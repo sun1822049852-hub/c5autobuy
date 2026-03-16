@@ -1,0 +1,62 @@
+{
+  "configs": [
+    {
+      "name": "1",
+      "created_at": "2026-01-04 23:48:41",
+      "last_updated": "2026-01-29 15:02:58",
+      "products": [
+        {
+          "url": "https://www.c5game.com/csgo/1315787693015306240/MP5-SD%20%7C%20%E8%90%A8%E5%87%A1%E7%BA%B3%E5%8D%8A%E8%B0%83/sell",
+          "item_id": "1315787693015306240",
+          "minwear": 0.25,
+          "max_wear": 0.31,
+          "max_price": 0.9,
+          "item_name": "MP5-SD | 萨凡纳半调 (久经沙场)",
+          "created_at": "2026-01-17 22:35:26",
+          "market_hash_name": "MP5-SD | Savannah Halftone (Field-Tested)",
+          "last_modified": "2026-01-22 20:45:17"
+        }
+      ]
+    },
+    {
+      "name": "久经",
+      "created_at": "2026-01-18 01:04:20",
+      "last_updated": "2026-03-05 08:45:30",
+      "products": [
+        {
+          "url": "https://www.c5game.com/csgo/1315791084443963392/%E6%B3%95%E7%8E%9B%E6%96%AF%20%7C%20%E5%8D%8A%E8%A2%96%E5%BC%8F/sell?minWear=0.24&maxWear=0.27",
+          "item_id": "1315791084443963392",
+          "minwear": 0.15,
+          "max_wear": 0.23,
+          "max_price": 0.4,
+          "item_name": "法玛斯 | 半袖式 (久经沙场)",
+          "created_at": "2026-01-18 01:05:10",
+          "market_hash_name": "FAMAS | Half Sleeve (Field-Tested)",
+          "last_modified": "2026-02-28 10:18:41"
+        },
+        {
+          "url": "https://www.c5game.com/csgo/1380979899390267393/P90%20%7C%20%E6%BB%A1%E6%98%8F%E4%BD%9C%E5%93%81%20(%E4%B9%85%E7%BB%8F%E6%B2%99%E5%9C%BA)/sell?sort=0&minWear=0.27&maxWear=0.38",
+          "item_id": "1380979899390267393",
+          "minwear": 0.15,
+          "max_wear": 0.29,
+          "max_price": 0.4,
+          "item_name": "P90 | 满昏作品 (久经沙场)",
+          "created_at": "2026-03-05 08:44:56",
+          "market_hash_name": "P90 | Straight Dimes (Field-Tested)",
+          "last_modified": "2026-03-05 08:44:56"
+        },
+        {
+          "url": "https://www.c5game.com/csgo/1380979899386073093/AUG%20%7C%20%E9%92%A2%E9%93%81%E5%93%A8%E5%85%B5/sell",
+          "item_id": "1380979899386073093",
+          "minwear": 0.15,
+          "max_wear": 0.29,
+          "max_price": 0.4,
+          "item_name": "AUG | 钢铁哨兵 (久经沙场)",
+          "created_at": "2026-03-05 08:45:30",
+          "market_hash_name": "AUG | Steel Sentinel (Field-Tested)",
+          "last_modified": "2026-03-05 08:45:30"
+        }
+      ]
+    }
+  ]
+}

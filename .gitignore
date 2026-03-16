@@ -1,0 +1,7 @@
+.worktrees/
+.venv/
+.pytest_cache/
+__pycache__/
+*.pyc
+proxy_auth_plugin_*.zip
+data/app.db

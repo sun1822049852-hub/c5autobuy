@@ -1,0 +1,50 @@
+================================================================================
+请求信息:
+================================================================================
+测试名称: 文档标准版
+请求时间: 2026-02-06T09:09:03.750360
+URL: https://openapi.c5game.com/merchant/market/v2/products/list
+
+请求参数:
+{
+  "app-key": "2c813df99211431888709d3c6f47eee6"
+}
+
+请求头:
+{
+  "Content-Type": "application/json",
+  "Accept": "application/json",
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+}
+
+请求体:
+{
+  "marketHashName": "FAMAS | Half Sleeve (Field-Tested)",
+  "appId": 730,
+  "pageNum": 1,
+  "pageSize": 2
+}
+
+================================================================================
+响应信息:
+================================================================================
+状态码: 200
+响应时间: 118.87ms
+
+响应头:
+  Content-Type: application/json
+  Date: Fri, 06 Feb 2026 01:09:02 GMT
+  req-cost-time: 11
+  req-arrive-time: 1770340143123
+  resp-start-time: 1770340143134
+  x-envoy-upstream-service-time: 11
+  alt-svc: h3=":443"; ma=86400
+  Content-Encoding: gzip
+  Vary: Accept-Encoding
+  Server: istio-envoy
+  Transfer-Encoding: chunked
+
+================================================================================
+原始响应内容:
+================================================================================
+{"success":true,"data":{"list":[{"productId":"1492773940447723523","price":0.3300,"delivery":2,"remark":"","acceptBargain":false,"img":"https://community.fastly.steamstatic.com/economy/image/i0CoZ81Ui0m-9KwlBY1L_18myuGuq1wfhWSaZgMttyVfPaERSR0Wqmu7LAocGIGz3UqlXOLrxM-vMGmW8VNxu5Dx60noTyL3n5vh7h1c_M2paaloIuKWCliWwON3o95kSi26gBBp5zyHnImgJ36XalVxCcB5RrEK4UK8lIDiP-7k4wfbjNlNyXr_2Hsb6TErvbhArf5oZg/330x192","sellerUid":"1002666741","assetInfo":{"@type":"cs2","assetId":"49232594424","paintIndex":461,"paintSeed":632,"floatWear":0.35411364}},{"productId":"1492779746431533059","price":0.3300,"delivery":2,"remark":"","acceptBargain":false,"img":"https://community.fastly.steamstatic.com/economy/image/i0CoZ81Ui0m-9KwlBY1L_18myuGuq1wfhWSaZgMttyVfPaERSR0Wqmu7LAocGIGz3UqlXOLrxM-vMGmW8VNxu5Dx60noTyL3n5vh7h1c_M2paaloIuKWCliWwON3o95kSi26gBBp5zyHnImgJ36XalVxCcB5RrEK4UK8lIDiP-7k4wfbjNlNyXr_2Hsb6TErvbhArf5oZg/330x192","sellerUid":"1002666741","assetInfo":{"@type":"cs2","assetId":"49232638328","paintIndex":461,"paintSeed":293,"floatWear":0.29247499}}],"pageNum":1,"pageSize":2,"hasMore":true},"errorCode":0,"errorMsg":null,"errorData":null,"errorCodeStr":null}

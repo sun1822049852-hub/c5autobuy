@@ -1,0 +1,37 @@
+{
+  "name": "功过是非皆过客唯有心安是归人",
+  "userId": "1003936745",
+  "proxy": "http://n4mfzv:xo7ljr3d@36.138.220.178:50004",
+  "cookie": "NC5_deviceId=177224505589236340; i18n_redirected=zh; _ga=GA1.1.1134109355.1772245039; _c_WBKFRo=yIJNsmntlIza3f2DBETOQbzgs4UDF6KkkjhfenrE; _nb_ioWEgULi=; Hm_lvt_86084b1bece3626cd94deede7ecf31a8=1772245042; HMACCOUNT=37BA093EC9983095; _gcl_au=1.1.359872686.1772245042; NC5_accessToken=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1aWQiOjEwMDM5MzY3NDUsImN0ZSI6MTc3MjI0NTA0OCwic2N0IjoiYzVnYW1lIn0.z-4yQGzpRNZvZIHAEVXkljO62ey_HwjjSbl9VHMtu8Y; NC5_uid=undefined; NC5_newC5login=1; NC5_crossAccessToken=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1aWQiOjEwMDM5MzY3NDUsImN0ZSI6MTc3MjI0NTA0OCwic2N0IjoiYzVnYW1lIn0.z-4yQGzpRNZvZIHAEVXkljO62ey_HwjjSbl9VHMtu8Y; noticeList=%E4%B8%BA%E7%BB%B4%E6%8A%A4%E4%BA%A4%E6%98%93%E5%85%AC%E5%B9%B3%EF%BC%8C%E4%BB%BB%E4%B8%80%E6%96%B9%E5%9C%A8%E4%BA%A4%E6%98%93%E5%AE%8C%E6%88%90%E5%90%8E%E6%92%A4%E9%94%80%E4%BA%A4%E6%98%93%EF%BC%8C%E8%B4%A6%E5%8F%B7%E5%B0%86%E5%8F%97%E5%88%B0%E9%99%90%E5%88%B6%E5%92%8C%E5%A4%84%E7%BD%9A%EF%BC%8C%E7%82%B9%E6%9F%A5%E7%9C%8B%E8%A7%84%E5%88%99%E8%AF%A6%E6%83%85%E3%80%82%E8%AF%B7%E6%82%A8%E5%9C%A8%E4%BA%A4%E6%98%93%E5%AE%8C%E6%88%90%E5%90%8E%E9%81%BF%E5%85%8D%E5%9C%A8steam%E6%92%A4%E9%94%80%EF%BC%8C%E4%BB%A5%E5%85%8D%E9%80%A0%E6%88%90%E6%8D%9F%E5%A4%B1%E3%80%82; _ga_ZWR0TBC7N2=GS2.1.s1772245038$o1$g1$t1772245050$j48$l0$h0; Hm_lpvt_86084b1bece3626cd94deede7ecf31a8=1772245050; ssxmod_itna=1-Qq_xBDRDcWeDwxeKxmq7jYRr5D8DpZxBP01sD_xQ5DODLxn44GdqReD9j3bDCqN4_t3CQlh4r5oDGN45xA5Dnzx7YDtoSa5qt91w52IdoGG5P4MAAhoe5QM1TgHqLEHrZw6QcnzkkV_SieDU4GnD06xi75PxYAfDBYD74G_DDeDixGIYn4DmqGybgTDQqDSDGp3ynuio6n3xiAYbhu3xifNQCpNSjbDYfT4x0tz2nxD0uxpH9GEDYpsojuNjAnxlpD4fWBWDBdPS9h3xDtXxyhWZZSj1FE5VlTDtqD9/AbDbRidmxuaxaWTgQrmYpmYr0Pe7Dm0m47D3nx5QGkeYC7D4QGnnhXY_e/G=lDeCw1CibKAQrbU0ptGqrltgaNlENOY4P_D3AeG0eplvxlwkimk7GRQRzlwGQmh0wd_e3iho/qPAA50r3YD; ssxmod_itna2=1-Qq_xBDRDcWeDwxeKxmq7jYRr5D8DpZxBP01sD_xQ5DODLxn44GdqReD9j3bDCqN4_t3CQlh4r5xnmY5_7SlOuIe9gqAi_tBr7iWXteD",
+  "created_at": "2026-01-29 10:28:19",
+  "last_updated": "2026-03-11 20:23:53",
+  "last_used": "2026-03-11 20:23:53",
+  "login": true,
+  "query_cooldown": 1.0,
+  "random_delay_enabled": false,
+  "random_delay_min": 0.0,
+  "random_delay_max": 2.0,
+  "api_key": "474fee7731124a74bc2c8858f3bf00e6",
+  "query_time_config": {
+    "enabled": false,
+    "start_hour": 0,
+    "start_minute": 0,
+    "end_hour": 0,
+    "end_minute": 0
+  },
+  "steam_inventories": [
+    {
+      "nickname": "Nothing",
+      "steamId": "76561198748020700",
+      "avatar": "https://avatars.steamstatic.com/7dbfc407699d74ef405bf687f0aeb52471f6436e.jpg",
+      "inventory_num": 669,
+      "inventory_max": 1000,
+      "status": 1,
+      "type": 1,
+      "remaining_capacity": 331
+    }
+  ],
+  "random_delay_min_ms": 0.0,
+  "random_delay_max_ms": 2000.0,
+  "selected_steam_id": "76561198748020700"
+}
