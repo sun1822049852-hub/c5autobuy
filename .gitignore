@@ -4,4 +4,4 @@
 __pycache__/
 *.pyc
 proxy_auth_plugin_*.zip
-data/app.db
+data/*.db

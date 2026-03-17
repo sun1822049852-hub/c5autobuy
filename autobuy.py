@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import aiohttp
 import json
@@ -3983,8 +3985,12 @@ class ProductQueryScanner:
     
     def _build_request_body(self):
         """构建请求体JSON"""
-        if not all([self.item_id, self.product_item.minwear, 
-                   self.product_item.max_wear, self.product_item.max_price]):
+        if (
+            not self.item_id
+            or self.product_item.minwear is None
+            or self.product_item.max_wear is None
+            or self.product_item.max_price is None
+        ):
             print("❌ 查询参数不完整，无法构建请求体")
             return None
         
