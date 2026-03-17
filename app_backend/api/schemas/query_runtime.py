@@ -71,3 +71,30 @@ class QueryRuntimeStatusResponse(BaseModel):
 
 class QueryRuntimeStartRequest(BaseModel):
     config_id: str
+
+
+class QueryRuntimePrepareItemResponse(BaseModel):
+    query_item_id: str
+    external_item_id: str
+    item_name: str | None
+    status: str
+    message: str
+    last_market_price: float | None
+    min_wear: float | None
+    detail_max_wear: float | None
+    last_detail_sync_at: str | None
+
+
+class QueryRuntimePrepareResponse(BaseModel):
+    config_id: str
+    config_name: str
+    threshold_hours: int
+    updated_count: int
+    skipped_count: int
+    failed_count: int
+    items: list[QueryRuntimePrepareItemResponse]
+
+
+class QueryRuntimePrepareRequest(BaseModel):
+    config_id: str
+    force_refresh: bool = False

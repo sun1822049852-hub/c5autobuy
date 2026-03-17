@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib
 import json
 
 from app_backend.domain.models.account import Account
@@ -75,11 +74,20 @@ class FakeSession:
         return FakeResponse(status=self._status, text=self._text)
 
 
-async def test_real_legacy_new_api_execute_query_smoke(monkeypatch):
-    from app_backend.infrastructure.query.runtime.legacy_scanner_adapter import LegacyScannerAdapter
+class FakeSigner:
+    def __init__(self, *, result: str) -> None:
+        self.result = result
+        self.calls: list[dict[str, object]] = []
+
+    def generate(self, **kwargs):
+        self.calls.append(kwargs)
+        return self.result
+
+
+async def test_new_api_executor_smoke_keeps_legacy_request_shape():
+    from app_backend.infrastructure.query.runtime.new_api_query_executor import NewApiQueryExecutor
     from app_backend.infrastructure.query.runtime.runtime_account_adapter import RuntimeAccountAdapter
 
-    legacy_module = importlib.import_module("autobuy")
     session = FakeSession(
         status=200,
         text=json.dumps(
@@ -97,31 +105,37 @@ async def test_real_legacy_new_api_execute_query_smoke(monkeypatch):
             }
         ),
     )
+    executor = NewApiQueryExecutor()
+    runtime_account = RuntimeAccountAdapter(build_account())
 
-    async def fake_get_api_session(self, force_new: bool = False):
-        return session
-
-    monkeypatch.setattr(RuntimeAccountAdapter, "get_api_session", fake_get_api_session)
-    adapter = LegacyScannerAdapter(legacy_module=legacy_module)
-
-    result = await adapter.execute_query(
-        mode_type="new_api",
-        account=build_account(),
+    result = await executor.execute_query(
+        account=runtime_account,
         query_item=build_item(),
+        session=session,
     )
 
     assert result.success is True
     assert result.match_count == 1
     assert result.product_list[0]["productId"] == "p1"
     assert result.product_list[0]["actRebateAmount"] == 0
+    assert session.calls[0]["url"] == "https://openapi.c5game.com/merchant/market/v2/products/search"
     assert session.calls[0]["params"] == {"app-key": "api-1"}
+    assert session.calls[0]["json"] == {
+        "pageSize": 50,
+        "appId": 730,
+        "marketHashName": "Test Item Name",
+        "priceMax": 100.0,
+        "wearMin": 0.0,
+        "wearMax": 0.25,
+    }
+    assert session.calls[0]["headers"]["Content-Type"] == "application/json"
+    assert session.calls[0]["headers"]["Accept"] == "application/json"
 
 
-async def test_real_legacy_fast_api_execute_query_smoke(monkeypatch):
-    from app_backend.infrastructure.query.runtime.legacy_scanner_adapter import LegacyScannerAdapter
+async def test_fast_api_executor_smoke_keeps_legacy_request_shape():
+    from app_backend.infrastructure.query.runtime.fast_api_query_executor import FastApiQueryExecutor
     from app_backend.infrastructure.query.runtime.runtime_account_adapter import RuntimeAccountAdapter
 
-    legacy_module = importlib.import_module("autobuy")
     session = FakeSession(
         status=200,
         text=json.dumps(
@@ -141,30 +155,36 @@ async def test_real_legacy_fast_api_execute_query_smoke(monkeypatch):
             }
         ),
     )
+    executor = FastApiQueryExecutor()
+    runtime_account = RuntimeAccountAdapter(build_account())
 
-    async def fake_get_api_session(self, force_new: bool = False):
-        return session
-
-    monkeypatch.setattr(RuntimeAccountAdapter, "get_api_session", fake_get_api_session)
-    adapter = LegacyScannerAdapter(legacy_module=legacy_module)
-
-    result = await adapter.execute_query(
-        mode_type="fast_api",
-        account=build_account(),
+    result = await executor.execute_query(
+        account=runtime_account,
         query_item=build_item(),
+        session=session,
     )
 
     assert result.success is True
     assert result.match_count == 1
     assert result.product_list[0]["productId"] == "p2"
+    assert session.calls[0]["url"] == "https://openapi.c5game.com/merchant/market/v2/products/list"
     assert session.calls[0]["params"] == {"app-key": "api-1"}
+    assert session.calls[0]["json"] == {
+        "pageSize": 50,
+        "pageNum": 1,
+        "appId": 730,
+        "marketHashName": "Test Item Name",
+        "delivery": 1,
+        "assetType": 1,
+    }
+    assert session.calls[0]["headers"]["Content-Type"] == "application/json"
+    assert session.calls[0]["headers"]["Accept"] == "application/json"
 
 
-async def test_real_legacy_token_execute_query_smoke(monkeypatch):
-    from app_backend.infrastructure.query.runtime.legacy_scanner_adapter import LegacyScannerAdapter
+async def test_token_executor_smoke_keeps_legacy_request_shape():
+    from app_backend.infrastructure.query.runtime.token_query_executor import TokenQueryExecutor
     from app_backend.infrastructure.query.runtime.runtime_account_adapter import RuntimeAccountAdapter
 
-    legacy_module = importlib.import_module("autobuy")
     session = FakeSession(
         status=200,
         text=json.dumps(
@@ -183,21 +203,34 @@ async def test_real_legacy_token_execute_query_smoke(monkeypatch):
             }
         ),
     )
+    signer = FakeSigner(result="fake-sign")
+    executor = TokenQueryExecutor(xsign_wrapper=signer)
+    runtime_account = RuntimeAccountAdapter(build_account())
 
-    async def fake_get_global_session(self, force_new: bool = False):
-        return session
-
-    monkeypatch.setattr(RuntimeAccountAdapter, "get_global_session", fake_get_global_session)
-    monkeypatch.setattr(legacy_module.GLOBAL_XSIGN_WRAPPER, "generate", lambda **kwargs: "fake-sign")
-    adapter = LegacyScannerAdapter(legacy_module=legacy_module)
-
-    result = await adapter.execute_query(
-        mode_type="token",
-        account=build_account(),
+    result = await executor.execute_query(
+        account=runtime_account,
         query_item=build_item(),
+        session=session,
     )
 
     assert result.success is True
     assert result.match_count == 1
     assert result.product_list[0]["productId"] == "p3"
+    assert signer.calls[0]["path"] == "support/trade/product/batch/v1/sell/query"
+    assert signer.calls[0]["method"] == "POST"
+    assert signer.calls[0]["token"] == "token-1"
+    assert session.calls[0]["url"] == "https://www.c5game.com/api/v1/support/trade/product/batch/v1/sell/query"
+    assert session.calls[0]["json"] == {
+        "itemId": "1380979899390261111",
+        "maxPrice": "100.0",
+        "delivery": 0,
+        "minWear": 0.0,
+        "maxWear": 0.25,
+        "limit": "200",
+        "giftBuy": "",
+    }
     assert session.calls[0]["headers"]["x-sign"] == "fake-sign"
+    assert session.calls[0]["headers"]["x-access-token"] == "token-1"
+    assert session.calls[0]["headers"]["x-device-id"] == "device-1"
+    assert session.calls[0]["headers"]["Cookie"] == build_account().cookie_raw
+    assert session.calls[0]["headers"]["Referer"] == build_item().product_url

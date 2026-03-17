@@ -225,7 +225,7 @@ class AccountCenterWindow(QWidget):
         dialog = self.edit_dialog_factory(account, self)
         if dialog.exec() != int(QDialog.DialogCode.Accepted):
             return
-        self.controller.edit_detail_account(dialog.build_payload())
+        self.controller.edit_detail_account(dialog.build_payload(), dialog.build_query_mode_payload())
 
     def _start_login(self) -> None:
         self.controller.start_login_for_detail()

@@ -29,6 +29,11 @@ class SqliteQueryConfigRepository:
             row = session.get(QueryConfigRecord, config_id)
             return self._to_domain(row) if row else None
 
+    def get_item(self, query_item_id: str) -> QueryItem | None:
+        with self._session_factory() as session:
+            row = session.get(QueryConfigItemRecord, query_item_id)
+            return self._to_item_domain(row) if row else None
+
     def create_config(self, *, name: str, description: str | None) -> QueryConfig:
         now = datetime.now().isoformat(timespec="seconds")
         config_id = str(uuid4())
@@ -68,6 +73,27 @@ class SqliteQueryConfigRepository:
             if created is None:
                 raise RuntimeError("Failed to create query config")
             return self._to_domain(created)
+
+    def update_config(self, config_id: str, *, name: str, description: str | None) -> QueryConfig:
+        with self._session_factory() as session:
+            row = session.get(QueryConfigRecord, config_id)
+            if row is None:
+                raise KeyError(config_id)
+
+            row.name = name
+            row.description = description
+            row.updated_at = datetime.now().isoformat(timespec="seconds")
+            session.commit()
+            session.refresh(row)
+            return self._to_domain(row)
+
+    def delete_config(self, config_id: str) -> None:
+        with self._session_factory() as session:
+            row = session.get(QueryConfigRecord, config_id)
+            if row is None:
+                raise KeyError(config_id)
+            session.delete(row)
+            session.commit()
 
     def update_mode_setting(self, config_id: str, mode_type: str, **changes) -> QueryModeSetting:
         with self._session_factory() as session:
@@ -114,6 +140,7 @@ class SqliteQueryConfigRepository:
         item_name: str | None,
         market_hash_name: str | None,
         min_wear: float | None,
+        detail_max_wear: float | None = None,
         max_wear: float | None,
         max_price: float | None,
         last_market_price: float | None,
@@ -133,6 +160,7 @@ class SqliteQueryConfigRepository:
                 item_name=item_name,
                 market_hash_name=market_hash_name,
                 min_wear=min_wear,
+                detail_max_wear=detail_max_wear,
                 max_wear=max_wear,
                 max_price=max_price,
                 last_market_price=last_market_price,
@@ -144,22 +172,7 @@ class SqliteQueryConfigRepository:
             session.add(row)
             session.commit()
             session.refresh(row)
-            return QueryItem(
-                query_item_id=row.query_item_id,
-                config_id=row.config_id,
-                product_url=row.product_url,
-                external_item_id=row.external_item_id,
-                item_name=row.item_name,
-                market_hash_name=row.market_hash_name,
-                min_wear=row.min_wear,
-                max_wear=row.max_wear,
-                max_price=row.max_price,
-                last_market_price=row.last_market_price,
-                last_detail_sync_at=row.last_detail_sync_at,
-                sort_order=row.sort_order,
-                created_at=row.created_at,
-                updated_at=row.updated_at,
-            )
+            return self._to_item_domain(row)
 
     def update_item(self, query_item_id: str, **changes) -> QueryItem:
         with self._session_factory() as session:
@@ -174,22 +187,34 @@ class SqliteQueryConfigRepository:
             row.updated_at = datetime.now().isoformat(timespec="seconds")
             session.commit()
             session.refresh(row)
-            return QueryItem(
-                query_item_id=row.query_item_id,
-                config_id=row.config_id,
-                product_url=row.product_url,
-                external_item_id=row.external_item_id,
-                item_name=row.item_name,
-                market_hash_name=row.market_hash_name,
-                min_wear=row.min_wear,
-                max_wear=row.max_wear,
-                max_price=row.max_price,
-                last_market_price=row.last_market_price,
-                last_detail_sync_at=row.last_detail_sync_at,
-                sort_order=row.sort_order,
-                created_at=row.created_at,
-                updated_at=row.updated_at,
-            )
+            return self._to_item_domain(row)
+
+    def update_item_detail(
+        self,
+        query_item_id: str,
+        *,
+        item_name: str | None,
+        market_hash_name: str | None,
+        min_wear: float | None,
+        detail_max_wear: float | None,
+        last_market_price: float | None,
+        last_detail_sync_at: str,
+    ) -> QueryItem:
+        with self._session_factory() as session:
+            row = session.get(QueryConfigItemRecord, query_item_id)
+            if row is None:
+                raise KeyError(query_item_id)
+
+            row.item_name = item_name
+            row.market_hash_name = market_hash_name
+            row.min_wear = min_wear
+            row.detail_max_wear = detail_max_wear
+            row.last_market_price = last_market_price
+            row.last_detail_sync_at = last_detail_sync_at
+            row.updated_at = datetime.now().isoformat(timespec="seconds")
+            session.commit()
+            session.refresh(row)
+            return self._to_item_domain(row)
 
     def delete_item(self, query_item_id: str) -> None:
         with self._session_factory() as session:
@@ -209,22 +234,7 @@ class SqliteQueryConfigRepository:
             created_at=row.created_at,
             updated_at=row.updated_at,
             items=[
-                QueryItem(
-                    query_item_id=item.query_item_id,
-                    config_id=item.config_id,
-                    product_url=item.product_url,
-                    external_item_id=item.external_item_id,
-                    item_name=item.item_name,
-                    market_hash_name=item.market_hash_name,
-                    min_wear=item.min_wear,
-                    max_wear=item.max_wear,
-                    max_price=item.max_price,
-                    last_market_price=item.last_market_price,
-                    last_detail_sync_at=item.last_detail_sync_at,
-                    sort_order=item.sort_order,
-                    created_at=item.created_at,
-                    updated_at=item.updated_at,
-                )
+                SqliteQueryConfigRepository._to_item_domain(item)
                 for item in sorted(row.items, key=lambda value: value.sort_order)
             ],
             mode_settings=[
@@ -248,4 +258,24 @@ class SqliteQueryConfigRepository:
                 )
                 for mode in sorted(row.mode_settings, key=lambda value: value.mode_type)
             ],
+        )
+
+    @staticmethod
+    def _to_item_domain(row: QueryConfigItemRecord) -> QueryItem:
+        return QueryItem(
+            query_item_id=row.query_item_id,
+            config_id=row.config_id,
+            product_url=row.product_url,
+            external_item_id=row.external_item_id,
+            item_name=row.item_name,
+            market_hash_name=row.market_hash_name,
+            min_wear=row.min_wear,
+            max_wear=row.max_wear,
+            max_price=row.max_price,
+            last_market_price=row.last_market_price,
+            last_detail_sync_at=row.last_detail_sync_at,
+            sort_order=row.sort_order,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+            detail_max_wear=row.detail_max_wear,
         )

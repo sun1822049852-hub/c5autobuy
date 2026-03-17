@@ -163,6 +163,27 @@ class FakeRuntime:
         }
 
 
+class FakePurchaseRuntimeService:
+    def __init__(
+        self,
+        *,
+        start_result: tuple[bool, str] = (True, "购买运行时已启动"),
+        stop_result: tuple[bool, str] = (True, "购买运行时已停止"),
+    ) -> None:
+        self.start_calls = 0
+        self.stop_calls = 0
+        self._start_result = start_result
+        self._stop_result = stop_result
+
+    def start(self) -> tuple[bool, str]:
+        self.start_calls += 1
+        return self._start_result
+
+    def stop(self) -> tuple[bool, str]:
+        self.stop_calls += 1
+        return self._stop_result
+
+
 def test_query_task_runtime_starts_mode_runners_and_aggregates_snapshot():
     from app_backend.infrastructure.query.runtime.query_task_runtime import QueryTaskRuntime
 
@@ -452,10 +473,12 @@ def test_runtime_service_rejects_second_running_task():
     from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
 
     repository = FakeQueryConfigRepository(build_config("cfg-1"))
+    purchase_service = FakePurchaseRuntimeService()
     service = QueryRuntimeService(
         query_config_repository=repository,
         account_repository=FakeAccountRepository(),
         runtime_factory=lambda config, accounts: FakeRuntime(config, accounts),
+        purchase_runtime_service=purchase_service,
     )
 
     started, _message = service.start(config_id="cfg-1")
@@ -470,10 +493,12 @@ def test_runtime_service_returns_current_snapshot():
     from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
 
     repository = FakeQueryConfigRepository(build_config("cfg-1"))
+    purchase_service = FakePurchaseRuntimeService()
     service = QueryRuntimeService(
         query_config_repository=repository,
         account_repository=FakeAccountRepository(),
         runtime_factory=lambda config, accounts: FakeRuntime(config, accounts),
+        purchase_runtime_service=purchase_service,
     )
 
     service.start(config_id="cfg-1")
@@ -559,10 +584,12 @@ def test_runtime_service_normalizes_recent_events():
             }
 
     repository = FakeQueryConfigRepository(build_config("cfg-1"))
+    purchase_service = FakePurchaseRuntimeService()
     service = QueryRuntimeService(
         query_config_repository=repository,
         account_repository=FakeAccountRepository([build_account("a1", api_key="api-1")]),
         runtime_factory=lambda config, accounts: FakeRuntimeWithEvents(config, accounts),
+        purchase_runtime_service=purchase_service,
     )
 
     service.start(config_id="cfg-1")
@@ -582,10 +609,12 @@ def test_runtime_service_stop_clears_running_state():
     from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
 
     repository = FakeQueryConfigRepository(build_config("cfg-1"))
+    purchase_service = FakePurchaseRuntimeService()
     service = QueryRuntimeService(
         query_config_repository=repository,
         account_repository=FakeAccountRepository(),
         runtime_factory=lambda config, accounts: FakeRuntime(config, accounts),
+        purchase_runtime_service=purchase_service,
     )
 
     service.start(config_id="cfg-1")
@@ -594,12 +623,71 @@ def test_runtime_service_stop_clears_running_state():
     assert stopped is True
     assert message == "查询任务已停止"
     assert service.get_status()["running"] is False
+    assert purchase_service.stop_calls == 1
+
+
+def test_runtime_service_starts_purchase_runtime_before_query_runtime():
+    from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
+
+    repository = FakeQueryConfigRepository(build_config("cfg-1"))
+    purchase_service = FakePurchaseRuntimeService()
+    service = QueryRuntimeService(
+        query_config_repository=repository,
+        account_repository=FakeAccountRepository(),
+        runtime_factory=lambda config, accounts: FakeRuntime(config, accounts),
+        purchase_runtime_service=purchase_service,
+    )
+
+    started, message = service.start(config_id="cfg-1")
+
+    assert started is True
+    assert message == "查询任务已启动"
+    assert purchase_service.start_calls == 1
+
+
+def test_runtime_service_allows_query_start_when_purchase_runtime_is_already_running():
+    from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
+
+    repository = FakeQueryConfigRepository(build_config("cfg-1"))
+    purchase_service = FakePurchaseRuntimeService(start_result=(False, "已有购买运行时在运行"))
+    service = QueryRuntimeService(
+        query_config_repository=repository,
+        account_repository=FakeAccountRepository(),
+        runtime_factory=lambda config, accounts: FakeRuntime(config, accounts),
+        purchase_runtime_service=purchase_service,
+    )
+
+    started, message = service.start(config_id="cfg-1")
+
+    assert started is True
+    assert message == "查询任务已启动"
+    assert purchase_service.start_calls == 1
+
+
+def test_runtime_service_rejects_query_start_when_purchase_runtime_cannot_start():
+    from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
+
+    repository = FakeQueryConfigRepository(build_config("cfg-1"))
+    purchase_service = FakePurchaseRuntimeService(start_result=(False, "购买运行时启动失败"))
+    service = QueryRuntimeService(
+        query_config_repository=repository,
+        account_repository=FakeAccountRepository(),
+        runtime_factory=lambda config, accounts: FakeRuntime(config, accounts),
+        purchase_runtime_service=purchase_service,
+    )
+
+    started, message = service.start(config_id="cfg-1")
+
+    assert started is False
+    assert message == "购买运行时启动失败"
+    assert service.get_status()["running"] is False
 
 
 def test_runtime_service_counts_eligible_accounts_by_mode():
     from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
 
     repository = FakeQueryConfigRepository(build_config("cfg-1"))
+    purchase_service = FakePurchaseRuntimeService()
     service = QueryRuntimeService(
         query_config_repository=repository,
         account_repository=FakeAccountRepository(
@@ -620,6 +708,7 @@ def test_runtime_service_counts_eligible_accounts_by_mode():
                 ),
             ]
         ),
+        purchase_runtime_service=purchase_service,
     )
 
     service.start(config_id="cfg-1")
@@ -654,6 +743,7 @@ def test_runtime_service_respects_mode_enabled_flag():
     config = build_config("cfg-1")
     config.mode_settings[1].enabled = False
     repository = FakeQueryConfigRepository(config)
+    purchase_service = FakePurchaseRuntimeService()
     service = QueryRuntimeService(
         query_config_repository=repository,
         account_repository=FakeAccountRepository(
@@ -662,6 +752,7 @@ def test_runtime_service_respects_mode_enabled_flag():
                 build_account("a2", api_key="api-2"),
             ]
         ),
+        purchase_runtime_service=purchase_service,
     )
 
     service.start(config_id="cfg-1")

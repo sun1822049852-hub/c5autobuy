@@ -3,5 +3,6 @@
 .pytest_cache/
 __pycache__/
 *.pyc
+*.egg-info/
 proxy_auth_plugin_*.zip
 data/*.db

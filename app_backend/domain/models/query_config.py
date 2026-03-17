@@ -19,6 +19,7 @@ class QueryItem:
     sort_order: int
     created_at: str
     updated_at: str
+    detail_max_wear: float | None = None
 
 
 @dataclass(slots=True)

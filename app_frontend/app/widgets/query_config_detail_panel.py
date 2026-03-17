@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -20,6 +22,22 @@ def _readonly_line_edit() -> QLineEdit:
     return field
 
 
+def _format_wear_range(min_wear: object, detail_max_wear: object) -> str:
+    if min_wear is None or detail_max_wear is None:
+        return ""
+    return f"{min_wear} ~ {detail_max_wear}"
+
+
+def _format_detail_sync_time(last_detail_sync_at: object) -> str:
+    if not last_detail_sync_at:
+        return "未同步"
+    raw_value = str(last_detail_sync_at)
+    try:
+        return datetime.fromisoformat(raw_value).strftime("%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return raw_value
+
+
 class QueryConfigDetailPanel(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -35,8 +53,8 @@ class QueryConfigDetailPanel(QWidget):
         self.mode_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.mode_table.verticalHeader().setVisible(False)
         self.mode_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.item_table = QTableWidget(0, 4)
-        self.item_table.setHorizontalHeaderLabels(["商品", "磨损上限", "价格上限", "市场名"])
+        self.item_table = QTableWidget(0, 6)
+        self.item_table.setHorizontalHeaderLabels(["商品", "完整磨损范围", "用户阈值", "价格上限", "市场名", "详情同步"])
         self.item_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.item_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.item_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -84,10 +102,13 @@ class QueryConfigDetailPanel(QWidget):
         self.mode_summary_input.setText(mode_summary)
         self.item_table.setRowCount(len(items))
         for row_index, item in enumerate(items):
+            wear_range_text = _format_wear_range(item.get("min_wear"), item.get("detail_max_wear"))
             self.item_table.setItem(row_index, 0, QTableWidgetItem(str(item.get("item_name") or item.get("external_item_id") or "")))
-            self.item_table.setItem(row_index, 1, QTableWidgetItem("" if item.get("max_wear") is None else str(item.get("max_wear"))))
-            self.item_table.setItem(row_index, 2, QTableWidgetItem("" if item.get("max_price") is None else str(item.get("max_price"))))
-            self.item_table.setItem(row_index, 3, QTableWidgetItem(str(item.get("market_hash_name") or "")))
+            self.item_table.setItem(row_index, 1, QTableWidgetItem(wear_range_text))
+            self.item_table.setItem(row_index, 2, QTableWidgetItem("" if item.get("max_wear") is None else str(item.get("max_wear"))))
+            self.item_table.setItem(row_index, 3, QTableWidgetItem("" if item.get("max_price") is None else str(item.get("max_price"))))
+            self.item_table.setItem(row_index, 4, QTableWidgetItem(str(item.get("market_hash_name") or "")))
+            self.item_table.setItem(row_index, 5, QTableWidgetItem(_format_detail_sync_time(item.get("last_detail_sync_at"))))
             item_cell = self.item_table.item(row_index, 0)
             if item_cell is not None:
                 item_cell.setData(Qt.ItemDataRole.UserRole, dict(item))

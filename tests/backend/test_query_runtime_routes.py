@@ -29,8 +29,10 @@ async def test_start_query_runtime_returns_running_snapshot(client):
     config_id = created.json()["config_id"]
 
     response = await client.post("/query-runtime/start", json={"config_id": config_id})
+    purchase_status = await client.get("/purchase-runtime/status")
 
     assert response.status_code == 200
+    assert purchase_status.status_code == 200
     payload = response.json()
     assert payload["running"] is True
     assert payload["config_id"] == config_id
@@ -43,6 +45,7 @@ async def test_start_query_runtime_returns_running_snapshot(client):
     assert payload["recent_events"] == []
     assert payload["started_at"] is not None
     assert payload["stopped_at"] is None
+    assert purchase_status.json()["running"] is True
     assert payload["modes"] == {
         "new_api": {
             "mode_type": "new_api",
@@ -83,6 +86,83 @@ async def test_start_query_runtime_returns_running_snapshot(client):
     }
 
 
+async def test_prepare_query_runtime_returns_refresh_summary(client, app):
+    created = await client.post(
+        "/query-configs",
+        json={
+            "name": "查询配置A",
+            "description": "用于运行时",
+        },
+    )
+    config_id = created.json()["config_id"]
+
+    class FakeRefreshService:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        async def prepare(self, *, config_id: str, force_refresh: bool = False) -> dict[str, object]:
+            self.calls.append({"config_id": config_id, "force_refresh": force_refresh})
+            return {
+                "config_id": config_id,
+                "config_name": "查询配置A",
+                "threshold_hours": 12,
+                "updated_count": 1,
+                "skipped_count": 0,
+                "failed_count": 0,
+                "items": [
+                    {
+                        "query_item_id": "item-1",
+                        "external_item_id": "1380979899390267393",
+                        "item_name": "AK-47 | Redline",
+                        "status": "updated",
+                        "message": "商品详情已刷新",
+                        "last_market_price": 123.45,
+                        "min_wear": 0.1,
+                        "detail_max_wear": 0.7,
+                        "last_detail_sync_at": "2026-03-17T12:00:00",
+                    }
+                ],
+            }
+
+    service = FakeRefreshService()
+    app.state.query_item_detail_refresh_service = service
+
+    response = await client.post("/query-runtime/prepare", json={"config_id": config_id, "force_refresh": True})
+
+    assert response.status_code == 200
+    assert service.calls == [{"config_id": config_id, "force_refresh": True}]
+    assert response.json()["updated_count"] == 1
+    assert response.json()["threshold_hours"] == 12
+    assert response.json()["items"][0]["status"] == "updated"
+    assert response.json()["items"][0]["detail_max_wear"] == 0.7
+
+
+async def test_prepare_query_runtime_returns_404_for_missing_config(client, app):
+    class MissingConfigRefreshService:
+        async def prepare(self, *, config_id: str, force_refresh: bool = False) -> dict[str, object]:
+            raise KeyError(config_id)
+
+    app.state.query_item_detail_refresh_service = MissingConfigRefreshService()
+
+    response = await client.post("/query-runtime/prepare", json={"config_id": "missing"})
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "查询配置不存在"}
+
+
+async def test_prepare_query_runtime_returns_409_for_prepare_conflict(client, app):
+    class ConflictRefreshService:
+        async def prepare(self, *, config_id: str, force_refresh: bool = False) -> dict[str, object]:
+            raise ValueError("没有可用于商品信息补全的已登录账号")
+
+    app.state.query_item_detail_refresh_service = ConflictRefreshService()
+
+    response = await client.post("/query-runtime/prepare", json={"config_id": "cfg-1"})
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "没有可用于商品信息补全的已登录账号"}
+
+
 async def test_start_query_runtime_rejects_second_running_task(client):
     created = await client.post(
         "/query-configs",
@@ -112,8 +192,10 @@ async def test_stop_query_runtime_returns_idle_snapshot(client):
 
     await client.post("/query-runtime/start", json={"config_id": config_id})
     response = await client.post("/query-runtime/stop")
+    purchase_status = await client.get("/purchase-runtime/status")
 
     assert response.status_code == 200
+    assert purchase_status.status_code == 200
     assert response.json() == {
         "running": False,
         "config_id": None,
@@ -128,3 +210,4 @@ async def test_stop_query_runtime_returns_idle_snapshot(client):
         "group_rows": [],
         "recent_events": [],
     }
+    assert purchase_status.json()["running"] is False

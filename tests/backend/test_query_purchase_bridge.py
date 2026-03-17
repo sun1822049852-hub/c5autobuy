@@ -86,6 +86,23 @@ class StubPurchaseRuntimeService:
         self.query_only = query_only
         self.accepted_hits: list[dict[str, object]] = []
         self.blocked_hits = 0
+        self.running = False
+        self.start_calls = 0
+        self.stop_calls = 0
+
+    def start(self) -> tuple[bool, str]:
+        self.start_calls += 1
+        if self.running:
+            return False, "已有购买运行时在运行"
+        self.running = True
+        return True, "购买运行时已启动"
+
+    def stop(self) -> tuple[bool, str]:
+        self.stop_calls += 1
+        if not self.running:
+            return False, "当前没有运行中的购买运行时"
+        self.running = False
+        return True, "购买运行时已停止"
 
     def accept_query_hit(self, hit: dict[str, object]) -> dict[str, object]:
         payload = dict(hit)

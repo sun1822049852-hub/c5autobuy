@@ -55,6 +55,14 @@ def _purchase_pool_tone(state: str | None) -> str:
     return mapping.get(state or "", "neutral")
 
 
+def _query_mode_status(*, enabled: bool, available: bool, unavailable_reason: str) -> tuple[str, str]:
+    if not available:
+        return unavailable_reason, "warn"
+    if enabled:
+        return "已启用", "ok"
+    return "已关闭", "muted"
+
+
 class AccountDetailPanel(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -69,6 +77,9 @@ class AccountDetailPanel(QWidget):
         self.last_error_input = _readonly_line_edit()
         self.proxy_input = _readonly_line_edit()
         self.api_key_status_input = _readonly_line_edit()
+        self.new_api_mode_input = _readonly_line_edit()
+        self.fast_api_mode_input = _readonly_line_edit()
+        self.token_mode_input = _readonly_line_edit()
         self.purchase_capability_input = _readonly_line_edit()
         self.purchase_pool_input = _readonly_line_edit()
 
@@ -88,6 +99,9 @@ class AccountDetailPanel(QWidget):
         query_form = QFormLayout(query_group)
         self.edit_query_button = QPushButton("编辑账号")
         query_form.addRow("API Key", self.api_key_status_input)
+        query_form.addRow("new_api", self.new_api_mode_input)
+        query_form.addRow("fast_api", self.fast_api_mode_input)
+        query_form.addRow("token", self.token_mode_input)
         query_form.addRow("", self.edit_query_button)
 
         capability_group = QGroupBox("购买能力")
@@ -155,6 +169,9 @@ class AccountDetailPanel(QWidget):
             self.last_error_input,
             self.proxy_input,
             self.api_key_status_input,
+            self.new_api_mode_input,
+            self.fast_api_mode_input,
+            self.token_mode_input,
             self.purchase_capability_input,
             self.purchase_pool_input,
         ):
@@ -183,10 +200,32 @@ class AccountDetailPanel(QWidget):
         api_key = account.get("api_key")
         purchase_capability_state = account.get("purchase_capability_state")
         purchase_pool_state = account.get("purchase_pool_state")
+        has_token = "NC5_accessToken=" in str(account.get("cookie_raw") or "")
+        new_api_text, new_api_tone = _query_mode_status(
+            enabled=bool(account.get("new_api_enabled", False)),
+            available=bool(api_key),
+            unavailable_reason="缺少 API Key",
+        )
+        fast_api_text, fast_api_tone = _query_mode_status(
+            enabled=bool(account.get("fast_api_enabled", False)),
+            available=bool(api_key),
+            unavailable_reason="缺少 API Key",
+        )
+        token_text, token_tone = _query_mode_status(
+            enabled=bool(account.get("token_enabled", False)),
+            available=has_token,
+            unavailable_reason="缺少 Token",
+        )
         self.api_key_status_input.setText("已配置" if api_key else "未配置")
+        self.new_api_mode_input.setText(new_api_text)
+        self.fast_api_mode_input.setText(fast_api_text)
+        self.token_mode_input.setText(token_text)
         self.purchase_capability_input.setText(purchase_capability_label(purchase_capability_state))
         self.purchase_pool_input.setText(purchase_pool_label(purchase_pool_state))
         _set_tone(self.api_key_status_input, _api_key_tone(api_key))
+        _set_tone(self.new_api_mode_input, new_api_tone)
+        _set_tone(self.fast_api_mode_input, fast_api_tone)
+        _set_tone(self.token_mode_input, token_tone)
         _set_tone(self.purchase_capability_input, _purchase_capability_tone(purchase_capability_state))
         _set_tone(self.purchase_pool_input, _purchase_pool_tone(purchase_pool_state))
         _set_tone(self.last_error_input, "error" if last_error else "neutral", tooltip=last_error)

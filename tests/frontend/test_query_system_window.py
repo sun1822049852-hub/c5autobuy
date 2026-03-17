@@ -20,6 +20,7 @@ def _config(config_id: str, *, name: str) -> dict:
                 "item_name": "测试商品",
                 "market_hash_name": "Test Item (Field-Tested)",
                 "min_wear": 0.0,
+                "detail_max_wear": 0.7,
                 "max_wear": 0.25,
                 "max_price": 100.0,
                 "last_market_price": 90.0,
@@ -56,6 +57,8 @@ class FakeController:
     def __init__(self) -> None:
         self.load_calls = 0
         self.created_payloads: list[dict] = []
+        self.updated_config_calls: list[dict] = []
+        self.deleted_config_calls = 0
         self.start_calls = 0
         self.stop_calls = 0
         self.refresh_runtime_calls = 0
@@ -63,12 +66,19 @@ class FakeController:
         self.added_item_payloads: list[dict] = []
         self.updated_item_calls: list[tuple[str, dict]] = []
         self.deleted_item_ids: list[str] = []
+        self.refreshed_item_ids: list[str] = []
 
     def load_configs(self) -> None:
         self.load_calls += 1
 
     def create_config(self, payload: dict) -> None:
         self.created_payloads.append(dict(payload))
+
+    def update_selected_config(self, payload: dict) -> None:
+        self.updated_config_calls.append(dict(payload))
+
+    def delete_selected_config(self) -> None:
+        self.deleted_config_calls += 1
 
     def start_runtime_for_selected(self) -> None:
         self.start_calls += 1
@@ -92,6 +102,9 @@ class FakeController:
 
     def delete_selected_item(self, item_id: str) -> None:
         self.deleted_item_ids.append(item_id)
+
+    def refresh_selected_item_detail(self, item_id: str) -> None:
+        self.refreshed_item_ids.append(item_id)
 
 
 class FakeConfirmService:
@@ -121,6 +134,14 @@ class FakeModeDialog(FakeDialog):
 
 class FakeItemDialog(FakeDialog):
     pass
+
+
+class FakePrepareDialog:
+    def __init__(self, result_code: int = 1) -> None:
+        self._result_code = result_code
+
+    def exec(self) -> int:
+        return self._result_code
 
 
 def test_query_system_window_updates_detail_and_dispatches_actions(qtbot):
@@ -156,11 +177,16 @@ def test_query_system_window_updates_detail_and_dispatches_actions(qtbot):
     )
     controller = FakeController()
     confirm_service = FakeConfirmService(True)
+    prepare_dialog_calls: list[tuple[str, str]] = []
     window = QuerySystemWindow(
         view_model=view_model,
         controller=controller,
         confirm_service=confirm_service,
+        prepare_runtime_dialog_factory=lambda config_id, config_name, parent=None: (
+            prepare_dialog_calls.append((config_id, config_name)) or FakePrepareDialog()
+        ),
         create_dialog_factory=lambda parent=None: FakeDialog({"name": "新配置", "description": "测试"}),
+        edit_config_dialog_factory=lambda config, parent=None: FakeDialog({"name": "改后配置", "description": "改后描述"}),
         mode_settings_dialog_factory=lambda mode_setting, parent=None: FakeModeDialog(
             {
                 "enabled": False,
@@ -197,21 +223,29 @@ def test_query_system_window_updates_detail_and_dispatches_actions(qtbot):
     qtbot.wait(20)
 
     assert window.detail_panel.name_input.text() == "夜间配置"
+    assert window.detail_panel.item_table.item(0, 1).text() == "0.0 ~ 0.7"
+    assert window.detail_panel.item_table.item(0, 2).text() == "0.25"
+    assert window.detail_panel.item_table.item(0, 5).text() == "未同步"
     assert window.runtime_panel.summary_label.text() == "运行中: 白天配置 (账号 2, 查询 5, 命中 1)"
     assert window.runtime_panel.mode_table.item(0, 2).text() == "1/1"
     assert window.runtime_panel.mode_table.item(0, 3).text() == "5/1"
 
     qtbot.mouseClick(window.refresh_button, Qt.LeftButton)
     qtbot.mouseClick(window.create_config_button, Qt.LeftButton)
+    qtbot.mouseClick(window.edit_config_button, Qt.LeftButton)
+    qtbot.mouseClick(window.delete_config_button, Qt.LeftButton)
     qtbot.mouseClick(window.edit_mode_button, Qt.LeftButton)
     qtbot.mouseClick(window.add_item_button, Qt.LeftButton)
     qtbot.mouseClick(window.edit_item_button, Qt.LeftButton)
+    qtbot.mouseClick(window.refresh_item_detail_button, Qt.LeftButton)
     qtbot.mouseClick(window.delete_item_button, Qt.LeftButton)
     qtbot.mouseClick(window.start_runtime_button, Qt.LeftButton)
     qtbot.mouseClick(window.stop_runtime_button, Qt.LeftButton)
 
     assert controller.load_calls == 1
     assert controller.created_payloads == [{"name": "新配置", "description": "测试"}]
+    assert controller.updated_config_calls == [{"name": "改后配置", "description": "改后描述"}]
+    assert controller.deleted_config_calls == 1
     assert controller.updated_mode_calls == [
         (
             "new_api",
@@ -238,8 +272,10 @@ def test_query_system_window_updates_detail_and_dispatches_actions(qtbot):
         }
     ]
     assert controller.updated_item_calls == [("cfg-2-item-1", {"max_wear": 0.12, "max_price": 166.0})]
+    assert controller.refreshed_item_ids == ["cfg-2-item-1"]
     assert controller.deleted_item_ids == ["cfg-2-item-1"]
-    assert confirm_service.calls == [("确认删除", "确定要删除当前商品吗？")]
+    assert confirm_service.calls == [("确认删除", "确定要删除当前配置吗？"), ("确认删除", "确定要删除当前商品吗？")]
+    assert prepare_dialog_calls == [("cfg-2", "夜间配置")]
     assert controller.start_calls == 1
     assert controller.stop_calls == 1
 
@@ -349,3 +385,66 @@ def test_query_system_window_stops_polling_after_runtime_stops(qtbot):
     qtbot.wait(120)
 
     assert controller.refresh_runtime_calls == call_count
+
+
+def test_query_system_window_does_not_start_runtime_when_prepare_dialog_is_rejected(qtbot):
+    from app_frontend.app.viewmodels.query_system_vm import QuerySystemViewModel
+    from app_frontend.app.windows.query_system_window import QuerySystemWindow
+
+    view_model = QuerySystemViewModel()
+    view_model.set_configs([_config("cfg-1", name="白天配置")])
+    controller = FakeController()
+    window = QuerySystemWindow(
+        view_model=view_model,
+        controller=controller,
+        prepare_runtime_dialog_factory=lambda config_id, config_name, parent=None: FakePrepareDialog(0),
+    )
+    qtbot.addWidget(window)
+
+    window.refresh_configs()
+    window.config_table.selectRow(0)
+    qtbot.wait(20)
+    qtbot.mouseClick(window.start_runtime_button, Qt.LeftButton)
+
+    assert controller.start_calls == 0
+
+
+def test_query_system_window_default_add_item_dialog_factory_receives_backend_services(qtbot):
+    from app_frontend.app.viewmodels.query_system_vm import QuerySystemViewModel
+    from app_frontend.app.windows.query_system_window import QuerySystemWindow
+
+    backend_client = object()
+    task_runner = object()
+    window = QuerySystemWindow(
+        view_model=QuerySystemViewModel(),
+        backend_client=backend_client,
+        task_runner=task_runner,
+    )
+    qtbot.addWidget(window)
+
+    dialog = window.add_item_dialog_factory(window)
+
+    assert dialog._backend_client is backend_client
+    assert dialog._task_runner is task_runner
+
+
+def test_query_system_window_displays_last_detail_sync_time_in_item_table(qtbot):
+    from app_frontend.app.viewmodels.query_system_vm import QuerySystemViewModel
+    from app_frontend.app.windows.query_system_window import QuerySystemWindow
+
+    config = _config("cfg-1", name="白天配置")
+    config["items"][0]["last_detail_sync_at"] = "2026-03-17T12:30:00"
+
+    view_model = QuerySystemViewModel()
+    view_model.set_configs([config])
+    window = QuerySystemWindow(
+        view_model=view_model,
+        controller=FakeController(),
+    )
+    qtbot.addWidget(window)
+
+    window.refresh_configs()
+    window.config_table.selectRow(0)
+    qtbot.wait(20)
+
+    assert window.detail_panel.item_table.item(0, 5).text() == "2026-03-17 12:30:00"

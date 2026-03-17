@@ -6,7 +6,7 @@ from typing import Any
 
 from app_backend.domain.models.query_config import QueryItem
 
-from .legacy_scanner_adapter import LegacyScannerAdapter
+from .query_executor_router import QueryExecutorRouter
 from .runtime_account_adapter import RuntimeAccountAdapter
 from .runtime_events import QueryExecutionEvent, QueryExecutionResult
 
@@ -17,13 +17,13 @@ class AccountQueryWorker:
         *,
         mode_type: str,
         account: object,
-        scanner_adapter: LegacyScannerAdapter | Any | None = None,
+        scanner_adapter: QueryExecutorRouter | Any | None = None,
         now_provider=None,
     ) -> None:
         self._mode_type = mode_type
         self._account = account
         self._runtime_account = RuntimeAccountAdapter(account)
-        self._scanner_adapter = scanner_adapter or LegacyScannerAdapter()
+        self._scanner_adapter = scanner_adapter or QueryExecutorRouter()
         self._now_provider = now_provider or time.time
         self._query_count = 0
         self._found_count = 0

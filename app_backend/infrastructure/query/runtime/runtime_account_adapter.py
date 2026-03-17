@@ -17,6 +17,14 @@ class _CookiePart:
 
 
 class RuntimeAccountAdapter:
+    """Compatibility layer kept on purpose.
+
+    This object now acts as the shared runtime account context for query, detail
+    fetch, inventory refresh and purchase execution. The legacy-style method
+    names are intentionally preserved until the wider runtime account cleanup is
+    scheduled as its own task.
+    """
+
     def __init__(self, account: object) -> None:
         self._account = account
         self.current_user_id = str(getattr(account, "account_id"))

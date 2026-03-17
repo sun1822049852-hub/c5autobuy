@@ -29,6 +29,7 @@ def test_update_and_delete_query_item(tmp_path):
         item_name="AK-47 | Redline",
         market_hash_name="AK-47 | Redline (Field-Tested)",
         min_wear=0.1,
+        detail_max_wear=0.7,
         max_wear=0.25,
         max_price=199.0,
         last_market_price=123.45,
@@ -44,6 +45,7 @@ def test_update_and_delete_query_item(tmp_path):
     assert updated.max_wear == 0.18
     assert updated.max_price == 155.0
     assert stored is not None
+    assert stored.items[0].detail_max_wear == 0.7
     assert stored.items[0].max_wear == 0.18
     assert stored.items[0].max_price == 155.0
 
@@ -52,3 +54,28 @@ def test_update_and_delete_query_item(tmp_path):
 
     assert stored_after_delete is not None
     assert stored_after_delete.items == []
+
+
+def test_update_and_delete_query_config(tmp_path):
+    engine = build_engine(tmp_path / "app.db")
+    create_schema(engine)
+    repository = SqliteQueryConfigRepository(build_session_factory(engine))
+
+    config = repository.create_config(name="旧配置", description="旧描述")
+
+    updated = repository.update_config(
+        config.config_id,
+        name="新配置",
+        description="新描述",
+    )
+    stored = repository.get_config(config.config_id)
+
+    assert updated.name == "新配置"
+    assert updated.description == "新描述"
+    assert stored is not None
+    assert stored.name == "新配置"
+    assert stored.description == "新描述"
+
+    repository.delete_config(config.config_id)
+
+    assert repository.get_config(config.config_id) is None

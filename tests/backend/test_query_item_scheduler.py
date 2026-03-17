@@ -22,7 +22,7 @@ def build_item(item_id: str) -> QueryItem:
     )
 
 
-async def test_query_item_scheduler_round_robins_items_globally():
+async def test_query_item_scheduler_round_robins_items_within_scheduler_instance():
     from app_backend.infrastructure.query.runtime.query_item_scheduler import QueryItemScheduler
 
     scheduler = QueryItemScheduler(
@@ -59,3 +59,27 @@ async def test_query_item_scheduler_delays_repeated_item_until_cooldown():
     assert first.execute_at == 10.0
     assert second.query_item.query_item_id == "item-1"
     assert second.execute_at == 10.1
+
+
+async def test_query_item_scheduler_instances_do_not_share_cooldown_state():
+    from app_backend.infrastructure.query.runtime.query_item_scheduler import QueryItemScheduler
+
+    scheduler_a = QueryItemScheduler(
+        [build_item("item-1")],
+        min_cooldown_seconds=0.1,
+    )
+    scheduler_b = QueryItemScheduler(
+        [build_item("item-1")],
+        min_cooldown_seconds=0.1,
+    )
+
+    first_a = await scheduler_a.reserve_next(now=10.0)
+    first_b = await scheduler_b.reserve_next(now=10.0)
+    second_a = await scheduler_a.reserve_next(now=10.0)
+
+    assert first_a is not None
+    assert first_b is not None
+    assert second_a is not None
+    assert first_a.execute_at == 10.0
+    assert first_b.execute_at == 10.0
+    assert second_a.execute_at == 10.1

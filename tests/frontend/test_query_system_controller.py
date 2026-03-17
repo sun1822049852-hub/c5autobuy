@@ -56,12 +56,15 @@ class FakeBackendClient:
     def __init__(self) -> None:
         self.configs = [_config("cfg-1", name="白天配置")]
         self.created_payloads: list[dict] = []
+        self.updated_config_calls: list[tuple[str, dict]] = []
+        self.deleted_config_ids: list[str] = []
         self.started_config_ids: list[str] = []
         self.stop_calls = 0
         self.updated_mode_calls: list[tuple[str, str, dict]] = []
         self.added_item_calls: list[tuple[str, dict]] = []
         self.updated_item_calls: list[tuple[str, str, dict]] = []
         self.deleted_item_calls: list[tuple[str, str]] = []
+        self.refreshed_item_calls: list[tuple[str, str]] = []
 
     async def list_query_configs(self) -> list[dict]:
         return [dict(config) for config in self.configs]
@@ -72,6 +75,18 @@ class FakeBackendClient:
         created["description"] = payload.get("description") or ""
         self.configs.append(created)
         return dict(created)
+
+    async def update_query_config(self, config_id: str, payload: dict) -> dict:
+        self.updated_config_calls.append((config_id, dict(payload)))
+        for config in self.configs:
+            if config["config_id"] == config_id:
+                config.update(payload)
+                return dict(config)
+        raise KeyError(config_id)
+
+    async def delete_query_config(self, config_id: str) -> None:
+        self.deleted_config_ids.append(config_id)
+        self.configs = [config for config in self.configs if config["config_id"] != config_id]
 
     async def get_query_runtime_status(self) -> dict:
         return {
@@ -145,6 +160,24 @@ class FakeBackendClient:
         self.deleted_item_calls.append((config_id, item_id))
         self.configs[0]["items"] = [item for item in self.configs[0]["items"] if item["query_item_id"] != item_id]
 
+    async def refresh_query_item_detail(self, config_id: str, item_id: str) -> dict:
+        self.refreshed_item_calls.append((config_id, item_id))
+        for item in self.configs[0]["items"]:
+            if item["query_item_id"] != item_id:
+                continue
+            item.update(
+                {
+                    "item_name": "Refreshed Item",
+                    "market_hash_name": "Refreshed Hash",
+                    "min_wear": 0.12,
+                    "detail_max_wear": 0.88,
+                    "last_market_price": 234.5,
+                    "last_detail_sync_at": "2026-03-17T12:30:00",
+                }
+            )
+            return dict(item)
+        raise KeyError(item_id)
+
 
 class ErrorBackendClient(FakeBackendClient):
     async def get_query_runtime_status(self) -> dict:
@@ -213,6 +246,31 @@ def test_query_system_controller_creates_config_and_controls_runtime():
     assert refresh_counter["count"] >= 3
     assert errors == []
     assert statuses[-1] == "查询任务已停止"
+
+
+def test_query_system_controller_updates_and_deletes_selected_config():
+    controller, view_model, backend_client, statuses, errors, refresh_counter = _build_controller()
+
+    controller.load_configs()
+    view_model.select_config("cfg-1")
+
+    controller.update_selected_config({"name": "夜间配置", "description": "夜里跑"})
+
+    assert backend_client.updated_config_calls == [("cfg-1", {"name": "夜间配置", "description": "夜里跑"})]
+    assert view_model.detail_config is not None
+    assert view_model.detail_config["name"] == "夜间配置"
+    assert view_model.detail_config["description"] == "夜里跑"
+    assert refresh_counter["count"] >= 2
+    assert errors == []
+    assert statuses[-1] == "查询配置已更新"
+
+    controller.delete_selected_config()
+
+    assert backend_client.deleted_config_ids == ["cfg-1"]
+    assert view_model.detail_config is None
+    assert refresh_counter["count"] >= 3
+    assert errors == []
+    assert statuses[-1] == "查询配置已删除"
 
 
 def test_query_system_controller_updates_selected_mode_setting():
@@ -302,6 +360,23 @@ def test_query_system_controller_adds_updates_and_deletes_items():
     assert refresh_counter["count"] >= 4
     assert errors == []
     assert statuses[-1] == "商品已删除"
+
+
+def test_query_system_controller_refreshes_selected_item_detail():
+    controller, view_model, backend_client, statuses, errors, refresh_counter = _build_controller()
+
+    controller.load_configs()
+    view_model.select_config("cfg-1")
+
+    controller.refresh_selected_item_detail("cfg-1-item-1")
+
+    assert backend_client.refreshed_item_calls == [("cfg-1", "cfg-1-item-1")]
+    assert view_model.detail_config["items"][0]["item_name"] == "Refreshed Item"
+    assert view_model.detail_config["items"][0]["detail_max_wear"] == 0.88
+    assert view_model.detail_config["items"][0]["last_market_price"] == 234.5
+    assert refresh_counter["count"] >= 2
+    assert errors == []
+    assert statuses[-1] == "商品详情已刷新"
 
 
 def test_query_system_controller_refreshes_runtime_status_silently():

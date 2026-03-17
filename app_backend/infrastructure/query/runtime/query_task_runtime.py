@@ -35,17 +35,21 @@ class QueryTaskRuntime:
         self._stop_requested = threading.Event()
         factory = mode_runner_factory or self._build_default_mode_runner
         item_scheduler_factory = query_item_scheduler_factory or self._build_default_query_item_scheduler
-        self._mode_runners = [
-            self._build_mode_runner(
-                factory,
-                mode_setting,
-                self._accounts,
-                query_items=list(self._config.items),
-                query_item_scheduler=item_scheduler_factory(list(self._config.items)),
-                hit_sink=self._hit_sink,
+        query_items = list(self._config.items)
+        self._mode_runners = []
+        for mode_setting in config.mode_settings:
+            # Each mode keeps an independent scheduler state while querying the same config items.
+            mode_scheduler = item_scheduler_factory(list(query_items))
+            self._mode_runners.append(
+                self._build_mode_runner(
+                    factory,
+                    mode_setting,
+                    self._accounts,
+                    query_items=list(query_items),
+                    query_item_scheduler=mode_scheduler,
+                    hit_sink=self._hit_sink,
+                )
             )
-            for mode_setting in config.mode_settings
-        ]
 
     @property
     def config(self) -> QueryConfig:

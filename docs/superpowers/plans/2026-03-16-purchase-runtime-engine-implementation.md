@@ -50,7 +50,7 @@
   - 单账户购买执行器
 - Create: `app_backend/infrastructure/purchase/runtime/execution_gateway.py`
   - 购买执行网关协议
-- Create: `app_backend/infrastructure/purchase/runtime/legacy_purchase_gateway.py`
+- Create: 旧购买执行适配器文件
   - legacy-compatible 下单/支付适配器
 - Create: `app_backend/infrastructure/purchase/runtime/purchase_runtime_service.py`
   - 购买运行时总服务
@@ -379,7 +379,7 @@ Expected: PASS
 
 **Files:**
 - Create: `app_backend/infrastructure/purchase/runtime/execution_gateway.py`
-- Create: `app_backend/infrastructure/purchase/runtime/legacy_purchase_gateway.py`
+- Create: 旧购买执行适配器文件
 - Create: `app_backend/infrastructure/purchase/runtime/account_purchase_worker.py`
 - Test: `tests/backend/test_account_purchase_worker_runtime.py`
 

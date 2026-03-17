@@ -7,6 +7,7 @@ from app_frontend.app.controllers.query_system_controller import QuerySystemCont
 from app_frontend.app.dialogs.query_config_dialog import QueryConfigDialog
 from app_frontend.app.dialogs.query_item_dialog import QueryItemDialog
 from app_frontend.app.dialogs.query_mode_settings_dialog import QueryModeSettingsDialog
+from app_frontend.app.dialogs.query_runtime_prepare_dialog import QueryRuntimePrepareDialog
 from app_frontend.app.services.async_runner import InlineTaskRunner, QtAsyncRunner
 from app_frontend.app.viewmodels.query_system_vm import QuerySystemViewModel
 from app_frontend.app.widgets.query_config_detail_panel import QueryConfigDetailPanel
@@ -23,9 +24,11 @@ class QuerySystemWindow(QWidget):
         task_runner=None,
         controller=None,
         create_dialog_factory=None,
+        edit_config_dialog_factory=None,
         mode_settings_dialog_factory=None,
         add_item_dialog_factory=None,
         edit_item_dialog_factory=None,
+        prepare_runtime_dialog_factory=None,
         confirm_service=None,
         runtime_poll_interval_ms: int = 1000,
         parent=None,
@@ -37,12 +40,35 @@ class QuerySystemWindow(QWidget):
         self._runtime_poll_interval_ms = runtime_poll_interval_ms
         self._runtime_refresh_in_flight = False
         self.create_dialog_factory = create_dialog_factory or (lambda parent=None: QueryConfigDialog(parent=parent))
+        self.edit_config_dialog_factory = edit_config_dialog_factory or (
+            lambda config, parent=None: QueryConfigDialog(config=config, parent=parent)
+        )
         self.mode_settings_dialog_factory = mode_settings_dialog_factory or (
             lambda mode_setting, parent=None: QueryModeSettingsDialog(mode_setting=mode_setting, parent=parent)
         )
-        self.add_item_dialog_factory = add_item_dialog_factory or (lambda parent=None: QueryItemDialog(parent=parent))
+        self.add_item_dialog_factory = add_item_dialog_factory or (
+            lambda parent=None: QueryItemDialog(
+                backend_client=self.backend_client,
+                task_runner=self.task_runner,
+                parent=parent,
+            )
+        )
         self.edit_item_dialog_factory = edit_item_dialog_factory or (
-            lambda item, parent=None: QueryItemDialog(item=item, parent=parent)
+            lambda item, parent=None: QueryItemDialog(
+                item=item,
+                backend_client=self.backend_client,
+                task_runner=self.task_runner,
+                parent=parent,
+            )
+        )
+        self.prepare_runtime_dialog_factory = prepare_runtime_dialog_factory or (
+            lambda config_id, config_name, parent=None: QueryRuntimePrepareDialog(
+                config_id=config_id,
+                config_name=config_name,
+                backend_client=self.backend_client,
+                task_runner=self.task_runner,
+                parent=parent,
+            )
         )
         self.confirm_service = confirm_service or _QtConfirmService(self)
         self.controller = controller or QuerySystemController(
@@ -65,8 +91,11 @@ class QuerySystemWindow(QWidget):
         self.runtime_panel = QueryRuntimePanel()
         self.refresh_button = QPushButton("刷新配置")
         self.create_config_button = QPushButton("新建配置")
+        self.edit_config_button = QPushButton("编辑配置")
+        self.delete_config_button = QPushButton("删除配置")
         self.add_item_button = QPushButton("新增商品")
         self.edit_item_button = QPushButton("编辑商品")
+        self.refresh_item_detail_button = QPushButton("刷新详情")
         self.delete_item_button = QPushButton("删除商品")
         self.edit_mode_button = QPushButton("模式设置")
         self.start_runtime_button = QPushButton("启动查询")
@@ -75,12 +104,15 @@ class QuerySystemWindow(QWidget):
         action_grid = QGridLayout()
         action_grid.addWidget(self.refresh_button, 0, 0)
         action_grid.addWidget(self.create_config_button, 0, 1)
-        action_grid.addWidget(self.add_item_button, 1, 0)
-        action_grid.addWidget(self.edit_item_button, 1, 1)
-        action_grid.addWidget(self.delete_item_button, 2, 0)
-        action_grid.addWidget(self.edit_mode_button, 2, 1)
-        action_grid.addWidget(self.start_runtime_button, 3, 0)
-        action_grid.addWidget(self.stop_runtime_button, 3, 1)
+        action_grid.addWidget(self.edit_config_button, 1, 0)
+        action_grid.addWidget(self.delete_config_button, 1, 1)
+        action_grid.addWidget(self.add_item_button, 2, 0)
+        action_grid.addWidget(self.edit_item_button, 2, 1)
+        action_grid.addWidget(self.refresh_item_detail_button, 3, 0)
+        action_grid.addWidget(self.delete_item_button, 3, 1)
+        action_grid.addWidget(self.edit_mode_button, 4, 0)
+        action_grid.addWidget(self.start_runtime_button, 4, 1)
+        action_grid.addWidget(self.stop_runtime_button, 5, 0)
 
         left_layout = QVBoxLayout()
         left_layout.addWidget(self.status_label)
@@ -100,8 +132,11 @@ class QuerySystemWindow(QWidget):
         self.detail_panel.mode_table.itemSelectionChanged.connect(self._sync_action_states)
         self.refresh_button.clicked.connect(self.load_configs)
         self.create_config_button.clicked.connect(self._create_config)
+        self.edit_config_button.clicked.connect(self._edit_config)
+        self.delete_config_button.clicked.connect(self._delete_config)
         self.add_item_button.clicked.connect(self._add_item)
         self.edit_item_button.clicked.connect(self._edit_item)
+        self.refresh_item_detail_button.clicked.connect(self._refresh_item_detail)
         self.delete_item_button.clicked.connect(self._delete_item)
         self.edit_mode_button.clicked.connect(self._edit_mode_setting)
         self.start_runtime_button.clicked.connect(self._start_runtime)
@@ -219,7 +254,35 @@ class QuerySystemWindow(QWidget):
             return
         self.controller.create_config(dialog.build_payload())
 
+    def _edit_config(self) -> None:
+        config = self.view_model.detail_config
+        if config is None:
+            return
+        dialog = self.edit_config_dialog_factory(config, self)
+        if dialog.exec() != int(QDialog.DialogCode.Accepted):
+            return
+        self.controller.update_selected_config(dialog.build_payload())
+
+    def _delete_config(self) -> None:
+        config = self.view_model.detail_config
+        if config is None:
+            return
+        if not self.confirm_service.ask("确认删除", "确定要删除当前配置吗？"):
+            self._publish_status("已取消删除配置")
+            return
+        self.controller.delete_selected_config()
+
     def _start_runtime(self) -> None:
+        config = self.view_model.detail_config
+        if config is None:
+            return
+        dialog = self.prepare_runtime_dialog_factory(
+            str(config.get("config_id") or ""),
+            str(config.get("name") or ""),
+            self,
+        )
+        if dialog.exec() != int(QDialog.DialogCode.Accepted):
+            return
         self.controller.start_runtime_for_selected()
 
     def _stop_runtime(self) -> None:
@@ -249,6 +312,12 @@ class QuerySystemWindow(QWidget):
             return
         self.controller.delete_selected_item(str(item.get("query_item_id") or ""))
 
+    def _refresh_item_detail(self) -> None:
+        item = self.detail_panel.selected_item()
+        if item is None:
+            return
+        self.controller.refresh_selected_item_detail(str(item.get("query_item_id") or ""))
+
     def _edit_mode_setting(self) -> None:
         mode_setting = self.detail_panel.selected_mode_setting()
         if mode_setting is None:
@@ -265,8 +334,11 @@ class QuerySystemWindow(QWidget):
         backend_ready = self.backend_client is not None or self.controller is not None
         self.refresh_button.setEnabled(backend_ready)
         self.create_config_button.setEnabled(backend_ready)
+        self.edit_config_button.setEnabled(backend_ready and has_selection)
+        self.delete_config_button.setEnabled(backend_ready and has_selection)
         self.add_item_button.setEnabled(backend_ready and has_selection)
         self.edit_item_button.setEnabled(backend_ready and has_selection and has_item_selection)
+        self.refresh_item_detail_button.setEnabled(backend_ready and has_selection and has_item_selection)
         self.delete_item_button.setEnabled(backend_ready and has_selection and has_item_selection)
         self.edit_mode_button.setEnabled(backend_ready and has_selection and has_mode_selection)
         self.start_runtime_button.setEnabled(backend_ready and has_selection)

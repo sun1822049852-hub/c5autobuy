@@ -41,6 +41,33 @@ async def test_backend_client_lists_and_creates_accounts(backend_client):
     assert accounts[0]["account_id"] == created["account_id"]
 
 
+async def test_backend_client_updates_account_query_modes(backend_client):
+    _app, client = backend_client
+
+    created = await client.create_account(
+        {
+            "remark_name": "模式账号",
+            "proxy_mode": "direct",
+            "proxy_url": None,
+            "api_key": "api-mode",
+        }
+    )
+
+    updated = await client.update_account_query_modes(
+        created["account_id"],
+        {
+            "new_api_enabled": False,
+            "fast_api_enabled": True,
+            "token_enabled": False,
+        },
+    )
+
+    assert updated["account_id"] == created["account_id"]
+    assert updated["new_api_enabled"] is False
+    assert updated["fast_api_enabled"] is True
+    assert updated["token_enabled"] is False
+
+
 async def test_backend_client_watch_task_streams_until_login_task_finishes(backend_client):
     app, client = backend_client
 
@@ -97,6 +124,34 @@ async def test_backend_client_lists_and_creates_query_configs(backend_client):
     assert {mode["mode_type"] for mode in created["mode_settings"]} == {"new_api", "fast_api", "token"}
 
 
+async def test_backend_client_gets_updates_and_deletes_query_config(backend_client):
+    _app, client = backend_client
+
+    created = await client.create_query_config(
+        {
+            "name": "待编辑配置",
+            "description": "旧描述",
+        }
+    )
+
+    fetched = await client.get_query_config(created["config_id"])
+    updated = await client.update_query_config(
+        created["config_id"],
+        {
+            "name": "已编辑配置",
+            "description": "新描述",
+        },
+    )
+    await client.delete_query_config(created["config_id"])
+    configs = await client.list_query_configs()
+
+    assert fetched["config_id"] == created["config_id"]
+    assert fetched["name"] == "待编辑配置"
+    assert updated["name"] == "已编辑配置"
+    assert updated["description"] == "新描述"
+    assert configs == []
+
+
 async def test_backend_client_starts_and_stops_query_runtime(backend_client):
     _app, client = backend_client
 
@@ -116,6 +171,51 @@ async def test_backend_client_starts_and_stops_query_runtime(backend_client):
     assert running["running"] is True
     assert running["config_name"] == "运行时配置"
     assert stopped["running"] is False
+
+
+async def test_backend_client_prepares_query_runtime(backend_client):
+    app, client = backend_client
+
+    created = await client.create_query_config(
+        {
+            "name": "准备配置",
+            "description": "给启动前准备",
+        }
+    )
+
+    class FakeRefreshService:
+        async def prepare(self, *, config_id: str, force_refresh: bool = False) -> dict[str, object]:
+            return {
+                "config_id": config_id,
+                "config_name": "准备配置",
+                "threshold_hours": 12,
+                "updated_count": 1,
+                "skipped_count": 0,
+                "failed_count": 0,
+                "items": [
+                    {
+                        "query_item_id": "item-1",
+                        "external_item_id": "1380979899390267393",
+                        "item_name": "AK-47 | Redline",
+                        "status": "updated",
+                        "message": "商品详情已刷新",
+                        "last_market_price": 123.45,
+                        "min_wear": 0.1,
+                        "detail_max_wear": 0.7,
+                        "last_detail_sync_at": "2026-03-17T12:00:00",
+                    }
+                ],
+            }
+
+    app.state.query_item_detail_refresh_service = FakeRefreshService()
+
+    prepared = await client.prepare_query_runtime(created["config_id"], force_refresh=True)
+
+    assert prepared["config_id"] == created["config_id"]
+    assert prepared["threshold_hours"] == 12
+    assert prepared["updated_count"] == 1
+    assert prepared["items"][0]["status"] == "updated"
+    assert prepared["items"][0]["detail_max_wear"] == 0.7
 
 
 async def test_backend_client_fetches_purchase_runtime_status(backend_client):
@@ -256,6 +356,91 @@ async def test_backend_client_adds_updates_and_deletes_query_items(backend_clien
     assert updated["max_wear"] == 0.18
     assert updated["max_price"] == 400.0
     assert configs[0]["items"] == []
+
+
+async def test_backend_client_parses_query_item_url(backend_client):
+    _app, client = backend_client
+
+    payload = await client.parse_query_item_url(
+        {
+            "product_url": "https://www.c5game.com/csgo/730/asset/1380979899390267555",
+        }
+    )
+
+    assert payload == {
+        "product_url": "https://www.c5game.com/csgo/730/asset/1380979899390267555",
+        "external_item_id": "1380979899390267555",
+    }
+
+
+async def test_backend_client_fetches_query_item_detail(backend_client):
+    app, client = backend_client
+
+    class FakeDetailCollector:
+        async def fetch_detail(self, *, external_item_id: str, product_url: str):
+            from app_backend.infrastructure.query.collectors.product_detail_collector import ProductDetail
+
+            return ProductDetail(
+                external_item_id=external_item_id,
+                product_url=product_url,
+                item_name="M4A1-S | Blue Phosphor",
+                market_hash_name="M4A1-S | Blue Phosphor (Factory New)",
+                min_wear=0.0,
+                max_wear=0.08,
+                last_market_price=2888.0,
+            )
+
+    app.state.product_detail_collector = FakeDetailCollector()
+
+    payload = await client.fetch_query_item_detail(
+        {
+            "product_url": "https://www.c5game.com/csgo/730/asset/1380979899390267444",
+            "external_item_id": "1380979899390267444",
+        }
+    )
+
+    assert payload == {
+        "product_url": "https://www.c5game.com/csgo/730/asset/1380979899390267444",
+        "external_item_id": "1380979899390267444",
+        "item_name": "M4A1-S | Blue Phosphor",
+        "market_hash_name": "M4A1-S | Blue Phosphor (Factory New)",
+        "min_wear": 0.0,
+        "detail_max_wear": 0.08,
+        "last_market_price": 2888.0,
+    }
+
+
+async def test_backend_client_refreshes_query_item_detail(backend_client):
+    app, client = backend_client
+
+    class FakeRefreshService:
+        async def refresh_item(self, *, config_id: str, query_item_id: str):
+            return {
+                "query_item_id": query_item_id,
+                "config_id": config_id,
+                "product_url": "https://www.c5game.com/csgo/730/asset/1380979899390267444",
+                "external_item_id": "1380979899390267444",
+                "item_name": "M4A1-S | Blue Phosphor",
+                "market_hash_name": "M4A1-S | Blue Phosphor (Factory New)",
+                "min_wear": 0.0,
+                "detail_max_wear": 0.08,
+                "max_wear": 0.18,
+                "max_price": 3000.0,
+                "last_market_price": 2888.0,
+                "last_detail_sync_at": "2026-03-17T12:30:00",
+                "sort_order": 0,
+                "created_at": "2026-03-17T12:00:00",
+                "updated_at": "2026-03-17T12:30:00",
+            }
+
+    app.state.query_item_detail_refresh_service = FakeRefreshService()
+
+    payload = await client.refresh_query_item_detail("cfg-1", "item-1")
+
+    assert payload["query_item_id"] == "item-1"
+    assert payload["config_id"] == "cfg-1"
+    assert payload["detail_max_wear"] == 0.08
+    assert payload["last_market_price"] == 2888.0
 
 
 async def test_backend_client_prefers_websocket_subscription_for_task_stream():

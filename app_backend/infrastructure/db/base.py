@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sqlalchemy import Engine, create_engine
+from sqlalchemy import Engine, create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 
@@ -40,3 +40,15 @@ def create_schema(engine: Engine) -> None:
             QueryModeSettingRecord.__table__,
         ],
     )
+    _ensure_query_config_item_columns(engine)
+
+
+def _ensure_query_config_item_columns(engine: Engine) -> None:
+    inspector = inspect(engine)
+    if "query_config_items" not in inspector.get_table_names():
+        return
+    existing_columns = {column["name"] for column in inspector.get_columns("query_config_items")}
+    if "detail_max_wear" in existing_columns:
+        return
+    with engine.begin() as connection:
+        connection.execute(text("ALTER TABLE query_config_items ADD COLUMN detail_max_wear FLOAT"))

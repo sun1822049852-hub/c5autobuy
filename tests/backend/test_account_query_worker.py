@@ -237,3 +237,15 @@ async def test_account_worker_cleanup_closes_reused_sessions(monkeypatch):
     await worker.cleanup()
 
     assert closed == {"global": 1, "api": 1}
+
+
+def test_account_worker_defaults_to_query_executor_router():
+    from app_backend.infrastructure.query.runtime.account_query_worker import AccountQueryWorker
+    from app_backend.infrastructure.query.runtime.query_executor_router import QueryExecutorRouter
+
+    worker = AccountQueryWorker(
+        mode_type="new_api",
+        account=build_account("a1", api_key="api-1"),
+    )
+
+    assert isinstance(worker._scanner_adapter, QueryExecutorRouter)

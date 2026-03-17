@@ -32,6 +32,10 @@ class QueryRuntimeService:
         if config is None:
             return False, "查询配置不存在"
 
+        purchase_started, purchase_message = self._ensure_purchase_runtime_started()
+        if not purchase_started:
+            return False, purchase_message
+
         accounts = list(self._account_repository.list_accounts())
         hit_sink = self._resolve_hit_sink()
         if hit_sink is not None and self._runtime_factory_accepts_hit_sink():
@@ -49,6 +53,7 @@ class QueryRuntimeService:
 
         self._runtime.stop()
         self._runtime = None
+        self._stop_linked_purchase_runtime()
         return True, "查询任务已停止"
 
     def get_status(self) -> dict[str, object]:
@@ -268,3 +273,32 @@ class QueryRuntimeService:
             if parameter.name == "hit_sink":
                 return True
         return False
+
+    def _ensure_purchase_runtime_started(self) -> tuple[bool, str]:
+        if self._purchase_runtime_service is None:
+            return True, "未接入购买运行时，跳过联动启动"
+
+        start_purchase_runtime = getattr(self._purchase_runtime_service, "start", None)
+        if not callable(start_purchase_runtime):
+            return False, "购买运行时未接入启动接口"
+
+        started, message = start_purchase_runtime()
+        normalized_message = str(message or "")
+        if started or normalized_message == "已有购买运行时在运行":
+            return True, normalized_message or "购买运行时已启动"
+        return False, normalized_message or "购买运行时启动失败"
+
+    def _stop_linked_purchase_runtime(self) -> None:
+        if self._purchase_runtime_service is None:
+            return
+
+        stop_purchase_runtime = getattr(self._purchase_runtime_service, "stop", None)
+        if not callable(stop_purchase_runtime):
+            return
+
+        stopped, message = stop_purchase_runtime()
+        normalized_message = str(message or "")
+        if stopped:
+            return
+        if normalized_message == "当前没有运行中的购买运行时":
+            return

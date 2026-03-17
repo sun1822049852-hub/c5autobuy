@@ -34,6 +34,11 @@ class QuerySystemViewModel:
         else:
             self._configs.append(normalized)
 
+    def remove_config(self, config_id: str) -> None:
+        self._configs = [config for config in self._configs if config["config_id"] != config_id]
+        if self.selected_config_id == config_id:
+            self.selected_config_id = None
+
     def update_mode_setting(self, config_id: str, mode_setting: dict[str, Any]) -> None:
         normalized = dict(mode_setting)
         for config in self._configs:

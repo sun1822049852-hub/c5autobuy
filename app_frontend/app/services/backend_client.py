@@ -60,6 +60,12 @@ class BackendClient:
             response.raise_for_status()
             return response.json()
 
+    async def update_account_query_modes(self, account_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        async with self._client() as http_client:
+            response = await http_client.patch(f"/accounts/{account_id}/query-modes", json=payload)
+            response.raise_for_status()
+            return response.json()
+
     async def delete_account(self, account_id: str) -> None:
         async with self._client() as http_client:
             response = await http_client.delete(f"/accounts/{account_id}")
@@ -83,15 +89,50 @@ class BackendClient:
             response.raise_for_status()
             return response.json()
 
+    async def get_query_config(self, config_id: str) -> dict[str, Any]:
+        async with self._client() as http_client:
+            response = await http_client.get(f"/query-configs/{config_id}")
+            response.raise_for_status()
+            return response.json()
+
+    async def update_query_config(self, config_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        async with self._client() as http_client:
+            response = await http_client.patch(f"/query-configs/{config_id}", json=payload)
+            response.raise_for_status()
+            return response.json()
+
+    async def delete_query_config(self, config_id: str) -> None:
+        async with self._client() as http_client:
+            response = await http_client.delete(f"/query-configs/{config_id}")
+            response.raise_for_status()
+
     async def update_query_mode_setting(self, config_id: str, mode_type: str, payload: dict[str, Any]) -> dict[str, Any]:
         async with self._client() as http_client:
             response = await http_client.patch(f"/query-configs/{config_id}/modes/{mode_type}", json=payload)
             response.raise_for_status()
             return response.json()
 
+    async def parse_query_item_url(self, payload: dict[str, Any]) -> dict[str, Any]:
+        async with self._client() as http_client:
+            response = await http_client.post("/query-items/parse-url", json=payload)
+            response.raise_for_status()
+            return response.json()
+
     async def add_query_item(self, config_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         async with self._client() as http_client:
             response = await http_client.post(f"/query-configs/{config_id}/items", json=payload)
+            response.raise_for_status()
+            return response.json()
+
+    async def fetch_query_item_detail(self, payload: dict[str, Any]) -> dict[str, Any]:
+        async with self._client() as http_client:
+            response = await http_client.post("/query-items/fetch-detail", json=payload)
+            response.raise_for_status()
+            return response.json()
+
+    async def refresh_query_item_detail(self, config_id: str, query_item_id: str) -> dict[str, Any]:
+        async with self._client() as http_client:
+            response = await http_client.post(f"/query-configs/{config_id}/items/{query_item_id}/refresh-detail")
             response.raise_for_status()
             return response.json()
 
@@ -109,6 +150,15 @@ class BackendClient:
     async def get_query_runtime_status(self) -> dict[str, Any]:
         async with self._client() as http_client:
             response = await http_client.get("/query-runtime/status")
+            response.raise_for_status()
+            return response.json()
+
+    async def prepare_query_runtime(self, config_id: str, *, force_refresh: bool = False) -> dict[str, Any]:
+        async with self._client() as http_client:
+            response = await http_client.post(
+                "/query-runtime/prepare",
+                json={"config_id": config_id, "force_refresh": force_refresh},
+            )
             response.raise_for_status()
             return response.json()
 

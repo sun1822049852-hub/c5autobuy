@@ -33,6 +33,9 @@ def _account(
         "created_at": "2026-03-16T12:00:00",
         "updated_at": "2026-03-16T12:00:00",
         "disabled": False,
+        "new_api_enabled": True,
+        "fast_api_enabled": True,
+        "token_enabled": True,
     }
 
 
@@ -48,7 +51,7 @@ class FakeBackendClient:
                 api_key="api-old",
                 c5_user_id="10001",
                 c5_nick_name="旧平台号",
-                cookie_raw="old=cookie",
+                cookie_raw="NC5_accessToken=old-token",
             )
         ]
         self.created_payloads: list[dict] = []
@@ -57,6 +60,7 @@ class FakeBackendClient:
         self.cleared_account_ids: list[str] = []
         self.started_login_account_ids: list[str] = []
         self.resolved_actions: list[tuple[str, str, str]] = []
+        self.updated_query_mode_payloads: list[tuple[str, dict]] = []
 
     async def list_accounts(self) -> list[dict]:
         return [dict(account) for account in self.accounts]
@@ -86,6 +90,14 @@ class FakeBackendClient:
     async def delete_account(self, account_id: str) -> None:
         self.deleted_account_ids.append(account_id)
         self.accounts = [account for account in self.accounts if account["account_id"] != account_id]
+
+    async def update_account_query_modes(self, account_id: str, payload: dict) -> dict:
+        self.updated_query_mode_payloads.append((account_id, dict(payload)))
+        for account in self.accounts:
+            if account["account_id"] == account_id:
+                account.update(payload)
+                return dict(account)
+        raise KeyError(account_id)
 
     async def clear_purchase_capability(self, account_id: str) -> dict:
         self.cleared_account_ids.append(account_id)
@@ -145,7 +157,7 @@ class FakeBackendClient:
                 default_name="默认九号",
                 c5_user_id="20002",
                 c5_nick_name="新登录号",
-                cookie_raw="new=cookie",
+                cookie_raw="NC5_accessToken=new-token",
             )
         ]
         return {
@@ -240,7 +252,12 @@ def test_controller_create_and_edit_refreshes_accounts():
             "proxy_mode": "custom",
             "proxy_url": "http://127.0.0.1:9500",
             "api_key": "api-edited",
-        }
+        },
+        {
+            "new_api_enabled": False,
+            "fast_api_enabled": True,
+            "token_enabled": False,
+        },
     )
 
     assert backend_client.created_payloads == [
@@ -262,7 +279,20 @@ def test_controller_create_and_edit_refreshes_accounts():
             },
         )
     ]
+    assert backend_client.updated_query_mode_payloads == [
+        (
+            "a-1",
+            {
+                "new_api_enabled": False,
+                "fast_api_enabled": True,
+                "token_enabled": False,
+            },
+        )
+    ]
     assert view_model.detail_account["remark_name"] == "改后备注"
+    assert view_model.detail_account["new_api_enabled"] is False
+    assert view_model.detail_account["fast_api_enabled"] is True
+    assert view_model.detail_account["token_enabled"] is False
     assert refresh_counter["count"] >= 3
     assert errors == []
     assert statuses[-1] == "账号已更新"

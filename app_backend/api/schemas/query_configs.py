@@ -34,6 +34,7 @@ class QueryItemResponse(BaseModel):
     item_name: str | None
     market_hash_name: str | None
     min_wear: float | None
+    detail_max_wear: float | None
     max_wear: float | None
     max_price: float | None
     last_market_price: float | None
@@ -44,6 +45,11 @@ class QueryItemResponse(BaseModel):
 
 
 class QueryConfigCreateRequest(BaseModel):
+    name: str
+    description: str | None = None
+
+
+class QueryConfigUpdateRequest(BaseModel):
     name: str
     description: str | None = None
 
@@ -66,6 +72,21 @@ class QueryItemUrlParseRequest(BaseModel):
 class QueryItemUrlParseResponse(BaseModel):
     product_url: str
     external_item_id: str
+
+
+class QueryItemDetailFetchRequest(BaseModel):
+    product_url: str
+    external_item_id: str
+
+
+class QueryItemDetailFetchResponse(BaseModel):
+    product_url: str
+    external_item_id: str
+    item_name: str | None
+    market_hash_name: str | None
+    min_wear: float | None
+    detail_max_wear: float | None
+    last_market_price: float | None
 
 
 class QueryModeSettingUpdateRequest(BaseModel):

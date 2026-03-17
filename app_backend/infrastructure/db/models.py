@@ -60,6 +60,7 @@ class QueryConfigItemRecord(Base):
     item_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     market_hash_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     min_wear: Mapped[float | None] = mapped_column(Float, nullable=True)
+    detail_max_wear: Mapped[float | None] = mapped_column(Float, nullable=True)
     max_wear: Mapped[float | None] = mapped_column(Float, nullable=True)
     max_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     last_market_price: Mapped[float | None] = mapped_column(Float, nullable=True)

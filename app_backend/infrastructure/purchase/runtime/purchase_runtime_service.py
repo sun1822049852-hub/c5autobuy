@@ -12,9 +12,9 @@ from app_backend.domain.enums.account_states import PurchaseCapabilityState, Pur
 from app_backend.domain.models.purchase_runtime_settings import PurchaseRuntimeSettings
 from app_backend.infrastructure.purchase.runtime.account_purchase_worker import AccountPurchaseWorker
 from app_backend.infrastructure.purchase.runtime.inventory_state import InventoryState
-from app_backend.infrastructure.purchase.runtime.legacy_purchase_gateway import LegacyPurchaseGateway
 from app_backend.infrastructure.purchase.runtime.purchase_hit_inbox import PurchaseHitInbox
 from app_backend.infrastructure.purchase.runtime.purchase_scheduler import PurchaseScheduler
+from app_backend.infrastructure.purchase.runtime.purchase_execution_gateway import PurchaseExecutionGateway
 from app_backend.infrastructure.purchase.runtime.runtime_events import InventoryRefreshResult
 
 RuntimeFactory = Callable[..., object]
@@ -40,7 +40,7 @@ class PurchaseRuntimeService:
         self._inventory_snapshot_repository = inventory_snapshot_repository
         self._inventory_refresh_gateway_factory = inventory_refresh_gateway_factory
         self._recovery_delay_seconds_provider = recovery_delay_seconds_provider
-        self._execution_gateway_factory = execution_gateway_factory or LegacyPurchaseGateway
+        self._execution_gateway_factory = execution_gateway_factory or PurchaseExecutionGateway
         self._runtime_factory = runtime_factory or self._build_default_runtime
         self._runtime = None
 
@@ -332,7 +332,7 @@ class PurchaseRuntimeService:
             inventory_snapshot_repository=inventory_snapshot_repository,
             inventory_refresh_gateway_factory=inventory_refresh_gateway_factory,
             recovery_delay_seconds_provider=recovery_delay_seconds_provider,
-            execution_gateway_factory=execution_gateway_factory or LegacyPurchaseGateway,
+            execution_gateway_factory=execution_gateway_factory or PurchaseExecutionGateway,
         )
 
 

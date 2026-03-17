@@ -48,15 +48,22 @@ class AccountCenterController:
             on_error=self.publish_error,
         )
 
-    def edit_detail_account(self, payload: dict[str, Any]) -> None:
+    def edit_detail_account(self, payload: dict[str, Any], query_mode_payload: dict[str, Any] | None = None) -> None:
         if self.backend_client is None:
             return
         account = self.view_model.detail_account
         if account is None:
             return
         self.publish_status("正在更新账号...")
+
+        async def update_account_bundle() -> dict[str, Any]:
+            updated_account = await self.backend_client.update_account(account["account_id"], payload)
+            if query_mode_payload is None:
+                return updated_account
+            return await self.backend_client.update_account_query_modes(account["account_id"], query_mode_payload)
+
         self.task_runner.submit(
-            lambda: self.backend_client.update_account(account["account_id"], payload),
+            update_account_bundle,
             on_success=self._handle_account_updated,
             on_error=self.publish_error,
         )

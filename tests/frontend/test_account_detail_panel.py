@@ -22,7 +22,7 @@ def _account(
         "api_key": api_key,
         "c5_user_id": "12345",
         "c5_nick_name": "平台昵称",
-        "cookie_raw": "foo=bar",
+        "cookie_raw": "NC5_accessToken=token-1; foo=bar",
         "purchase_capability_state": purchase_capability_state,
         "purchase_pool_state": purchase_pool_state,
         "last_login_at": "2026-03-16T12:00:00",
@@ -30,6 +30,9 @@ def _account(
         "created_at": "2026-03-16T12:00:00",
         "updated_at": "2026-03-16T12:00:00",
         "disabled": False,
+        "new_api_enabled": True,
+        "fast_api_enabled": False,
+        "token_enabled": True,
     }
 
 
@@ -49,6 +52,9 @@ def test_detail_panel_fields_are_readonly(qtbot):
     assert panel.default_name_input.isReadOnly()
     assert panel.c5_nick_name_input.isReadOnly()
     assert panel.c5_user_id_input.isReadOnly()
+    assert panel.new_api_mode_input.isReadOnly()
+    assert panel.fast_api_mode_input.isReadOnly()
+    assert panel.token_mode_input.isReadOnly()
 
 
 def test_detail_panel_shows_all_account_identity_layers_and_actions(qtbot):
@@ -65,6 +71,9 @@ def test_detail_panel_shows_all_account_identity_layers_and_actions(qtbot):
     assert panel.c5_user_id_input.text() == "12345"
     assert panel.last_login_input.text() == "2026-03-16 12:00:00"
     assert panel.last_error_input.text() == ""
+    assert panel.new_api_mode_input.text() == "已启用"
+    assert panel.fast_api_mode_input.text() == "已关闭"
+    assert panel.token_mode_input.text() == "已启用"
     assert panel.edit_query_button.text() == "编辑账号"
     assert panel.start_login_button.text() == "发起登录"
     assert panel.clear_purchase_button.text() == "清除购买能力"
@@ -81,6 +90,9 @@ def test_detail_panel_applies_semantic_tones_for_status_fields(qtbot):
     assert panel.api_key_status_input.property("tone") == "ok"
     assert panel.purchase_capability_input.property("tone") == "ok"
     assert panel.purchase_pool_input.property("tone") == "muted"
+    assert panel.new_api_mode_input.property("tone") == "ok"
+    assert panel.fast_api_mode_input.property("tone") == "muted"
+    assert panel.token_mode_input.property("tone") == "ok"
     assert panel.last_error_input.property("tone") == "neutral"
     assert panel.last_error_input.toolTip() == ""
 
@@ -104,6 +116,9 @@ def test_detail_panel_highlights_recent_error_and_problem_states(qtbot):
     assert panel.api_key_status_input.property("tone") == "muted"
     assert panel.purchase_capability_input.property("tone") == "error"
     assert panel.purchase_pool_input.property("tone") == "warn"
+    assert panel.new_api_mode_input.text() == "缺少 API Key"
+    assert panel.fast_api_mode_input.text() == "缺少 API Key"
+    assert panel.token_mode_input.text() == "已启用"
     assert panel.last_error_input.property("tone") == "error"
     assert panel.last_error_input.toolTip() == "代理认证失败"
 

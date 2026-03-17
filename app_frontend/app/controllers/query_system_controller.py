@@ -41,6 +41,32 @@ class QuerySystemController:
             on_error=self.publish_error,
         )
 
+    def update_selected_config(self, payload: dict[str, Any]) -> None:
+        if self.backend_client is None:
+            return
+        config = self.view_model.detail_config
+        if config is None:
+            return
+        self.publish_status("正在更新查询配置...")
+        self.task_runner.submit(
+            lambda: self.backend_client.update_query_config(config["config_id"], payload),
+            on_success=self._handle_config_updated,
+            on_error=self.publish_error,
+        )
+
+    def delete_selected_config(self) -> None:
+        if self.backend_client is None:
+            return
+        config = self.view_model.detail_config
+        if config is None:
+            return
+        self.publish_status("正在删除查询配置...")
+        self.task_runner.submit(
+            lambda: self.backend_client.delete_query_config(config["config_id"]),
+            on_success=lambda _result: self._handle_config_deleted(config["config_id"]),
+            on_error=self.publish_error,
+        )
+
     def update_selected_mode_setting(self, mode_type: str, payload: dict[str, Any]) -> None:
         if self.backend_client is None:
             return
@@ -77,6 +103,19 @@ class QuerySystemController:
         self.task_runner.submit(
             lambda: self.backend_client.update_query_item(config["config_id"], item_id, payload),
             on_success=lambda item: self._handle_item_updated(config["config_id"], item),
+            on_error=self.publish_error,
+        )
+
+    def refresh_selected_item_detail(self, item_id: str) -> None:
+        if self.backend_client is None:
+            return
+        config = self.view_model.detail_config
+        if config is None:
+            return
+        self.publish_status("正在刷新商品详情...")
+        self.task_runner.submit(
+            lambda: self.backend_client.refresh_query_item_detail(config["config_id"], item_id),
+            on_success=lambda item: self._handle_item_detail_refreshed(config["config_id"], item),
             on_error=self.publish_error,
         )
 
@@ -162,6 +201,17 @@ class QuerySystemController:
         self.publish_status("查询配置已创建")
         self.refresh_view()
 
+    def _handle_config_updated(self, config: dict[str, Any]) -> None:
+        self.view_model.upsert_config(config)
+        self.view_model.select_config(config["config_id"])
+        self.publish_status("查询配置已更新")
+        self.refresh_view()
+
+    def _handle_config_deleted(self, config_id: str) -> None:
+        self.view_model.remove_config(config_id)
+        self.publish_status("查询配置已删除")
+        self.refresh_view()
+
     def _handle_mode_setting_updated(self, config_id: str, setting: dict[str, Any]) -> None:
         self.view_model.update_mode_setting(config_id, setting)
         self.publish_status("模式参数已更新")
@@ -175,6 +225,11 @@ class QuerySystemController:
     def _handle_item_updated(self, config_id: str, item: dict[str, Any]) -> None:
         self.view_model.upsert_item(config_id, item)
         self.publish_status("商品已更新")
+        self.refresh_view()
+
+    def _handle_item_detail_refreshed(self, config_id: str, item: dict[str, Any]) -> None:
+        self.view_model.upsert_item(config_id, item)
+        self.publish_status("商品详情已刷新")
         self.refresh_view()
 
     def _handle_item_deleted(self, config_id: str, item_id: str) -> None:

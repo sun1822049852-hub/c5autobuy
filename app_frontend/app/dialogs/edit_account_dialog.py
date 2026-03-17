@@ -13,3 +13,9 @@ class EditAccountDialog(_AccountDialogBase):
         proxy_mode = account.get("proxy_mode") or "direct"
         self.proxy_mode_combo.setCurrentText(proxy_mode)
         self.proxy_url_input.setText(proxy_url)
+        self._set_query_mode_state(
+            new_api_enabled=bool(account.get("new_api_enabled", False)),
+            fast_api_enabled=bool(account.get("fast_api_enabled", False)),
+            token_enabled=bool(account.get("token_enabled", False)),
+            token_available="NC5_accessToken=" in str(account.get("cookie_raw") or ""),
+        )
