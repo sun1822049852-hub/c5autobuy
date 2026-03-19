@@ -3,7 +3,8 @@
 更新时间：2026-03-18
 
 ## 1. 当前状态
-- `autobuy.py` 与 `c5_layered` 已退出默认运行链路，但源码当前仍保留在仓库中。
+- `autobuy.py` 已退出默认运行链路，但源码当前仍保留在仓库中作为参考。
+- `c5_layered` 兼容 UI 层已从仓库删除。
 - 当前运行入口为 `run_app.py -> app_frontend.main.main() -> LocalBackendServer -> app_backend.main.create_app()`。
 - 查询、购买、库存刷新、登录运行时都已收口到 `app_backend`。
 
@@ -35,7 +36,7 @@
 - 新增默认行为不要重新依赖 `autobuy.py`、`c5_layered` 或任何 `legacy_*` 兼容壳
 - UI 只通过 `app_frontend` 调后端接口，不直接持有后端运行时对象
 - 新增行为必须继续对照旧语义，但实现只能落在当前前后端分层内
-- `autobuy.py / c5_layered` 当前保留为历史 UI/legacy 源码与过渡重构区，不代表默认运行链路仍依赖它们
+- `autobuy.py` 当前保留为历史单文件参考；`c5_layered` 已删除，不代表默认运行链路仍依赖旧 UI 层
 
 ## 5. 建议验证命令
 
