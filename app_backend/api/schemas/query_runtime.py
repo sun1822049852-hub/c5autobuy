@@ -71,6 +71,7 @@ class QueryRuntimeItemRowResponse(BaseModel):
     detail_min_wear: float | None
     detail_max_wear: float | None
     manual_paused: bool
+    query_count: int
     modes: dict[str, QueryRuntimeItemModeResponse]
 
 

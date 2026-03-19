@@ -38,6 +38,30 @@ class PurchaseRuntimeAccountResponse(BaseModel):
     selected_inventory_max: int | None = None
     last_error: str | None = None
     total_purchased_count: int | None = None
+    submitted_product_count: int = 0
+    purchase_success_count: int = 0
+    purchase_failed_count: int = 0
+
+
+class PurchaseRuntimeActiveQueryConfigResponse(BaseModel):
+    config_id: str
+    config_name: str | None = None
+    state: str
+    message: str
+
+
+class PurchaseRuntimeItemRowResponse(BaseModel):
+    query_item_id: str
+    item_name: str | None = None
+    max_price: float | None = None
+    min_wear: float | None = None
+    max_wear: float | None = None
+    detail_min_wear: float | None = None
+    detail_max_wear: float | None = None
+    query_execution_count: int = 0
+    matched_product_count: int = 0
+    purchase_success_count: int = 0
+    purchase_failed_count: int = 0
 
 
 class PurchaseRuntimeInventoryDetailResponse(BaseModel):
@@ -69,6 +93,12 @@ class PurchaseRuntimeStatusResponse(BaseModel):
     active_account_count: int
     total_account_count: int
     total_purchased_count: int
+    runtime_session_id: str | None = None
+    active_query_config: PurchaseRuntimeActiveQueryConfigResponse | None = None
+    matched_product_count: int = 0
+    purchase_success_count: int = 0
+    purchase_failed_count: int = 0
     recent_events: list[PurchaseRuntimeRecentEventResponse]
     accounts: list[PurchaseRuntimeAccountResponse]
+    item_rows: list[PurchaseRuntimeItemRowResponse] = []
     settings: PurchaseRuntimeSettingsResponse

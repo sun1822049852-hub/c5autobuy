@@ -1098,17 +1098,177 @@ button {
   gap: 10px;
 }
 
+.purchase-system-page {
+  display: grid;
+  gap: 16px;
+  min-height: calc(100vh - 32px);
+}
+
+.purchase-system-page__hero,
+.purchase-runtime-header,
+.purchase-account-table,
+.purchase-item-panel,
+.purchase-runtime-actions,
+.purchase-system-page__empty {
+  border: 1px solid var(--line-soft);
+  border-radius: 24px;
+  background: linear-gradient(180deg, rgba(23, 27, 33, 0.95), rgba(15, 18, 22, 0.95));
+  box-shadow: var(--shadow-panel);
+}
+
+.purchase-system-page__hero {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 22px 24px;
+}
+
+.purchase-system-page__hero-copy {
+  display: grid;
+  gap: 6px;
+}
+
+.purchase-system-page__title {
+  margin: 0;
+  font-size: clamp(28px, 4vw, 34px);
+  line-height: 1.1;
+}
+
+.purchase-system-page__subtitle {
+  margin: 0;
+  max-width: 58ch;
+  color: var(--text-soft);
+}
+
+.purchase-runtime-header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: start;
+  padding: 20px 22px;
+}
+
+.purchase-runtime-header__config {
+  display: grid;
+  gap: 6px;
+}
+
+.purchase-runtime-header__label {
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--accent-strong);
+}
+
+.purchase-runtime-header__name {
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.purchase-runtime-header__meta {
+  color: var(--text-soft);
+}
+
+.purchase-runtime-header__stats {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.purchase-runtime-header__stat {
+  padding: 10px 14px;
+  border: 1px solid rgba(220, 164, 76, 0.24);
+  border-radius: 999px;
+  color: var(--text-main);
+  background: rgba(220, 164, 76, 0.08);
+}
+
+.purchase-system-page__layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(320px, 0.9fr);
+  gap: 16px;
+  min-height: 0;
+}
+
+.purchase-system-page__items {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+}
+
+.purchase-item-panel {
+  display: grid;
+  gap: 10px;
+  padding: 18px 20px;
+}
+
+.purchase-item-panel__name {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.purchase-item-panel__meta {
+  color: var(--text-soft);
+}
+
+.purchase-item-panel__stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.purchase-item-panel__stats span {
+  padding: 8px 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  font-size: 13px;
+  color: var(--text-main);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.purchase-account-table {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  padding: 20px 22px;
+}
+
+.purchase-account-table__title {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.purchase-system-page__empty {
+  padding: 22px 24px;
+  color: var(--text-soft);
+}
+
+.purchase-runtime-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 18px 22px;
+}
+
+.purchase-runtime-actions__button {
+  min-width: 144px;
+}
+
 @media (max-width: 1080px) {
   .app-shell {
     grid-template-columns: 1fr;
   }
 
+  .purchase-system-page__layout,
   .query-system-page__layout,
   .overview-grid,
   .status-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .purchase-system-page__layout,
   .query-system-page__layout {
     grid-template-columns: 1fr;
   }
@@ -1126,12 +1286,15 @@ button {
     padding: 10px;
   }
 
+  .purchase-runtime-header,
+  .purchase-runtime-actions,
   .query-save-bar,
   .overview-grid,
   .status-strip {
     grid-template-columns: 1fr;
   }
 
+  .purchase-runtime-header,
   .query-item-row__headline,
   .query-save-bar {
     flex-direction: column;

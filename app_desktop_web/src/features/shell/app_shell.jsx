@@ -11,9 +11,8 @@ const NAV_ITEMS = [
   },
   {
     id: "purchase-system",
-    label: "购买系统（即将迁移）",
-    tag: "Soon",
-    disabled: true,
+    label: "购买系统",
+    tag: "Live",
   },
 ];
 

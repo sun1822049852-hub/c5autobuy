@@ -19,6 +19,7 @@ class QueryTaskRuntime:
         config: QueryConfig,
         accounts: list[object],
         *,
+        runtime_session_id: str | None = None,
         mode_runner_factory=None,
         query_item_scheduler_factory=None,
         hit_sink=None,
@@ -26,6 +27,7 @@ class QueryTaskRuntime:
     ) -> None:
         self._config = config
         self._accounts = list(accounts)
+        self._runtime_session_id = str(runtime_session_id or "") or None
         self._hit_sink = hit_sink
         self._event_sink = event_sink
         self._running = False
@@ -49,6 +51,8 @@ class QueryTaskRuntime:
                     self._accounts,
                     query_items=list(query_items),
                     query_item_scheduler=mode_scheduler,
+                    query_config_id=str(self._config.config_id),
+                    runtime_session_id=self._runtime_session_id,
                     hit_sink=self._hit_sink,
                     event_sink=self._event_sink,
                 )
@@ -57,6 +61,10 @@ class QueryTaskRuntime:
     @property
     def config(self) -> QueryConfig:
         return self._config
+
+    @property
+    def runtime_session_id(self) -> str | None:
+        return self._runtime_session_id
 
     def start(self) -> None:
         self._stop_requested.clear()
@@ -136,6 +144,7 @@ class QueryTaskRuntime:
             "running": self._running,
             "config_id": self._config.config_id,
             "config_name": self._config.name,
+            "runtime_session_id": self._runtime_session_id,
             "message": "运行中" if self._running else "未运行",
             "account_count": len(self._accounts),
             "started_at": self._started_at,
@@ -158,6 +167,8 @@ class QueryTaskRuntime:
         *,
         query_items: list[object] | None = None,
         query_item_scheduler=None,
+        query_config_id: str | None = None,
+        runtime_session_id: str | None = None,
         hit_sink=None,
         event_sink=None,
     ) -> ModeRunner:
@@ -166,6 +177,8 @@ class QueryTaskRuntime:
             accounts,
             query_items=query_items,
             query_item_scheduler=query_item_scheduler,
+            query_config_id=query_config_id,
+            runtime_session_id=runtime_session_id,
             hit_sink=hit_sink,
             event_sink=event_sink,
         )
@@ -182,12 +195,26 @@ class QueryTaskRuntime:
         *,
         query_items,
         query_item_scheduler,
+        query_config_id,
+        runtime_session_id,
         hit_sink,
         event_sink,
     ):
         kwargs = {"query_items": query_items}
         if query_item_scheduler is not None and QueryTaskRuntime._factory_accepts_parameter(factory, "query_item_scheduler"):
             kwargs["query_item_scheduler"] = query_item_scheduler
+        if query_config_id is not None and QueryTaskRuntime._factory_accepts_parameter(
+            factory,
+            "query_config_id",
+            allow_var_keyword=False,
+        ):
+            kwargs["query_config_id"] = query_config_id
+        if runtime_session_id is not None and QueryTaskRuntime._factory_accepts_parameter(
+            factory,
+            "runtime_session_id",
+            allow_var_keyword=False,
+        ):
+            kwargs["runtime_session_id"] = runtime_session_id
         if hit_sink is not None and QueryTaskRuntime._factory_accepts_parameter(factory, "hit_sink"):
             kwargs["hit_sink"] = hit_sink
         if event_sink is not None and QueryTaskRuntime._factory_accepts_parameter(factory, "event_sink"):
@@ -195,14 +222,14 @@ class QueryTaskRuntime:
         return factory(mode_setting, accounts, **kwargs)
 
     @staticmethod
-    def _factory_accepts_parameter(factory, parameter_name: str) -> bool:
+    def _factory_accepts_parameter(factory, parameter_name: str, *, allow_var_keyword: bool = True) -> bool:
         try:
             parameters = signature(factory).parameters.values()
         except (TypeError, ValueError):
             return False
 
         for parameter in parameters:
-            if parameter.kind == Parameter.VAR_KEYWORD:
+            if allow_var_keyword and parameter.kind == Parameter.VAR_KEYWORD:
                 return True
             if parameter.name == parameter_name:
                 return True
@@ -248,6 +275,7 @@ class QueryTaskRuntime:
                 "detail_min_wear": item.detail_min_wear,
                 "detail_max_wear": item.detail_max_wear,
                 "manual_paused": bool(item.manual_paused),
+                "query_count": 0,
                 "modes": {},
             }
             rows_by_item_id[item_id] = row
@@ -267,6 +295,7 @@ class QueryTaskRuntime:
                 mode_type = str(raw_row.get("mode_type") or fallback_mode_type)
                 if not mode_type:
                     continue
+                rows_by_item_id[item_id]["query_count"] += int(raw_row.get("query_count", 0))
                 rows_by_item_id[item_id]["modes"][mode_type] = {
                     "mode_type": mode_type,
                     "target_dedicated_count": int(raw_row.get("target_dedicated_count", 0)),

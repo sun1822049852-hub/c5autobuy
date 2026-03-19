@@ -29,9 +29,16 @@ def _runtime_service(request: Request):
     return request.app.state.purchase_runtime_service
 
 
+def _query_runtime_service(request: Request):
+    return request.app.state.query_runtime_service
+
+
 @router.get("/status", response_model=PurchaseRuntimeStatusResponse)
 async def get_purchase_runtime_status(request: Request) -> PurchaseRuntimeStatusResponse:
-    use_case = GetPurchaseRuntimeStatusUseCase(_runtime_service(request))
+    use_case = GetPurchaseRuntimeStatusUseCase(
+        _runtime_service(request),
+        _query_runtime_service(request),
+    )
     return PurchaseRuntimeStatusResponse.model_validate(use_case.execute())
 
 

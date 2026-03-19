@@ -15,6 +15,7 @@ from app_backend.infrastructure.purchase.runtime.inventory_state import Inventor
 from app_backend.infrastructure.purchase.runtime.purchase_hit_inbox import PurchaseHitInbox
 from app_backend.infrastructure.purchase.runtime.purchase_scheduler import PurchaseScheduler
 from app_backend.infrastructure.purchase.runtime.purchase_execution_gateway import PurchaseExecutionGateway
+from app_backend.infrastructure.purchase.runtime.purchase_stats_aggregator import PurchaseStatsAggregator
 from app_backend.infrastructure.purchase.runtime.runtime_events import InventoryRefreshResult
 
 RuntimeFactory = Callable[..., object]
@@ -243,6 +244,24 @@ class PurchaseRuntimeService:
                 apply_settings(updated_settings)
         return self.get_status()
 
+    def bind_query_runtime_session(
+        self,
+        *,
+        query_config_id: str | None,
+        query_config_name: str | None,
+        runtime_session_id: str | None,
+    ) -> None:
+        if not self._has_running_runtime():
+            return
+        bind_runtime_session = getattr(self._runtime, "bind_query_runtime_session", None)
+        if not callable(bind_runtime_session):
+            return
+        bind_runtime_session(
+            query_config_id=query_config_id,
+            query_config_name=query_config_name,
+            runtime_session_id=runtime_session_id,
+        )
+
     def accept_query_hit(self, hit: dict[str, object]) -> dict[str, object]:
         return _run_coroutine_sync(self.accept_query_hit_async(hit))
 
@@ -344,8 +363,14 @@ class PurchaseRuntimeService:
             "active_account_count": 0,
             "total_account_count": 0,
             "total_purchased_count": 0,
+            "runtime_session_id": None,
+            "matched_product_count": 0,
+            "purchase_success_count": 0,
+            "purchase_failed_count": 0,
             "recent_events": [],
             "accounts": [],
+            "item_rows": [],
+            "active_query_config": None,
             "settings": {
                 "whitelist_account_ids": list(settings.whitelist_account_ids),
                 "updated_at": settings.updated_at,
@@ -363,8 +388,14 @@ class PurchaseRuntimeService:
             "active_account_count": int(snapshot.get("active_account_count", 0)),
             "total_account_count": int(snapshot.get("total_account_count", 0)),
             "total_purchased_count": int(snapshot.get("total_purchased_count", 0)),
+            "runtime_session_id": snapshot.get("runtime_session_id"),
+            "matched_product_count": int(snapshot.get("matched_product_count", 0)),
+            "purchase_success_count": int(snapshot.get("purchase_success_count", 0)),
+            "purchase_failed_count": int(snapshot.get("purchase_failed_count", 0)),
             "recent_events": list(snapshot.get("recent_events") or []),
             "accounts": PurchaseRuntimeService._normalize_accounts(snapshot.get("accounts")),
+            "item_rows": PurchaseRuntimeService._normalize_item_rows(snapshot.get("item_rows")),
+            "active_query_config": snapshot.get("active_query_config"),
             "settings": {
                 "whitelist_account_ids": list(settings.whitelist_account_ids),
                 "updated_at": settings.updated_at,
@@ -403,6 +434,28 @@ class PurchaseRuntimeService:
                         if raw_account.get("total_purchased_count") is not None
                         else None
                     ),
+                    "submitted_product_count": int(raw_account.get("submitted_product_count", 0)),
+                    "purchase_success_count": int(raw_account.get("purchase_success_count", 0)),
+                    "purchase_failed_count": int(raw_account.get("purchase_failed_count", 0)),
+                }
+            )
+        return normalized
+
+    @staticmethod
+    def _normalize_item_rows(raw_rows: object) -> list[dict[str, object]]:
+        if not isinstance(raw_rows, list):
+            return []
+
+        normalized: list[dict[str, object]] = []
+        for raw_row in raw_rows:
+            if not isinstance(raw_row, dict):
+                continue
+            normalized.append(
+                {
+                    "query_item_id": str(raw_row.get("query_item_id") or ""),
+                    "matched_product_count": int(raw_row.get("matched_product_count", 0)),
+                    "purchase_success_count": int(raw_row.get("purchase_success_count", 0)),
+                    "purchase_failed_count": int(raw_row.get("purchase_failed_count", 0)),
                 }
             )
         return normalized
@@ -849,6 +902,7 @@ class _DefaultPurchaseRuntime:
         self._drain_signal = threading.Event()
         self._drain_stop_signal = threading.Event()
         self._drain_thread: threading.Thread | None = None
+        self._stats_aggregator = PurchaseStatsAggregator()
 
     def set_availability_callbacks(
         self,
@@ -870,6 +924,13 @@ class _DefaultPurchaseRuntime:
         self._account_states = {}
         self._total_purchased_count = 0
         self._recovery_timers = {}
+        self._stats_aggregator = PurchaseStatsAggregator()
+        self._stats_aggregator.start()
+        self._stats_aggregator.reset(
+            runtime_session_id=None,
+            query_config_id=None,
+            query_config_name=None,
+        )
         self._initialize_accounts()
         self._active_account_count = self._scheduler.active_account_count()
         self._drain_stop_signal = threading.Event()
@@ -885,6 +946,7 @@ class _DefaultPurchaseRuntime:
         if drain_thread is not None and drain_thread.is_alive():
             drain_thread.join(timeout=0.2)
         self._drain_thread = None
+        self._stats_aggregator.stop()
         self._stopped_at = datetime.now().isoformat(timespec="seconds")
 
     def apply_settings(self, settings: PurchaseRuntimeSettings) -> None:
@@ -898,6 +960,27 @@ class _DefaultPurchaseRuntime:
             self._initialize_accounts()
             self._handle_active_account_count_change(previous_active_account_count)
 
+    def bind_query_runtime_session(
+        self,
+        *,
+        query_config_id: str | None,
+        query_config_name: str | None,
+        runtime_session_id: str | None,
+    ) -> None:
+        current_stats = self._stats_aggregator.snapshot()
+        if (
+            current_stats.get("runtime_session_id") == runtime_session_id
+            and current_stats.get("query_config_id") == query_config_id
+        ):
+            return
+        self._hit_inbox = PurchaseHitInbox()
+        self._scheduler.clear_queue()
+        self._stats_aggregator.reset(
+            runtime_session_id=runtime_session_id,
+            query_config_id=query_config_id,
+            query_config_name=query_config_name,
+        )
+
     async def accept_query_hit_async(self, hit: dict[str, object]) -> dict[str, object]:
         if self._scheduler.active_account_count() <= 0:
             self._push_event(
@@ -907,6 +990,7 @@ class _DefaultPurchaseRuntime:
             )
             return {"accepted": False, "status": "ignored_no_available_accounts"}
 
+        self._stats_aggregator.enqueue_hit(hit)
         batch = self._hit_inbox.accept(hit)
         if batch is None:
             self._push_event(hit, status="duplicate_filtered", message="重复命中已忽略")
@@ -918,6 +1002,12 @@ class _DefaultPurchaseRuntime:
         return {"accepted": True, "status": "queued"}
 
     def snapshot(self) -> dict[str, object]:
+        stats_snapshot = self._stats_aggregator.snapshot()
+        account_stats = {
+            str(row.get("account_id") or ""): row
+            for row in stats_snapshot.get("accounts", [])
+            if isinstance(row, dict)
+        }
         return {
             "running": self._running,
             "message": "运行中" if self._running else "未运行",
@@ -927,6 +1017,10 @@ class _DefaultPurchaseRuntime:
             "active_account_count": self._scheduler.active_account_count() if self._running else 0,
             "total_account_count": self._scheduler.total_account_count() if self._running else 0,
             "total_purchased_count": self._total_purchased_count,
+            "runtime_session_id": stats_snapshot.get("runtime_session_id"),
+            "matched_product_count": int(stats_snapshot.get("matched_product_count", 0)),
+            "purchase_success_count": int(stats_snapshot.get("purchase_success_count", 0)),
+            "purchase_failed_count": int(stats_snapshot.get("purchase_failed_count", 0)),
             "recent_events": list(self._recent_events),
             "accounts": [
                 {
@@ -941,9 +1035,19 @@ class _DefaultPurchaseRuntime:
                     "selected_inventory_max": self._selected_inventory_max(state),
                     "last_error": state.last_error,
                     "total_purchased_count": state.total_purchased_count,
+                    "submitted_product_count": int(
+                        account_stats.get(state.account_id, {}).get("submitted_product_count", 0)
+                    ),
+                    "purchase_success_count": int(
+                        account_stats.get(state.account_id, {}).get("purchase_success_count", 0)
+                    ),
+                    "purchase_failed_count": int(
+                        account_stats.get(state.account_id, {}).get("purchase_failed_count", 0)
+                    ),
                 }
                 for state in self._account_states.values()
             ],
+            "item_rows": list(stats_snapshot.get("item_rows", [])),
         }
 
     def get_account_inventory_detail(self, account_id: str) -> dict[str, object] | None:
@@ -1174,6 +1278,7 @@ class _DefaultPurchaseRuntime:
         state.capability_state = outcome.capability_state
         state.pool_state = outcome.pool_state
         state.last_error = outcome.error
+        stats_status = str(outcome.status)
         if outcome.status == "success":
             state.total_purchased_count += int(outcome.purchased_count)
             self._total_purchased_count += int(outcome.purchased_count)
@@ -1200,6 +1305,7 @@ class _DefaultPurchaseRuntime:
                 message=outcome.error or "登录已失效",
             )
         elif outcome.status == "no_inventory":
+            stats_status = "paused_no_inventory"
             self._sync_scheduler_state(state)
             self._persist_inventory_snapshot(state, last_error=outcome.error)
             self._push_event_from_batch(
@@ -1214,6 +1320,12 @@ class _DefaultPurchaseRuntime:
                 message=outcome.error or "购买失败",
             )
 
+        self._stats_aggregator.enqueue_outcome(
+            account_id=state.account_id,
+            batch=batch,
+            status=stats_status,
+            purchased_count=int(outcome.purchased_count),
+        )
         self._sync_account_repository_state(state)
 
     def _reconcile_inventory_after_success(
@@ -1480,6 +1592,9 @@ class _DefaultPurchaseRuntime:
                 "account_display_name": state.display_name,
                 "selected_steam_id": state.inventory_state.selected_steam_id,
                 "query_item_name": "",
+                "query_config_id": None,
+                "query_item_id": None,
+                "runtime_session_id": None,
                 "external_item_id": None,
                 "product_url": None,
                 "product_list": [],
@@ -1501,6 +1616,9 @@ class _DefaultPurchaseRuntime:
                 "account_display_name": "",
                 "selected_steam_id": None,
                 "query_item_name": "",
+                "query_config_id": None,
+                "query_item_id": None,
+                "runtime_session_id": None,
                 "external_item_id": None,
                 "product_url": None,
                 "product_list": [],
@@ -1519,6 +1637,9 @@ class _DefaultPurchaseRuntime:
                 "status": status,
                 "message": message,
                 "query_item_name": str(getattr(batch, "query_item_name", "") or ""),
+                "query_config_id": getattr(batch, "query_config_id", None),
+                "query_item_id": getattr(batch, "query_item_id", None),
+                "runtime_session_id": getattr(batch, "runtime_session_id", None),
                 "external_item_id": getattr(batch, "external_item_id", None),
                 "product_url": getattr(batch, "product_url", None),
                 "product_list": list(getattr(batch, "product_list", []) or []),
@@ -1537,6 +1658,9 @@ class _DefaultPurchaseRuntime:
                 "status": status,
                 "message": message,
                 "query_item_name": str(hit.get("query_item_name") or ""),
+                "query_config_id": str(hit.get("query_config_id") or "") or None,
+                "query_item_id": str(hit.get("query_item_id") or "") or None,
+                "runtime_session_id": str(hit.get("runtime_session_id") or "") or None,
                 "external_item_id": hit.get("external_item_id"),
                 "product_url": hit.get("product_url"),
                 "product_list": list(hit.get("product_list") or []),

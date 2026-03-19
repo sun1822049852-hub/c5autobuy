@@ -385,6 +385,7 @@ async def test_query_runtime_status_returns_item_rows_for_mode_status_labels(cli
                         "detail_min_wear": 0.12,
                         "detail_max_wear": 0.3,
                         "manual_paused": False,
+                        "query_count": 5,
                         "modes": {
                             "new_api": {
                                 "mode_type": "new_api",
@@ -420,6 +421,7 @@ async def test_query_runtime_status_returns_item_rows_for_mode_status_labels(cli
             "detail_min_wear": 0.12,
             "detail_max_wear": 0.3,
             "manual_paused": False,
+            "query_count": 5,
             "modes": {
                 "new_api": {
                     "mode_type": "new_api",

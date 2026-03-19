@@ -309,6 +309,7 @@ def test_query_task_runtime_starts_mode_runners_and_aggregates_snapshot():
                     {
                         "query_item_id": "item-1",
                         "mode_type": self.mode_type,
+                        "query_count": 2 if self.started and not self.stopped else 0,
                         "target_dedicated_count": 1 if self.mode_type == "new_api" else 0,
                         "actual_dedicated_count": 1 if self.mode_type == "new_api" else 0,
                         "status": "dedicated" if self.mode_type == "new_api" else "shared",
@@ -348,6 +349,7 @@ def test_query_task_runtime_starts_mode_runners_and_aggregates_snapshot():
             "detail_min_wear": 0.0,
             "detail_max_wear": 0.25,
             "manual_paused": False,
+            "query_count": 6,
             "modes": {
                 "new_api": {
                     "mode_type": "new_api",
@@ -747,6 +749,7 @@ def test_runtime_service_normalizes_item_rows():
                         "detail_min_wear": 0.0,
                         "detail_max_wear": 0.25,
                         "manual_paused": False,
+                        "query_count": 7,
                         "modes": {
                             "new_api": {
                                 "mode_type": "new_api",
@@ -782,6 +785,7 @@ def test_runtime_service_normalizes_item_rows():
             "detail_min_wear": 0.0,
             "detail_max_wear": 0.25,
             "manual_paused": False,
+            "query_count": 7,
             "modes": {
                 "new_api": {
                     "mode_type": "new_api",
@@ -899,6 +903,7 @@ def test_runtime_service_enters_waiting_state_when_no_purchase_accounts_are_avai
     assert snapshot["config_id"] == "cfg-1"
     assert snapshot["config_name"] == "测试配置"
     assert snapshot["message"] == "等待购买账号恢复"
+    assert snapshot["item_rows"][0]["query_count"] == 0
 
 
 def test_runtime_service_starts_in_waiting_state_and_auto_recovers_when_purchase_accounts_return():

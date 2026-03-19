@@ -755,6 +755,8 @@ async def test_mode_runner_forwards_not_login_event_to_event_sink():
             "timestamp": "2026-03-16T10:00:02",
             "level": "error",
             "mode_type": "token",
+            "query_config_id": None,
+            "runtime_session_id": None,
             "account_id": "a1",
             "account_display_name": "Token账号",
             "query_item_id": "1380979899390261111",

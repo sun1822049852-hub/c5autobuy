@@ -24,6 +24,8 @@ class QueryExecutionEvent:
     query_item_id: str
     message: str
     match_count: int
+    query_config_id: str | None = None
+    runtime_session_id: str | None = None
     external_item_id: str | None = None
     product_url: str | None = None
     account_display_name: str | None = None

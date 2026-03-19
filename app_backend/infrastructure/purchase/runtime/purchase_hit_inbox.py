@@ -25,6 +25,9 @@ class PurchaseHitInbox:
 
         return PurchaseHitBatch(
             query_item_name=str(hit.get("query_item_name") or ""),
+            query_config_id=str(hit.get("query_config_id") or "") or None,
+            query_item_id=str(hit.get("query_item_id") or "") or None,
+            runtime_session_id=str(hit.get("runtime_session_id") or "") or None,
             external_item_id=str(hit.get("external_item_id") or "") or None,
             product_url=str(hit.get("product_url") or "") or None,
             product_list=list(hit.get("product_list") or []),

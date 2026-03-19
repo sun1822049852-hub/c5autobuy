@@ -132,6 +132,11 @@ export function createAccountCenterClient({
         method: "GET",
       });
     },
+    async getPurchaseRuntimeStatus() {
+      return http.getJson("/purchase-runtime/status", {
+        method: "GET",
+      });
+    },
     async startQueryRuntime(configId) {
       return http.postJson("/query-runtime/start", {
         config_id: configId,
@@ -139,6 +144,12 @@ export function createAccountCenterClient({
     },
     async stopQueryRuntime() {
       return http.postJson("/query-runtime/stop", {});
+    },
+    async startPurchaseRuntime() {
+      return http.postJson("/purchase-runtime/start", {});
+    },
+    async stopPurchaseRuntime() {
+      return http.postJson("/purchase-runtime/stop", {});
     },
     async createQueryConfig(payload) {
       return http.postJson("/query-configs", payload);

@@ -39,8 +39,14 @@ async def test_purchase_runtime_status_defaults_to_idle(client):
         "active_account_count": 0,
         "total_account_count": 0,
         "total_purchased_count": 0,
+        "runtime_session_id": None,
+        "active_query_config": None,
+        "matched_product_count": 0,
+        "purchase_success_count": 0,
+        "purchase_failed_count": 0,
         "recent_events": [],
         "accounts": [],
+        "item_rows": [],
         "settings": {
             "whitelist_account_ids": [],
             "updated_at": None,
@@ -84,8 +90,14 @@ async def test_stop_purchase_runtime_returns_idle_snapshot(client):
         "active_account_count": 0,
         "total_account_count": 0,
         "total_purchased_count": 0,
+        "runtime_session_id": None,
+        "active_query_config": None,
+        "matched_product_count": 0,
+        "purchase_success_count": 0,
+        "purchase_failed_count": 0,
         "recent_events": [],
         "accounts": [],
+        "item_rows": [],
         "settings": {
             "whitelist_account_ids": [],
             "updated_at": None,
@@ -182,6 +194,120 @@ async def test_purchase_runtime_status_returns_selected_inventory_summary(client
     assert payload["accounts"][0]["selected_steam_id"] == "steam-1"
     assert payload["accounts"][0]["selected_inventory_remaining_capacity"] == 90
     assert payload["accounts"][0]["selected_inventory_max"] == 1000
+
+
+async def test_purchase_runtime_status_includes_stats_and_keeps_accounts_shape(client, app):
+    class FakePurchaseRuntimeService:
+        def get_status(self) -> dict[str, object]:
+            return {
+                "running": True,
+                "message": "运行中",
+                "started_at": "2026-03-19T13:00:00",
+                "stopped_at": None,
+                "queue_size": 0,
+                "active_account_count": 1,
+                "total_account_count": 1,
+                "total_purchased_count": 1,
+                "runtime_session_id": "run-1",
+                "matched_product_count": 3,
+                "purchase_success_count": 1,
+                "purchase_failed_count": 2,
+                "recent_events": [],
+                "accounts": [
+                    {
+                        "account_id": "a1",
+                        "display_name": "购买账号",
+                        "purchase_capability_state": "bound",
+                        "purchase_pool_state": "active",
+                        "selected_steam_id": "steam-1",
+                        "selected_inventory_remaining_capacity": 90,
+                        "selected_inventory_max": 1000,
+                        "last_error": None,
+                        "total_purchased_count": 1,
+                        "submitted_product_count": 3,
+                        "purchase_success_count": 1,
+                        "purchase_failed_count": 2,
+                    }
+                ],
+                "item_rows": [
+                    {
+                        "query_item_id": "item-1",
+                        "matched_product_count": 3,
+                        "purchase_success_count": 1,
+                        "purchase_failed_count": 2,
+                    }
+                ],
+                "settings": {
+                    "whitelist_account_ids": [],
+                    "updated_at": None,
+                },
+            }
+
+    class FakeQueryRuntimeService:
+        def get_status(self) -> dict[str, object]:
+            return {
+                "running": False,
+                "config_id": "cfg-1",
+                "config_name": "查询配置A",
+                "message": "等待购买账号恢复",
+                "account_count": 0,
+                "started_at": None,
+                "stopped_at": "2026-03-19T13:00:01",
+                "total_query_count": 7,
+                "total_found_count": 3,
+                "modes": {},
+                "group_rows": [],
+                "recent_events": [],
+                "item_rows": [
+                    {
+                        "query_item_id": "item-1",
+                        "item_name": "AK-47 | Redline",
+                        "max_price": 123.45,
+                        "min_wear": 0.1,
+                        "max_wear": 0.7,
+                        "detail_min_wear": 0.12,
+                        "detail_max_wear": 0.3,
+                        "manual_paused": False,
+                        "query_count": 7,
+                        "modes": {},
+                    }
+                ],
+            }
+
+    app.state.purchase_runtime_service = FakePurchaseRuntimeService()
+    app.state.query_runtime_service = FakeQueryRuntimeService()
+
+    response = await client.get("/purchase-runtime/status")
+
+    assert response.status_code == 200
+    assert response.json()["runtime_session_id"] == "run-1"
+    assert response.json()["active_query_config"] == {
+        "config_id": "cfg-1",
+        "config_name": "查询配置A",
+        "state": "waiting",
+        "message": "等待购买账号恢复",
+    }
+    assert response.json()["matched_product_count"] == 3
+    assert response.json()["purchase_success_count"] == 1
+    assert response.json()["purchase_failed_count"] == 2
+    assert response.json()["accounts"][0]["submitted_product_count"] == 3
+    assert response.json()["accounts"][0]["purchase_success_count"] == 1
+    assert response.json()["accounts"][0]["purchase_failed_count"] == 2
+    assert response.json()["item_rows"] == [
+        {
+            "query_item_id": "item-1",
+            "item_name": "AK-47 | Redline",
+            "max_price": 123.45,
+            "min_wear": 0.1,
+            "max_wear": 0.7,
+            "detail_min_wear": 0.12,
+            "detail_max_wear": 0.3,
+            "query_execution_count": 7,
+            "matched_product_count": 3,
+            "purchase_success_count": 1,
+            "purchase_failed_count": 2,
+        }
+    ]
 
 
 async def test_purchase_runtime_inventory_detail_route_returns_snapshot(client, app):

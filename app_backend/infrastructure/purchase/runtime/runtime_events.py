@@ -7,6 +7,9 @@ from typing import Any
 @dataclass(slots=True)
 class PurchaseHitBatch:
     query_item_name: str
+    query_config_id: str | None = None
+    query_item_id: str | None = None
+    runtime_session_id: str | None = None
     external_item_id: str | None = None
     product_url: str | None = None
     product_list: list[dict[str, Any]] = field(default_factory=list)

@@ -4,6 +4,7 @@ import threading
 from collections.abc import Callable
 from datetime import datetime
 from inspect import Parameter, signature
+from uuid import uuid4
 
 from app_backend.domain.enums.account_states import PurchaseCapabilityState, PurchasePoolState
 from app_backend.domain.models.query_config import QueryConfig, QueryModeSetting
@@ -29,6 +30,7 @@ class QueryRuntimeService:
         self._runtime = None
         self._pending_resume_config_id: str | None = None
         self._pending_resume_config_name: str | None = None
+        self._pending_resume_runtime_session_id: str | None = None
         self._paused_at: str | None = None
         self._register_purchase_runtime_callbacks()
 
@@ -74,13 +76,23 @@ class QueryRuntimeService:
             purchase_started, purchase_message = self._ensure_purchase_runtime_started()
             if not purchase_started:
                 return False, purchase_message
+            if allow_pending_resume:
+                runtime_session_id = self._pending_resume_runtime_session_id
+            else:
+                runtime_session_id = self._pending_resume_runtime_session_id or self._build_runtime_session_id()
+                self._bind_purchase_runtime_session(config=config, runtime_session_id=runtime_session_id)
             if not self._purchase_runtime_has_available_accounts():
-                self._mark_waiting_for_purchase_recovery(config)
+                self._mark_waiting_for_purchase_recovery(config, runtime_session_id=runtime_session_id)
                 return True, "查询任务已启动，等待购买账号恢复"
 
             accounts = list(self._account_repository.list_accounts())
             hit_sink = self._resolve_hit_sink()
-            runtime = self._create_runtime(config, accounts, hit_sink=hit_sink)
+            runtime = self._create_runtime(
+                config,
+                accounts,
+                hit_sink=hit_sink,
+                runtime_session_id=runtime_session_id,
+            )
             self._runtime = runtime
             runtime.start()
             self._clear_pending_resume_state()
@@ -138,6 +150,7 @@ class QueryRuntimeService:
     def _clear_pending_resume_state(self) -> None:
         self._pending_resume_config_id = None
         self._pending_resume_config_name = None
+        self._pending_resume_runtime_session_id = None
         self._paused_at = None
 
     def _build_idle_snapshot(self) -> dict[str, object]:
@@ -305,6 +318,7 @@ class QueryRuntimeService:
                     "detail_min_wear": item.detail_min_wear,
                     "detail_max_wear": item.detail_max_wear,
                     "manual_paused": bool(item.manual_paused),
+                    "query_count": 0,
                     "modes": modes,
                 }
             )
@@ -403,6 +417,7 @@ class QueryRuntimeService:
                         else None
                     ),
                     "manual_paused": bool(raw_row.get("manual_paused")),
+                    "query_count": int(raw_row.get("query_count", 0)),
                     "modes": normalized_modes,
                 }
             )
@@ -448,11 +463,29 @@ class QueryRuntimeService:
         return datetime.fromtimestamp(value).isoformat(timespec="seconds")
 
     @staticmethod
-    def _build_default_runtime(config, accounts: list[object], *, hit_sink=None, event_sink=None) -> QueryTaskRuntime:
-        return QueryTaskRuntime(config, accounts, hit_sink=hit_sink, event_sink=event_sink)
+    def _build_default_runtime(
+        config,
+        accounts: list[object],
+        *,
+        runtime_session_id: str | None = None,
+        hit_sink=None,
+        event_sink=None,
+    ) -> QueryTaskRuntime:
+        return QueryTaskRuntime(
+            config,
+            accounts,
+            runtime_session_id=runtime_session_id,
+            hit_sink=hit_sink,
+            event_sink=event_sink,
+        )
 
-    def _create_runtime(self, config, accounts: list[object], *, hit_sink=None):
+    def _create_runtime(self, config, accounts: list[object], *, hit_sink=None, runtime_session_id: str | None = None):
         kwargs = {}
+        if runtime_session_id is not None and self._runtime_factory_accepts_parameter(
+            "runtime_session_id",
+            allow_var_keyword=False,
+        ):
+            kwargs["runtime_session_id"] = runtime_session_id
         if hit_sink is not None and self._runtime_factory_accepts_parameter("hit_sink"):
             kwargs["hit_sink"] = hit_sink
         event_sink = self._resolve_event_sink()
@@ -480,14 +513,14 @@ class QueryRuntimeService:
         hit_sink = getattr(self._purchase_runtime_service, "accept_query_hit", None)
         return hit_sink if callable(hit_sink) else None
 
-    def _runtime_factory_accepts_parameter(self, parameter_name: str) -> bool:
+    def _runtime_factory_accepts_parameter(self, parameter_name: str, *, allow_var_keyword: bool = True) -> bool:
         try:
             parameters = signature(self._runtime_factory).parameters.values()
         except (TypeError, ValueError):
             return False
 
         for parameter in parameters:
-            if parameter.kind == Parameter.VAR_KEYWORD:
+            if allow_var_keyword and parameter.kind == Parameter.VAR_KEYWORD:
                 return True
             if parameter.name == parameter_name:
                 return True
@@ -557,7 +590,8 @@ class QueryRuntimeService:
                 return
             runtime = self._runtime
             config = getattr(runtime, "config", None) if runtime is not None else None
-            self._mark_waiting_for_purchase_recovery(config)
+            runtime_session_id = self._extract_runtime_session_id(runtime)
+            self._mark_waiting_for_purchase_recovery(config, runtime_session_id=runtime_session_id)
         if runtime is not None:
             runtime.stop()
 
@@ -579,11 +613,49 @@ class QueryRuntimeService:
             return
         self._mark_account_not_login(account_id=account_id, error=error)
 
-    def _mark_waiting_for_purchase_recovery(self, config: QueryConfig | None) -> None:
+    def _mark_waiting_for_purchase_recovery(
+        self,
+        config: QueryConfig | None,
+        *,
+        runtime_session_id: str | None = None,
+    ) -> None:
         self._runtime = None
         self._pending_resume_config_id = getattr(config, "config_id", None)
         self._pending_resume_config_name = getattr(config, "name", None)
+        self._pending_resume_runtime_session_id = str(runtime_session_id or "") or None
         self._paused_at = datetime.now().isoformat(timespec="seconds")
+
+    @staticmethod
+    def _build_runtime_session_id() -> str:
+        return uuid4().hex
+
+    @staticmethod
+    def _extract_runtime_session_id(runtime) -> str | None:
+        if runtime is None:
+            return None
+        runtime_session_id = getattr(runtime, "runtime_session_id", None)
+        if runtime_session_id:
+            return str(runtime_session_id)
+        snapshot = getattr(runtime, "snapshot", None)
+        if not callable(snapshot):
+            return None
+        data = snapshot()
+        if not isinstance(data, dict):
+            return None
+        value = str(data.get("runtime_session_id") or "").strip()
+        return value or None
+
+    def _bind_purchase_runtime_session(self, *, config: QueryConfig, runtime_session_id: str | None) -> None:
+        if self._purchase_runtime_service is None:
+            return
+        bind_query_runtime_session = getattr(self._purchase_runtime_service, "bind_query_runtime_session", None)
+        if not callable(bind_query_runtime_session):
+            return
+        bind_query_runtime_session(
+            query_config_id=str(getattr(config, "config_id", "") or "") or None,
+            query_config_name=str(getattr(config, "name", "") or "") or None,
+            runtime_session_id=runtime_session_id,
+        )
 
     def _mark_account_not_login(self, *, account_id: str, error: str) -> None:
         account = None

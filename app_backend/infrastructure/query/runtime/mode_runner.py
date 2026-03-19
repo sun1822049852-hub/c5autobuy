@@ -25,6 +25,8 @@ class ModeRunner:
         *,
         query_items: list[QueryItem] | None = None,
         query_item_scheduler: QueryItemScheduler | None = None,
+        query_config_id: str | None = None,
+        runtime_session_id: str | None = None,
         worker_factory=None,
         now_provider=None,
         random_provider=None,
@@ -37,6 +39,8 @@ class ModeRunner:
         self._worker_factory = worker_factory or self._build_default_worker
         self._now_provider = now_provider or datetime.now
         self._random_provider = random_provider or random.uniform
+        self._query_config_id = str(query_config_id or "") or None
+        self._runtime_session_id = str(runtime_session_id or "") or None
         self._hit_sink = hit_sink
         self._event_sink = event_sink
         self._query_item_scheduler = query_item_scheduler or QueryItemScheduler(self._query_items)
@@ -60,6 +64,7 @@ class ModeRunner:
         self._last_error: str | None = None
         self._recent_events: list[dict[str, object]] = []
         self._worker_cooldown_until: dict[str, float | None] = {}
+        self._item_query_counts: dict[str, int] = {}
 
     def start(self) -> None:
         self._started = True
@@ -69,6 +74,10 @@ class ModeRunner:
         self._last_error = None
         self._recent_events = []
         self._worker_cooldown_until = {}
+        self._item_query_counts = {
+            str(query_item.query_item_id): 0
+            for query_item in self._query_items
+        }
         self._query_item_scheduler.reset()
         self._query_mode_allocator.reset()
         self._workers = [
@@ -143,6 +152,11 @@ class ModeRunner:
             next_window_start = window_state.next_window_start.isoformat(timespec="seconds")
             next_window_end = window_state.next_window_end.isoformat(timespec="seconds")
         item_rows = self._query_mode_allocator.snapshot(active_workers=self._active_workers()).get("item_rows", [])
+        for row in item_rows:
+            if not isinstance(row, dict):
+                continue
+            item_id = str(row.get("query_item_id") or "")
+            row["query_count"] = int(self._item_query_counts.get(item_id, 0))
 
         return {
             "mode_type": self._mode_setting.mode_type,
@@ -344,6 +358,9 @@ class ModeRunner:
         self._query_count += 1
         self._found_count += int(getattr(event, "match_count", 0))
         self._last_error = getattr(event, "error", None)
+        item_id = str(getattr(event, "query_item_id", "") or "")
+        if item_id:
+            self._item_query_counts[item_id] = self._item_query_counts.get(item_id, 0) + 1
         self._record_event(event)
         await self._forward_event(event)
         await self._forward_hit(event)
@@ -388,12 +405,15 @@ class ModeRunner:
             return
         self._worker_cooldown_until[account_id] = None
 
-    @staticmethod
-    def _serialize_event(event: QueryExecutionEvent) -> dict[str, object]:
+    def _serialize_event(self, event: QueryExecutionEvent) -> dict[str, object]:
+        query_config_id = str(getattr(event, "query_config_id", "") or self._query_config_id or "") or None
+        runtime_session_id = str(getattr(event, "runtime_session_id", "") or self._runtime_session_id or "") or None
         return {
             "timestamp": event.timestamp,
             "level": event.level,
             "mode_type": event.mode_type,
+            "query_config_id": query_config_id,
+            "runtime_session_id": runtime_session_id,
             "account_id": event.account_id,
             "account_display_name": event.account_display_name,
             "query_item_id": event.query_item_id,

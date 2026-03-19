@@ -138,6 +138,8 @@ async def test_mode_runner_forwards_positive_match_to_purchase_runtime():
                 timestamp="2026-03-16T10:00:00",
                 level="info",
                 mode_type="new_api",
+                query_config_id="cfg-1",
+                runtime_session_id="run-1",
                 account_id=self.account.account_id,
                 account_display_name=self.account.display_name,
                 query_item_id=query_item.query_item_id,
@@ -165,6 +167,9 @@ async def test_mode_runner_forwards_positive_match_to_purchase_runtime():
     await runner.run_once()
 
     assert purchase_service.accepted_hits[0]["query_item_name"] == "AK"
+    assert purchase_service.accepted_hits[0]["query_config_id"] == "cfg-1"
+    assert purchase_service.accepted_hits[0]["runtime_session_id"] == "run-1"
+    assert purchase_service.accepted_hits[0]["query_item_id"] == "item-1"
     assert purchase_service.accepted_hits[0]["external_item_id"] == "item-1"
     assert purchase_service.accepted_hits[0]["product_url"] == "https://www.c5game.com/csgo/730/asset/item-1"
     assert purchase_service.accepted_hits[0]["mode_type"] == "new_api"
