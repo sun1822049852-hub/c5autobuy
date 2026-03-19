@@ -4,7 +4,6 @@ import re
 
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
-    QCheckBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -60,7 +59,6 @@ class PurchaseRuntimeWindow(QWidget):
         self.setWindowTitle("C5 购买运行")
         self.status_label = QLabel("准备就绪")
         self.status_label.setProperty("tone", "neutral")
-        self.query_only_checkbox = QCheckBox("仅查询模式")
         self.whitelist_input = QLineEdit()
         self.whitelist_input.setPlaceholderText("账号 ID，使用逗号分隔")
         self.refresh_button = QPushButton("刷新状态")
@@ -71,7 +69,6 @@ class PurchaseRuntimeWindow(QWidget):
 
         settings_group = QGroupBox("运行设置")
         settings_form = QFormLayout(settings_group)
-        settings_form.addRow("模式", self.query_only_checkbox)
         settings_form.addRow("白名单", self.whitelist_input)
 
         action_layout = QHBoxLayout()
@@ -171,7 +168,6 @@ class PurchaseRuntimeWindow(QWidget):
     def refresh_view(self) -> None:
         self.runtime_panel.load_status(self.view_model.raw_status)
         settings = self.view_model.settings
-        self.query_only_checkbox.setChecked(bool(settings["query_only"]))
         self.whitelist_input.setText(str(settings["whitelist_text"] or ""))
         self._sync_action_states()
         self._sync_runtime_polling()
@@ -181,7 +177,6 @@ class PurchaseRuntimeWindow(QWidget):
 
     def _save_settings(self) -> None:
         payload = {
-            "query_only": self.query_only_checkbox.isChecked(),
             "whitelist_account_ids": self._parse_whitelist(self.whitelist_input.text()),
         }
         self.controller.save_settings(payload)

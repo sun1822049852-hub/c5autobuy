@@ -33,7 +33,7 @@ class AccountCenterController:
             return
         self.publish_status("正在加载账号列表...")
         self.task_runner.submit(
-            lambda: self.backend_client.list_accounts(),
+            lambda: self.backend_client.list_account_center_accounts(),
             on_success=self._handle_accounts_loaded,
             on_error=self.publish_error,
         )
@@ -45,6 +45,82 @@ class AccountCenterController:
         self.task_runner.submit(
             lambda: self.backend_client.create_account(payload),
             on_success=lambda _result: self.load_accounts(),
+            on_error=self.publish_error,
+        )
+
+    def edit_account_remark(self, account_id: str, payload: dict[str, Any]) -> None:
+        if self.backend_client is None:
+            return
+        account = self._account_for(account_id)
+        if account is None:
+            return
+        self.publish_status("正在更新账号...")
+        update_payload = {
+            "remark_name": payload.get("remark_name"),
+            "proxy_mode": account.get("proxy_mode") or "direct",
+            "proxy_url": account.get("proxy_url"),
+            "api_key": account.get("api_key"),
+        }
+        self.task_runner.submit(
+            lambda: self.backend_client.update_account(account_id, update_payload),
+            on_success=lambda _result: self.load_accounts(),
+            on_error=self.publish_error,
+        )
+
+    def edit_account_api_key(self, account_id: str, payload: dict[str, Any]) -> None:
+        if self.backend_client is None:
+            return
+        account = self._account_for(account_id)
+        if account is None:
+            return
+        self.publish_status("正在更新账号...")
+        update_payload = {
+            "remark_name": account.get("remark_name"),
+            "proxy_mode": account.get("proxy_mode") or "direct",
+            "proxy_url": account.get("proxy_url"),
+            "api_key": payload.get("api_key"),
+        }
+        self.task_runner.submit(
+            lambda: self.backend_client.update_account(account_id, update_payload),
+            on_success=lambda _result: self.load_accounts(),
+            on_error=self.publish_error,
+        )
+
+    def edit_account_proxy(self, account_id: str, proxy_payload: dict[str, Any] | None) -> None:
+        self._submit_login_proxy(
+            account_id=account_id,
+            proxy_payload=proxy_payload,
+            start_when_unchanged=False,
+        )
+
+    def submit_login_proxy_for_account(self, account_id: str, proxy_payload: dict[str, Any] | None) -> None:
+        self._submit_login_proxy(
+            account_id=account_id,
+            proxy_payload=proxy_payload,
+            start_when_unchanged=True,
+        )
+
+    def update_account_purchase_config(self, account_id: str, payload: dict[str, Any]) -> None:
+        if self.backend_client is None:
+            return
+        self.publish_status("正在更新购买配置...")
+        self.task_runner.submit(
+            lambda: self.backend_client.update_account_purchase_config(account_id, payload),
+            on_success=lambda _result: self.load_accounts(),
+            on_error=self.publish_error,
+        )
+
+    def load_purchase_inventory_detail(
+        self,
+        account_id: str,
+        on_loaded: Callable[[dict[str, Any]], None],
+    ) -> None:
+        if self.backend_client is None:
+            return
+        self.publish_status("正在加载仓库配置...")
+        self.task_runner.submit(
+            lambda: self.backend_client.get_purchase_runtime_inventory_detail(account_id),
+            on_success=lambda detail: self._handle_purchase_inventory_detail_loaded(detail, on_loaded),
             on_error=self.publish_error,
         )
 
@@ -81,6 +157,12 @@ class AccountCenterController:
             on_success=partial(self._handle_login_started, account["account_id"]),
             on_error=self.publish_error,
         )
+
+    def submit_login_proxy_for_detail(self, proxy_payload: dict[str, Any] | None) -> None:
+        account = self.view_model.detail_account
+        if account is None:
+            return
+        self.submit_login_proxy_for_account(account["account_id"], proxy_payload)
 
     def resolve_login_conflict(self, action: str) -> None:
         if self.backend_client is None or self.active_login_account_id is None or self.active_login_task_id is None:
@@ -122,6 +204,16 @@ class AccountCenterController:
             on_error=self.publish_error,
         )
 
+    def delete_account(self, account_id: str) -> None:
+        if self.backend_client is None:
+            return
+        self.publish_status("正在删除账号...")
+        self.task_runner.submit(
+            lambda: self.backend_client.delete_account(account_id),
+            on_success=lambda _result: self.load_accounts(),
+            on_error=self.publish_error,
+        )
+
     def _handle_accounts_loaded(self, accounts: list[dict[str, Any]]) -> None:
         self.view_model.set_accounts(accounts)
         self.publish_status(f"已加载 {len(accounts)} 个账号")
@@ -136,6 +228,74 @@ class AccountCenterController:
         self.view_model.remove_account(account_id)
         self.publish_status("账号已删除")
         self.refresh_view()
+
+    def _handle_purchase_inventory_detail_loaded(
+        self,
+        detail: dict[str, Any],
+        on_loaded: Callable[[dict[str, Any]], None],
+    ) -> None:
+        self.publish_status("仓库配置已加载")
+        on_loaded(detail)
+
+    def _handle_login_proxy_updated(self, account_id: str, account: dict[str, Any]) -> None:
+        self.view_model.upsert_account(account)
+        self.refresh_view()
+        self._start_login(account_id)
+
+    def _submit_login_proxy(
+        self,
+        *,
+        account_id: str,
+        proxy_payload: dict[str, Any] | None,
+        start_when_unchanged: bool,
+    ) -> None:
+        if self.backend_client is None or proxy_payload is None:
+            return
+        account = self._account_for(account_id)
+        if account is None:
+            return
+
+        next_proxy_mode = proxy_payload.get("proxy_mode") or "direct"
+        next_proxy_url = proxy_payload.get("proxy_url")
+        current_proxy_mode = account.get("proxy_mode") or "direct"
+        current_proxy_url = account.get("proxy_url")
+        if current_proxy_mode == next_proxy_mode and current_proxy_url == next_proxy_url:
+            if start_when_unchanged:
+                self._start_login(account_id)
+            return
+
+        self.publish_status("正在更新登录代理...")
+        update_payload = {
+            "remark_name": account.get("remark_name"),
+            "proxy_mode": next_proxy_mode,
+            "proxy_url": next_proxy_url,
+            "api_key": account.get("api_key"),
+        }
+        self.task_runner.submit(
+            lambda: self.backend_client.update_account(account_id, update_payload),
+            on_success=partial(self._handle_login_proxy_updated, account_id),
+            on_error=self.publish_error,
+        )
+
+    def _start_login(self, account_id: str) -> None:
+        if self.backend_client is None:
+            return
+        self.active_login_account_id = account_id
+        self.publish_status("正在发起登录...")
+        self.task_runner.submit(
+            lambda: self.backend_client.start_login(account_id),
+            on_success=partial(self._handle_login_started, account_id),
+            on_error=self.publish_error,
+        )
+
+    def _account_for(self, account_id: str) -> dict[str, Any] | None:
+        account = self.view_model.account_by_id(account_id)
+        if account is not None:
+            return account
+        detail_account = self.view_model.detail_account
+        if detail_account is not None and detail_account.get("account_id") == account_id:
+            return detail_account
+        return None
 
     def _handle_login_started(self, account_id: str, task_payload: dict[str, Any]) -> None:
         self.active_login_account_id = account_id

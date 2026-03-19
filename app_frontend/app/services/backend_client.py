@@ -42,6 +42,12 @@ class BackendClient:
             response.raise_for_status()
             return response.json()
 
+    async def list_account_center_accounts(self) -> list[dict[str, Any]]:
+        async with self._client() as http_client:
+            response = await http_client.get("/account-center/accounts")
+            response.raise_for_status()
+            return response.json()
+
     async def get_account(self, account_id: str) -> dict[str, Any]:
         async with self._client() as http_client:
             response = await http_client.get(f"/accounts/{account_id}")
@@ -57,6 +63,12 @@ class BackendClient:
     async def update_account(self, account_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         async with self._client() as http_client:
             response = await http_client.patch(f"/accounts/{account_id}", json=payload)
+            response.raise_for_status()
+            return response.json()
+
+    async def update_account_purchase_config(self, account_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        async with self._client() as http_client:
+            response = await http_client.patch(f"/accounts/{account_id}/purchase-config", json=payload)
             response.raise_for_status()
             return response.json()
 

@@ -1,3 +1,42 @@
+from app_backend.domain.models.account import Account
+
+
+def _build_query_purchase_account(account_id: str) -> Account:
+    return Account(
+        account_id=account_id,
+        default_name=f"账号-{account_id}",
+        remark_name=None,
+        proxy_mode="direct",
+        proxy_url=None,
+        api_key=None,
+        c5_user_id="10001",
+        c5_nick_name="购买查询账号",
+        cookie_raw="NC5_accessToken=token-1",
+        purchase_capability_state="bound",
+        purchase_pool_state="not_connected",
+        last_login_at="2026-03-16T10:00:00",
+        last_error=None,
+        created_at="2026-03-16T10:00:00",
+        updated_at="2026-03-16T10:00:00",
+        disabled=False,
+        new_api_enabled=False,
+        fast_api_enabled=False,
+        token_enabled=False,
+    )
+
+
+def _prepare_active_purchase_account(app, account_id: str = "a1") -> None:
+    app.state.account_repository.create_account(_build_query_purchase_account(account_id))
+    app.state.purchase_runtime_service._inventory_refresh_gateway_factory = None
+    app.state.purchase_runtime_service._inventory_snapshot_repository.save(
+        account_id=account_id,
+        selected_steam_id="steam-1",
+        inventories=[{"steamId": "steam-1", "inventory_num": 910, "inventory_max": 1000}],
+        refreshed_at="2026-03-16T10:00:00",
+        last_error=None,
+    )
+
+
 async def test_query_runtime_status_defaults_to_idle(client):
     response = await client.get("/query-runtime/status")
 
@@ -18,7 +57,7 @@ async def test_query_runtime_status_defaults_to_idle(client):
     }
 
 
-async def test_start_query_runtime_returns_running_snapshot(client):
+async def test_start_query_runtime_rejects_when_no_purchase_account_is_available(client):
     created = await client.post(
         "/query-configs",
         json={
@@ -27,6 +66,23 @@ async def test_start_query_runtime_returns_running_snapshot(client):
         },
     )
     config_id = created.json()["config_id"]
+
+    response = await client.post("/query-runtime/start", json={"config_id": config_id})
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "当前没有可用购买账号"}
+
+
+async def test_start_query_runtime_returns_running_snapshot(client, app):
+    created = await client.post(
+        "/query-configs",
+        json={
+            "name": "查询配置A",
+            "description": "用于运行时",
+        },
+    )
+    config_id = created.json()["config_id"]
+    _prepare_active_purchase_account(app)
 
     response = await client.post("/query-runtime/start", json={"config_id": config_id})
     purchase_status = await client.get("/purchase-runtime/status")
@@ -38,7 +94,7 @@ async def test_start_query_runtime_returns_running_snapshot(client):
     assert payload["config_id"] == config_id
     assert payload["config_name"] == "查询配置A"
     assert payload["message"] == "运行中"
-    assert payload["account_count"] == 0
+    assert payload["account_count"] == 1
     assert payload["total_query_count"] == 0
     assert payload["total_found_count"] == 0
     assert payload["group_rows"] == []
@@ -163,7 +219,7 @@ async def test_prepare_query_runtime_returns_409_for_prepare_conflict(client, ap
     assert response.json() == {"detail": "没有可用于商品信息补全的已登录账号"}
 
 
-async def test_start_query_runtime_rejects_second_running_task(client):
+async def test_start_query_runtime_rejects_second_running_task(client, app):
     created = await client.post(
         "/query-configs",
         json={
@@ -172,6 +228,7 @@ async def test_start_query_runtime_rejects_second_running_task(client):
         },
     )
     config_id = created.json()["config_id"]
+    _prepare_active_purchase_account(app)
 
     await client.post("/query-runtime/start", json={"config_id": config_id})
     response = await client.post("/query-runtime/start", json={"config_id": config_id})
@@ -180,7 +237,7 @@ async def test_start_query_runtime_rejects_second_running_task(client):
     assert response.json() == {"detail": "已有查询任务在运行"}
 
 
-async def test_stop_query_runtime_returns_idle_snapshot(client):
+async def test_stop_query_runtime_returns_idle_snapshot(client, app):
     created = await client.post(
         "/query-configs",
         json={
@@ -189,6 +246,7 @@ async def test_stop_query_runtime_returns_idle_snapshot(client):
         },
     )
     config_id = created.json()["config_id"]
+    _prepare_active_purchase_account(app)
 
     await client.post("/query-runtime/start", json={"config_id": config_id})
     response = await client.post("/query-runtime/stop")

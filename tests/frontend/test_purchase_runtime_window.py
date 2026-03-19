@@ -3,7 +3,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 
 
-def build_snapshot(*, running: bool = False, query_only: bool = False) -> dict:
+def build_snapshot(*, running: bool = False) -> dict:
     return {
         "running": running,
         "message": "运行中" if running else "未运行",
@@ -28,8 +28,7 @@ def build_snapshot(*, running: bool = False, query_only: bool = False) -> dict:
             }
         ],
         "settings": {
-            "query_only": query_only,
-            "whitelist_account_ids": ["a1", "a2"] if query_only else [],
+            "whitelist_account_ids": ["a1", "a2"],
             "updated_at": "2026-03-16T12:05:00",
         },
     }
@@ -77,7 +76,7 @@ class FakeBackendClient:
 
     async def update_purchase_runtime_settings(self, payload: dict) -> dict:
         self.updated_payloads.append(dict(payload))
-        return build_snapshot(query_only=bool(payload["query_only"]))
+        return build_snapshot()
 
     async def get_purchase_runtime_inventory_detail(self, account_id: str) -> dict:
         self.detail_calls.append(account_id)
@@ -114,7 +113,6 @@ def test_purchase_runtime_window_submits_settings_and_refreshes_runtime(qtbot):
     )
     qtbot.addWidget(window)
 
-    window.query_only_checkbox.setChecked(True)
     window.whitelist_input.setText("a1, a2")
 
     qtbot.mouseClick(window.save_settings_button, Qt.LeftButton)
@@ -125,7 +123,8 @@ def test_purchase_runtime_window_submits_settings_and_refreshes_runtime(qtbot):
 
     qtbot.mouseClick(window.stop_button, Qt.LeftButton)
 
-    assert backend_client.updated_payloads == [{"query_only": True, "whitelist_account_ids": ["a1", "a2"]}]
+    assert not hasattr(window, "query_only_checkbox")
+    assert backend_client.updated_payloads == [{"whitelist_account_ids": ["a1", "a2"]}]
     assert backend_client.start_calls == 1
     assert backend_client.stop_calls == 1
     assert window.status_label.text() == "购买运行已停止"

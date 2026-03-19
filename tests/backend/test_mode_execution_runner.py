@@ -133,6 +133,24 @@ def test_mode_runner_filters_accounts_by_preference_and_capability():
     assert snapshot["active_account_count"] == 0
 
 
+def test_mode_runner_excludes_token_account_marked_not_login():
+    from app_backend.infrastructure.query.runtime.mode_runner import ModeRunner
+
+    blocked_account = build_account("a1", cookie_raw="NC5_accessToken=t; NC5_deviceId=d")
+    blocked_account.last_error = "Not login"
+
+    runner = ModeRunner(
+        build_mode("token"),
+        [blocked_account],
+        query_items=[build_item("1380979899390261111")],
+    )
+
+    snapshot = runner.snapshot()
+
+    assert snapshot["eligible_account_count"] == 0
+    assert snapshot["active_account_count"] == 0
+
+
 async def test_mode_runner_dispatches_one_item_per_active_worker():
     from app_backend.infrastructure.query.runtime.mode_runner import ModeRunner
     from app_backend.infrastructure.query.runtime.runtime_events import QueryExecutionEvent
@@ -535,3 +553,136 @@ async def test_mode_runner_keeps_recent_hit_and_error_events():
     assert snapshot["recent_events"][1]["total_wear_sum"] == 0.1234
     assert snapshot["recent_events"][1]["product_list"][0]["productId"] == "p-1"
     assert snapshot["recent_events"][1]["query_item_name"] == "商品-1380979899390261111"
+
+
+async def test_mode_runner_adds_rate_limit_increment_into_cycle_cooldown(monkeypatch):
+    import asyncio
+
+    from app_backend.infrastructure.query.runtime.mode_runner import ModeRunner
+    from app_backend.infrastructure.query.runtime.runtime_events import QueryExecutionEvent
+
+    stop_event = asyncio.Event()
+    recorded_timeouts: list[float] = []
+
+    class FakeWorker:
+        def __init__(self, account: Account) -> None:
+            self.account = account
+            self.rate_limit_increment = 0.0
+
+        def snapshot(self) -> dict[str, object]:
+            return {
+                "account_id": self.account.account_id,
+                "active": True,
+                "eligible": True,
+                "disabled_reason": None,
+                "backoff_until": None,
+                "rate_limit_increment": self.rate_limit_increment,
+                "last_query_at": None,
+                "last_success_at": None,
+                "last_error": "HTTP 429 Too Many Requests" if self.rate_limit_increment else None,
+            }
+
+        async def run_once(self, query_item: QueryItem) -> QueryExecutionEvent:
+            self.rate_limit_increment = 0.05
+            return QueryExecutionEvent(
+                timestamp="2026-03-16T10:00:00",
+                level="error",
+                mode_type="fast_api",
+                account_id=self.account.account_id,
+                query_item_id=query_item.query_item_id,
+                message="HTTP 429 Too Many Requests",
+                match_count=0,
+                latency_ms=12.0,
+                error="HTTP 429 Too Many Requests",
+            )
+
+    runner = ModeRunner(
+        build_mode("fast_api"),
+        [build_account("a1", api_key="api-1")],
+        query_items=[build_item("1380979899390261111")],
+        worker_factory=lambda mode_type, account: FakeWorker(account),
+    )
+
+    async def fake_wait_until(stop_event, execute_at: float) -> bool:
+        return False
+
+    async def fake_wait_for_stop(stop_event, timeout: float) -> bool:
+        recorded_timeouts.append(timeout)
+        return True
+
+    runner.start()
+    monkeypatch.setattr(runner, "_wait_until", fake_wait_until)
+    monkeypatch.setattr(runner, "_wait_for_stop", fake_wait_for_stop)
+
+    await runner.run_loop(stop_event)
+
+    assert recorded_timeouts == [1.05]
+
+
+async def test_mode_runner_forwards_not_login_event_to_event_sink():
+    from app_backend.infrastructure.query.runtime.mode_runner import ModeRunner
+    from app_backend.infrastructure.query.runtime.runtime_events import QueryExecutionEvent
+
+    forwarded_events: list[dict[str, object]] = []
+
+    class FakeWorker:
+        def __init__(self, account: Account) -> None:
+            self.account = account
+
+        def snapshot(self) -> dict[str, object]:
+            return {
+                "account_id": self.account.account_id,
+                "active": True,
+                "eligible": True,
+                "disabled_reason": None,
+                "last_query_at": None,
+                "last_success_at": None,
+                "last_error": None,
+            }
+
+        async def run_once(self, query_item: QueryItem) -> QueryExecutionEvent:
+            return QueryExecutionEvent(
+                timestamp="2026-03-16T10:00:02",
+                level="error",
+                mode_type="token",
+                account_id=self.account.account_id,
+                account_display_name="Token账号",
+                query_item_id=query_item.query_item_id,
+                query_item_name="商品-1380979899390261111",
+                message="Not login",
+                match_count=0,
+                latency_ms=9.0,
+                error="Not login",
+            )
+
+    runner = ModeRunner(
+        build_mode("token"),
+        [build_account("a1", cookie_raw="NC5_accessToken=t; NC5_deviceId=d")],
+        query_items=[build_item("1380979899390261111")],
+        worker_factory=lambda mode_type, account: FakeWorker(account),
+        event_sink=forwarded_events.append,
+    )
+
+    runner.start()
+    await runner.run_once()
+
+    assert forwarded_events == [
+        {
+            "timestamp": "2026-03-16T10:00:02",
+            "level": "error",
+            "mode_type": "token",
+            "account_id": "a1",
+            "account_display_name": "Token账号",
+            "query_item_id": "1380979899390261111",
+            "external_item_id": None,
+            "product_url": None,
+            "query_item_name": "商品-1380979899390261111",
+            "message": "Not login",
+            "match_count": 0,
+            "product_list": [],
+            "total_price": None,
+            "total_wear_sum": None,
+            "latency_ms": 9.0,
+            "error": "Not login",
+        }
+    ]

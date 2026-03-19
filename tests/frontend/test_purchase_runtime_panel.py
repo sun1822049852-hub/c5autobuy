@@ -62,7 +62,6 @@ def build_snapshot(*, running: bool = False) -> dict:
             },
         ],
         "settings": {
-            "query_only": True,
             "whitelist_account_ids": ["a1", "a2"],
             "updated_at": "2026-03-16T12:05:00",
         },

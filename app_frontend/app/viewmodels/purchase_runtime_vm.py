@@ -78,7 +78,6 @@ class PurchaseRuntimeViewModel:
         settings = dict(self._status.get("settings") or {})
         whitelist = [str(account_id) for account_id in settings.get("whitelist_account_ids") or []]
         return {
-            "query_only": bool(settings.get("query_only", False)),
             "whitelist_account_ids": whitelist,
             "whitelist_text": ", ".join(whitelist),
             "updated_at": settings.get("updated_at"),
@@ -98,7 +97,6 @@ class PurchaseRuntimeViewModel:
             "recent_events": [],
             "accounts": [],
             "settings": {
-                "query_only": False,
                 "whitelist_account_ids": [],
                 "updated_at": None,
             },

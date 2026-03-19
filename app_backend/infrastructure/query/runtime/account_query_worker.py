@@ -29,6 +29,7 @@ class AccountQueryWorker:
         self._found_count = 0
         self._disabled_reason: str | None = None
         self._backoff_until: float | datetime | None = None
+        self._rate_limit_until: float | datetime | None = None
         self._rate_limit_increment = 0.0
         self._last_query_at: float | datetime | None = None
         self._last_success_at: float | datetime | None = None
@@ -39,10 +40,11 @@ class AccountQueryWorker:
         return self._account
 
     async def run_once(self, query_item: QueryItem) -> QueryExecutionEvent | None:
+        now_value = self._now_provider()
+        self._expire_rate_limit_if_needed(now_value)
         if not self._is_active():
             return None
 
-        now_value = self._now_provider()
         self._last_query_at = now_value
         self._query_count += 1
 
@@ -72,6 +74,7 @@ class AccountQueryWorker:
         )
 
     def snapshot(self) -> dict[str, object]:
+        self._expire_rate_limit_if_needed(self._now_provider())
         return {
             "account_id": str(getattr(self._account, "account_id")),
             "active": self._is_active(),
@@ -100,18 +103,24 @@ class AccountQueryWorker:
         error = (result.error or "").strip()
         if error == "HTTP 429 Too Many Requests":
             self._rate_limit_increment = round(self._rate_limit_increment + 0.05, 2)
-            self._backoff_until = self._add_seconds(now_value, 600)
+            self._rate_limit_until = self._add_seconds(now_value, 600)
+            self._backoff_until = None
             return
 
         if error == "Not login" or "HTTP 403" in error:
             self._disabled_reason = error or "query disabled"
 
     def _is_active(self) -> bool:
-        if self._disabled_reason:
-            return False
-        if self._backoff_until is None:
-            return True
-        return self._to_seconds(self._now_provider()) >= self._to_seconds(self._backoff_until)
+        return self._disabled_reason is None
+
+    def _expire_rate_limit_if_needed(self, now_value: float | datetime) -> None:
+        if self._rate_limit_until is None:
+            return
+        if self._to_seconds(now_value) < self._to_seconds(self._rate_limit_until):
+            return
+        self._rate_limit_until = None
+        self._rate_limit_increment = 0.0
+        self._backoff_until = None
 
     @staticmethod
     def _add_seconds(now_value: float | datetime, seconds: float) -> float | datetime:

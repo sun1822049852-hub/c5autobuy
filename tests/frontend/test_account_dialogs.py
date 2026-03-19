@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
+
 
 def _account() -> dict:
     return {
@@ -124,3 +126,119 @@ def test_account_dialogs_do_not_expose_purchase_capability_editing(qtbot):
         assert not hasattr(dialog, "cookie_input")
         assert not hasattr(dialog, "c5_user_id_input")
         assert not hasattr(dialog, "purchase_capability_input")
+
+
+def test_login_proxy_dialog_prefills_current_proxy(qtbot):
+    from app_frontend.app.dialogs.login_proxy_dialog import LoginProxyDialog
+
+    account = _account()
+    account["proxy_mode"] = "custom"
+    account["proxy_url"] = "http://127.0.0.1:9400"
+
+    dialog = LoginProxyDialog(account=account)
+    qtbot.addWidget(dialog)
+
+    assert dialog.proxy_mode_combo.currentText() == "custom"
+    assert dialog.proxy_url_input.text() == "http://127.0.0.1:9400"
+    assert dialog.build_proxy_payload() == {
+        "proxy_mode": "custom",
+        "proxy_url": "http://127.0.0.1:9400",
+    }
+
+
+def test_login_proxy_dialog_builds_split_proxy_payload(qtbot):
+    from app_frontend.app.dialogs.login_proxy_dialog import LoginProxyDialog
+
+    dialog = LoginProxyDialog(account=_account())
+    qtbot.addWidget(dialog)
+    dialog.proxy_mode_combo.setCurrentText("custom")
+    dialog.proxy_url_input.clear()
+    dialog.proxy_scheme_combo.setCurrentText("https")
+    dialog.proxy_host_input.setText("127.0.0.1")
+    dialog.proxy_port_input.setText("9900")
+    dialog.proxy_username_input.setText("demo")
+    dialog.proxy_password_input.setText("secret")
+
+    assert dialog.build_proxy_payload() == {
+        "proxy_mode": "custom",
+        "proxy_url": "https://demo:secret@127.0.0.1:9900",
+    }
+
+
+def test_purchase_config_dialog_lists_warehouses_and_only_allows_available_selection(qtbot):
+    from app_frontend.app.dialogs.purchase_config_dialog import PurchaseConfigDialog
+
+    dialog = PurchaseConfigDialog(
+        account=_account() | {"disabled": False, "selected_steam_id": "steam-1"},
+        inventory_detail={
+            "account_id": "a-1",
+            "display_name": "旧备注",
+            "selected_steam_id": "steam-1",
+            "refreshed_at": "2026-03-18T10:00:00",
+            "last_error": None,
+            "inventories": [
+                {
+                    "steamId": "steam-1",
+                    "inventory_num": 910,
+                    "inventory_max": 1000,
+                    "remaining_capacity": 90,
+                    "is_selected": True,
+                    "is_available": True,
+                },
+                {
+                    "steamId": "steam-2",
+                    "inventory_num": 1000,
+                    "inventory_max": 1000,
+                    "remaining_capacity": 0,
+                    "is_selected": False,
+                    "is_available": False,
+                },
+            ],
+        },
+    )
+    qtbot.addWidget(dialog)
+
+    assert dialog.inventory_table.rowCount() == 2
+    assert dialog.inventory_table.item(0, 0).text() == "steam-1"
+    assert dialog.inventory_table.item(1, 4).text() == "库存已满"
+    assert bool(dialog.inventory_table.item(1, 0).flags() & Qt.ItemFlag.ItemIsSelectable) is False
+
+    dialog.inventory_table.selectRow(0)
+
+    assert dialog.build_payload() == {
+        "disabled": False,
+        "selected_steam_id": "steam-1",
+    }
+
+
+def test_purchase_config_dialog_keeps_full_current_warehouse_as_display_only(qtbot):
+    from app_frontend.app.dialogs.purchase_config_dialog import PurchaseConfigDialog
+
+    dialog = PurchaseConfigDialog(
+        account=_account() | {"disabled": False, "selected_steam_id": "steam-2"},
+        inventory_detail={
+            "account_id": "a-1",
+            "display_name": "旧备注",
+            "selected_steam_id": "steam-2",
+            "refreshed_at": "2026-03-18T10:00:00",
+            "last_error": None,
+            "inventories": [
+                {
+                    "steamId": "steam-2",
+                    "inventory_num": 1000,
+                    "inventory_max": 1000,
+                    "remaining_capacity": 0,
+                    "is_selected": True,
+                    "is_available": False,
+                }
+            ],
+        },
+    )
+    qtbot.addWidget(dialog)
+
+    assert dialog.current_selected_input.text() == "steam-2"
+    assert dialog.inventory_table.currentRow() == -1
+    assert dialog.build_payload() == {
+        "disabled": False,
+        "selected_steam_id": None,
+    }

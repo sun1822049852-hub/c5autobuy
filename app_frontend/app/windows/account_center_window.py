@@ -2,18 +2,17 @@ from __future__ import annotations
 
 from typing import Any
 
-from PySide6.QtWidgets import QDialog, QGridLayout, QLabel, QMessageBox
-from PySide6.QtWidgets import (
-    QHBoxLayout,
-    QPushButton,
-    QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QDialog, QHBoxLayout, QLabel, QMenu, QMessageBox, QPushButton, QVBoxLayout, QWidget
 
+from app_frontend.app.controllers.account_center_controller import AccountCenterController
+from app_frontend.app.dialogs.api_key_dialog import ApiKeyDialog
 from app_frontend.app.dialogs.create_account_dialog import CreateAccountDialog
 from app_frontend.app.dialogs.edit_account_dialog import EditAccountDialog
+from app_frontend.app.dialogs.login_proxy_dialog import LoginProxyDialog
 from app_frontend.app.dialogs.login_task_dialog import LoginTaskDialog
-from app_frontend.app.controllers.account_center_controller import AccountCenterController
+from app_frontend.app.dialogs.purchase_config_dialog import PurchaseConfigDialog
+from app_frontend.app.dialogs.remark_edit_dialog import RemarkEditDialog
 from app_frontend.app.services.async_runner import InlineTaskRunner, QtAsyncRunner
 from app_frontend.app.viewmodels.account_center_vm import AccountCenterViewModel
 from app_frontend.app.widgets.account_detail_panel import AccountDetailPanel
@@ -29,6 +28,10 @@ class AccountCenterWindow(QWidget):
         task_runner=None,
         create_dialog_factory=None,
         edit_dialog_factory=None,
+        remark_dialog_factory=None,
+        api_key_dialog_factory=None,
+        purchase_config_dialog_factory=None,
+        login_proxy_dialog_factory=None,
         login_task_dialog_factory=None,
         confirm_service=None,
         parent=None,
@@ -40,6 +43,22 @@ class AccountCenterWindow(QWidget):
         self.create_dialog_factory = create_dialog_factory or (lambda parent=None: CreateAccountDialog(parent=parent))
         self.edit_dialog_factory = edit_dialog_factory or (
             lambda account, parent=None: EditAccountDialog(account=account, parent=parent)
+        )
+        self.remark_dialog_factory = remark_dialog_factory or (
+            lambda account, parent=None: RemarkEditDialog(account=account, parent=parent)
+        )
+        self.api_key_dialog_factory = api_key_dialog_factory or (
+            lambda account, parent=None: ApiKeyDialog(account=account, parent=parent)
+        )
+        self.purchase_config_dialog_factory = purchase_config_dialog_factory or (
+            lambda account, inventory_detail, parent=None: PurchaseConfigDialog(
+                account=account,
+                inventory_detail=inventory_detail,
+                parent=parent,
+            )
+        )
+        self.login_proxy_dialog_factory = login_proxy_dialog_factory or (
+            lambda account, parent=None: LoginProxyDialog(account=account, parent=parent)
         )
         self.login_task_dialog_factory = login_task_dialog_factory or (
             lambda on_resolve_conflict, parent=None: LoginTaskDialog(
@@ -56,7 +75,7 @@ class AccountCenterWindow(QWidget):
         self.status_label = QLabel("准备就绪")
         self.status_label.setProperty("tone", "neutral")
         self.refresh_button = QPushButton("刷新列表")
-        self.create_account_button = QPushButton("新建账号")
+        self.create_account_button = QPushButton("添加账号")
         self.view_detail_button = QPushButton("查看详情")
         self.edit_account_button = self.detail_panel.edit_query_button
         self.start_login_button = self.detail_panel.start_login_button
@@ -72,21 +91,20 @@ class AccountCenterWindow(QWidget):
             publish_error=self._handle_error,
         )
 
-        action_grid = QGridLayout()
-        action_grid.addWidget(self.refresh_button, 0, 0)
-        action_grid.addWidget(self.create_account_button, 0, 1)
-        action_grid.addWidget(self.view_detail_button, 1, 0, 1, 2)
+        header_row = QHBoxLayout()
+        header_row.addWidget(self.refresh_button)
+        header_row.addStretch(1)
+        header_row.addWidget(self.create_account_button)
 
-        left_layout = QVBoxLayout()
-        left_layout.addWidget(self.status_label)
-        left_layout.addWidget(self.account_table)
-        left_layout.addLayout(action_grid)
-
-        root_layout = QHBoxLayout(self)
-        root_layout.addLayout(left_layout, 3)
-        root_layout.addWidget(self.detail_panel, 2)
+        root_layout = QVBoxLayout(self)
+        root_layout.addWidget(self.status_label)
+        root_layout.addLayout(header_row)
+        root_layout.addWidget(self.account_table)
 
         self.account_table.itemSelectionChanged.connect(self._handle_selection_changed)
+        self.account_table.cellClicked.connect(self._handle_table_cell_clicked)
+        self.account_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.account_table.customContextMenuRequested.connect(self._open_table_context_menu)
         self.refresh_button.clicked.connect(self.load_accounts)
         self.create_account_button.clicked.connect(self._create_account)
         self.edit_account_button.clicked.connect(self._edit_account)
@@ -186,10 +204,6 @@ class AccountCenterWindow(QWidget):
 
     def refresh_accounts(self) -> None:
         self.account_table.set_rows(self.view_model.table_rows)
-        if self.view_model.detail_account is None:
-            self.detail_panel.clear_account()
-        else:
-            self.detail_panel.load_account(self.view_model.detail_account)
         self._sync_action_states()
 
     def load_accounts(self) -> None:
@@ -199,14 +213,81 @@ class AccountCenterWindow(QWidget):
         self.view_model.select_account(self.account_table.selected_account_id())
         self._sync_action_states()
 
+    def _handle_table_cell_clicked(self, row_index: int, column_index: int) -> None:
+        account_id = self.account_table.account_id_at_row(row_index)
+        if account_id is None:
+            return
+        self.view_model.select_account(account_id)
+        account = self.view_model.selected_account
+        if account is None:
+            return
+        if column_index == 0:
+            dialog = self.remark_dialog_factory(account, self)
+            if dialog.exec() != int(QDialog.DialogCode.Accepted):
+                return
+            self.controller.edit_account_remark(account_id, dialog.build_payload())
+            return
+        if column_index == 1:
+            dialog = self.api_key_dialog_factory(account, self)
+            if dialog.exec() != int(QDialog.DialogCode.Accepted):
+                return
+            self.controller.edit_account_api_key(account_id, dialog.build_payload())
+            return
+        if column_index == 2:
+            if str(account.get("purchase_status_code") or "") == "not_logged_in":
+                dialog_parent = self.window() if isinstance(self.window(), QWidget) else self
+                dialog = self.login_proxy_dialog_factory(account, dialog_parent)
+                if isinstance(dialog, QDialog):
+                    dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
+                    dialog.raise_()
+                    dialog.activateWindow()
+                if dialog.exec() != int(QDialog.DialogCode.Accepted):
+                    return
+                self.controller.submit_login_proxy_for_account(account_id, dialog.build_proxy_payload())
+                return
+            self.controller.load_purchase_inventory_detail(
+                account_id,
+                lambda inventory_detail: self._open_purchase_config_dialog(account_id, inventory_detail),
+            )
+            return
+        if column_index == 3:
+            dialog_parent = self.window() if isinstance(self.window(), QWidget) else self
+            dialog = self.login_proxy_dialog_factory(account, dialog_parent)
+            if isinstance(dialog, QDialog):
+                dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
+                dialog.raise_()
+                dialog.activateWindow()
+            if dialog.exec() != int(QDialog.DialogCode.Accepted):
+                return
+            self.controller.edit_account_proxy(account_id, dialog.build_proxy_payload())
+
     def _open_selected_detail(self) -> None:
         account = self.view_model.open_selected_account_detail()
-        if account is None:
-            self.detail_panel.clear_account()
-            self._sync_action_states()
-            return
-        self.detail_panel.load_account(account)
+        if account is not None:
+            self.detail_panel.load_account(account)
         self._sync_action_states()
+
+    def _open_purchase_config_dialog(self, account_id: str, inventory_detail: dict[str, Any]) -> None:
+        account = self.view_model.account_by_id(account_id)
+        if account is None:
+            return
+        dialog = self.purchase_config_dialog_factory(account, inventory_detail, self)
+        if dialog.exec() != int(QDialog.DialogCode.Accepted):
+            return
+        self.controller.update_account_purchase_config(account_id, dialog.build_payload())
+
+    def _open_table_context_menu(self, position) -> None:
+        row_index = self.account_table.rowAt(position.y())
+        if row_index < 0:
+            return
+        account_id = self.account_table.account_id_at_row(row_index)
+        if account_id is None:
+            return
+        menu = QMenu(self)
+        delete_action = menu.addAction("删除账号")
+        selected_action = menu.exec(self.account_table.viewport().mapToGlobal(position))
+        if selected_action == delete_action:
+            self._delete_account_by_id(account_id)
 
     def _create_account(self) -> None:
         if self.backend_client is None:
@@ -228,7 +309,20 @@ class AccountCenterWindow(QWidget):
         self.controller.edit_detail_account(dialog.build_payload(), dialog.build_query_mode_payload())
 
     def _start_login(self) -> None:
-        self.controller.start_login_for_detail()
+        if self.backend_client is None:
+            return
+        account = self.view_model.detail_account
+        if account is None:
+            return
+        dialog_parent = self.window() if isinstance(self.window(), QWidget) else self
+        dialog = self.login_proxy_dialog_factory(account, dialog_parent)
+        if isinstance(dialog, QDialog):
+            dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
+            dialog.raise_()
+            dialog.activateWindow()
+        if dialog.exec() != int(QDialog.DialogCode.Accepted):
+            return
+        self.controller.submit_login_proxy_for_detail(dialog.build_proxy_payload())
 
     def _clear_purchase_capability(self) -> None:
         if self.backend_client is None:
@@ -252,6 +346,14 @@ class AccountCenterWindow(QWidget):
             return
         self.controller.delete_detail_account()
 
+    def _delete_account_by_id(self, account_id: str) -> None:
+        if self.backend_client is None:
+            return
+        if not self.confirm_service.ask("确认删除", "确定要删除当前账号吗？"):
+            self._publish_status("已取消删除账号")
+            return
+        self.controller.delete_account(account_id)
+
     def _resolve_login_conflict(self, action: str) -> None:
         self.controller.resolve_login_conflict(action)
 
@@ -262,10 +364,10 @@ class AccountCenterWindow(QWidget):
         self.create_account_button.setEnabled(backend_ready)
         self.view_detail_button.setEnabled(has_selection)
         detail_loaded = self.view_model.detail_account is not None
-        self.edit_account_button.setEnabled(backend_ready and detail_loaded)
-        self.start_login_button.setEnabled(backend_ready and detail_loaded)
-        self.clear_purchase_button.setEnabled(backend_ready and detail_loaded)
-        self.delete_account_button.setEnabled(backend_ready and detail_loaded)
+        self.edit_account_button.setEnabled(backend_ready and detail_loaded and has_selection)
+        self.start_login_button.setEnabled(backend_ready and detail_loaded and has_selection)
+        self.clear_purchase_button.setEnabled(backend_ready and detail_loaded and has_selection)
+        self.delete_account_button.setEnabled(backend_ready and detail_loaded and has_selection)
 
     def _handle_error(self, message: str) -> None:
         self._publish_status(f"操作失败: {message}")

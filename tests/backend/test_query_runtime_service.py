@@ -140,6 +140,21 @@ class FakeAccountRepository:
     def list_accounts(self):
         return list(self._accounts)
 
+    def get_account(self, account_id: str):
+        for account in self._accounts:
+            if account.account_id == account_id:
+                return account
+        return None
+
+    def update_account(self, account_id: str, **changes):
+        account = self.get_account(account_id)
+        if account is None:
+            raise KeyError(account_id)
+        for key, value in changes.items():
+            if hasattr(account, key):
+                setattr(account, key, value)
+        return account
+
 
 class FakeRuntime:
     def __init__(self, config, accounts) -> None:
@@ -169,19 +184,60 @@ class FakePurchaseRuntimeService:
         *,
         start_result: tuple[bool, str] = (True, "购买运行时已启动"),
         stop_result: tuple[bool, str] = (True, "购买运行时已停止"),
+        active_account_count: int = 1,
     ) -> None:
         self.start_calls = 0
         self.stop_calls = 0
+        self.mark_auth_invalid_calls: list[dict[str, str | None]] = []
         self._start_result = start_result
         self._stop_result = stop_result
+        self._active_account_count = active_account_count
+        self._running = False
+        self._on_no_available_accounts = None
+        self._on_accounts_available = None
 
     def start(self) -> tuple[bool, str]:
         self.start_calls += 1
+        if self._start_result[0] or self._start_result[1] == "已有购买运行时在运行":
+            self._running = True
         return self._start_result
 
     def stop(self) -> tuple[bool, str]:
         self.stop_calls += 1
+        if self._stop_result[0]:
+            self._running = False
         return self._stop_result
+
+    def get_status(self) -> dict[str, object]:
+        return {
+            "running": self._running,
+            "active_account_count": self._active_account_count,
+        }
+
+    def has_available_accounts(self) -> bool:
+        return self._active_account_count > 0
+
+    def register_availability_callbacks(
+        self,
+        *,
+        on_no_available_accounts=None,
+        on_accounts_available=None,
+    ) -> None:
+        self._on_no_available_accounts = on_no_available_accounts
+        self._on_accounts_available = on_accounts_available
+
+    def emit_all_accounts_unavailable(self) -> None:
+        self._active_account_count = 0
+        if callable(self._on_no_available_accounts):
+            self._on_no_available_accounts()
+
+    def emit_accounts_recovered(self, *, active_account_count: int = 1) -> None:
+        self._active_account_count = active_account_count
+        if callable(self._on_accounts_available):
+            self._on_accounts_available()
+
+    def mark_account_auth_invalid(self, *, account_id: str, error: str | None = None) -> None:
+        self.mark_auth_invalid_calls.append({"account_id": account_id, "error": error})
 
 
 def test_query_task_runtime_starts_mode_runners_and_aggregates_snapshot():
@@ -645,6 +701,93 @@ def test_runtime_service_starts_purchase_runtime_before_query_runtime():
     assert purchase_service.start_calls == 1
 
 
+def test_runtime_service_rejects_query_start_when_no_purchase_accounts_are_available():
+    from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
+
+    repository = FakeQueryConfigRepository(build_config("cfg-1"))
+    purchase_service = FakePurchaseRuntimeService(active_account_count=0)
+    service = QueryRuntimeService(
+        query_config_repository=repository,
+        account_repository=FakeAccountRepository(),
+        runtime_factory=lambda config, accounts: FakeRuntime(config, accounts),
+        purchase_runtime_service=purchase_service,
+    )
+
+    started, message = service.start(config_id="cfg-1")
+
+    assert started is False
+    assert message == "当前没有可用购买账号"
+    assert service.get_status()["running"] is False
+
+
+def test_runtime_service_pauses_query_when_purchase_accounts_become_unavailable():
+    from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
+
+    repository = FakeQueryConfigRepository(build_config("cfg-1"))
+    purchase_service = FakePurchaseRuntimeService()
+    created_runtimes: list[FakeRuntime] = []
+
+    def runtime_factory(config, accounts):
+        runtime = FakeRuntime(config, accounts)
+        created_runtimes.append(runtime)
+        return runtime
+
+    service = QueryRuntimeService(
+        query_config_repository=repository,
+        account_repository=FakeAccountRepository(),
+        runtime_factory=runtime_factory,
+        purchase_runtime_service=purchase_service,
+    )
+
+    started, _message = service.start(config_id="cfg-1")
+
+    assert started is True
+
+    purchase_service.emit_all_accounts_unavailable()
+    snapshot = service.get_status()
+
+    assert created_runtimes[0].stopped is True
+    assert snapshot["running"] is False
+    assert snapshot["config_id"] == "cfg-1"
+    assert snapshot["config_name"] == "测试配置"
+    assert snapshot["message"] == "等待购买账号恢复"
+    assert purchase_service.stop_calls == 0
+
+
+def test_runtime_service_auto_restarts_query_when_purchase_accounts_recover():
+    from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
+
+    repository = FakeQueryConfigRepository(build_config("cfg-1"))
+    purchase_service = FakePurchaseRuntimeService()
+    created_runtimes: list[FakeRuntime] = []
+
+    def runtime_factory(config, accounts):
+        runtime = FakeRuntime(config, accounts)
+        created_runtimes.append(runtime)
+        return runtime
+
+    service = QueryRuntimeService(
+        query_config_repository=repository,
+        account_repository=FakeAccountRepository(),
+        runtime_factory=runtime_factory,
+        purchase_runtime_service=purchase_service,
+    )
+
+    started, _message = service.start(config_id="cfg-1")
+    assert started is True
+
+    purchase_service.emit_all_accounts_unavailable()
+    purchase_service.emit_accounts_recovered()
+    snapshot = service.get_status()
+
+    assert len(created_runtimes) == 2
+    assert created_runtimes[0].stopped is True
+    assert created_runtimes[1].started is True
+    assert snapshot["running"] is True
+    assert snapshot["config_id"] == "cfg-1"
+    assert snapshot["config_name"] == "测试配置"
+
+
 def test_runtime_service_allows_query_start_when_purchase_runtime_is_already_running():
     from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
 
@@ -764,3 +907,64 @@ def test_runtime_service_respects_mode_enabled_flag():
     assert snapshot["modes"]["fast_api"]["in_window"] is False
     assert snapshot["modes"]["fast_api"]["query_count"] == 0
     assert snapshot["modes"]["fast_api"]["found_count"] == 0
+
+
+def test_runtime_service_propagates_not_login_event_to_account_repository_and_purchase_runtime():
+    from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
+
+    repository = FakeQueryConfigRepository(build_config("cfg-1"))
+    account_repository = FakeAccountRepository(
+        [build_account("a1", cookie_raw="foo=bar; NC5_accessToken=token-1; NC5_deviceId=device-1")]
+    )
+    purchase_service = FakePurchaseRuntimeService()
+
+    class FakeRuntimeWithEventSink(FakeRuntime):
+        def __init__(self, config, accounts, *, event_sink=None) -> None:
+            super().__init__(config, accounts)
+            self._event_sink = event_sink
+
+        def start(self) -> None:
+            super().start()
+            if callable(self._event_sink):
+                self._event_sink(
+                    {
+                        "timestamp": "2026-03-18T12:00:00",
+                        "level": "error",
+                        "mode_type": "token",
+                        "account_id": "a1",
+                        "account_display_name": "账号-a1",
+                        "query_item_id": "item-1",
+                        "query_item_name": "商品-1",
+                        "message": "Not login",
+                        "match_count": 0,
+                        "product_list": [],
+                        "total_price": None,
+                        "total_wear_sum": None,
+                        "latency_ms": 9.0,
+                        "error": "Not login",
+                    }
+                )
+
+    service = QueryRuntimeService(
+        query_config_repository=repository,
+        account_repository=account_repository,
+        runtime_factory=lambda config, accounts, event_sink=None: FakeRuntimeWithEventSink(
+            config,
+            accounts,
+            event_sink=event_sink,
+        ),
+        purchase_runtime_service=purchase_service,
+    )
+
+    started, message = service.start(config_id="cfg-1")
+
+    assert started is True
+    assert message == "查询任务已启动"
+    account = account_repository.get_account("a1")
+    assert account is not None
+    assert account.purchase_capability_state == "expired"
+    assert account.purchase_pool_state == "paused_auth_invalid"
+    assert account.last_error == "Not login"
+    assert purchase_service.mark_auth_invalid_calls == [
+        {"account_id": "a1", "error": "Not login"}
+    ]

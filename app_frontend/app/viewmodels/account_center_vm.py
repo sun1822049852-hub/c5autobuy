@@ -21,17 +21,29 @@ class AccountCenterViewModel:
 
     @property
     def table_rows(self) -> list[dict[str, Any]]:
-        return [
-            {
-                "account_id": account["account_id"],
-                "display_name": self._display_name(account),
-                "query_capability": "已配置" if account.get("api_key") else "未配置",
-                "purchase_capability": purchase_capability_label(account.get("purchase_capability_state", "unbound")),
-                "purchase_pool_state": purchase_pool_label(account.get("purchase_pool_state", "not_connected")),
-                "proxy": account.get("proxy_url") or "直连",
-            }
-            for account in self._accounts
-        ]
+        rows: list[dict[str, Any]] = []
+        for account in self._accounts:
+            display_name = self._display_name(account)
+            api_key_available = bool(account.get("api_key_present")) or bool(account.get("api_key"))
+            purchase_status_text = account.get("purchase_status_text")
+            if purchase_status_text is None:
+                purchase_status_text = purchase_pool_label(account.get("purchase_pool_state", "not_connected"))
+            rows.append(
+                {
+                    "account_id": account["account_id"],
+                    "c5_nickname": display_name,
+                    "api_key": "有" if api_key_available else "无",
+                    "purchase_status": purchase_status_text,
+                    "purchase_status_code": str(account.get("purchase_status_code") or ""),
+                    "proxy": account.get("proxy_display") or account.get("proxy_url") or "直连",
+                    # 兼容旧测试和旧窗口层，后续窗口重构时统一切到上面的新字段。
+                    "display_name": display_name,
+                    "query_capability": "已配置" if api_key_available else "未配置",
+                    "purchase_capability": purchase_capability_label(account.get("purchase_capability_state", "unbound")),
+                    "purchase_pool_state": purchase_pool_label(account.get("purchase_pool_state", "not_connected")),
+                }
+            )
+        return rows
 
     @property
     def detail_account(self) -> dict[str, Any] | None:
@@ -47,6 +59,9 @@ class AccountCenterViewModel:
 
     def select_account(self, account_id: str | None) -> None:
         self.selected_account_id = account_id
+
+    def account_by_id(self, account_id: str) -> dict[str, Any] | None:
+        return self._get_account(account_id)
 
     def open_selected_account_detail(self) -> dict[str, Any] | None:
         if self.selected_account_id is None:

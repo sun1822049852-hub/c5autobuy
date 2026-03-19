@@ -9,10 +9,10 @@ class EditAccountDialog(_AccountDialogBase):
         self.setWindowTitle("编辑账号")
         self.remark_name_input.setText(account.get("remark_name") or "")
         self.api_key_input.setText(account.get("api_key") or "")
-        proxy_url = account.get("proxy_url") or ""
-        proxy_mode = account.get("proxy_mode") or "direct"
-        self.proxy_mode_combo.setCurrentText(proxy_mode)
-        self.proxy_url_input.setText(proxy_url)
+        self.set_proxy_inputs(
+            proxy_mode=account.get("proxy_mode") or "direct",
+            proxy_url=account.get("proxy_url"),
+        )
         self._set_query_mode_state(
             new_api_enabled=bool(account.get("new_api_enabled", False)),
             fast_api_enabled=bool(account.get("fast_api_enabled", False)),

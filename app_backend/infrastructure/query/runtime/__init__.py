@@ -1,6 +1,5 @@
 from .account_query_worker import AccountQueryWorker
 from .fast_api_query_executor import FastApiQueryExecutor
-from .legacy_scanner_adapter import LegacyScannerAdapter
 from .mode_runner import ModeRunner
 from .new_api_query_executor import NewApiQueryExecutor
 from .query_executor_router import QueryExecutorRouter
@@ -15,7 +14,6 @@ from .window_scheduler import WindowScheduler
 __all__ = [
     "AccountQueryWorker",
     "FastApiQueryExecutor",
-    "LegacyScannerAdapter",
     "ModeRunner",
     "NewApiQueryExecutor",
     "QueryExecutorRouter",

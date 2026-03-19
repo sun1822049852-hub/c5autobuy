@@ -7,7 +7,7 @@ from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QTableWidget, QTab
 
 
 class AccountTableWidget(QTableWidget):
-    HEADERS = ["显示名", "查询能力", "购买能力", "购买池", "代理"]
+    HEADERS = ["C5昵称", "API Key", "购买状态", "代理"]
 
     def __init__(self, parent=None) -> None:
         super().__init__(0, len(self.HEADERS), parent)
@@ -22,10 +22,9 @@ class AccountTableWidget(QTableWidget):
         self.setRowCount(len(rows))
         for row_index, row in enumerate(rows):
             values = [
-                row["display_name"],
-                row["query_capability"],
-                row["purchase_capability"],
-                row["purchase_pool_state"],
+                row["c5_nickname"],
+                row["api_key"],
+                row["purchase_status"],
                 row["proxy"],
             ]
             for column_index, value in enumerate(values):
@@ -33,6 +32,12 @@ class AccountTableWidget(QTableWidget):
                 if column_index == 0:
                     item.setData(Qt.ItemDataRole.UserRole, row["account_id"])
                 self.setItem(row_index, column_index, item)
+
+    def account_id_at_row(self, row_index: int) -> str | None:
+        item = self.item(row_index, 0)
+        if item is None:
+            return None
+        return item.data(Qt.ItemDataRole.UserRole)
 
     def selected_account_id(self) -> str | None:
         indexes = self.selectionModel().selectedRows()

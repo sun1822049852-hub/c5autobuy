@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable
+from datetime import datetime
 from inspect import Parameter, signature
 
+from app_backend.domain.enums.account_states import PurchaseCapabilityState, PurchasePoolState
 from app_backend.domain.models.query_config import QueryConfig, QueryModeSetting
 from app_backend.infrastructure.query.runtime.query_task_runtime import QueryTaskRuntime
 
@@ -22,64 +25,114 @@ class QueryRuntimeService:
         self._account_repository = account_repository
         self._runtime_factory = runtime_factory or self._build_default_runtime
         self._purchase_runtime_service = purchase_runtime_service
+        self._state_lock = threading.RLock()
         self._runtime = None
+        self._pending_resume_config_id: str | None = None
+        self._pending_resume_config_name: str | None = None
+        self._paused_at: str | None = None
+        self._register_purchase_runtime_callbacks()
 
     def start(self, *, config_id: str) -> tuple[bool, str]:
-        if self._has_running_runtime():
-            return False, "已有查询任务在运行"
+        with self._state_lock:
+            if self._has_running_runtime_locked():
+                return False, "已有查询任务在运行"
 
-        config = self._query_config_repository.get_config(config_id)
-        if config is None:
-            return False, "查询配置不存在"
+            config = self._query_config_repository.get_config(config_id)
+            if config is None:
+                return False, "查询配置不存在"
 
-        purchase_started, purchase_message = self._ensure_purchase_runtime_started()
-        if not purchase_started:
-            return False, purchase_message
+            purchase_started, purchase_message = self._ensure_purchase_runtime_started()
+            if not purchase_started:
+                return False, purchase_message
+            if not self._purchase_runtime_has_available_accounts():
+                return False, "当前没有可用购买账号"
 
-        accounts = list(self._account_repository.list_accounts())
-        hit_sink = self._resolve_hit_sink()
-        if hit_sink is not None and self._runtime_factory_accepts_hit_sink():
-            runtime = self._runtime_factory(config, accounts, hit_sink=hit_sink)
-        else:
-            runtime = self._runtime_factory(config, accounts)
-        runtime.start()
-        self._runtime = runtime
-        return True, "查询任务已启动"
+            accounts = list(self._account_repository.list_accounts())
+            hit_sink = self._resolve_hit_sink()
+            runtime = self._create_runtime(config, accounts, hit_sink=hit_sink)
+            self._runtime = runtime
+            runtime.start()
+            self._clear_pending_resume_state()
+            return True, "查询任务已启动"
 
     def stop(self) -> tuple[bool, str]:
-        if not self._has_running_runtime():
-            self._runtime = None
-            return False, "当前没有运行中的查询任务"
+        with self._state_lock:
+            if not self._has_running_runtime_locked() and not self._has_pending_resume_state():
+                self._runtime = None
+                return False, "当前没有运行中的查询任务"
 
-        self._runtime.stop()
-        self._runtime = None
+            runtime = self._runtime
+            self._runtime = None
+            self._clear_pending_resume_state()
+        if runtime is not None:
+            runtime.stop()
         self._stop_linked_purchase_runtime()
         return True, "查询任务已停止"
 
     def get_status(self) -> dict[str, object]:
-        if not self._has_running_runtime():
-            self._runtime = None
-            return {
-                "running": False,
-                "config_id": None,
-                "config_name": None,
-                "message": "未运行",
-                "account_count": 0,
-                "started_at": None,
-                "stopped_at": None,
-                "total_query_count": 0,
-                "total_found_count": 0,
-                "modes": {},
-                "group_rows": [],
-                "recent_events": [],
-            }
-        return self._normalize_snapshot(self._runtime.snapshot(), getattr(self._runtime, "config", None))
+        with self._state_lock:
+            if not self._has_running_runtime_locked():
+                self._runtime = None
+                if self._has_pending_resume_state():
+                    return self._build_waiting_snapshot()
+                return self._build_idle_snapshot()
+            return self._normalize_snapshot(self._runtime.snapshot(), getattr(self._runtime, "config", None))
 
     def _has_running_runtime(self) -> bool:
+        with self._state_lock:
+            return self._has_running_runtime_locked()
+
+    def _has_running_runtime_locked(self) -> bool:
         if self._runtime is None:
             return False
         snapshot = self._runtime.snapshot()
         return bool(snapshot.get("running"))
+
+    def _has_pending_resume_state(self) -> bool:
+        return bool(self._pending_resume_config_id)
+
+    def _clear_pending_resume_state(self) -> None:
+        self._pending_resume_config_id = None
+        self._pending_resume_config_name = None
+        self._paused_at = None
+
+    def _build_idle_snapshot(self) -> dict[str, object]:
+        return {
+            "running": False,
+            "config_id": None,
+            "config_name": None,
+            "message": "未运行",
+            "account_count": 0,
+            "started_at": None,
+            "stopped_at": None,
+            "total_query_count": 0,
+            "total_found_count": 0,
+            "modes": {},
+            "group_rows": [],
+            "recent_events": [],
+        }
+
+    def _build_waiting_snapshot(self) -> dict[str, object]:
+        config_id = self._pending_resume_config_id
+        config = self._query_config_repository.get_config(config_id) if config_id else None
+        snapshot = {
+            "running": False,
+            "config_id": config_id,
+            "config_name": self._pending_resume_config_name or getattr(config, "name", None),
+            "message": "等待购买账号恢复",
+            "account_count": 0,
+            "started_at": None,
+            "stopped_at": self._paused_at,
+            "total_query_count": 0,
+            "total_found_count": 0,
+            "modes": {},
+            "group_rows": [],
+            "recent_events": [],
+        }
+        if config is not None:
+            for mode_setting in config.mode_settings:
+                snapshot["modes"][mode_setting.mode_type] = self._build_default_mode_snapshot(mode_setting)
+        return snapshot
 
     def _normalize_snapshot(self, snapshot: dict[str, object], config: QueryConfig | None) -> dict[str, object]:
         normalized = {
@@ -249,8 +302,28 @@ class QueryRuntimeService:
         return datetime.fromtimestamp(value).isoformat(timespec="seconds")
 
     @staticmethod
-    def _build_default_runtime(config, accounts: list[object], *, hit_sink=None) -> QueryTaskRuntime:
-        return QueryTaskRuntime(config, accounts, hit_sink=hit_sink)
+    def _build_default_runtime(config, accounts: list[object], *, hit_sink=None, event_sink=None) -> QueryTaskRuntime:
+        return QueryTaskRuntime(config, accounts, hit_sink=hit_sink, event_sink=event_sink)
+
+    def _create_runtime(self, config, accounts: list[object], *, hit_sink=None):
+        kwargs = {}
+        if hit_sink is not None and self._runtime_factory_accepts_parameter("hit_sink"):
+            kwargs["hit_sink"] = hit_sink
+        event_sink = self._resolve_event_sink()
+        if event_sink is not None and self._runtime_factory_accepts_parameter("event_sink"):
+            kwargs["event_sink"] = event_sink
+        try:
+            return self._runtime_factory(config, accounts, **kwargs)
+        except TypeError as exc:
+            message = str(exc)
+            fallback_kwargs = dict(kwargs)
+            if "unexpected keyword argument 'event_sink'" in message:
+                fallback_kwargs.pop("event_sink", None)
+            if "unexpected keyword argument 'hit_sink'" in message:
+                fallback_kwargs.pop("hit_sink", None)
+            if fallback_kwargs == kwargs:
+                raise
+            return self._runtime_factory(config, accounts, **fallback_kwargs)
 
     def _resolve_hit_sink(self):
         if self._purchase_runtime_service is None:
@@ -261,7 +334,7 @@ class QueryRuntimeService:
         hit_sink = getattr(self._purchase_runtime_service, "accept_query_hit", None)
         return hit_sink if callable(hit_sink) else None
 
-    def _runtime_factory_accepts_hit_sink(self) -> bool:
+    def _runtime_factory_accepts_parameter(self, parameter_name: str) -> bool:
         try:
             parameters = signature(self._runtime_factory).parameters.values()
         except (TypeError, ValueError):
@@ -270,9 +343,12 @@ class QueryRuntimeService:
         for parameter in parameters:
             if parameter.kind == Parameter.VAR_KEYWORD:
                 return True
-            if parameter.name == "hit_sink":
+            if parameter.name == parameter_name:
                 return True
         return False
+
+    def _resolve_event_sink(self):
+        return self._handle_runtime_event
 
     def _ensure_purchase_runtime_started(self) -> tuple[bool, str]:
         if self._purchase_runtime_service is None:
@@ -288,6 +364,21 @@ class QueryRuntimeService:
             return True, normalized_message or "购买运行时已启动"
         return False, normalized_message or "购买运行时启动失败"
 
+    def _purchase_runtime_has_available_accounts(self) -> bool:
+        if self._purchase_runtime_service is None:
+            return True
+        has_available_accounts = getattr(self._purchase_runtime_service, "has_available_accounts", None)
+        if callable(has_available_accounts):
+            return bool(has_available_accounts())
+        get_status = getattr(self._purchase_runtime_service, "get_status", None)
+        if callable(get_status):
+            try:
+                status = get_status()
+            except Exception:
+                return True
+            return int(status.get("active_account_count", 0)) > 0
+        return True
+
     def _stop_linked_purchase_runtime(self) -> None:
         if self._purchase_runtime_service is None:
             return
@@ -301,4 +392,85 @@ class QueryRuntimeService:
         if stopped:
             return
         if normalized_message == "当前没有运行中的购买运行时":
+            return
+
+    def _register_purchase_runtime_callbacks(self) -> None:
+        if self._purchase_runtime_service is None:
+            return
+        register_callbacks = getattr(self._purchase_runtime_service, "register_availability_callbacks", None)
+        if not callable(register_callbacks):
+            return
+        register_callbacks(
+            on_no_available_accounts=self._pause_for_purchase_unavailable,
+            on_accounts_available=self._resume_after_purchase_recovered,
+        )
+
+    def _pause_for_purchase_unavailable(self) -> None:
+        with self._state_lock:
+            if not self._has_running_runtime_locked():
+                return
+            runtime = self._runtime
+            config = getattr(runtime, "config", None) if runtime is not None else None
+            self._runtime = None
+            self._pending_resume_config_id = getattr(config, "config_id", None)
+            self._pending_resume_config_name = getattr(config, "name", None)
+            self._paused_at = datetime.now().isoformat(timespec="seconds")
+        if runtime is not None:
+            runtime.stop()
+
+    def _resume_after_purchase_recovered(self) -> None:
+        with self._state_lock:
+            if self._has_running_runtime_locked():
+                return
+            config_id = self._pending_resume_config_id
+        if not config_id:
+            return
+        self.start(config_id=config_id)
+
+    def _handle_runtime_event(self, event: dict[str, object]) -> None:
+        if not isinstance(event, dict):
+            return
+        error = str(event.get("error") or "").strip()
+        account_id = str(event.get("account_id") or "").strip()
+        if error != "Not login" or not account_id:
+            return
+        self._mark_account_not_login(account_id=account_id, error=error)
+
+    def _mark_account_not_login(self, *, account_id: str, error: str) -> None:
+        account = None
+        get_account = getattr(self._account_repository, "get_account", None)
+        if callable(get_account):
+            try:
+                account = get_account(account_id)
+            except Exception:
+                account = None
+
+        if (
+            account is not None
+            and str(getattr(account, "purchase_capability_state", "") or "") == PurchaseCapabilityState.EXPIRED
+            and str(getattr(account, "last_error", "") or "") == error
+        ):
+            return
+
+        update_account = getattr(self._account_repository, "update_account", None)
+        if callable(update_account):
+            try:
+                update_account(
+                    account_id,
+                    purchase_capability_state=PurchaseCapabilityState.EXPIRED,
+                    purchase_pool_state=PurchasePoolState.PAUSED_AUTH_INVALID,
+                    last_error=error,
+                    updated_at=datetime.now().isoformat(timespec="seconds"),
+                )
+            except Exception:
+                pass
+
+        if self._purchase_runtime_service is None:
+            return
+        mark_account_auth_invalid = getattr(self._purchase_runtime_service, "mark_account_auth_invalid", None)
+        if not callable(mark_account_auth_invalid):
+            return
+        try:
+            mark_account_auth_invalid(account_id=account_id, error=error)
+        except Exception:
             return

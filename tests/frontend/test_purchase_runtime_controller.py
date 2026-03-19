@@ -4,7 +4,7 @@ from __future__ import annotations
 from app_frontend.app.viewmodels.purchase_runtime_vm import PurchaseRuntimeViewModel
 
 
-def build_snapshot(*, running: bool = False, query_only: bool = False) -> dict:
+def build_snapshot(*, running: bool = False) -> dict:
     return {
         "running": running,
         "message": "运行中" if running else "未运行",
@@ -17,7 +17,6 @@ def build_snapshot(*, running: bool = False, query_only: bool = False) -> dict:
         "recent_events": [],
         "accounts": [],
         "settings": {
-            "query_only": query_only,
             "whitelist_account_ids": ["a1"],
             "updated_at": "2026-03-16T12:05:00",
         },
@@ -64,7 +63,7 @@ class FakeBackendClient:
 
     async def update_purchase_runtime_settings(self, payload: dict) -> dict:
         self.updated_payloads.append(dict(payload))
-        return build_snapshot(running=False, query_only=bool(payload["query_only"]))
+        return build_snapshot(running=False)
 
     async def get_purchase_runtime_inventory_detail(self, account_id: str) -> dict:
         self.detail_calls.append(account_id)
@@ -119,15 +118,14 @@ def test_purchase_runtime_controller_loads_status():
 def test_purchase_runtime_controller_updates_settings_and_controls_runtime():
     controller, view_model, backend_client, statuses, errors, refresh_counter = _build_controller()
 
-    controller.save_settings({"query_only": True, "whitelist_account_ids": ["a1"]})
+    controller.save_settings({"whitelist_account_ids": ["a1"]})
     controller.start_runtime()
     controller.stop_runtime()
 
-    assert backend_client.updated_payloads == [{"query_only": True, "whitelist_account_ids": ["a1"]}]
+    assert backend_client.updated_payloads == [{"whitelist_account_ids": ["a1"]}]
     assert backend_client.start_calls == 1
     assert backend_client.stop_calls == 1
     assert view_model.summary["message"] == "未运行"
-    assert view_model.settings["query_only"] is False
     assert refresh_counter["count"] == 3
     assert errors == []
     assert statuses[-1] == "购买运行已停止"

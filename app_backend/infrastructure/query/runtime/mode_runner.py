@@ -28,6 +28,7 @@ class ModeRunner:
         now_provider=None,
         random_provider=None,
         hit_sink=None,
+        event_sink=None,
     ) -> None:
         self._mode_setting = mode_setting
         self._accounts = list(accounts)
@@ -36,6 +37,7 @@ class ModeRunner:
         self._now_provider = now_provider or datetime.now
         self._random_provider = random_provider or random.uniform
         self._hit_sink = hit_sink
+        self._event_sink = event_sink
         self._query_item_scheduler = query_item_scheduler or QueryItemScheduler(self._query_items)
         self._window_scheduler = WindowScheduler(
             window_enabled=bool(mode_setting.window_enabled),
@@ -206,13 +208,16 @@ class ModeRunner:
             if event is not None:
                 await self._handle_event(event)
 
-            cooldown_seconds = self._compute_cycle_delay()
+            worker_snapshot = worker.snapshot()
+            cooldown_seconds = self._compute_cycle_delay(
+                rate_limit_increment=worker_snapshot.get("rate_limit_increment", 0.0),
+            )
             self._set_worker_cooldown_until(worker, cooldown_seconds)
             if await self._wait_for_stop(stop_event, cooldown_seconds):
                 return
             self._clear_worker_cooldown_until(worker)
 
-    def _compute_cycle_delay(self) -> float:
+    def _compute_cycle_delay(self, *, rate_limit_increment: object = 0.0) -> float:
         base_delay = self._pick_delay(
             self._mode_setting.base_cooldown_min,
             self._mode_setting.base_cooldown_max,
@@ -223,7 +228,11 @@ class ModeRunner:
                 self._mode_setting.random_delay_min,
                 self._mode_setting.random_delay_max,
             )
-        return max(base_delay + random_delay, 0.0)
+        try:
+            rate_limit_delay = max(float(rate_limit_increment or 0.0), 0.0)
+        except (TypeError, ValueError):
+            rate_limit_delay = 0.0
+        return max(base_delay + random_delay + rate_limit_delay, 0.0)
 
     def _pick_delay(self, minimum: float, maximum: float) -> float:
         minimum_value = max(float(minimum), 0.0)
@@ -242,6 +251,8 @@ class ModeRunner:
         if mode_type == "fast_api":
             return bool(getattr(account, "fast_api_enabled", False)) and bool(getattr(account, "api_key", None))
         if mode_type == "token":
+            if str(getattr(account, "last_error", "") or "").strip() == "Not login":
+                return False
             return bool(getattr(account, "token_enabled", False)) and self._has_access_token(
                 getattr(account, "cookie_raw", None)
             )
@@ -299,11 +310,20 @@ class ModeRunner:
         if inspect.isawaitable(result):
             await result
 
+    async def _forward_event(self, event: QueryExecutionEvent) -> None:
+        if self._event_sink is None:
+            return
+
+        result = self._event_sink(self._serialize_event(event))
+        if inspect.isawaitable(result):
+            await result
+
     async def _handle_event(self, event: QueryExecutionEvent) -> None:
         self._query_count += 1
         self._found_count += int(getattr(event, "match_count", 0))
         self._last_error = getattr(event, "error", None)
         self._record_event(event)
+        await self._forward_event(event)
         await self._forward_hit(event)
 
     def _build_group_rows(self, worker_snapshots: list[dict[str, object]], *, in_window: bool) -> list[dict[str, object]]:

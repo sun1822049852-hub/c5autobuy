@@ -99,7 +99,6 @@ class PurchaseRuntimeSettingsRecord(Base):
     __tablename__ = "purchase_runtime_settings"
 
     settings_id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
-    query_only: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     whitelist_account_ids_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     updated_at: Mapped[str | None] = mapped_column(Text, nullable=True)
 

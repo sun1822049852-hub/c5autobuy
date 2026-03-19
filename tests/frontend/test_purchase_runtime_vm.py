@@ -62,7 +62,6 @@ def build_snapshot(*, running: bool = False, active_account_count: int = 0) -> d
             },
         ],
         "settings": {
-            "query_only": True,
             "whitelist_account_ids": ["a1", "a2"],
             "updated_at": "2026-03-16T12:05:00",
         },
@@ -109,5 +108,4 @@ def test_purchase_runtime_vm_formats_summary_and_account_rows():
     assert vm.recent_event_rows[0]["account_display_name"] == "主号"
     assert vm.recent_event_rows[1]["status"] == "inventory_recovered"
     assert vm.recent_event_rows[1]["account_display_name"] == "备号"
-    assert vm.settings["query_only"] is True
     assert vm.settings["whitelist_text"] == "a1, a2"

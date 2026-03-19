@@ -23,6 +23,40 @@ async def backend_client(tmp_path: Path):
         yield app, client
 
 
+def _prepare_active_purchase_account(app, account_id: str = "a1") -> None:
+    app.state.account_repository.create_account(
+        Account(
+            account_id=account_id,
+            default_name=f"账号-{account_id}",
+            remark_name=None,
+            proxy_mode="direct",
+            proxy_url=None,
+            api_key=None,
+            c5_user_id="10001",
+            c5_nick_name="主号",
+            cookie_raw="NC5_accessToken=token",
+            purchase_capability_state="bound",
+            purchase_pool_state="not_connected",
+            last_login_at="2026-03-16T20:00:00",
+            last_error=None,
+            created_at="2026-03-16T20:00:00",
+            updated_at="2026-03-16T20:00:00",
+            disabled=False,
+            new_api_enabled=False,
+            fast_api_enabled=False,
+            token_enabled=False,
+        )
+    )
+    app.state.purchase_runtime_service._inventory_refresh_gateway_factory = None
+    app.state.purchase_runtime_service._inventory_snapshot_repository.save(
+        account_id=account_id,
+        selected_steam_id="steam-1",
+        inventories=[{"steamId": "steam-1", "inventory_num": 910, "inventory_max": 1000}],
+        refreshed_at="2026-03-16T20:05:00",
+        last_error=None,
+    )
+
+
 async def test_backend_client_lists_and_creates_accounts(backend_client):
     _app, client = backend_client
 
@@ -153,7 +187,8 @@ async def test_backend_client_gets_updates_and_deletes_query_config(backend_clie
 
 
 async def test_backend_client_starts_and_stops_query_runtime(backend_client):
-    _app, client = backend_client
+    app, client = backend_client
+    _prepare_active_purchase_account(app)
 
     created = await client.create_query_config(
         {
@@ -224,7 +259,7 @@ async def test_backend_client_fetches_purchase_runtime_status(backend_client):
     payload = await client.get_purchase_runtime_status()
 
     assert payload["running"] is False
-    assert payload["settings"]["query_only"] is False
+    assert payload["settings"]["whitelist_account_ids"] == []
 
 
 async def test_backend_client_updates_purchase_runtime_settings(backend_client):
@@ -232,13 +267,11 @@ async def test_backend_client_updates_purchase_runtime_settings(backend_client):
 
     updated = await client.update_purchase_runtime_settings(
         {
-            "query_only": True,
             "whitelist_account_ids": ["a1"],
         }
     )
     settings = await client.get_purchase_runtime_settings()
 
-    assert updated["settings"]["query_only"] is True
     assert updated["settings"]["whitelist_account_ids"] == ["a1"]
     assert settings["whitelist_account_ids"] == ["a1"]
 
@@ -280,6 +313,73 @@ async def test_backend_client_fetches_purchase_runtime_inventory_detail(backend_
     assert payload["selected_steam_id"] == "steam-1"
     assert payload["inventories"][0]["remaining_capacity"] == 90
     assert payload["inventories"][0]["is_selected"] is True
+
+
+async def test_backend_client_lists_account_center_accounts(backend_client):
+    app, client = backend_client
+    _prepare_active_purchase_account(app, account_id="a-center")
+
+    payload = await client.list_account_center_accounts()
+
+    assert len(payload) == 1
+    assert payload[0]["account_id"] == "a-center"
+    assert payload[0]["display_name"] == "主号"
+    assert payload[0]["api_key_present"] is False
+    assert payload[0]["purchase_status_code"] == "selected_warehouse"
+    assert payload[0]["purchase_status_text"] == "steam-1"
+    assert payload[0]["proxy_display"] == "直连"
+
+
+async def test_backend_client_updates_account_purchase_config(backend_client):
+    app, client = backend_client
+
+    app.state.account_repository.create_account(
+        Account(
+            account_id="a-config",
+            default_name="账号-a-config",
+            remark_name="配置账号",
+            proxy_mode="direct",
+            proxy_url=None,
+            api_key="api-config",
+            c5_user_id="10001",
+            c5_nick_name="配置主号",
+            cookie_raw="NC5_accessToken=token",
+            purchase_capability_state="bound",
+            purchase_pool_state="not_connected",
+            last_login_at="2026-03-16T20:00:00",
+            last_error=None,
+            created_at="2026-03-16T20:00:00",
+            updated_at="2026-03-16T20:00:00",
+            disabled=False,
+            new_api_enabled=True,
+            fast_api_enabled=False,
+            token_enabled=False,
+        )
+    )
+    app.state.purchase_runtime_service._inventory_snapshot_repository.save(
+        account_id="a-config",
+        selected_steam_id="steam-1",
+        inventories=[
+            {"steamId": "steam-1", "inventory_num": 900, "inventory_max": 1000},
+            {"steamId": "steam-2", "inventory_num": 850, "inventory_max": 1000},
+        ],
+        refreshed_at="2026-03-16T20:05:00",
+        last_error=None,
+    )
+
+    updated = await client.update_account_purchase_config(
+        "a-config",
+        {
+            "disabled": True,
+            "selected_steam_id": "steam-2",
+        },
+    )
+
+    assert updated["account_id"] == "a-config"
+    assert updated["disabled"] is True
+    assert updated["selected_steam_id"] == "steam-2"
+    assert updated["purchase_status_code"] == "disabled"
+    assert updated["purchase_status_text"] == "禁用"
 
 
 async def test_backend_client_updates_query_mode_setting(backend_client):

@@ -22,10 +22,12 @@ class QueryTaskRuntime:
         mode_runner_factory=None,
         query_item_scheduler_factory=None,
         hit_sink=None,
+        event_sink=None,
     ) -> None:
         self._config = config
         self._accounts = list(accounts)
         self._hit_sink = hit_sink
+        self._event_sink = event_sink
         self._running = False
         self._started_at: str | None = None
         self._stopped_at: str | None = None
@@ -48,6 +50,7 @@ class QueryTaskRuntime:
                     query_items=list(query_items),
                     query_item_scheduler=mode_scheduler,
                     hit_sink=self._hit_sink,
+                    event_sink=self._event_sink,
                 )
             )
 
@@ -155,6 +158,7 @@ class QueryTaskRuntime:
         query_items: list[object] | None = None,
         query_item_scheduler=None,
         hit_sink=None,
+        event_sink=None,
     ) -> ModeRunner:
         return ModeRunner(
             mode_setting,
@@ -162,6 +166,7 @@ class QueryTaskRuntime:
             query_items=query_items,
             query_item_scheduler=query_item_scheduler,
             hit_sink=hit_sink,
+            event_sink=event_sink,
         )
 
     @staticmethod
@@ -169,12 +174,23 @@ class QueryTaskRuntime:
         return QueryItemScheduler(list(query_items))
 
     @staticmethod
-    def _build_mode_runner(factory, mode_setting, accounts: list[object], *, query_items, query_item_scheduler, hit_sink):
+    def _build_mode_runner(
+        factory,
+        mode_setting,
+        accounts: list[object],
+        *,
+        query_items,
+        query_item_scheduler,
+        hit_sink,
+        event_sink,
+    ):
         kwargs = {"query_items": query_items}
         if query_item_scheduler is not None and QueryTaskRuntime._factory_accepts_parameter(factory, "query_item_scheduler"):
             kwargs["query_item_scheduler"] = query_item_scheduler
         if hit_sink is not None and QueryTaskRuntime._factory_accepts_parameter(factory, "hit_sink"):
             kwargs["hit_sink"] = hit_sink
+        if event_sink is not None and QueryTaskRuntime._factory_accepts_parameter(factory, "event_sink"):
+            kwargs["event_sink"] = event_sink
         return factory(mode_setting, accounts, **kwargs)
 
     @staticmethod

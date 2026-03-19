@@ -120,7 +120,7 @@ async def test_account_worker_disables_account_on_403():
     assert snapshot["active"] is False
 
 
-async def test_account_worker_adds_backoff_on_429():
+async def test_account_worker_adds_rate_limit_increment_on_429_without_disabling_worker():
     from app_backend.infrastructure.query.runtime.account_query_worker import AccountQueryWorker
     from app_backend.infrastructure.query.runtime.runtime_events import QueryExecutionResult
 
@@ -147,8 +147,50 @@ async def test_account_worker_adds_backoff_on_429():
     snapshot = worker.snapshot()
 
     assert snapshot["disabled_reason"] is None
-    assert snapshot["backoff_until"] == 700.0
+    assert snapshot["active"] is True
+    assert snapshot["backoff_until"] is None
     assert snapshot["rate_limit_increment"] == 0.05
+
+
+async def test_account_worker_accumulates_429_increment_and_resets_after_rate_limit_window():
+    from app_backend.infrastructure.query.runtime.account_query_worker import AccountQueryWorker
+    from app_backend.infrastructure.query.runtime.runtime_events import QueryExecutionResult
+
+    now_holder = {"value": 100.0}
+
+    class FakeAdapter:
+        async def execute_query(self, *, mode_type, account, query_item):
+            return QueryExecutionResult(
+                success=False,
+                match_count=0,
+                product_list=[],
+                total_price=0.0,
+                total_wear_sum=0.0,
+                error="HTTP 429 Too Many Requests",
+                latency_ms=10.0,
+            )
+
+    worker = AccountQueryWorker(
+        mode_type="fast_api",
+        account=build_account("a1", api_key="api-1"),
+        scanner_adapter=FakeAdapter(),
+        now_provider=lambda: now_holder["value"],
+    )
+
+    await worker.run_once(build_item())
+    now_holder["value"] = 200.0
+    await worker.run_once(build_item("1380979899390262222"))
+    limited_snapshot = worker.snapshot()
+
+    assert limited_snapshot["active"] is True
+    assert limited_snapshot["rate_limit_increment"] == 0.1
+
+    now_holder["value"] = 801.0
+    reset_snapshot = worker.snapshot()
+
+    assert reset_snapshot["active"] is True
+    assert reset_snapshot["backoff_until"] is None
+    assert reset_snapshot["rate_limit_increment"] == 0.0
 
 
 async def test_account_worker_disables_account_on_not_login():

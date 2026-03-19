@@ -82,10 +82,8 @@ def build_account(account_id: str = "a1", *, api_key: str | None = "api-1") -> A
 
 
 class StubPurchaseRuntimeService:
-    def __init__(self, *, query_only: bool = False) -> None:
-        self.query_only = query_only
+    def __init__(self) -> None:
         self.accepted_hits: list[dict[str, object]] = []
-        self.blocked_hits = 0
         self.running = False
         self.start_calls = 0
         self.stop_calls = 0
@@ -106,9 +104,6 @@ class StubPurchaseRuntimeService:
 
     def accept_query_hit(self, hit: dict[str, object]) -> dict[str, object]:
         payload = dict(hit)
-        if self.query_only:
-            self.blocked_hits += 1
-            return {"accepted": False, "status": "blocked_query_only"}
         self.accepted_hits.append(payload)
         return {"accepted": True, "status": "queued"}
 
@@ -220,54 +215,6 @@ async def test_mode_runner_skips_hit_sink_for_zero_match_event():
     await runner.run_once()
 
     assert purchase_service.accepted_hits == []
-    assert purchase_service.blocked_hits == 0
-
-
-async def test_mode_runner_marks_hit_blocked_when_query_only_enabled():
-    from app_backend.infrastructure.query.runtime.mode_runner import ModeRunner
-    from app_backend.infrastructure.query.runtime.runtime_events import QueryExecutionEvent
-
-    purchase_service = StubPurchaseRuntimeService(query_only=True)
-
-    class FakeWorker:
-        def __init__(self, account: Account) -> None:
-            self.account = account
-
-        def snapshot(self) -> dict[str, object]:
-            return {"account_id": self.account.account_id, "active": True}
-
-        async def run_once(self, query_item: QueryItem) -> QueryExecutionEvent:
-            return QueryExecutionEvent(
-                timestamp="2026-03-16T10:00:00",
-                level="info",
-                mode_type="new_api",
-                account_id=self.account.account_id,
-                query_item_id=query_item.query_item_id,
-                external_item_id=query_item.external_item_id,
-                product_url=query_item.product_url,
-                query_item_name=query_item.item_name,
-                message="query completed",
-                match_count=1,
-                product_list=[{"productId": "p-1", "price": 88.0, "actRebateAmount": 0}],
-                total_price=88.0,
-                total_wear_sum=0.1234,
-                latency_ms=12.0,
-                error=None,
-            )
-
-    runner = ModeRunner(
-        build_mode("new_api"),
-        [build_account()],
-        query_items=[build_item(item_name="AK")],
-        worker_factory=lambda mode_type, account: FakeWorker(account),
-        hit_sink=purchase_service.accept_query_hit,
-    )
-
-    runner.start()
-    await runner.run_once()
-
-    assert purchase_service.accepted_hits == []
-    assert purchase_service.blocked_hits == 1
 
 
 def test_query_task_runtime_passes_hit_sink_to_mode_runners():

@@ -38,12 +38,12 @@ class _AccountDialogBase(QDialog):
         self._desired_token_enabled = False
         self._syncing_query_mode_ui = False
 
-        basic_group = QGroupBox("基础配置")
-        basic_form = QFormLayout(basic_group)
-        basic_form.addRow("备注名", self.remark_name_input)
-        basic_form.addRow("代理模式", self.proxy_mode_combo)
-        basic_form.addRow("完整代理", self.proxy_url_input)
-        basic_form.addRow("API Key", self.api_key_input)
+        self.basic_group = QGroupBox("基础配置")
+        self.basic_form = QFormLayout(self.basic_group)
+        self.basic_form.addRow("备注名", self.remark_name_input)
+        self.basic_form.addRow("代理模式", self.proxy_mode_combo)
+        self.basic_form.addRow("完整代理", self.proxy_url_input)
+        self.basic_form.addRow("API Key", self.api_key_input)
 
         query_mode_group = QGroupBox("查询开关")
         query_mode_layout = QVBoxLayout(query_mode_group)
@@ -52,18 +52,18 @@ class _AccountDialogBase(QDialog):
         query_mode_layout.addWidget(self.token_enabled_checkbox)
         self.query_mode_group = query_mode_group
 
-        split_group = QGroupBox("拆分代理")
-        split_layout = QFormLayout(split_group)
-        split_layout.addRow("协议", self.proxy_scheme_combo)
-        split_layout.addRow("主机", self.proxy_host_input)
-        split_layout.addRow("端口", self.proxy_port_input)
-        split_layout.addRow("用户名", self.proxy_username_input)
-        split_layout.addRow("密码", self.proxy_password_input)
+        self.split_group = QGroupBox("拆分代理")
+        self.split_layout = QFormLayout(self.split_group)
+        self.split_layout.addRow("协议", self.proxy_scheme_combo)
+        self.split_layout.addRow("主机", self.proxy_host_input)
+        self.split_layout.addRow("端口", self.proxy_port_input)
+        self.split_layout.addRow("用户名", self.proxy_username_input)
+        self.split_layout.addRow("密码", self.proxy_password_input)
 
-        root_layout = QVBoxLayout(self)
-        root_layout.addWidget(basic_group)
-        root_layout.addWidget(query_mode_group)
-        root_layout.addWidget(split_group)
+        self.root_layout = QVBoxLayout(self)
+        self.root_layout.addWidget(self.basic_group)
+        self.root_layout.addWidget(query_mode_group)
+        self.root_layout.addWidget(self.split_group)
 
         self.proxy_mode_combo.currentTextChanged.connect(self._sync_proxy_mode_ui)
         self.api_key_input.textChanged.connect(lambda _text: self._sync_query_mode_ui())
@@ -74,12 +74,17 @@ class _AccountDialogBase(QDialog):
         self._sync_query_mode_ui()
 
     def build_payload(self) -> dict:
-        proxy_mode, proxy_url = self._build_proxy_payload()
         return {
             "remark_name": self.remark_name_input.text().strip() or None,
+            **self.build_proxy_payload(),
+            "api_key": self.api_key_input.text().strip() or None,
+        }
+
+    def build_proxy_payload(self) -> dict[str, str | None]:
+        proxy_mode, proxy_url = self._build_proxy_payload()
+        return {
             "proxy_mode": proxy_mode,
             "proxy_url": proxy_url,
-            "api_key": self.api_key_input.text().strip() or None,
         }
 
     def build_query_mode_payload(self) -> dict[str, bool]:
@@ -117,6 +122,16 @@ class _AccountDialogBase(QDialog):
             host_and_port = f"{host}:{port}"
 
         return "custom", f"{scheme}://{auth}{host_and_port}"
+
+    def set_proxy_inputs(self, *, proxy_mode: str, proxy_url: str | None) -> None:
+        self.proxy_mode_combo.setCurrentText(proxy_mode or "direct")
+        self.proxy_url_input.setText(proxy_url or "")
+
+    def set_basic_row_visible(self, field, visible: bool) -> None:
+        label = self.basic_form.labelForField(field)
+        if label is not None:
+            label.setVisible(visible)
+        field.setVisible(visible)
 
     def _sync_proxy_mode_ui(self, proxy_mode: str) -> None:
         enabled = proxy_mode == "custom"
