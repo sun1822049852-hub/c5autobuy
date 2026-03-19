@@ -93,6 +93,7 @@ node main_ui_account_center_desktop.js
   - 默认数据库目录
 - `docs/superpowers/`
   - 迁移过程中的 spec / plan / 记录
+  - 登录、查询、购买与 legacy `autobuy.py` 的语义对账参考也放在这里
   - 这些文档很多仍会提到 `autobuy.py`、legacy、过渡层，属于历史材料，不代表当前运行依赖
 - `REFACTOR_EXECUTION_PLAN.md`
   - 重构过程文档，适合了解迁移背景，不应替代源码和测试
@@ -100,6 +101,12 @@ node main_ui_account_center_desktop.js
 仓库根目录里还保留了一些调试文件、历史目录和临时产物。接手时优先看上面这些主目录，不要被无关文件带偏。
 
 ## 当前必须保持的业务语义
+
+注意：
+
+- 下面列的是当前实现需要维持的行为约束
+- 它们不等同于 legacy `autobuy.py` 的全部历史语义
+- 如需排查两者之间的漂移与回归风险，先看 `docs/superpowers/references/2026-03-19-autobuy-backend-semantic-drift-reference.md`
 
 下面这些约束是当前系统的有效语义，后续改动不要擅自改掉：
 
@@ -129,4 +136,5 @@ python -m pytest -q
 - 先从 `run_app.py`、`app_frontend/main.py`、`app_backend/main.py` 看启动链路
 - 业务变更优先看 `tests/` 里是否已有对应约束
 - 如果历史文档与当前代码冲突，以当前源码和测试为准
+- 如果要排查旧 `autobuy.py` 与新 backend 的实现差异，先看 `docs/superpowers/references/2026-03-19-autobuy-backend-semantic-drift-reference.md`
 - 如果改动涉及登录、查询调度、购买分配、库存刷新，必须严格对照既有语义，不能凭印象改参数或流程

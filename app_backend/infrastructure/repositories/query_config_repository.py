@@ -7,11 +7,19 @@ from sqlalchemy import select
 from sqlalchemy.orm import sessionmaker
 
 from app_backend.domain.enums.query_modes import QueryMode
-from app_backend.domain.models.query_config import QueryConfig, QueryItem, QueryModeSetting
+from app_backend.domain.models.query_config import (
+    QueryConfig,
+    QueryItem,
+    QueryItemModeAllocation,
+    QueryModeSetting,
+    QueryProduct,
+)
 from app_backend.infrastructure.db.models import (
     QueryConfigItemRecord,
     QueryConfigRecord,
+    QueryItemModeAllocationRecord,
     QueryModeSettingRecord,
+    QueryProductRecord,
 )
 
 
@@ -33,6 +41,11 @@ class SqliteQueryConfigRepository:
         with self._session_factory() as session:
             row = session.get(QueryConfigItemRecord, query_item_id)
             return self._to_item_domain(row) if row else None
+
+    def get_product(self, external_item_id: str) -> QueryProduct | None:
+        with self._session_factory() as session:
+            row = session.get(QueryProductRecord, external_item_id)
+            return self._to_product_domain(row) if row else None
 
     def create_config(self, *, name: str, description: str | None) -> QueryConfig:
         now = datetime.now().isoformat(timespec="seconds")
@@ -131,6 +144,37 @@ class SqliteQueryConfigRepository:
                 updated_at=row.updated_at,
             )
 
+    def upsert_product(
+        self,
+        *,
+        external_item_id: str,
+        product_url: str,
+        item_name: str | None,
+        market_hash_name: str | None,
+        min_wear: float | None,
+        max_wear: float | None,
+        last_market_price: float | None,
+        last_detail_sync_at: str | None,
+        propagate_to_items: bool = False,
+    ) -> QueryProduct:
+        with self._session_factory() as session:
+            row = self._upsert_product_row(
+                session,
+                external_item_id=external_item_id,
+                product_url=product_url,
+                item_name=item_name,
+                market_hash_name=market_hash_name,
+                min_wear=min_wear,
+                max_wear=max_wear,
+                last_market_price=last_market_price,
+                last_detail_sync_at=last_detail_sync_at,
+            )
+            if propagate_to_items:
+                self._sync_items_from_product_row(session, row)
+            session.commit()
+            session.refresh(row)
+            return self._to_product_domain(row)
+
     def add_item(
         self,
         *,
@@ -140,10 +184,14 @@ class SqliteQueryConfigRepository:
         item_name: str | None,
         market_hash_name: str | None,
         min_wear: float | None,
-        detail_max_wear: float | None = None,
         max_wear: float | None,
+        detail_min_wear: float | None,
+        detail_max_wear: float | None,
         max_price: float | None,
         last_market_price: float | None,
+        last_detail_sync_at: str | None = None,
+        manual_paused: bool = False,
+        mode_allocations: dict[str, int] | None = None,
     ) -> QueryItem:
         now = datetime.now().isoformat(timespec="seconds")
         with self._session_factory() as session:
@@ -151,25 +199,49 @@ class SqliteQueryConfigRepository:
             if config is None:
                 raise KeyError(config_id)
 
+            product_row = self._upsert_product_row(
+                session,
+                external_item_id=external_item_id,
+                product_url=product_url,
+                item_name=item_name,
+                market_hash_name=market_hash_name,
+                min_wear=min_wear,
+                max_wear=max_wear,
+                last_market_price=last_market_price,
+                last_detail_sync_at=last_detail_sync_at or now,
+            )
+
             sort_order = len(config.items)
             row = QueryConfigItemRecord(
                 query_item_id=str(uuid4()),
                 config_id=config_id,
-                product_url=product_url,
-                external_item_id=external_item_id,
-                item_name=item_name,
-                market_hash_name=market_hash_name,
-                min_wear=min_wear,
+                product_url=product_row.product_url,
+                external_item_id=product_row.external_item_id,
+                item_name=product_row.item_name,
+                market_hash_name=product_row.market_hash_name,
+                min_wear=product_row.min_wear,
+                max_wear=product_row.max_wear,
+                detail_min_wear=detail_min_wear,
                 detail_max_wear=detail_max_wear,
-                max_wear=max_wear,
                 max_price=max_price,
-                last_market_price=last_market_price,
-                last_detail_sync_at=now,
+                last_market_price=product_row.last_market_price,
+                last_detail_sync_at=product_row.last_detail_sync_at,
+                manual_paused=int(bool(manual_paused)),
                 sort_order=sort_order,
                 created_at=now,
                 updated_at=now,
             )
             session.add(row)
+            for mode_type in QueryMode.ALL:
+                session.add(
+                    QueryItemModeAllocationRecord(
+                        query_item_id=row.query_item_id,
+                        mode_type=mode_type,
+                        target_dedicated_count=int((mode_allocations or {}).get(mode_type, 0)),
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
             session.commit()
             session.refresh(row)
             return self._to_item_domain(row)
@@ -180,9 +252,13 @@ class SqliteQueryConfigRepository:
             if row is None:
                 raise KeyError(query_item_id)
 
+            mode_allocations = changes.pop("mode_allocations", None)
             for key, value in changes.items():
                 if hasattr(row, key):
                     setattr(row, key, value)
+
+            if mode_allocations is not None:
+                self._upsert_mode_allocations(session, row, mode_allocations)
 
             row.updated_at = datetime.now().isoformat(timespec="seconds")
             session.commit()
@@ -196,7 +272,7 @@ class SqliteQueryConfigRepository:
         item_name: str | None,
         market_hash_name: str | None,
         min_wear: float | None,
-        detail_max_wear: float | None,
+        max_wear: float | None,
         last_market_price: float | None,
         last_detail_sync_at: str,
     ) -> QueryItem:
@@ -205,13 +281,18 @@ class SqliteQueryConfigRepository:
             if row is None:
                 raise KeyError(query_item_id)
 
-            row.item_name = item_name
-            row.market_hash_name = market_hash_name
-            row.min_wear = min_wear
-            row.detail_max_wear = detail_max_wear
-            row.last_market_price = last_market_price
-            row.last_detail_sync_at = last_detail_sync_at
-            row.updated_at = datetime.now().isoformat(timespec="seconds")
+            product_row = self._upsert_product_row(
+                session,
+                external_item_id=row.external_item_id,
+                product_url=row.product_url,
+                item_name=item_name,
+                market_hash_name=market_hash_name,
+                min_wear=min_wear,
+                max_wear=max_wear,
+                last_market_price=last_market_price,
+                last_detail_sync_at=last_detail_sync_at,
+            )
+            self._sync_items_from_product_row(session, product_row)
             session.commit()
             session.refresh(row)
             return self._to_item_domain(row)
@@ -261,7 +342,23 @@ class SqliteQueryConfigRepository:
         )
 
     @staticmethod
+    def _to_product_domain(row: QueryProductRecord) -> QueryProduct:
+        return QueryProduct(
+            external_item_id=row.external_item_id,
+            product_url=row.product_url,
+            item_name=row.item_name,
+            market_hash_name=row.market_hash_name,
+            min_wear=row.min_wear,
+            max_wear=row.max_wear,
+            last_market_price=row.last_market_price,
+            last_detail_sync_at=row.last_detail_sync_at,
+            created_at=row.created_at,
+            updated_at=row.updated_at,
+        )
+
+    @staticmethod
     def _to_item_domain(row: QueryConfigItemRecord) -> QueryItem:
+        mode_allocations = SqliteQueryConfigRepository._to_mode_allocations(row.mode_allocations)
         return QueryItem(
             query_item_id=row.query_item_id,
             config_id=row.config_id,
@@ -271,11 +368,116 @@ class SqliteQueryConfigRepository:
             market_hash_name=row.market_hash_name,
             min_wear=row.min_wear,
             max_wear=row.max_wear,
+            detail_min_wear=row.detail_min_wear,
+            detail_max_wear=row.detail_max_wear,
             max_price=row.max_price,
             last_market_price=row.last_market_price,
             last_detail_sync_at=row.last_detail_sync_at,
             sort_order=row.sort_order,
             created_at=row.created_at,
             updated_at=row.updated_at,
-            detail_max_wear=row.detail_max_wear,
+            manual_paused=bool(getattr(row, "manual_paused", 0)),
+            mode_allocations=mode_allocations,
         )
+
+    @staticmethod
+    def _to_mode_allocations(rows: list[QueryItemModeAllocationRecord]) -> list[QueryItemModeAllocation]:
+        order = {mode_type: index for index, mode_type in enumerate(QueryMode.ALL)}
+        existing = {
+            row.mode_type: QueryItemModeAllocation(
+                mode_type=row.mode_type,
+                target_dedicated_count=int(row.target_dedicated_count),
+            )
+            for row in rows
+        }
+        for mode_type in QueryMode.ALL:
+            existing.setdefault(
+                mode_type,
+                QueryItemModeAllocation(mode_type=mode_type, target_dedicated_count=0),
+            )
+        return [existing[mode_type] for mode_type in sorted(existing, key=lambda value: order.get(value, 999))]
+
+    @staticmethod
+    def _upsert_mode_allocations(session, row: QueryConfigItemRecord, mode_allocations: dict[str, int]) -> None:
+        now = datetime.now().isoformat(timespec="seconds")
+        existing = {
+            allocation.mode_type: allocation
+            for allocation in row.mode_allocations
+        }
+        for mode_type in QueryMode.ALL:
+            target = int(mode_allocations.get(mode_type, 0))
+            allocation = existing.get(mode_type)
+            if allocation is None:
+                session.add(
+                    QueryItemModeAllocationRecord(
+                        query_item_id=row.query_item_id,
+                        mode_type=mode_type,
+                        target_dedicated_count=target,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+                continue
+            allocation.target_dedicated_count = target
+            allocation.updated_at = now
+
+    @staticmethod
+    def _upsert_product_row(
+        session,
+        *,
+        external_item_id: str,
+        product_url: str,
+        item_name: str | None,
+        market_hash_name: str | None,
+        min_wear: float | None,
+        max_wear: float | None,
+        last_market_price: float | None,
+        last_detail_sync_at: str | None,
+    ) -> QueryProductRecord:
+        now = datetime.now().isoformat(timespec="seconds")
+        row = session.get(QueryProductRecord, external_item_id)
+        if row is None:
+            row = QueryProductRecord(
+                external_item_id=external_item_id,
+                product_url=product_url,
+                item_name=item_name,
+                market_hash_name=market_hash_name,
+                min_wear=min_wear,
+                max_wear=max_wear,
+                last_market_price=last_market_price,
+                last_detail_sync_at=last_detail_sync_at,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(row)
+            session.flush()
+            return row
+
+        row.product_url = product_url
+        row.item_name = item_name
+        row.market_hash_name = market_hash_name
+        row.min_wear = min_wear
+        row.max_wear = max_wear
+        row.last_market_price = last_market_price
+        row.last_detail_sync_at = last_detail_sync_at
+        row.updated_at = now
+        session.flush()
+        return row
+
+    @staticmethod
+    def _sync_items_from_product_row(session, product_row: QueryProductRecord) -> None:
+        item_rows = session.scalars(
+            select(QueryConfigItemRecord).where(
+                QueryConfigItemRecord.external_item_id == product_row.external_item_id
+            )
+        ).all()
+        now = datetime.now().isoformat(timespec="seconds")
+        for item_row in item_rows:
+            item_row.product_url = product_row.product_url
+            item_row.item_name = product_row.item_name
+            item_row.market_hash_name = product_row.market_hash_name
+            item_row.min_wear = product_row.min_wear
+            item_row.max_wear = product_row.max_wear
+            item_row.last_market_price = product_row.last_market_price
+            item_row.last_detail_sync_at = product_row.last_detail_sync_at
+            item_row.updated_at = now

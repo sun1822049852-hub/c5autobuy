@@ -112,6 +112,54 @@ export function createAccountCenterClient({
         method: "GET",
       });
     },
+    async listQueryConfigs() {
+      return http.getJson("/query-configs", {
+        method: "GET",
+      });
+    },
+    async getQueryConfig(configId) {
+      return http.getJson(`/query-configs/${configId}`, {
+        method: "GET",
+      });
+    },
+    async getQueryCapacitySummary() {
+      return http.getJson("/query-configs/capacity-summary", {
+        method: "GET",
+      });
+    },
+    async getQueryRuntimeStatus() {
+      return http.getJson("/query-runtime/status", {
+        method: "GET",
+      });
+    },
+    async startQueryRuntime(configId) {
+      return http.postJson("/query-runtime/start", {
+        config_id: configId,
+      });
+    },
+    async stopQueryRuntime() {
+      return http.postJson("/query-runtime/stop", {});
+    },
+    async createQueryConfig(payload) {
+      return http.postJson("/query-configs", payload);
+    },
+    async deleteQueryConfig(configId) {
+      await http.delete(`/query-configs/${configId}`);
+    },
+    async addQueryItem(configId, payload) {
+      return http.postJson(`/query-configs/${configId}/items`, payload);
+    },
+    async updateQueryItem(configId, queryItemId, payload) {
+      return http.patchJson(`/query-configs/${configId}/items/${queryItemId}`, payload);
+    },
+    async parseQueryItemUrl(productUrl) {
+      return http.postJson("/query-items/parse-url", {
+        product_url: productUrl,
+      });
+    },
+    async fetchQueryItemDetail(payload) {
+      return http.postJson("/query-items/fetch-detail", payload);
+    },
     async createAccount(payload) {
       return http.postJson("/accounts", payload);
     },

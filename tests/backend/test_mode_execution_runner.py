@@ -64,6 +64,7 @@ def build_account(
     fast_api_enabled: bool = True,
     token_enabled: bool = True,
     disabled: bool = False,
+    purchase_disabled: bool = False,
 ) -> Account:
     return Account(
         account_id=account_id,
@@ -82,6 +83,7 @@ def build_account(
         created_at="2026-03-16T10:00:00",
         updated_at="2026-03-16T10:00:00",
         disabled=disabled,
+        purchase_disabled=purchase_disabled,
         new_api_enabled=new_api_enabled,
         fast_api_enabled=fast_api_enabled,
         token_enabled=token_enabled,
@@ -148,6 +150,24 @@ def test_mode_runner_excludes_token_account_marked_not_login():
     snapshot = runner.snapshot()
 
     assert snapshot["eligible_account_count"] == 0
+    assert snapshot["active_account_count"] == 0
+
+
+def test_mode_runner_keeps_purchase_disabled_account_query_eligible():
+    from app_backend.infrastructure.query.runtime.mode_runner import ModeRunner
+
+    runner = ModeRunner(
+        build_mode("new_api"),
+        [
+            build_account("a1", api_key="api-1", purchase_disabled=True),
+            build_account("a2", api_key="api-2", disabled=True),
+        ],
+        query_items=[build_item("1380979899390261111")],
+    )
+
+    snapshot = runner.snapshot()
+
+    assert snapshot["eligible_account_count"] == 1
     assert snapshot["active_account_count"] == 0
 
 
@@ -295,6 +315,70 @@ async def test_mode_runner_uses_shared_query_item_scheduler():
     assert calls == [
         ("a1", "1380979899390261111"),
         ("a2", "1380979899390262222"),
+    ]
+
+
+async def test_mode_runner_keeps_dedicated_item_exclusive_when_no_shared_worker_exists():
+    from app_backend.domain.enums.query_modes import QueryMode
+    from app_backend.domain.models.query_config import QueryItemModeAllocation
+    from app_backend.infrastructure.query.runtime.mode_runner import ModeRunner
+    from app_backend.infrastructure.query.runtime.runtime_events import QueryExecutionEvent
+
+    calls: list[str] = []
+
+    class FakeWorker:
+        def __init__(self, account: Account) -> None:
+            self.account = account
+
+        def snapshot(self) -> dict[str, object]:
+            return {
+                "account_id": self.account.account_id,
+                "active": True,
+                "eligible": True,
+                "disabled_reason": None,
+                "last_query_at": None,
+                "last_success_at": None,
+                "last_error": None,
+            }
+
+        async def run_once(self, query_item: QueryItem) -> QueryExecutionEvent:
+            calls.append(query_item.query_item_id)
+            return QueryExecutionEvent(
+                timestamp="2026-03-16T10:00:00",
+                level="info",
+                mode_type="new_api",
+                account_id=self.account.account_id,
+                query_item_id=query_item.query_item_id,
+                message="查询完成",
+                match_count=1,
+                latency_ms=12.0,
+                error=None,
+            )
+
+    dedicated_item = build_item("1380979899390261111")
+    dedicated_item.mode_allocations = [
+        QueryItemModeAllocation(
+            mode_type=mode_type,
+            target_dedicated_count=(1 if mode_type == QueryMode.NEW_API else 0),
+        )
+        for mode_type in QueryMode.ALL
+    ]
+    shared_item = build_item("1380979899390262222")
+
+    runner = ModeRunner(
+        build_mode("new_api"),
+        [build_account("a1", api_key="api-1")],
+        query_items=[dedicated_item, shared_item],
+        worker_factory=lambda mode_type, account: FakeWorker(account),
+    )
+
+    runner.start()
+    await runner.run_once()
+    await runner.run_once()
+
+    assert calls == [
+        "1380979899390261111",
+        "1380979899390261111",
     ]
 
 

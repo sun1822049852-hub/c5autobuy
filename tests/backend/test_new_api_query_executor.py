@@ -46,7 +46,9 @@ def build_item() -> QueryItem:
         item_name="Test Item",
         market_hash_name="Test Item Name",
         min_wear=0.0,
-        max_wear=0.25,
+        max_wear=0.8,
+        detail_min_wear=0.1,
+        detail_max_wear=0.25,
         max_price=100.0,
         last_market_price=90.0,
         last_detail_sync_at=None,
@@ -123,6 +125,8 @@ async def test_new_api_query_executor_parses_success_response():
         {"productId": "p1", "price": 88.8, "actRebateAmount": 0},
         {"productId": "p2", "price": 66.6, "actRebateAmount": 0},
     ]
+    assert session.calls[0]["json"]["wearMin"] == 0.1
+    assert session.calls[0]["json"]["wearMax"] == 0.25
     assert result.total_price == pytest.approx(155.4)
     assert result.total_wear_sum == pytest.approx(0.2234)
 

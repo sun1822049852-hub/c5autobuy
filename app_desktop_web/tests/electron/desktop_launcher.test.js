@@ -87,4 +87,74 @@ describe("desktop launcher", () => {
       }),
     );
   });
+
+  it("rebuilds the renderer when source files are newer than the existing dist bundle", () => {
+    const appDirectory = "C:/demo/project/app_desktop_web";
+    const distEntryPath = path.join(appDirectory, "dist", "index.html");
+    const srcDirectory = path.join(appDirectory, "src");
+    const featuresDirectory = path.join(srcDirectory, "features");
+    const querySystemDirectory = path.join(featuresDirectory, "query-system");
+    const queryPagePath = path.join(srcDirectory, "features", "query-system", "query_system_page.jsx");
+    const rootIndexPath = path.join(appDirectory, "index.html");
+    const viteConfigPath = path.join(appDirectory, "vite.config.js");
+
+    const existingPaths = new Set([
+      distEntryPath,
+      srcDirectory,
+      featuresDirectory,
+      querySystemDirectory,
+      queryPagePath,
+      rootIndexPath,
+      viteConfigPath,
+    ]);
+
+    const existsSync = vi.fn((targetPath) => existingPaths.has(targetPath));
+    const statSync = vi.fn((targetPath) => {
+      if (targetPath === distEntryPath) {
+        return { isDirectory: () => false, mtimeMs: 100 };
+      }
+      if (targetPath === srcDirectory) {
+        return { isDirectory: () => true, mtimeMs: 0 };
+      }
+      if (targetPath === featuresDirectory || targetPath === querySystemDirectory) {
+        return { isDirectory: () => true, mtimeMs: 0 };
+      }
+      if (targetPath === queryPagePath) {
+        return { isDirectory: () => false, mtimeMs: 200 };
+      }
+      if (targetPath === rootIndexPath || targetPath === viteConfigPath) {
+        return { isDirectory: () => false, mtimeMs: 90 };
+      }
+      throw new Error(`unexpected path: ${targetPath}`);
+    });
+    const readdirSync = vi.fn((targetPath) => {
+      if (targetPath === srcDirectory) {
+        return ["features"];
+      }
+      if (targetPath === path.join(srcDirectory, "features")) {
+        return ["query-system"];
+      }
+      if (targetPath === path.join(srcDirectory, "features", "query-system")) {
+        return ["query_system_page.jsx"];
+      }
+      return [];
+    });
+    const spawnSync = vi.fn(() => ({ status: 0 }));
+
+    launcher.ensureRendererBuild(appDirectory, {
+      existsSync,
+      readdirSync,
+      spawnSync,
+      statSync,
+    });
+
+    expect(spawnSync).toHaveBeenCalledWith(
+      expect.stringMatching(/npm(?:\.cmd)?$/),
+      ["--prefix", "app_desktop_web", "run", "build"],
+      expect.objectContaining({
+        cwd: expect.any(String),
+        stdio: "inherit",
+      }),
+    );
+  });
 });

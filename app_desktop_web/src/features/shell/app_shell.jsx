@@ -6,18 +6,19 @@ const NAV_ITEMS = [
   },
   {
     id: "query-system",
-    label: "查询系统（即将迁移）",
-    tag: "Soon",
+    label: "查询系统",
+    tag: "Live",
   },
   {
     id: "purchase-system",
     label: "购买系统（即将迁移）",
     tag: "Soon",
+    disabled: true,
   },
 ];
 
 
-export function AppShell({ activeItem, children }) {
+export function AppShell({ activeItem, children, onSelect }) {
   return (
     <div className="app-shell">
       <aside className="app-shell__sidebar" aria-label="主导航">
@@ -33,8 +34,14 @@ export function AppShell({ activeItem, children }) {
             <button
               key={item.id}
               aria-label={item.label}
-              className={`app-shell__nav-button${item.id === activeItem ? " is-active" : ""}`}
+              className={`app-shell__nav-button${item.id === activeItem ? " is-active" : ""}${item.disabled ? " is-disabled" : ""}`}
+              disabled={item.disabled}
               type="button"
+              onClick={() => {
+                if (!item.disabled) {
+                  onSelect?.(item.id);
+                }
+              }}
             >
               <span className="app-shell__nav-button-label">{item.label}</span>
               <span aria-hidden="true" className="app-shell__nav-button-tag">{item.tag}</span>

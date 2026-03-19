@@ -181,8 +181,8 @@ class FastApiQueryExecutor:
         except (TypeError, ValueError):
             return None
 
-        min_wear = float(query_item.min_wear)
-        max_wear = float(query_item.max_wear)
+        min_wear = float(query_item.configured_min_wear)
+        max_wear = float(query_item.configured_max_wear)
         need_wear_check = min_wear > 0 or max_wear < 1
 
         wear = None

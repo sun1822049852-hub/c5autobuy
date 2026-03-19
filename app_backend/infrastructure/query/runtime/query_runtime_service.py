@@ -32,20 +32,51 @@ class QueryRuntimeService:
         self._paused_at: str | None = None
         self._register_purchase_runtime_callbacks()
 
-    def start(self, *, config_id: str) -> tuple[bool, str]:
+    def start(self, *, config_id: str, resume: bool = False) -> tuple[bool, str]:
+        config = None
+        runtime_to_stop = None
         with self._state_lock:
-            if self._has_running_runtime_locked():
+            active_config_id = self._get_active_config_id_locked()
+            allow_pending_resume = (
+                resume
+                and active_config_id == config_id
+                and not self._has_running_runtime_locked()
+                and self._has_pending_resume_state()
+            )
+            if active_config_id == config_id and not allow_pending_resume:
                 return False, "已有查询任务在运行"
+            if active_config_id is not None and not allow_pending_resume:
+                config = self._query_config_repository.get_config(config_id)
+                if config is None:
+                    return False, "已有查询任务在运行"
+                runtime_to_stop = self._runtime
+                self._runtime = None
+                self._clear_pending_resume_state()
+            else:
+                config = self._query_config_repository.get_config(config_id)
+                if config is None:
+                    return False, "查询配置不存在"
 
-            config = self._query_config_repository.get_config(config_id)
-            if config is None:
-                return False, "查询配置不存在"
+        if runtime_to_stop is not None:
+            runtime_to_stop.stop()
+
+        with self._state_lock:
+            current_active_config_id = self._get_active_config_id_locked()
+            allow_pending_resume = (
+                resume
+                and current_active_config_id == config_id
+                and not self._has_running_runtime_locked()
+                and self._has_pending_resume_state()
+            )
+            if current_active_config_id is not None and not allow_pending_resume:
+                return False, "已有查询任务在运行"
 
             purchase_started, purchase_message = self._ensure_purchase_runtime_started()
             if not purchase_started:
                 return False, purchase_message
             if not self._purchase_runtime_has_available_accounts():
-                return False, "当前没有可用购买账号"
+                self._mark_waiting_for_purchase_recovery(config)
+                return True, "查询任务已启动，等待购买账号恢复"
 
             accounts = list(self._account_repository.list_accounts())
             hit_sink = self._resolve_hit_sink()
@@ -91,6 +122,19 @@ class QueryRuntimeService:
     def _has_pending_resume_state(self) -> bool:
         return bool(self._pending_resume_config_id)
 
+    def _get_active_config_id_locked(self) -> str | None:
+        if self._has_running_runtime_locked():
+            runtime_config = getattr(self._runtime, "config", None)
+            runtime_config_id = getattr(runtime_config, "config_id", None)
+            if runtime_config_id:
+                return str(runtime_config_id)
+            snapshot = self._runtime.snapshot()
+            normalized_config_id = str(snapshot.get("config_id") or "").strip()
+            return normalized_config_id or None
+        if self._has_pending_resume_state():
+            return self._pending_resume_config_id
+        return None
+
     def _clear_pending_resume_state(self) -> None:
         self._pending_resume_config_id = None
         self._pending_resume_config_name = None
@@ -110,6 +154,7 @@ class QueryRuntimeService:
             "modes": {},
             "group_rows": [],
             "recent_events": [],
+            "item_rows": [],
         }
 
     def _build_waiting_snapshot(self) -> dict[str, object]:
@@ -128,6 +173,7 @@ class QueryRuntimeService:
             "modes": {},
             "group_rows": [],
             "recent_events": [],
+            "item_rows": self._build_default_item_rows(config),
         }
         if config is not None:
             for mode_setting in config.mode_settings:
@@ -148,6 +194,7 @@ class QueryRuntimeService:
             "modes": {},
             "group_rows": self._normalize_group_rows(snapshot.get("group_rows")),
             "recent_events": self._normalize_recent_events(snapshot.get("recent_events")),
+            "item_rows": self._normalize_item_rows(snapshot.get("item_rows")),
         }
         raw_modes = snapshot.get("modes")
         if isinstance(raw_modes, dict):
@@ -222,6 +269,48 @@ class QueryRuntimeService:
         }
 
     @staticmethod
+    def _build_default_item_rows(config: QueryConfig | None) -> list[dict[str, object]]:
+        if config is None:
+            return []
+
+        rows: list[dict[str, object]] = []
+        for item in config.items:
+            allocation_map = {
+                allocation.mode_type: int(allocation.target_dedicated_count)
+                for allocation in item.mode_allocations
+            }
+            modes: dict[str, dict[str, object]] = {}
+            for mode_setting in config.mode_settings:
+                target = int(allocation_map.get(mode_setting.mode_type, 0))
+                if item.manual_paused:
+                    status = "manual_paused"
+                    status_message = "手动暂停"
+                else:
+                    status = "unavailable"
+                    status_message = f"无可用账号 0/{target}" if target > 0 else "无可用账号"
+                modes[mode_setting.mode_type] = {
+                    "mode_type": mode_setting.mode_type,
+                    "target_dedicated_count": target,
+                    "actual_dedicated_count": 0,
+                    "status": status,
+                    "status_message": status_message,
+                }
+            rows.append(
+                {
+                    "query_item_id": str(item.query_item_id),
+                    "item_name": item.item_name or item.market_hash_name or item.query_item_id,
+                    "max_price": item.max_price,
+                    "min_wear": item.min_wear,
+                    "max_wear": item.max_wear,
+                    "detail_min_wear": item.detail_min_wear,
+                    "detail_max_wear": item.detail_max_wear,
+                    "manual_paused": bool(item.manual_paused),
+                    "modes": modes,
+                }
+            )
+        return rows
+
+    @staticmethod
     def _normalize_recent_events(raw_events: object) -> list[dict[str, object]]:
         if not isinstance(raw_events, list):
             return []
@@ -258,6 +347,63 @@ class QueryRuntimeService:
                         else None
                     ),
                     "error": raw_event.get("error"),
+                }
+            )
+        return normalized
+
+    @staticmethod
+    def _normalize_item_rows(raw_rows: object) -> list[dict[str, object]]:
+        if not isinstance(raw_rows, list):
+            return []
+
+        normalized: list[dict[str, object]] = []
+        for raw_row in raw_rows:
+            if not isinstance(raw_row, dict):
+                continue
+            raw_modes = raw_row.get("modes")
+            normalized_modes: dict[str, dict[str, object]] = {}
+            if isinstance(raw_modes, dict):
+                for mode_type, raw_mode in raw_modes.items():
+                    if not isinstance(raw_mode, dict):
+                        continue
+                    normalized_modes[str(mode_type)] = {
+                        "mode_type": str(raw_mode.get("mode_type") or mode_type or ""),
+                        "target_dedicated_count": int(raw_mode.get("target_dedicated_count", 0)),
+                        "actual_dedicated_count": int(raw_mode.get("actual_dedicated_count", 0)),
+                        "status": str(raw_mode.get("status") or ""),
+                        "status_message": str(raw_mode.get("status_message") or ""),
+                    }
+            normalized.append(
+                {
+                    "query_item_id": str(raw_row.get("query_item_id") or ""),
+                    "item_name": raw_row.get("item_name"),
+                    "max_price": (
+                        float(raw_row["max_price"])
+                        if raw_row.get("max_price") is not None
+                        else None
+                    ),
+                    "min_wear": (
+                        float(raw_row["min_wear"])
+                        if raw_row.get("min_wear") is not None
+                        else None
+                    ),
+                    "max_wear": (
+                        float(raw_row["max_wear"])
+                        if raw_row.get("max_wear") is not None
+                        else None
+                    ),
+                    "detail_min_wear": (
+                        float(raw_row["detail_min_wear"])
+                        if raw_row.get("detail_min_wear") is not None
+                        else None
+                    ),
+                    "detail_max_wear": (
+                        float(raw_row["detail_max_wear"])
+                        if raw_row.get("detail_max_wear") is not None
+                        else None
+                    ),
+                    "manual_paused": bool(raw_row.get("manual_paused")),
+                    "modes": normalized_modes,
                 }
             )
         return normalized
@@ -411,10 +557,7 @@ class QueryRuntimeService:
                 return
             runtime = self._runtime
             config = getattr(runtime, "config", None) if runtime is not None else None
-            self._runtime = None
-            self._pending_resume_config_id = getattr(config, "config_id", None)
-            self._pending_resume_config_name = getattr(config, "name", None)
-            self._paused_at = datetime.now().isoformat(timespec="seconds")
+            self._mark_waiting_for_purchase_recovery(config)
         if runtime is not None:
             runtime.stop()
 
@@ -425,7 +568,7 @@ class QueryRuntimeService:
             config_id = self._pending_resume_config_id
         if not config_id:
             return
-        self.start(config_id=config_id)
+        self.start(config_id=config_id, resume=True)
 
     def _handle_runtime_event(self, event: dict[str, object]) -> None:
         if not isinstance(event, dict):
@@ -435,6 +578,12 @@ class QueryRuntimeService:
         if error != "Not login" or not account_id:
             return
         self._mark_account_not_login(account_id=account_id, error=error)
+
+    def _mark_waiting_for_purchase_recovery(self, config: QueryConfig | None) -> None:
+        self._runtime = None
+        self._pending_resume_config_id = getattr(config, "config_id", None)
+        self._pending_resume_config_name = getattr(config, "name", None)
+        self._paused_at = datetime.now().isoformat(timespec="seconds")
 
     def _mark_account_not_login(self, *, account_id: str, error: str) -> None:
         account = None

@@ -34,8 +34,8 @@ class NewApiQueryExecutor:
             "appId": 730,
             "marketHashName": query_item.market_hash_name,
             "priceMax": float(query_item.max_price),
-            "wearMin": float(query_item.min_wear),
-            "wearMax": float(query_item.max_wear),
+            "wearMin": float(query_item.configured_min_wear),
+            "wearMax": float(query_item.configured_max_wear),
         }
 
     @staticmethod

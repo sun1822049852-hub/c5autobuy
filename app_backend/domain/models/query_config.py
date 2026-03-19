@@ -2,6 +2,35 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from app_backend.domain.enums.query_modes import QueryMode
+
+
+@dataclass(slots=True)
+class QueryProduct:
+    external_item_id: str
+    product_url: str
+    item_name: str | None
+    market_hash_name: str | None
+    min_wear: float | None
+    max_wear: float | None
+    last_market_price: float | None
+    last_detail_sync_at: str | None
+    created_at: str
+    updated_at: str
+
+
+@dataclass(slots=True)
+class QueryItemModeAllocation:
+    mode_type: str
+    target_dedicated_count: int
+
+
+def _default_mode_allocations() -> list[QueryItemModeAllocation]:
+    return [
+        QueryItemModeAllocation(mode_type=mode_type, target_dedicated_count=0)
+        for mode_type in QueryMode.ALL
+    ]
+
 
 @dataclass(slots=True)
 class QueryItem:
@@ -19,7 +48,18 @@ class QueryItem:
     sort_order: int
     created_at: str
     updated_at: str
+    detail_min_wear: float | None = None
     detail_max_wear: float | None = None
+    manual_paused: bool = False
+    mode_allocations: list[QueryItemModeAllocation] = field(default_factory=_default_mode_allocations)
+
+    @property
+    def configured_min_wear(self) -> float | None:
+        return self.detail_min_wear if self.detail_min_wear is not None else self.min_wear
+
+    @property
+    def configured_max_wear(self) -> float | None:
+        return self.detail_max_wear if self.detail_max_wear is not None else self.max_wear
 
 
 @dataclass(slots=True)

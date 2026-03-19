@@ -50,6 +50,6 @@ async def fetch_query_item_detail(
         item_name=detail.item_name,
         market_hash_name=detail.market_hash_name,
         min_wear=detail.min_wear,
-        detail_max_wear=detail.max_wear,
+        max_wear=detail.max_wear,
         last_market_price=detail.last_market_price,
     )

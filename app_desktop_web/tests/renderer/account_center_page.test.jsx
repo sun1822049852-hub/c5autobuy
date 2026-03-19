@@ -76,7 +76,7 @@ describe("account center page", () => {
     render(<App />);
 
     expect(screen.getByRole("button", { name: "账号中心" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "查询系统（即将迁移）" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "查询系统" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "购买系统（即将迁移）" })).toBeInTheDocument();
 
     await waitFor(() => {

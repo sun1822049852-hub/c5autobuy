@@ -141,15 +141,68 @@ function ensureElectronRuntime(
   }
 }
 
+function getLatestModifiedTimeMs(
+  targetPath,
+  {
+    existsSync = fs.existsSync,
+    readdirSync = fs.readdirSync,
+    statSync = fs.statSync,
+  } = {},
+) {
+  if (!existsSync(targetPath)) {
+    return 0;
+  }
 
-function ensureRendererBuild(appDirectory) {
+  const stat = statSync(targetPath);
+  if (!stat.isDirectory()) {
+    return stat.mtimeMs;
+  }
+
+  return readdirSync(targetPath).reduce((latestTime, entryName) => {
+    const entryPath = path.join(targetPath, entryName);
+    return Math.max(latestTime, getLatestModifiedTimeMs(entryPath, {
+      existsSync,
+      readdirSync,
+      statSync,
+    }));
+  }, stat.mtimeMs);
+}
+
+
+function ensureRendererBuild(
+  appDirectory,
+  {
+    existsSync = fs.existsSync,
+    readdirSync = fs.readdirSync,
+    spawnSync: spawnSyncImpl = spawnSync,
+    statSync = fs.statSync,
+  } = {},
+) {
   const distEntryPath = path.join(appDirectory, "dist", "index.html");
-  if (fs.existsSync(distEntryPath)) {
+  const sourcePaths = [
+    path.join(appDirectory, "src"),
+    path.join(appDirectory, "index.html"),
+    path.join(appDirectory, "vite.config.js"),
+  ];
+
+  const shouldBuild = !existsSync(distEntryPath) || sourcePaths.some((sourcePath) => (
+    getLatestModifiedTimeMs(sourcePath, {
+      existsSync,
+      readdirSync,
+      statSync,
+    }) > getLatestModifiedTimeMs(distEntryPath, {
+      existsSync,
+      readdirSync,
+      statSync,
+    })
+  ));
+
+  if (!shouldBuild) {
     return;
   }
 
   const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
-  const buildResult = spawnSync(
+  const buildResult = spawnSyncImpl(
     npmCommand,
     ["--prefix", "app_desktop_web", "run", "build"],
     {
@@ -200,6 +253,8 @@ module.exports = {
   buildElectronLaunchSpec,
   buildElectronInstallEnv,
   ensureElectronRuntime,
+  ensureRendererBuild,
+  getLatestModifiedTimeMs,
   isElectronRuntimeInstalled,
   main,
   resolveElectronCliScript,

@@ -46,7 +46,9 @@ def build_item() -> QueryItem:
         item_name="Test Item",
         market_hash_name="Test Item Name",
         min_wear=0.0,
-        max_wear=0.25,
+        max_wear=0.8,
+        detail_min_wear=0.1,
+        detail_max_wear=0.25,
         max_price=100.0,
         last_market_price=90.0,
         last_detail_sync_at=None,
@@ -103,6 +105,7 @@ async def test_fast_api_query_executor_filters_response_client_side():
                 "success": True,
                 "data": {
                     "list": [
+                        {"productId": "too-low-wear", "price": "88.80", "assetInfo": {"floatWear": "0.0500"}},
                         {"productId": "ok-1", "price": "88.80", "assetInfo": {"floatWear": "0.1234"}},
                         {"productId": "expensive", "price": "188.80", "assetInfo": {"floatWear": "0.1234"}},
                         {"productId": "bad-wear", "price": "66.60", "assetInfo": {"floatWear": "0.9000"}},

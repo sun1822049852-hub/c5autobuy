@@ -53,7 +53,7 @@ class QueryItemDetailRefreshService:
                         "message": "12小时内已同步，跳过",
                         "last_market_price": query_item.last_market_price,
                         "min_wear": query_item.min_wear,
-                        "detail_max_wear": query_item.detail_max_wear,
+                        "max_wear": query_item.max_wear,
                         "last_detail_sync_at": query_item.last_detail_sync_at,
                     }
                 )
@@ -71,7 +71,7 @@ class QueryItemDetailRefreshService:
                         "message": "商品详情已刷新",
                         "last_market_price": updated_item.last_market_price,
                         "min_wear": updated_item.min_wear,
-                        "detail_max_wear": updated_item.detail_max_wear,
+                        "max_wear": updated_item.max_wear,
                         "last_detail_sync_at": updated_item.last_detail_sync_at,
                     }
                 )
@@ -88,7 +88,7 @@ class QueryItemDetailRefreshService:
                         "message": str(exc),
                         "last_market_price": query_item.last_market_price,
                         "min_wear": query_item.min_wear,
-                        "detail_max_wear": query_item.detail_max_wear,
+                        "max_wear": query_item.max_wear,
                         "last_detail_sync_at": query_item.last_detail_sync_at,
                     }
                 )
@@ -120,7 +120,7 @@ class QueryItemDetailRefreshService:
             item_name=detail.item_name,
             market_hash_name=detail.market_hash_name,
             min_wear=detail.min_wear,
-            detail_max_wear=detail.max_wear,
+            max_wear=detail.max_wear,
             last_market_price=detail.last_market_price,
             last_detail_sync_at=synced_at,
         )

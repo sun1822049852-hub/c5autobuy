@@ -43,8 +43,8 @@ class TokenQueryExecutor:
             "itemId": str(query_item.external_item_id),
             "maxPrice": str(query_item.max_price),
             "delivery": 0,
-            "minWear": float(query_item.min_wear),
-            "maxWear": float(query_item.max_wear),
+            "minWear": float(query_item.configured_min_wear),
+            "maxWear": float(query_item.configured_max_wear),
             "limit": "200",
             "giftBuy": "",
         }

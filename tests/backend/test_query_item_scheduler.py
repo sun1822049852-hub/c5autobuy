@@ -83,3 +83,27 @@ async def test_query_item_scheduler_instances_do_not_share_cooldown_state():
     assert first_a.execute_at == 10.0
     assert first_b.execute_at == 10.0
     assert second_a.execute_at == 10.1
+
+
+async def test_query_item_scheduler_uses_dynamic_cooldown_when_one_item_has_multiple_assigned_workers():
+    from app_backend.infrastructure.query.runtime.query_item_scheduler import QueryItemScheduler
+
+    item = build_item("item-1")
+    scheduler = QueryItemScheduler(
+        [item],
+        min_cooldown_seconds=0.1,
+    )
+
+    first = await scheduler.reserve_item(
+        item,
+        now=10.0,
+        actual_assigned_count=2,
+    )
+    second = await scheduler.reserve_item(
+        item,
+        now=10.0,
+        actual_assigned_count=2,
+    )
+
+    assert first.execute_at == 10.0
+    assert second.execute_at == 10.25

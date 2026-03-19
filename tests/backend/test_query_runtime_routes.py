@@ -54,10 +54,11 @@ async def test_query_runtime_status_defaults_to_idle(client):
         "modes": {},
         "group_rows": [],
         "recent_events": [],
+        "item_rows": [],
     }
 
 
-async def test_start_query_runtime_rejects_when_no_purchase_account_is_available(client):
+async def test_start_query_runtime_returns_waiting_snapshot_when_no_purchase_account_is_available(client):
     created = await client.post(
         "/query-configs",
         json={
@@ -68,9 +69,62 @@ async def test_start_query_runtime_rejects_when_no_purchase_account_is_available
     config_id = created.json()["config_id"]
 
     response = await client.post("/query-runtime/start", json={"config_id": config_id})
+    payload = response.json()
 
-    assert response.status_code == 409
-    assert response.json() == {"detail": "当前没有可用购买账号"}
+    assert response.status_code == 200
+    assert payload == {
+        "running": False,
+        "config_id": config_id,
+        "config_name": "查询配置A",
+        "message": "等待购买账号恢复",
+        "account_count": 0,
+        "started_at": None,
+        "stopped_at": payload["stopped_at"],
+        "total_query_count": 0,
+        "total_found_count": 0,
+        "modes": {
+            "new_api": {
+                "mode_type": "new_api",
+                "enabled": True,
+                "eligible_account_count": 0,
+                "active_account_count": 0,
+                "in_window": True,
+                "next_window_start": None,
+                "next_window_end": None,
+                "query_count": 0,
+                "found_count": 0,
+                "last_error": None,
+            },
+            "fast_api": {
+                "mode_type": "fast_api",
+                "enabled": True,
+                "eligible_account_count": 0,
+                "active_account_count": 0,
+                "in_window": True,
+                "next_window_start": None,
+                "next_window_end": None,
+                "query_count": 0,
+                "found_count": 0,
+                "last_error": None,
+            },
+            "token": {
+                "mode_type": "token",
+                "enabled": True,
+                "eligible_account_count": 0,
+                "active_account_count": 0,
+                "in_window": True,
+                "next_window_start": None,
+                "next_window_end": None,
+                "query_count": 0,
+                "found_count": 0,
+                "last_error": None,
+            },
+        },
+        "group_rows": [],
+        "recent_events": [],
+        "item_rows": [],
+    }
+    assert payload["stopped_at"] is not None
 
 
 async def test_start_query_runtime_returns_running_snapshot(client, app):
@@ -99,6 +153,7 @@ async def test_start_query_runtime_returns_running_snapshot(client, app):
     assert payload["total_found_count"] == 0
     assert payload["group_rows"] == []
     assert payload["recent_events"] == []
+    assert payload["item_rows"] == []
     assert payload["started_at"] is not None
     assert payload["stopped_at"] is None
     assert purchase_status.json()["running"] is True
@@ -174,7 +229,7 @@ async def test_prepare_query_runtime_returns_refresh_summary(client, app):
                         "message": "商品详情已刷新",
                         "last_market_price": 123.45,
                         "min_wear": 0.1,
-                        "detail_max_wear": 0.7,
+                        "max_wear": 0.7,
                         "last_detail_sync_at": "2026-03-17T12:00:00",
                     }
                 ],
@@ -190,7 +245,7 @@ async def test_prepare_query_runtime_returns_refresh_summary(client, app):
     assert response.json()["updated_count"] == 1
     assert response.json()["threshold_hours"] == 12
     assert response.json()["items"][0]["status"] == "updated"
-    assert response.json()["items"][0]["detail_max_wear"] == 0.7
+    assert response.json()["items"][0]["max_wear"] == 0.7
 
 
 async def test_prepare_query_runtime_returns_404_for_missing_config(client, app):
@@ -237,6 +292,38 @@ async def test_start_query_runtime_rejects_second_running_task(client, app):
     assert response.json() == {"detail": "已有查询任务在运行"}
 
 
+async def test_start_query_runtime_switches_to_another_config_when_request_targets_new_config(client, app):
+    created_first = await client.post(
+        "/query-configs",
+        json={
+            "name": "查询配置A",
+            "description": "用于运行时",
+        },
+    )
+    created_second = await client.post(
+        "/query-configs",
+        json={
+            "name": "查询配置B",
+            "description": "第二套配置",
+        },
+    )
+    config_id_first = created_first.json()["config_id"]
+    config_id_second = created_second.json()["config_id"]
+    _prepare_active_purchase_account(app)
+
+    await client.post("/query-runtime/start", json={"config_id": config_id_first})
+    response = await client.post("/query-runtime/start", json={"config_id": config_id_second})
+    status_response = await client.get("/query-runtime/status")
+
+    assert response.status_code == 200
+    assert response.json()["running"] is True
+    assert response.json()["config_id"] == config_id_second
+    assert response.json()["config_name"] == "查询配置B"
+    assert status_response.status_code == 200
+    assert status_response.json()["config_id"] == config_id_second
+    assert status_response.json()["config_name"] == "查询配置B"
+
+
 async def test_stop_query_runtime_returns_idle_snapshot(client, app):
     created = await client.post(
         "/query-configs",
@@ -267,5 +354,87 @@ async def test_stop_query_runtime_returns_idle_snapshot(client, app):
         "modes": {},
         "group_rows": [],
         "recent_events": [],
+        "item_rows": [],
     }
     assert purchase_status.json()["running"] is False
+
+
+async def test_query_runtime_status_returns_item_rows_for_mode_status_labels(client, app):
+    class FakeQueryRuntimeService:
+        def get_status(self) -> dict[str, object]:
+            return {
+                "running": True,
+                "config_id": "cfg-1",
+                "config_name": "查询配置A",
+                "message": "运行中",
+                "account_count": 2,
+                "started_at": "2026-03-19T12:00:00",
+                "stopped_at": None,
+                "total_query_count": 3,
+                "total_found_count": 1,
+                "modes": {},
+                "group_rows": [],
+                "recent_events": [],
+                "item_rows": [
+                    {
+                        "query_item_id": "item-1",
+                        "item_name": "AK-47 | Redline",
+                        "max_price": 123.45,
+                        "min_wear": 0.1,
+                        "max_wear": 0.7,
+                        "detail_min_wear": 0.12,
+                        "detail_max_wear": 0.3,
+                        "manual_paused": False,
+                        "modes": {
+                            "new_api": {
+                                "mode_type": "new_api",
+                                "target_dedicated_count": 1,
+                                "actual_dedicated_count": 1,
+                                "status": "dedicated",
+                                "status_message": "专属中 1/1",
+                            },
+                            "token": {
+                                "mode_type": "token",
+                                "target_dedicated_count": 0,
+                                "actual_dedicated_count": 0,
+                                "status": "shared",
+                                "status_message": "共享中",
+                            },
+                        },
+                    }
+                ],
+            }
+
+    app.state.query_runtime_service = FakeQueryRuntimeService()
+
+    response = await client.get("/query-runtime/status")
+
+    assert response.status_code == 200
+    assert response.json()["item_rows"] == [
+        {
+            "query_item_id": "item-1",
+            "item_name": "AK-47 | Redline",
+            "max_price": 123.45,
+            "min_wear": 0.1,
+            "max_wear": 0.7,
+            "detail_min_wear": 0.12,
+            "detail_max_wear": 0.3,
+            "manual_paused": False,
+            "modes": {
+                "new_api": {
+                    "mode_type": "new_api",
+                    "target_dedicated_count": 1,
+                    "actual_dedicated_count": 1,
+                    "status": "dedicated",
+                    "status_message": "专属中 1/1",
+                },
+                "token": {
+                    "mode_type": "token",
+                    "target_dedicated_count": 0,
+                    "actual_dedicated_count": 0,
+                    "status": "shared",
+                    "status_message": "共享中",
+                },
+            },
+        }
+    ]

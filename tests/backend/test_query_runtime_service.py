@@ -22,7 +22,9 @@ def build_config(config_id: str = "cfg-1") -> QueryConfig:
                 item_name="商品-1",
                 market_hash_name="Test Item 1",
                 min_wear=0.0,
-                max_wear=0.25,
+                max_wear=0.7,
+                detail_min_wear=0.0,
+                detail_max_wear=0.25,
                 max_price=100.0,
                 last_market_price=90.0,
                 last_detail_sync_at=None,
@@ -131,6 +133,17 @@ class FakeQueryConfigRepository:
         if config_id == self._config.config_id:
             return self._config
         return None
+
+
+class MultiQueryConfigRepository:
+    def __init__(self, configs: list[QueryConfig]) -> None:
+        self._configs = {
+            config.config_id: config
+            for config in configs
+        }
+
+    def get_config(self, config_id: str) -> QueryConfig | None:
+        return self._configs.get(config_id)
 
 
 class FakeAccountRepository:
@@ -292,6 +305,16 @@ def test_query_task_runtime_starts_mode_runners_and_aggregates_snapshot():
                     }
                     for index in range(2)
                 ],
+                "item_rows": [
+                    {
+                        "query_item_id": "item-1",
+                        "mode_type": self.mode_type,
+                        "target_dedicated_count": 1 if self.mode_type == "new_api" else 0,
+                        "actual_dedicated_count": 1 if self.mode_type == "new_api" else 0,
+                        "status": "dedicated" if self.mode_type == "new_api" else "shared",
+                        "status_message": "专属中 1/1" if self.mode_type == "new_api" else "共享中",
+                    }
+                ],
             }
 
     config = build_config("cfg-1")
@@ -315,6 +338,41 @@ def test_query_task_runtime_starts_mode_runners_and_aggregates_snapshot():
     assert snapshot["recent_events"][0]["account_display_name"] == "白天主号"
     assert snapshot["recent_events"][0]["query_item_name"] == "商品-1"
     assert snapshot["recent_events"][0]["product_list"][0]["productId"] == "p-2"
+    assert snapshot["item_rows"] == [
+        {
+            "query_item_id": "item-1",
+            "item_name": "商品-1",
+            "max_price": 100.0,
+            "min_wear": 0.0,
+            "max_wear": 0.7,
+            "detail_min_wear": 0.0,
+            "detail_max_wear": 0.25,
+            "manual_paused": False,
+            "modes": {
+                "new_api": {
+                    "mode_type": "new_api",
+                    "target_dedicated_count": 1,
+                    "actual_dedicated_count": 1,
+                    "status": "dedicated",
+                    "status_message": "专属中 1/1",
+                },
+                "fast_api": {
+                    "mode_type": "fast_api",
+                    "target_dedicated_count": 0,
+                    "actual_dedicated_count": 0,
+                    "status": "shared",
+                    "status_message": "共享中",
+                },
+                "token": {
+                    "mode_type": "token",
+                    "target_dedicated_count": 0,
+                    "actual_dedicated_count": 0,
+                    "status": "shared",
+                    "status_message": "共享中",
+                },
+            },
+        }
+    ]
 
 
 def test_query_task_runtime_builds_one_query_item_scheduler_per_mode():
@@ -661,6 +719,82 @@ def test_runtime_service_normalizes_recent_events():
     assert snapshot["recent_events"][1]["product_list"][0]["productId"] == "p-1"
 
 
+def test_runtime_service_normalizes_item_rows():
+    from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
+
+    class FakeRuntimeWithItemRows(FakeRuntime):
+        def snapshot(self) -> dict:
+            return {
+                "running": self.started and not self.stopped,
+                "config_id": self.config.config_id,
+                "config_name": self.config.name,
+                "message": "运行中",
+                "account_count": 1,
+                "started_at": "2026-03-16T10:00:00",
+                "stopped_at": None,
+                "total_query_count": 0,
+                "total_found_count": 0,
+                "modes": {},
+                "group_rows": [],
+                "recent_events": [],
+                "item_rows": [
+                    {
+                        "query_item_id": "item-1",
+                        "item_name": "商品-1",
+                        "max_price": 100,
+                        "min_wear": 0,
+                        "max_wear": 0.7,
+                        "detail_min_wear": 0.0,
+                        "detail_max_wear": 0.25,
+                        "manual_paused": False,
+                        "modes": {
+                            "new_api": {
+                                "mode_type": "new_api",
+                                "target_dedicated_count": 1,
+                                "actual_dedicated_count": 1,
+                                "status": "dedicated",
+                                "status_message": "专属中 1/1",
+                            }
+                        },
+                    }
+                ],
+            }
+
+    repository = FakeQueryConfigRepository(build_config("cfg-1"))
+    purchase_service = FakePurchaseRuntimeService()
+    service = QueryRuntimeService(
+        query_config_repository=repository,
+        account_repository=FakeAccountRepository([build_account("a1", api_key="api-1")]),
+        runtime_factory=lambda config, accounts: FakeRuntimeWithItemRows(config, accounts),
+        purchase_runtime_service=purchase_service,
+    )
+
+    service.start(config_id="cfg-1")
+    snapshot = service.get_status()
+
+    assert snapshot["item_rows"] == [
+        {
+            "query_item_id": "item-1",
+            "item_name": "商品-1",
+            "max_price": 100.0,
+            "min_wear": 0.0,
+            "max_wear": 0.7,
+            "detail_min_wear": 0.0,
+            "detail_max_wear": 0.25,
+            "manual_paused": False,
+            "modes": {
+                "new_api": {
+                    "mode_type": "new_api",
+                    "target_dedicated_count": 1,
+                    "actual_dedicated_count": 1,
+                    "status": "dedicated",
+                    "status_message": "专属中 1/1",
+                }
+            },
+        }
+    ]
+
+
 def test_runtime_service_stop_clears_running_state():
     from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
 
@@ -701,23 +835,104 @@ def test_runtime_service_starts_purchase_runtime_before_query_runtime():
     assert purchase_service.start_calls == 1
 
 
-def test_runtime_service_rejects_query_start_when_no_purchase_accounts_are_available():
+def test_runtime_service_switches_running_config_when_starting_a_different_config():
+    from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
+
+    repository = MultiQueryConfigRepository([build_config("cfg-1"), build_config("cfg-2")])
+    purchase_service = FakePurchaseRuntimeService()
+    created_runtimes: list[FakeRuntime] = []
+
+    def runtime_factory(config, accounts):
+      runtime = FakeRuntime(config, accounts)
+      created_runtimes.append(runtime)
+      return runtime
+
+    service = QueryRuntimeService(
+        query_config_repository=repository,
+        account_repository=FakeAccountRepository(),
+        runtime_factory=runtime_factory,
+        purchase_runtime_service=purchase_service,
+    )
+
+    started_first, message_first = service.start(config_id="cfg-1")
+    started_second, message_second = service.start(config_id="cfg-2")
+    snapshot = service.get_status()
+
+    assert started_first is True
+    assert message_first == "查询任务已启动"
+    assert started_second is True
+    assert message_second == "查询任务已启动"
+    assert len(created_runtimes) == 2
+    assert created_runtimes[0].stopped is True
+    assert created_runtimes[1].started is True
+    assert snapshot["running"] is True
+    assert snapshot["config_id"] == "cfg-2"
+    assert snapshot["config_name"] == "测试配置"
+
+
+def test_runtime_service_enters_waiting_state_when_no_purchase_accounts_are_available():
     from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
 
     repository = FakeQueryConfigRepository(build_config("cfg-1"))
     purchase_service = FakePurchaseRuntimeService(active_account_count=0)
+    created_runtimes: list[FakeRuntime] = []
+
+    def runtime_factory(config, accounts):
+        runtime = FakeRuntime(config, accounts)
+        created_runtimes.append(runtime)
+        return runtime
+
     service = QueryRuntimeService(
         query_config_repository=repository,
         account_repository=FakeAccountRepository(),
-        runtime_factory=lambda config, accounts: FakeRuntime(config, accounts),
+        runtime_factory=runtime_factory,
         purchase_runtime_service=purchase_service,
     )
 
     started, message = service.start(config_id="cfg-1")
+    snapshot = service.get_status()
 
-    assert started is False
-    assert message == "当前没有可用购买账号"
-    assert service.get_status()["running"] is False
+    assert started is True
+    assert message == "查询任务已启动，等待购买账号恢复"
+    assert created_runtimes == []
+    assert snapshot["running"] is False
+    assert snapshot["config_id"] == "cfg-1"
+    assert snapshot["config_name"] == "测试配置"
+    assert snapshot["message"] == "等待购买账号恢复"
+
+
+def test_runtime_service_starts_in_waiting_state_and_auto_recovers_when_purchase_accounts_return():
+    from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
+
+    repository = FakeQueryConfigRepository(build_config("cfg-1"))
+    purchase_service = FakePurchaseRuntimeService(active_account_count=0)
+    created_runtimes: list[FakeRuntime] = []
+
+    def runtime_factory(config, accounts):
+        runtime = FakeRuntime(config, accounts)
+        created_runtimes.append(runtime)
+        return runtime
+
+    service = QueryRuntimeService(
+        query_config_repository=repository,
+        account_repository=FakeAccountRepository(),
+        runtime_factory=runtime_factory,
+        purchase_runtime_service=purchase_service,
+    )
+
+    started, message = service.start(config_id="cfg-1")
+    assert started is True
+    assert message == "查询任务已启动，等待购买账号恢复"
+    assert created_runtimes == []
+
+    purchase_service.emit_accounts_recovered()
+    snapshot = service.get_status()
+
+    assert len(created_runtimes) == 1
+    assert created_runtimes[0].started is True
+    assert snapshot["running"] is True
+    assert snapshot["config_id"] == "cfg-1"
+    assert snapshot["config_name"] == "测试配置"
 
 
 def test_runtime_service_pauses_query_when_purchase_accounts_become_unavailable():

@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request, status
 
 from app_backend.api.schemas.query_configs import (
+    QueryCapacitySummaryResponse,
     QueryConfigCreateRequest,
     QueryConfigResponse,
     QueryConfigUpdateRequest,
@@ -12,11 +13,13 @@ from app_backend.api.schemas.query_configs import (
     QueryModeSettingResponse,
     QueryModeSettingUpdateRequest,
 )
+from app_backend.application.services.query_mode_capacity_service import QueryModeCapacityService
 from app_backend.application.use_cases.add_query_item import AddQueryItemUseCase
 from app_backend.application.use_cases.create_query_config import CreateQueryConfigUseCase
 from app_backend.application.use_cases.delete_query_config import DeleteQueryConfigUseCase
 from app_backend.application.use_cases.delete_query_item import DeleteQueryItemUseCase
 from app_backend.application.use_cases.get_query_config import GetQueryConfigUseCase
+from app_backend.application.use_cases.get_query_capacity_summary import GetQueryCapacitySummaryUseCase
 from app_backend.application.use_cases.list_query_configs import ListQueryConfigsUseCase
 from app_backend.application.use_cases.refresh_query_item_detail import RefreshQueryItemDetailUseCase
 from app_backend.application.use_cases.update_query_config import UpdateQueryConfigUseCase
@@ -38,6 +41,10 @@ def _detail_refresh_service(request: Request):
     return request.app.state.query_item_detail_refresh_service
 
 
+def _account_repository(request: Request):
+    return request.app.state.account_repository
+
+
 @router.get("", response_model=list[QueryConfigResponse])
 async def list_query_configs(request: Request) -> list[QueryConfigResponse]:
     use_case = ListQueryConfigsUseCase(_repository(request))
@@ -52,6 +59,12 @@ async def create_query_config(
     use_case = CreateQueryConfigUseCase(_repository(request))
     config = use_case.execute(name=payload.name, description=payload.description)
     return QueryConfigResponse.model_validate(config)
+
+
+@router.get("/capacity-summary", response_model=QueryCapacitySummaryResponse)
+async def get_query_capacity_summary(request: Request) -> QueryCapacitySummaryResponse:
+    use_case = GetQueryCapacitySummaryUseCase(QueryModeCapacityService(_account_repository(request)))
+    return QueryCapacitySummaryResponse.model_validate(use_case.execute())
 
 
 @router.get("/{config_id}", response_model=QueryConfigResponse)
@@ -104,8 +117,11 @@ async def add_query_item(
         item = await use_case.execute(
             config_id=config_id,
             product_url=payload.product_url,
-            max_wear=payload.max_wear,
+            detail_min_wear=payload.detail_min_wear,
+            detail_max_wear=payload.detail_max_wear,
             max_price=payload.max_price,
+            manual_paused=payload.manual_paused,
+            mode_allocations=payload.mode_allocations,
         )
     except KeyError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Query config not found") from exc
@@ -125,8 +141,11 @@ async def update_query_item(
     try:
         item = use_case.execute(
             query_item_id=query_item_id,
-            max_wear=payload.max_wear,
+            detail_min_wear=payload.detail_min_wear,
+            detail_max_wear=payload.detail_max_wear,
             max_price=payload.max_price,
+            manual_paused=payload.manual_paused,
+            mode_allocations=payload.mode_allocations,
         )
     except KeyError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Query item not found") from exc

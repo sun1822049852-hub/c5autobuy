@@ -14,8 +14,9 @@ def build_item(
     external_item_id: str,
     last_detail_sync_at: str | None,
     min_wear: float | None = 0.0,
-    detail_max_wear: float | None = 0.7,
-    max_wear: float | None = 0.25,
+    max_wear: float | None = 0.7,
+    detail_min_wear: float | None = 0.0,
+    detail_max_wear: float | None = 0.25,
     max_price: float | None = 199.0,
     last_market_price: float | None = 90.0,
 ) -> QueryItem:
@@ -27,8 +28,9 @@ def build_item(
         item_name=f"商品-{query_item_id}",
         market_hash_name=f"Hash-{query_item_id}",
         min_wear=min_wear,
-        detail_max_wear=detail_max_wear,
         max_wear=max_wear,
+        detail_min_wear=detail_min_wear,
+        detail_max_wear=detail_max_wear,
         max_price=max_price,
         last_market_price=last_market_price,
         last_detail_sync_at=last_detail_sync_at,
@@ -87,7 +89,7 @@ class FakeQueryConfigRepository:
         item_name: str | None,
         market_hash_name: str | None,
         min_wear: float | None,
-        detail_max_wear: float | None,
+        max_wear: float | None,
         last_market_price: float | None,
         last_detail_sync_at: str,
     ) -> QueryItem:
@@ -97,7 +99,7 @@ class FakeQueryConfigRepository:
                 "item_name": item_name,
                 "market_hash_name": market_hash_name,
                 "min_wear": min_wear,
-                "detail_max_wear": detail_max_wear,
+                "max_wear": max_wear,
                 "last_market_price": last_market_price,
                 "last_detail_sync_at": last_detail_sync_at,
             }
@@ -108,7 +110,7 @@ class FakeQueryConfigRepository:
             item.item_name = item_name
             item.market_hash_name = market_hash_name
             item.min_wear = min_wear
-            item.detail_max_wear = detail_max_wear
+            item.max_wear = max_wear
             item.last_market_price = last_market_price
             item.last_detail_sync_at = last_detail_sync_at
             return item
@@ -225,7 +227,9 @@ async def test_refresh_service_updates_detail_fields_without_overwriting_user_th
                     external_item_id="1001",
                     last_detail_sync_at=(now - timedelta(hours=24)).isoformat(timespec="seconds"),
                     min_wear=0.0,
-                    max_wear=0.25,
+                    max_wear=0.77,
+                    detail_min_wear=0.0,
+                    detail_max_wear=0.25,
                     max_price=199.0,
                     last_market_price=80.0,
                 )
@@ -255,9 +259,10 @@ async def test_refresh_service_updates_detail_fields_without_overwriting_user_th
     item = repository.get_config("cfg-1").items[0]
 
     assert item.min_wear == 0.11
-    assert item.detail_max_wear == 0.77
+    assert item.max_wear == 0.77
     assert item.last_market_price == 123.45
-    assert item.max_wear == 0.25
+    assert item.detail_min_wear == 0.0
+    assert item.detail_max_wear == 0.25
     assert item.max_price == 199.0
 
 
@@ -305,8 +310,9 @@ async def test_refresh_service_refreshes_single_item_without_overwriting_user_th
                     external_item_id="1001",
                     last_detail_sync_at=(now - timedelta(hours=24)).isoformat(timespec="seconds"),
                     min_wear=0.0,
-                    detail_max_wear=0.7,
-                    max_wear=0.25,
+                    max_wear=0.7,
+                    detail_min_wear=0.0,
+                    detail_max_wear=0.25,
                     max_price=199.0,
                     last_market_price=90.0,
                 ),
@@ -315,8 +321,9 @@ async def test_refresh_service_refreshes_single_item_without_overwriting_user_th
                     external_item_id="1002",
                     last_detail_sync_at=(now - timedelta(hours=1)).isoformat(timespec="seconds"),
                     min_wear=0.1,
-                    detail_max_wear=0.8,
-                    max_wear=0.35,
+                    max_wear=0.8,
+                    detail_min_wear=0.1,
+                    detail_max_wear=0.35,
                     max_price=299.0,
                     last_market_price=190.0,
                 ),
@@ -349,8 +356,9 @@ async def test_refresh_service_refreshes_single_item_without_overwriting_user_th
     assert item.item_name == "AK-47 | Vulcan"
     assert item.market_hash_name == "AK-47 | Vulcan (Field-Tested)"
     assert item.min_wear == 0.12
-    assert item.detail_max_wear == 0.79
+    assert item.max_wear == 0.79
     assert item.last_market_price == 321.0
-    assert item.max_wear == 0.25
+    assert item.detail_min_wear == 0.0
+    assert item.detail_max_wear == 0.25
     assert item.max_price == 199.0
     assert repository.get_config("cfg-1").items[1].item_name == "商品-item-2"

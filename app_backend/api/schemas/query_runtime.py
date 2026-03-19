@@ -54,6 +54,26 @@ class QueryRuntimeGroupRowResponse(BaseModel):
     rate_limit_increment: float
 
 
+class QueryRuntimeItemModeResponse(BaseModel):
+    mode_type: str
+    target_dedicated_count: int
+    actual_dedicated_count: int
+    status: str
+    status_message: str
+
+
+class QueryRuntimeItemRowResponse(BaseModel):
+    query_item_id: str
+    item_name: str | None
+    max_price: float | None
+    min_wear: float | None
+    max_wear: float | None
+    detail_min_wear: float | None
+    detail_max_wear: float | None
+    manual_paused: bool
+    modes: dict[str, QueryRuntimeItemModeResponse]
+
+
 class QueryRuntimeStatusResponse(BaseModel):
     running: bool
     config_id: str | None
@@ -67,6 +87,7 @@ class QueryRuntimeStatusResponse(BaseModel):
     modes: dict[str, QueryRuntimeModeResponse]
     group_rows: list[QueryRuntimeGroupRowResponse]
     recent_events: list[QueryRuntimeRecentEventResponse]
+    item_rows: list[QueryRuntimeItemRowResponse]
 
 
 class QueryRuntimeStartRequest(BaseModel):
@@ -81,7 +102,7 @@ class QueryRuntimePrepareItemResponse(BaseModel):
     message: str
     last_market_price: float | None
     min_wear: float | None
-    detail_max_wear: float | None
+    max_wear: float | None
     last_detail_sync_at: str | None
 
 

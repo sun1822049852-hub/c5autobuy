@@ -48,4 +48,5 @@ python -m pytest -q
 ## 6. 维护说明
 - 如果后续继续做差异审计，基准对象应改为“历史设计语义”而不是仓库内旧实现文件
 - 如果要补当前里程碑说明，优先更新 `README.md` 与本文件
+- 如果要排查旧 `autobuy.py` 与新 backend 的实现级差异，先看 `docs/superpowers/references/2026-03-19-autobuy-backend-semantic-drift-reference.md`
 - `docs/superpowers/specs/`、`docs/superpowers/plans/` 保留为迁移过程档案，不作为当前运行结构说明

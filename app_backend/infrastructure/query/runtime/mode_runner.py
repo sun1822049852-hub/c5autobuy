@@ -9,6 +9,7 @@ from typing import Any
 from app_backend.domain.models.query_config import QueryItem, QueryModeSetting
 
 from .account_query_worker import AccountQueryWorker
+from .query_mode_allocator import QueryModeAllocator
 from .query_item_scheduler import QueryItemScheduler
 from .runtime_events import QueryExecutionEvent
 from .window_scheduler import WindowScheduler
@@ -39,6 +40,11 @@ class ModeRunner:
         self._hit_sink = hit_sink
         self._event_sink = event_sink
         self._query_item_scheduler = query_item_scheduler or QueryItemScheduler(self._query_items)
+        self._query_mode_allocator = QueryModeAllocator(
+            mode_setting.mode_type,
+            self._query_items,
+            query_item_scheduler=self._query_item_scheduler,
+        )
         self._window_scheduler = WindowScheduler(
             window_enabled=bool(mode_setting.window_enabled),
             start_hour=mode_setting.start_hour,
@@ -64,6 +70,7 @@ class ModeRunner:
         self._recent_events = []
         self._worker_cooldown_until = {}
         self._query_item_scheduler.reset()
+        self._query_mode_allocator.reset()
         self._workers = [
             self._worker_factory(self._mode_setting.mode_type, account)
             for account in self._eligible_accounts()
@@ -108,8 +115,9 @@ class ModeRunner:
 
         events: list[object] = []
         self._has_run_cycle = True
-        for worker in self._active_workers():
-            reservation = await self._query_item_scheduler.reserve_next(now=self._now_provider())
+        active_workers = self._active_workers()
+        for worker in active_workers:
+            reservation = await self._reserve_next_item(worker, active_workers=active_workers)
             if reservation is None:
                 break
             await self._wait_until(None, reservation.execute_at)
@@ -134,6 +142,7 @@ class ModeRunner:
         if enabled and self._mode_setting.window_enabled:
             next_window_start = window_state.next_window_start.isoformat(timespec="seconds")
             next_window_end = window_state.next_window_end.isoformat(timespec="seconds")
+        item_rows = self._query_mode_allocator.snapshot(active_workers=self._active_workers()).get("item_rows", [])
 
         return {
             "mode_type": self._mode_setting.mode_type,
@@ -147,6 +156,7 @@ class ModeRunner:
             "found_count": self._found_count,
             "last_error": last_error,
             "group_rows": self._build_group_rows(worker_snapshots, in_window=bool(enabled and window_state.in_window)),
+            "item_rows": item_rows,
             "recent_events": list(self._recent_events),
         }
 
@@ -170,6 +180,15 @@ class ModeRunner:
 
     def _build_default_worker(self, mode_type: str, account: object) -> AccountQueryWorker:
         return AccountQueryWorker(mode_type=mode_type, account=account)
+
+    async def _reserve_next_item(self, worker: object, *, active_workers: list[object]):
+        if not hasattr(self._query_item_scheduler, "reserve_item"):
+            return await self._query_item_scheduler.reserve_next(now=self._now_provider())
+        return await self._query_mode_allocator.reserve_next(
+            worker,
+            active_workers=active_workers,
+            now=self._now_provider(),
+        )
 
     async def _run_worker_loop(self, worker: object, stop_event) -> None:
         while self._started and not stop_event.is_set():
@@ -195,7 +214,10 @@ class ModeRunner:
                 continue
 
             self._has_run_cycle = True
-            reservation = await self._query_item_scheduler.reserve_next(now=self._now_provider())
+            reservation = await self._reserve_next_item(
+                worker,
+                active_workers=self._active_workers(),
+            )
             if reservation is None:
                 if await self._wait_for_stop(stop_event, 0.1):
                     return

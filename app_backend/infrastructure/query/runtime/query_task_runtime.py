@@ -143,6 +143,7 @@ class QueryTaskRuntime:
             "total_query_count": sum(int(snapshot.get("query_count", 0)) for snapshot in mode_snapshots),
             "total_found_count": sum(int(snapshot.get("found_count", 0)) for snapshot in mode_snapshots),
             "group_rows": self._collect_group_rows(mode_snapshots),
+            "item_rows": self._collect_item_rows(self._config, mode_snapshots),
             "recent_events": self._collect_recent_events(mode_snapshots),
             "modes": {
                 snapshot["mode_type"]: snapshot
@@ -231,3 +232,46 @@ class QueryTaskRuntime:
                 if isinstance(row, dict):
                     group_rows.append(dict(row))
         return group_rows
+
+    @staticmethod
+    def _collect_item_rows(config: QueryConfig, mode_snapshots: list[dict[str, object]]) -> list[dict[str, object]]:
+        rows_by_item_id: dict[str, dict[str, object]] = {}
+        ordered_rows: list[dict[str, object]] = []
+        for item in config.items:
+            item_id = str(item.query_item_id)
+            row = {
+                "query_item_id": item_id,
+                "item_name": item.item_name or item.market_hash_name or item_id,
+                "max_price": item.max_price,
+                "min_wear": item.min_wear,
+                "max_wear": item.max_wear,
+                "detail_min_wear": item.detail_min_wear,
+                "detail_max_wear": item.detail_max_wear,
+                "manual_paused": bool(item.manual_paused),
+                "modes": {},
+            }
+            rows_by_item_id[item_id] = row
+            ordered_rows.append(row)
+
+        for snapshot in mode_snapshots:
+            raw_rows = snapshot.get("item_rows")
+            if not isinstance(raw_rows, list):
+                continue
+            fallback_mode_type = str(snapshot.get("mode_type") or "")
+            for raw_row in raw_rows:
+                if not isinstance(raw_row, dict):
+                    continue
+                item_id = str(raw_row.get("query_item_id") or "")
+                if not item_id or item_id not in rows_by_item_id:
+                    continue
+                mode_type = str(raw_row.get("mode_type") or fallback_mode_type)
+                if not mode_type:
+                    continue
+                rows_by_item_id[item_id]["modes"][mode_type] = {
+                    "mode_type": mode_type,
+                    "target_dedicated_count": int(raw_row.get("target_dedicated_count", 0)),
+                    "actual_dedicated_count": int(raw_row.get("actual_dedicated_count", 0)),
+                    "status": str(raw_row.get("status") or ""),
+                    "status_message": str(raw_row.get("status_message") or ""),
+                }
+        return ordered_rows
