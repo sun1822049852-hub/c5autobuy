@@ -185,6 +185,7 @@ export function useAccountCenterPage({ client }) {
     account: null,
     detail: null,
     isLoading: false,
+    isRefreshing: false,
     open: false,
   });
   const [loginDrawerAccount, setLoginDrawerAccount] = useState(null);
@@ -332,6 +333,7 @@ export function useAccountCenterPage({ client }) {
         account: null,
         detail: null,
         isLoading: false,
+        isRefreshing: false,
         open: false,
       });
     },
@@ -397,6 +399,7 @@ export function useAccountCenterPage({ client }) {
         account,
         detail: null,
         isLoading: true,
+        isRefreshing: false,
         open: true,
       });
 
@@ -406,6 +409,7 @@ export function useAccountCenterPage({ client }) {
           account,
           detail,
           isLoading: false,
+          isRefreshing: false,
           open: true,
         });
       } catch (error) {
@@ -413,6 +417,7 @@ export function useAccountCenterPage({ client }) {
           account: null,
           detail: null,
           isLoading: false,
+          isRefreshing: false,
           open: false,
         });
         setRecentError(`加载购买配置失败：${toErrorMessage(error)}`);
@@ -513,10 +518,44 @@ export function useAccountCenterPage({ client }) {
           account: null,
           detail: null,
           isLoading: false,
+          isRefreshing: false,
           open: false,
         });
         await refreshAccounts();
       }, `已更新购买配置：${getDisplayName(account)}`);
+    },
+    refreshPurchaseConfigInventory: async () => {
+      const account = purchaseDrawerState.account;
+      if (!account) {
+        return null;
+      }
+
+      setPurchaseDrawerState((current) => ({
+        ...current,
+        isRefreshing: true,
+      }));
+
+      try {
+        const detail = await client.refreshPurchaseRuntimeInventoryDetail(account.account_id);
+        setPurchaseDrawerState((current) => ({
+          ...current,
+          account,
+          detail,
+          isLoading: false,
+          isRefreshing: false,
+          open: true,
+        }));
+        setRecentError("当前无错误记录");
+        setRecentModification(`已刷新仓库：${getDisplayName(account)}`);
+        return detail;
+      } catch (error) {
+        setPurchaseDrawerState((current) => ({
+          ...current,
+          isRefreshing: false,
+        }));
+        setRecentError(`刷新仓库失败：${toErrorMessage(error)}`);
+        return null;
+      }
     },
     submitRemark: async (payload) => {
       const account = remarkDialogAccount;

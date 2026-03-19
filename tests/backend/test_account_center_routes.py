@@ -76,7 +76,7 @@ async def test_account_center_accounts_route_renders_purchase_status_priority(cl
     snapshot_repo.save(
         account_id="disabled",
         selected_steam_id="steam-disabled",
-        inventories=[{"steamId": "steam-disabled", "inventory_num": 900, "inventory_max": 1000}],
+        inventories=[{"steamId": "steam-disabled", "nickname": "禁用仓", "inventory_num": 900, "inventory_max": 1000}],
         refreshed_at="2026-03-16T20:10:00",
         last_error=None,
     )
@@ -90,7 +90,7 @@ async def test_account_center_accounts_route_renders_purchase_status_priority(cl
     snapshot_repo.save(
         account_id="ready",
         selected_steam_id="steam-ready",
-        inventories=[{"steamId": "steam-ready", "inventory_num": 900, "inventory_max": 1000}],
+        inventories=[{"steamId": "steam-ready", "nickname": "可买主仓", "inventory_num": 900, "inventory_max": 1000}],
         refreshed_at="2026-03-16T20:10:00",
         last_error=None,
     )
@@ -135,7 +135,7 @@ async def test_account_center_accounts_route_renders_purchase_status_priority(cl
             "disabled": False,
             "purchase_disabled": True,
             "selected_steam_id": "steam-disabled",
-            "selected_warehouse_text": "steam-disabled",
+            "selected_warehouse_text": "禁用仓",
             "purchase_status_code": "disabled",
             "purchase_status_text": "禁用",
         },
@@ -175,9 +175,9 @@ async def test_account_center_accounts_route_renders_purchase_status_priority(cl
             "disabled": False,
             "purchase_disabled": False,
             "selected_steam_id": "steam-ready",
-            "selected_warehouse_text": "steam-ready",
+            "selected_warehouse_text": "可买主仓",
             "purchase_status_code": "selected_warehouse",
-            "purchase_status_text": "steam-ready",
+            "purchase_status_text": "可买主仓",
         },
     ]
 
@@ -195,8 +195,8 @@ async def test_account_center_accounts_route_prefers_runtime_selected_inventory_
         account_id="runtime-first",
         selected_steam_id="steam-snapshot",
         inventories=[
-            {"steamId": "steam-snapshot", "inventory_num": 900, "inventory_max": 1000},
-            {"steamId": "steam-runtime", "inventory_num": 800, "inventory_max": 1000},
+            {"steamId": "steam-snapshot", "nickname": "快照仓", "inventory_num": 900, "inventory_max": 1000},
+            {"steamId": "steam-runtime", "nickname": "运行时主仓", "inventory_num": 800, "inventory_max": 1000},
         ],
         refreshed_at="2026-03-16T20:05:00",
         last_error=None,
@@ -210,8 +210,8 @@ async def test_account_center_accounts_route_prefers_runtime_selected_inventory_
 
     assert response.status_code == 200
     assert response.json()[0]["selected_steam_id"] == "steam-runtime"
-    assert response.json()[0]["selected_warehouse_text"] == "steam-runtime"
-    assert response.json()[0]["purchase_status_text"] == "steam-runtime"
+    assert response.json()[0]["selected_warehouse_text"] == "运行时主仓"
+    assert response.json()[0]["purchase_status_text"] == "运行时主仓"
 
 
 async def test_update_purchase_config_route_updates_purchase_disabled_and_selected_inventory(client, app):

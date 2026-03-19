@@ -76,10 +76,13 @@ function buildInventoryMap() {
       display_name: "账号 A",
       selected_steam_id: "steam-1",
       refreshed_at: "2026-03-18T10:00:00",
+      auto_refresh_due_at: "2026-03-18T10:05:00",
+      auto_refresh_remaining_seconds: 300,
       last_error: null,
       inventories: [
         {
           steamId: "steam-1",
+          nickname: "主仓一号",
           inventory_num: 900,
           inventory_max: 1000,
           remaining_capacity: 100,
@@ -88,6 +91,7 @@ function buildInventoryMap() {
         },
         {
           steamId: "steam-2",
+          nickname: "备用仓二号",
           inventory_num: 880,
           inventory_max: 1000,
           remaining_capacity: 120,
@@ -96,6 +100,7 @@ function buildInventoryMap() {
         },
         {
           steamId: "steam-full",
+          nickname: "满仓仓库",
           inventory_num: 1000,
           inventory_max: 1000,
           remaining_capacity: 0,
@@ -113,6 +118,7 @@ function buildInventoryMap() {
       inventories: [
         {
           steamId: "steam-full",
+          nickname: "满仓仓库",
           inventory_num: 1000,
           inventory_max: 1000,
           remaining_capacity: 0,
@@ -300,6 +306,29 @@ function createFetchHarness() {
     const inventoryMatch = url.pathname.match(/^\/purchase-runtime\/accounts\/([^/]+)\/inventory$/);
     if (inventoryMatch && method === "GET") {
       return jsonResponse(inventoryMap[inventoryMatch[1]]);
+    }
+
+    const inventoryRefreshMatch = url.pathname.match(/^\/purchase-runtime\/accounts\/([^/]+)\/inventory\/refresh$/);
+    if (inventoryRefreshMatch && method === "POST") {
+      const accountId = inventoryRefreshMatch[1];
+      inventoryMap[accountId] = {
+        ...inventoryMap[accountId],
+        refreshed_at: "2026-03-18T10:02:00",
+        auto_refresh_due_at: "2026-03-18T10:07:00",
+        auto_refresh_remaining_seconds: 300,
+        inventories: inventoryMap[accountId].inventories.map((inventory) => (
+          inventory.steamId === "steam-1"
+            ? {
+              ...inventory,
+              nickname: "主仓一号",
+              inventory_num: 800,
+              remaining_capacity: 200,
+              is_selected: true,
+            }
+            : inventory
+        )),
+      };
+      return jsonResponse(inventoryMap[accountId]);
     }
 
     const purchaseConfigMatch = url.pathname.match(/^\/accounts\/([^/]+)\/purchase-config$/);
@@ -545,9 +574,17 @@ describe("account center editing flows", () => {
         }),
       ]),
     );
+    expect(within(purchaseDrawer).getByDisplayValue("主仓一号")).toBeInTheDocument();
+    expect(within(purchaseDrawer).getByText("主仓一号（当前）")).toBeInTheDocument();
+    expect(within(purchaseDrawer).getByText("当前仓库占用 900/1000")).toBeInTheDocument();
+    expect(within(purchaseDrawer).getByText("自动刷新剩余时间 05:00")).toBeInTheDocument();
+    await user.click(within(purchaseDrawer).getByRole("button", { name: "手动刷新仓库" }));
+    await waitFor(() => {
+      expect(within(purchaseDrawer).getByText("当前仓库占用 800/1000")).toBeInTheDocument();
+    });
 
     const warehouseSelect = within(purchaseDrawer).getByLabelText("当前仓库");
-    expect(within(warehouseSelect).getByRole("option", { name: "steam-full（库存已满）" })).toBeDisabled();
+    expect(within(warehouseSelect).getByRole("option", { name: "满仓仓库（库存已满）" })).toBeDisabled();
     await user.selectOptions(warehouseSelect, "steam-2");
     await user.click(within(purchaseDrawer).getByLabelText("禁用该账号的购买能力"));
     await user.click(within(purchaseDrawer).getByRole("button", { name: "保存" }));
@@ -562,6 +599,11 @@ describe("account center editing flows", () => {
             },
             method: "PATCH",
             pathname: "/accounts/a-1/purchase-config",
+          }),
+          expect.objectContaining({
+            body: null,
+            method: "POST",
+            pathname: "/purchase-runtime/accounts/a-1/inventory/refresh",
           }),
         ]),
       );

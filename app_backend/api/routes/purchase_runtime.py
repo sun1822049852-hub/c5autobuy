@@ -11,6 +11,9 @@ from app_backend.api.schemas.purchase_runtime import (
 from app_backend.application.use_cases.get_purchase_runtime_inventory_detail import (
     GetPurchaseRuntimeInventoryDetailUseCase,
 )
+from app_backend.application.use_cases.refresh_purchase_runtime_inventory_detail import (
+    RefreshPurchaseRuntimeInventoryDetailUseCase,
+)
 from app_backend.application.use_cases.get_purchase_runtime_settings import GetPurchaseRuntimeSettingsUseCase
 from app_backend.application.use_cases.get_purchase_runtime_status import GetPurchaseRuntimeStatusUseCase
 from app_backend.application.use_cases.start_purchase_runtime import StartPurchaseRuntimeUseCase
@@ -38,6 +41,18 @@ async def get_purchase_runtime_inventory_detail(
     request: Request,
 ) -> PurchaseRuntimeInventoryDetailResponse:
     use_case = GetPurchaseRuntimeInventoryDetailUseCase(_runtime_service(request))
+    detail = use_case.execute(account_id=account_id)
+    if detail is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="购买账号不存在")
+    return PurchaseRuntimeInventoryDetailResponse.model_validate(detail)
+
+
+@router.post("/accounts/{account_id}/inventory/refresh", response_model=PurchaseRuntimeInventoryDetailResponse)
+async def refresh_purchase_runtime_inventory_detail(
+    account_id: str,
+    request: Request,
+) -> PurchaseRuntimeInventoryDetailResponse:
+    use_case = RefreshPurchaseRuntimeInventoryDetailUseCase(_runtime_service(request))
     detail = use_case.execute(account_id=account_id)
     if detail is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="购买账号不存在")

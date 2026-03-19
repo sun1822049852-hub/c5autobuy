@@ -41,6 +41,7 @@ export function AccountCenterPage({ bootstrapConfig, client }) {
     recentError,
     recentLoginTask,
     recentModification,
+    refreshPurchaseConfigInventory,
     refreshAccounts,
     remarkDialogAccount,
     searchTerm,
@@ -134,8 +135,10 @@ export function AccountCenterPage({ bootstrapConfig, client }) {
         account={purchaseDrawerState.account}
         detail={purchaseDrawerState.detail}
         isLoading={purchaseDrawerState.isLoading}
+        isRefreshing={purchaseDrawerState.isRefreshing}
         open={purchaseDrawerState.open}
         onClose={closePurchaseDrawer}
+        onRefresh={refreshPurchaseConfigInventory}
         onSubmit={submitPurchaseConfig}
       />
       <LoginDrawer

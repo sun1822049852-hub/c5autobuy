@@ -1,4 +1,5 @@
 import time
+from datetime import datetime, timedelta
 
 from app_backend.domain.models.account import Account
 from app_backend.domain.models.purchase_runtime_settings import PurchaseRuntimeSettings
@@ -370,8 +371,8 @@ def test_purchase_runtime_service_returns_inventory_detail_from_runtime_memory()
                     "account_id": "a1",
                     "selected_steam_id": "steam-2",
                     "inventories": [
-                        {"steamId": "steam-1", "inventory_num": 910, "inventory_max": 1000},
-                        {"steamId": "steam-2", "inventory_num": 950, "inventory_max": 1200},
+                        {"steamId": "steam-1", "nickname": "备用仓", "inventory_num": 910, "inventory_max": 1000},
+                        {"steamId": "steam-2", "nickname": "主仓", "inventory_num": 950, "inventory_max": 1200},
                     ],
                     "refreshed_at": "2026-03-16T20:00:00",
                     "last_error": None,
@@ -394,6 +395,7 @@ def test_purchase_runtime_service_returns_inventory_detail_from_runtime_memory()
     assert detail["inventories"] == [
         {
             "steamId": "steam-1",
+            "nickname": "备用仓",
             "inventory_num": 910,
             "inventory_max": 1000,
             "remaining_capacity": 90,
@@ -402,6 +404,7 @@ def test_purchase_runtime_service_returns_inventory_detail_from_runtime_memory()
         },
         {
             "steamId": "steam-2",
+            "nickname": "主仓",
             "inventory_num": 950,
             "inventory_max": 1200,
             "remaining_capacity": 250,
@@ -449,6 +452,7 @@ def test_purchase_runtime_service_returns_inventory_detail_from_persisted_snapsh
     assert detail["inventories"] == [
         {
             "steamId": "steam-1",
+            "nickname": None,
             "inventory_num": 990,
             "inventory_max": 1000,
             "remaining_capacity": 10,
@@ -457,6 +461,7 @@ def test_purchase_runtime_service_returns_inventory_detail_from_persisted_snapsh
         },
         {
             "steamId": "steam-3",
+            "nickname": None,
             "inventory_num": 920,
             "inventory_max": 1000,
             "remaining_capacity": 80,
@@ -464,6 +469,88 @@ def test_purchase_runtime_service_returns_inventory_detail_from_persisted_snapsh
             "is_available": True,
         },
     ]
+
+
+def test_purchase_runtime_service_inventory_detail_exposes_auto_refresh_remaining_time():
+    from app_backend.infrastructure.purchase.runtime.purchase_runtime_service import PurchaseRuntimeService
+
+    account = build_account("a1")
+    account.purchase_recovery_due_at = (datetime.now() + timedelta(seconds=180)).isoformat()
+    account_repository = FakeAccountRepository([account])
+    snapshot_repository = FakeInventorySnapshotRepository(
+        {
+            "a1": type(
+                "Snapshot",
+                (),
+                {
+                    "account_id": "a1",
+                    "selected_steam_id": "steam-3",
+                    "inventories": [
+                        {"steamId": "steam-3", "inventory_num": 920, "inventory_max": 1000},
+                    ],
+                    "refreshed_at": "2026-03-16T21:00:00",
+                    "last_error": "等待恢复检查",
+                },
+            )()
+        }
+    )
+    service = PurchaseRuntimeService(
+        account_repository=account_repository,
+        settings_repository=FakeSettingsRepository(),
+        inventory_snapshot_repository=snapshot_repository,
+    )
+
+    detail = service.get_account_inventory_detail("a1")
+
+    assert detail["auto_refresh_due_at"] == account.purchase_recovery_due_at
+    assert 0 < detail["auto_refresh_remaining_seconds"] <= 180
+
+
+def test_purchase_runtime_service_manual_refresh_updates_inventory_detail():
+    from app_backend.infrastructure.purchase.runtime.purchase_runtime_service import PurchaseRuntimeService
+    from app_backend.infrastructure.purchase.runtime.runtime_events import InventoryRefreshResult
+
+    account_repository = FakeAccountRepository([build_account("a1")])
+    snapshot_repository = FakeInventorySnapshotRepository(
+        {
+            "a1": type(
+                "Snapshot",
+                (),
+                {
+                    "account_id": "a1",
+                    "selected_steam_id": "steam-1",
+                    "inventories": [
+                        {"steamId": "steam-1", "inventory_num": 900, "inventory_max": 1000},
+                    ],
+                    "refreshed_at": "2026-03-16T20:00:00",
+                    "last_error": None,
+                },
+            )()
+        }
+    )
+    refresh_gateway = StubInventoryRefreshGateway(
+        InventoryRefreshResult.success(
+            inventories=[
+                {"steamId": "steam-1", "nickname": "主仓", "inventory_num": 800, "inventory_max": 1000},
+                {"steamId": "steam-2", "nickname": "备用仓", "inventory_num": 760, "inventory_max": 1000},
+            ]
+        )
+    )
+    service = PurchaseRuntimeService(
+        account_repository=account_repository,
+        settings_repository=FakeSettingsRepository(),
+        inventory_snapshot_repository=snapshot_repository,
+        inventory_refresh_gateway_factory=lambda: refresh_gateway,
+    )
+
+    detail = service.refresh_account_inventory_detail("a1")
+
+    assert refresh_gateway.calls == [{"account_id": "a1"}]
+    assert detail["selected_steam_id"] == "steam-1"
+    assert detail["inventories"][0]["nickname"] == "主仓"
+    assert detail["inventories"][0]["inventory_num"] == 800
+    assert snapshot_repository.saved_payloads[-1]["inventories"][0]["nickname"] == "主仓"
+    assert snapshot_repository.saved_payloads[-1]["inventories"][0]["inventory_num"] == 800
 
 
 def test_purchase_runtime_service_stops_running_runtime():

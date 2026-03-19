@@ -97,7 +97,7 @@ class PurchaseRuntimeService:
         if account is None:
             return None
 
-        runtime_detail = self._get_runtime_inventory_detail(account_id)
+        runtime_detail = self._get_runtime_inventory_detail(account_id, account=account)
         if runtime_detail is not None:
             return runtime_detail
 
@@ -107,6 +107,82 @@ class PurchaseRuntimeService:
             else None
         )
         return self._build_inventory_detail_from_snapshot(account, snapshot)
+
+    def refresh_account_inventory_detail(self, account_id: str) -> dict[str, object] | None:
+        account = self._find_account(account_id)
+        if account is None:
+            return None
+
+        runtime_detail = self._refresh_runtime_inventory_detail(account_id, account=account)
+        if runtime_detail is not None:
+            return runtime_detail
+
+        snapshot = (
+            self._inventory_snapshot_repository.get(account_id)
+            if self._inventory_snapshot_repository is not None
+            else None
+        )
+        inventory_state = InventoryState()
+        if snapshot is not None and list(getattr(snapshot, "inventories", []) or []):
+            inventory_state.load_snapshot(list(snapshot.inventories))
+            selected_steam_id = getattr(snapshot, "selected_steam_id", None)
+            if selected_steam_id and any(
+                inventory.get("steamId") == selected_steam_id
+                for inventory in inventory_state.available_inventories
+            ):
+                inventory_state.selected_steam_id = selected_steam_id
+
+        refresh_result = self._refresh_inventory_from_remote(account, inventory_state)
+        if refresh_result is None:
+            return self._build_inventory_detail_from_snapshot(account, snapshot)
+
+        detail_payload = {
+            "account_id": str(getattr(account, "account_id", "") or ""),
+            "display_name": str(getattr(account, "display_name", "") or ""),
+            "selected_steam_id": getattr(snapshot, "selected_steam_id", None) if snapshot is not None else None,
+            "refreshed_at": getattr(snapshot, "refreshed_at", None) if snapshot is not None else None,
+            "last_error": getattr(snapshot, "last_error", None) if snapshot is not None else None,
+            "inventories": self._build_inventory_rows(
+                list(getattr(snapshot, "inventories", []) or []) if snapshot is not None else [],
+                selected_steam_id=getattr(snapshot, "selected_steam_id", None) if snapshot is not None else None,
+            ),
+        }
+
+        if refresh_result.status == "success":
+            inventory_state.refresh_from_remote(list(refresh_result.inventories))
+            refreshed_at = datetime.now().isoformat(timespec="seconds")
+            detail_payload = {
+                "account_id": str(getattr(account, "account_id", "") or ""),
+                "display_name": str(getattr(account, "display_name", "") or ""),
+                "selected_steam_id": inventory_state.selected_steam_id,
+                "refreshed_at": refreshed_at,
+                "last_error": None,
+                "inventories": self._build_inventory_rows(
+                    inventory_state.inventories,
+                    selected_steam_id=inventory_state.selected_steam_id,
+                ),
+            }
+            if self._inventory_snapshot_repository is not None:
+                self._inventory_snapshot_repository.save(
+                    account_id=str(getattr(account, "account_id", "") or ""),
+                    selected_steam_id=inventory_state.selected_steam_id,
+                    inventories=inventory_state.inventories,
+                    refreshed_at=refreshed_at,
+                    last_error=None,
+                )
+            return self._normalize_inventory_detail(detail_payload, account=account)
+
+        error = refresh_result.error
+        if refresh_result.status == "auth_invalid" and error:
+            self._mark_account_auth_invalid_in_repository(
+                account_id=str(getattr(account, "account_id", "") or ""),
+                error=error,
+            )
+            setattr(account, "purchase_capability_state", PurchaseCapabilityState.EXPIRED)
+            setattr(account, "purchase_pool_state", PurchasePoolState.PAUSED_AUTH_INVALID)
+        if error is not None:
+            detail_payload["last_error"] = error
+        return self._normalize_inventory_detail(detail_payload, account=account)
 
     def list_account_center_accounts(self) -> list[dict[str, object]]:
         runtime_accounts = self._runtime_account_map()
@@ -361,6 +437,7 @@ class PurchaseRuntimeService:
         inventory_detail = self.get_account_inventory_detail(account_id)
         selected_row = self._selected_inventory_row(inventory_detail)
         selected_steam_id = str(selected_row.get("steamId") or "") if selected_row is not None else ""
+        selected_warehouse_text = self._selected_inventory_display_text(selected_row)
         purchase_capability_state = (
             str(runtime_account.get("purchase_capability_state") or "")
             if runtime_account is not None
@@ -396,7 +473,7 @@ class PurchaseRuntimeService:
             "disabled": bool(getattr(account, "disabled", False)),
             "purchase_disabled": purchase_disabled,
             "selected_steam_id": selected_steam_id or None,
-            "selected_warehouse_text": selected_steam_id or None,
+            "selected_warehouse_text": selected_warehouse_text,
             "purchase_status_code": purchase_status_code,
             "purchase_status_text": purchase_status_text,
         }
@@ -424,8 +501,18 @@ class PurchaseRuntimeService:
             return "disabled", "禁用"
         if selected_row is None or not bool(selected_row.get("is_available")) or purchase_pool_state == PurchasePoolState.PAUSED_NO_INVENTORY:
             return "inventory_full", "库存已满"
-        selected_steam_id = str(selected_row.get("steamId") or "")
-        return "selected_warehouse", selected_steam_id
+        selected_text = PurchaseRuntimeService._selected_inventory_display_text(selected_row)
+        return "selected_warehouse", selected_text or str(selected_row.get("steamId") or "")
+
+    @staticmethod
+    def _selected_inventory_display_text(selected_row: dict[str, object] | None) -> str | None:
+        if selected_row is None:
+            return None
+        nickname = str(selected_row.get("nickname") or "").strip()
+        if nickname:
+            return nickname
+        steam_id = str(selected_row.get("steamId") or "").strip()
+        return steam_id or None
 
     def _resolve_selected_steam_id(
         self,
@@ -523,6 +610,7 @@ class PurchaseRuntimeService:
         return [
             {
                 "steamId": str(row.get("steamId") or ""),
+                "nickname": (str(row.get("nickname") or "").strip() or None),
                 "inventory_num": int(row.get("inventory_num", 0)),
                 "inventory_max": int(row.get("inventory_max", 0)),
                 "remaining_capacity": int(row.get("remaining_capacity", 0)),
@@ -546,7 +634,7 @@ class PurchaseRuntimeService:
         except Exception:
             return
 
-    def _get_runtime_inventory_detail(self, account_id: str) -> dict[str, object] | None:
+    def _get_runtime_inventory_detail(self, account_id: str, *, account) -> dict[str, object] | None:
         if not self._has_running_runtime():
             return None
         get_detail = getattr(self._runtime, "get_account_inventory_detail", None)
@@ -555,7 +643,18 @@ class PurchaseRuntimeService:
         detail = get_detail(account_id)
         if detail is None:
             return None
-        return self._normalize_inventory_detail(detail)
+        return self._normalize_inventory_detail(detail, account=account)
+
+    def _refresh_runtime_inventory_detail(self, account_id: str, *, account) -> dict[str, object] | None:
+        if not self._has_running_runtime():
+            return None
+        refresh_detail = getattr(self._runtime, "refresh_account_inventory_detail", None)
+        if not callable(refresh_detail):
+            return None
+        detail = refresh_detail(account_id)
+        if detail is None:
+            return None
+        return self._normalize_inventory_detail(detail, account=account)
 
     def _build_inventory_detail_from_snapshot(self, account, snapshot) -> dict[str, object]:
         inventories = list(getattr(snapshot, "inventories", []) or []) if snapshot is not None else []
@@ -568,20 +667,34 @@ class PurchaseRuntimeService:
                 "refreshed_at": getattr(snapshot, "refreshed_at", None) if snapshot is not None else None,
                 "last_error": getattr(snapshot, "last_error", None) if snapshot is not None else None,
                 "inventories": self._build_inventory_rows(inventories, selected_steam_id=selected_steam_id),
-            }
+            },
+            account=account,
         )
 
     @staticmethod
-    def _normalize_inventory_detail(detail: dict[str, object]) -> dict[str, object]:
+    def _normalize_inventory_detail(detail: dict[str, object], *, account=None) -> dict[str, object]:
+        auto_refresh_due_at = detail.get("auto_refresh_due_at")
+        if auto_refresh_due_at is None and account is not None:
+            auto_refresh_due_at = getattr(account, "purchase_recovery_due_at", None)
+        auto_refresh_remaining_seconds = detail.get("auto_refresh_remaining_seconds")
+        if auto_refresh_remaining_seconds is None:
+            auto_refresh_remaining_seconds = PurchaseRuntimeService._remaining_seconds_until(auto_refresh_due_at)
         return {
             "account_id": str(detail.get("account_id") or ""),
             "display_name": str(detail.get("display_name") or detail.get("account_id") or ""),
             "selected_steam_id": detail.get("selected_steam_id"),
             "refreshed_at": detail.get("refreshed_at"),
             "last_error": detail.get("last_error"),
+            "auto_refresh_due_at": auto_refresh_due_at,
+            "auto_refresh_remaining_seconds": (
+                max(int(auto_refresh_remaining_seconds), 0)
+                if auto_refresh_remaining_seconds is not None
+                else None
+            ),
             "inventories": [
                 {
                     "steamId": str(row.get("steamId") or ""),
+                    "nickname": (str(row.get("nickname") or "").strip() or None),
                     "inventory_num": int(row.get("inventory_num", 0)),
                     "inventory_max": int(row.get("inventory_max", 0)),
                     "remaining_capacity": int(row.get("remaining_capacity", 0)),
@@ -592,6 +705,41 @@ class PurchaseRuntimeService:
                 if isinstance(row, dict)
             ],
         }
+
+    @staticmethod
+    def _remaining_seconds_until(value: str | datetime | None) -> int | None:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            due_at = value
+        else:
+            try:
+                due_at = datetime.fromisoformat(str(value))
+            except ValueError:
+                return None
+        return max(int((due_at - datetime.now()).total_seconds()), 0)
+
+    def _refresh_inventory_from_remote(
+        self,
+        account: object,
+        inventory_state: InventoryState,
+    ) -> InventoryRefreshResult | None:
+        if self._inventory_refresh_gateway_factory is None:
+            return None
+
+        gateway = self._inventory_refresh_gateway_factory()
+        refresh = getattr(gateway, "refresh", None)
+        if not callable(refresh):
+            return InventoryRefreshResult(status="error", inventories=[], error="refresh not supported")
+
+        try:
+            result = _run_coroutine_sync(refresh(account=account))
+        except Exception as exc:
+            return InventoryRefreshResult(status="error", inventories=[], error=str(exc))
+
+        if isinstance(result, InventoryRefreshResult):
+            return result
+        return InventoryRefreshResult(status="error", inventories=[], error="invalid refresh result")
 
     @staticmethod
     def _build_inventory_rows(
@@ -609,6 +757,7 @@ class PurchaseRuntimeService:
             rows.append(
                 {
                     "steamId": steam_id,
+                    "nickname": (str(inventory.get("nickname") or "").strip() or None),
                     "inventory_num": current_num,
                     "inventory_max": max_num,
                     "remaining_capacity": remaining,
@@ -789,12 +938,54 @@ class _DefaultPurchaseRuntime:
         state = self._account_states.get(account_id)
         if state is None:
             return None
+        return self._build_account_inventory_detail(state)
+
+    def refresh_account_inventory_detail(self, account_id: str) -> dict[str, object] | None:
+        state = self._account_states.get(account_id)
+        if state is None:
+            return None
+
+        state.recovery_due_at = None
+        refresh_result = self._refresh_inventory_from_remote(state.account, state.inventory_state)
+        if refresh_result is None:
+            return self._build_account_inventory_detail(state)
+
+        if refresh_result.status == "success":
+            state.capability_state = PurchaseCapabilityState.BOUND
+            state.inventory_state.refresh_from_remote(list(refresh_result.inventories))
+            state.last_error = None
+            state.pool_state = (
+                PurchasePoolState.ACTIVE
+                if state.inventory_state.selected_steam_id is not None
+                else PurchasePoolState.PAUSED_NO_INVENTORY
+            )
+        elif refresh_result.status == "auth_invalid":
+            state.capability_state = PurchaseCapabilityState.EXPIRED
+            state.pool_state = PurchasePoolState.PAUSED_AUTH_INVALID
+            state.last_error = refresh_result.error
+        else:
+            if state.capability_state != PurchaseCapabilityState.EXPIRED:
+                state.capability_state = PurchaseCapabilityState.BOUND
+                state.pool_state = PurchasePoolState.PAUSED_NO_INVENTORY
+            else:
+                state.pool_state = PurchasePoolState.PAUSED_AUTH_INVALID
+            state.last_error = refresh_result.error
+
+        self._sync_scheduler_state(state)
+        self._persist_inventory_snapshot(state, last_error=state.last_error)
+        self._sync_account_repository_state(state)
+        return self._build_account_inventory_detail(state)
+
+    def _build_account_inventory_detail(self, state: _RuntimeAccountState) -> dict[str, object]:
+        auto_refresh_due_at = self._format_recovery_due_at(state.recovery_due_at)
         return {
             "account_id": state.account_id,
             "display_name": state.display_name,
             "selected_steam_id": state.inventory_state.selected_steam_id,
             "refreshed_at": state.inventory_refreshed_at,
             "last_error": state.last_error,
+            "auto_refresh_due_at": auto_refresh_due_at,
+            "auto_refresh_remaining_seconds": PurchaseRuntimeService._remaining_seconds_until(state.recovery_due_at),
             "inventories": PurchaseRuntimeService._build_inventory_rows(
                 state.inventory_state.inventories,
                 selected_steam_id=state.inventory_state.selected_steam_id,

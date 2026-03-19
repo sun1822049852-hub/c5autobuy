@@ -43,6 +43,7 @@ class PurchaseRuntimeAccountResponse(BaseModel):
 class PurchaseRuntimeInventoryDetailResponse(BaseModel):
     class InventoryResponse(BaseModel):
         steamId: str
+        nickname: str | None = None
         inventory_num: int
         inventory_max: int
         remaining_capacity: int
@@ -54,6 +55,8 @@ class PurchaseRuntimeInventoryDetailResponse(BaseModel):
     selected_steam_id: str | None
     refreshed_at: str | None
     last_error: str | None
+    auto_refresh_due_at: str | None = None
+    auto_refresh_remaining_seconds: int | None = None
     inventories: list[InventoryResponse]
 
 

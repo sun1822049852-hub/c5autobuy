@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta
+
 from app_backend.domain.models.account import Account
 from app_backend.infrastructure.purchase.runtime.runtime_events import PurchaseExecutionResult
 
@@ -168,13 +170,15 @@ async def test_purchase_runtime_status_returns_selected_inventory_summary(client
 
 
 async def test_purchase_runtime_inventory_detail_route_returns_snapshot(client, app):
-    app.state.account_repository.create_account(_build_account("a1"))
+    account = _build_account("a1")
+    account.purchase_recovery_due_at = (datetime.now() + timedelta(seconds=180)).isoformat()
+    app.state.account_repository.create_account(account)
     app.state.purchase_runtime_service._inventory_snapshot_repository.save(
         account_id="a1",
         selected_steam_id="steam-2",
         inventories=[
-            {"steamId": "steam-1", "inventory_num": 990, "inventory_max": 1000},
-            {"steamId": "steam-2", "inventory_num": 920, "inventory_max": 1000},
+            {"steamId": "steam-1", "nickname": "备用仓", "inventory_num": 990, "inventory_max": 1000},
+            {"steamId": "steam-2", "nickname": "主仓", "inventory_num": 920, "inventory_max": 1000},
         ],
         refreshed_at="2026-03-16T21:00:00",
         last_error="等待恢复检查",
@@ -189,9 +193,12 @@ async def test_purchase_runtime_inventory_detail_route_returns_snapshot(client, 
         "selected_steam_id": "steam-2",
         "refreshed_at": "2026-03-16T21:00:00",
         "last_error": "等待恢复检查",
+        "auto_refresh_due_at": account.purchase_recovery_due_at,
+        "auto_refresh_remaining_seconds": response.json()["auto_refresh_remaining_seconds"],
         "inventories": [
             {
                 "steamId": "steam-1",
+                "nickname": "备用仓",
                 "inventory_num": 990,
                 "inventory_max": 1000,
                 "remaining_capacity": 10,
@@ -200,6 +207,7 @@ async def test_purchase_runtime_inventory_detail_route_returns_snapshot(client, 
             },
             {
                 "steamId": "steam-2",
+                "nickname": "主仓",
                 "inventory_num": 920,
                 "inventory_max": 1000,
                 "remaining_capacity": 80,
@@ -208,3 +216,42 @@ async def test_purchase_runtime_inventory_detail_route_returns_snapshot(client, 
             },
         ],
     }
+    assert 0 < response.json()["auto_refresh_remaining_seconds"] <= 180
+
+
+async def test_purchase_runtime_inventory_refresh_route_returns_latest_detail(client, app):
+    from app_backend.infrastructure.purchase.runtime.runtime_events import InventoryRefreshResult
+
+    app.state.account_repository.create_account(_build_account("a1"))
+    app.state.purchase_runtime_service._inventory_snapshot_repository.save(
+        account_id="a1",
+        selected_steam_id="steam-1",
+        inventories=[
+            {"steamId": "steam-1", "nickname": "主仓", "inventory_num": 900, "inventory_max": 1000},
+        ],
+        refreshed_at="2026-03-16T21:00:00",
+        last_error=None,
+    )
+
+    class RefreshGateway:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        async def refresh(self, *, account):
+            self.calls.append({"account_id": account.account_id})
+            return InventoryRefreshResult.success(
+                inventories=[
+                    {"steamId": "steam-1", "nickname": "主仓", "inventory_num": 800, "inventory_max": 1000},
+                ]
+            )
+
+    refresh_gateway = RefreshGateway()
+    app.state.purchase_runtime_service._inventory_refresh_gateway_factory = lambda: refresh_gateway
+
+    response = await client.post("/purchase-runtime/accounts/a1/inventory/refresh")
+
+    assert response.status_code == 200
+    assert refresh_gateway.calls == [{"account_id": "a1"}]
+    assert response.json()["selected_steam_id"] == "steam-1"
+    assert response.json()["inventories"][0]["nickname"] == "主仓"
+    assert response.json()["inventories"][0]["inventory_num"] == 800

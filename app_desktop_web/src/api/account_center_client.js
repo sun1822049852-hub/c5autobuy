@@ -180,6 +180,11 @@ export function createAccountCenterClient({
         method: "GET",
       });
     },
+    async refreshPurchaseRuntimeInventoryDetail(accountId) {
+      return http.getJson(`/purchase-runtime/accounts/${accountId}/inventory/refresh`, {
+        method: "POST",
+      });
+    },
     async getTask(taskId) {
       return http.getJson(`/tasks/${taskId}`, {
         method: "GET",
