@@ -25,7 +25,6 @@ class SqlitePurchaseRuntimeSettingsRepository:
     def save(
         self,
         *,
-        query_only: bool,
         whitelist_account_ids: list[str],
         updated_at: str | None = None,
     ) -> PurchaseRuntimeSettings:
@@ -34,7 +33,6 @@ class SqlitePurchaseRuntimeSettingsRepository:
             if row is None:
                 row = PurchaseRuntimeSettingsRecord(settings_id=self._SETTINGS_ID)
                 session.add(row)
-            row.query_only = int(bool(query_only))
             row.whitelist_account_ids_json = json.dumps(list(whitelist_account_ids), ensure_ascii=True)
             row.updated_at = updated_at
             session.commit()
@@ -50,7 +48,6 @@ class SqlitePurchaseRuntimeSettingsRepository:
             raw_value = []
         whitelist_account_ids = [str(account_id) for account_id in raw_value] if isinstance(raw_value, list) else []
         return PurchaseRuntimeSettings(
-            query_only=bool(row.query_only),
             whitelist_account_ids=whitelist_account_ids,
             updated_at=row.updated_at,
         )

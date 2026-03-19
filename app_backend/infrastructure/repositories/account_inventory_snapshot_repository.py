@@ -40,6 +40,16 @@ class SqliteAccountInventorySnapshotRepository:
             session.refresh(row)
             return self._to_domain(row)
 
+    def update_selected_steam_id(self, *, account_id: str, selected_steam_id: str | None) -> AccountInventorySnapshot | None:
+        with self._session_factory() as session:
+            row = session.get(AccountInventorySnapshotRecord, account_id)
+            if row is None:
+                return None
+            row.selected_steam_id = selected_steam_id
+            session.commit()
+            session.refresh(row)
+            return self._to_domain(row)
+
     @staticmethod
     def _to_domain(row: AccountInventorySnapshotRecord) -> AccountInventorySnapshot:
         try:

@@ -75,7 +75,6 @@ async def update_purchase_runtime_settings(
 ) -> PurchaseRuntimeStatusResponse:
     runtime_service = _runtime_service(request)
     snapshot = UpdatePurchaseRuntimeSettingsUseCase(runtime_service).execute(
-        query_only=payload.query_only,
         whitelist_account_ids=payload.whitelist_account_ids,
     )
     return PurchaseRuntimeStatusResponse.model_validate(snapshot)

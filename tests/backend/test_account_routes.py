@@ -24,6 +24,24 @@ async def test_post_accounts_creates_account(client):
     assert payload["token_enabled"] is True
 
 
+async def test_post_accounts_treats_blank_custom_proxy_as_direct(client):
+    response = await client.post(
+        "/accounts",
+        json={
+            "remark_name": "测试备注",
+            "proxy_mode": "custom",
+            "proxy_url": "   ",
+            "api_key": None,
+        },
+    )
+
+    assert response.status_code == 201
+    payload = response.json()
+    assert payload["proxy_mode"] == "direct"
+    assert payload["proxy_url"] is None
+    assert payload["api_key"] is None
+
+
 async def test_get_accounts_returns_created_accounts(client):
     await client.post(
         "/accounts",
@@ -70,6 +88,34 @@ async def test_patch_account_updates_allowed_fields(client):
     assert payload["remark_name"] == "新备注"
     assert payload["proxy_url"] == "http://127.0.0.1:8080"
     assert payload["api_key"] == "new-key"
+
+
+async def test_patch_account_normalizes_scheme_less_proxy_and_auth(client):
+    created = await client.post(
+        "/accounts",
+        json={
+            "remark_name": None,
+            "proxy_mode": "direct",
+            "proxy_url": None,
+            "api_key": None,
+        },
+    )
+    account_id = created.json()["account_id"]
+
+    response = await client.patch(
+        f"/accounts/{account_id}",
+        json={
+            "remark_name": None,
+            "proxy_mode": "custom",
+            "proxy_url": "user:pass@127.0.0.1:8080",
+            "api_key": None,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["proxy_mode"] == "custom"
+    assert payload["proxy_url"] == "http://user:pass@127.0.0.1:8080"
 
 
 async def test_patch_account_query_modes_updates_global_flags(client):

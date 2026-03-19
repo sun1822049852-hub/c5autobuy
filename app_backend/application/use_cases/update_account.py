@@ -18,11 +18,12 @@ class UpdateAccountUseCase:
         proxy_url: str | None,
         api_key: str | None,
     ):
+        normalized_proxy_url = normalize_proxy_input(proxy_mode=proxy_mode, proxy_url=proxy_url)
         return self._repository.update_account(
             account_id,
             remark_name=remark_name,
-            proxy_mode=proxy_mode,
-            proxy_url=normalize_proxy_input(proxy_mode=proxy_mode, proxy_url=proxy_url),
+            proxy_mode="custom" if normalized_proxy_url else "direct",
+            proxy_url=normalized_proxy_url,
             api_key=(api_key or None),
             updated_at=datetime.now().isoformat(timespec="seconds"),
         )

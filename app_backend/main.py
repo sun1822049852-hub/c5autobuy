@@ -3,8 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
+from app_backend.api.routes import account_center as account_center_routes
 from app_backend.api.routes import accounts as account_routes
 from app_backend.api.routes import purchase_runtime as purchase_runtime_routes
 from app_backend.api.routes import query_configs as query_config_routes
@@ -68,6 +70,14 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     )
 
     app = FastAPI(title="C5 Account Center Backend")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["null"],
+        allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     app.state.account_repository = repository
     app.state.query_config_repository = query_config_repository
     app.state.purchase_runtime_service = purchase_runtime_service
@@ -78,6 +88,7 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     app.state.product_detail_collector = product_detail_collector
     app.state.query_item_detail_refresh_service = query_item_detail_refresh_service
 
+    app.include_router(account_center_routes.router)
     app.include_router(account_routes.router)
     app.include_router(purchase_runtime_routes.router)
     app.include_router(query_config_routes.router)

@@ -43,6 +43,8 @@ class PurchaseRuntimeService:
         self._execution_gateway_factory = execution_gateway_factory or PurchaseExecutionGateway
         self._runtime_factory = runtime_factory or self._build_default_runtime
         self._runtime = None
+        self._on_no_available_accounts = None
+        self._on_accounts_available = None
 
     def start(self) -> tuple[bool, str]:
         if self._has_running_runtime():
@@ -51,6 +53,7 @@ class PurchaseRuntimeService:
         settings = self._settings_repository.get()
         accounts = list(self._account_repository.list_accounts())
         runtime = self._create_runtime(accounts, settings)
+        self._bind_runtime_callbacks(runtime)
         runtime.start()
         self._runtime = runtime
         return True, "购买运行时已启动"
@@ -72,6 +75,23 @@ class PurchaseRuntimeService:
         snapshot = self._runtime.snapshot()
         return self._normalize_snapshot(snapshot, settings)
 
+    def has_available_accounts(self) -> bool:
+        if not self._has_running_runtime():
+            return False
+        snapshot = self._runtime.snapshot()
+        return int(snapshot.get("active_account_count", 0)) > 0
+
+    def register_availability_callbacks(
+        self,
+        *,
+        on_no_available_accounts=None,
+        on_accounts_available=None,
+    ) -> None:
+        self._on_no_available_accounts = on_no_available_accounts
+        self._on_accounts_available = on_accounts_available
+        if self._runtime is not None:
+            self._bind_runtime_callbacks(self._runtime)
+
     def get_account_inventory_detail(self, account_id: str) -> dict[str, object] | None:
         account = self._find_account(account_id)
         if account is None:
@@ -88,9 +108,56 @@ class PurchaseRuntimeService:
         )
         return self._build_inventory_detail_from_snapshot(account, snapshot)
 
-    def update_settings(self, *, query_only: bool, whitelist_account_ids: list[str]) -> dict[str, object]:
+    def list_account_center_accounts(self) -> list[dict[str, object]]:
+        runtime_accounts = self._runtime_account_map()
+        rows: list[dict[str, object]] = []
+        for account in self._account_repository.list_accounts():
+            runtime_account = runtime_accounts.get(str(getattr(account, "account_id", "") or ""))
+            rows.append(self._build_account_center_row(account, runtime_account=runtime_account))
+        return rows
+
+    def update_account_purchase_config(
+        self,
+        *,
+        account_id: str,
+        disabled: bool,
+        selected_steam_id: str | None,
+    ) -> dict[str, object]:
+        account = self._find_account(account_id)
+        if account is None:
+            raise KeyError(account_id)
+
+        inventory_detail = self.get_account_inventory_detail(account_id)
+        next_selected_steam_id = self._resolve_selected_steam_id(
+            account=account,
+            inventory_detail=inventory_detail,
+            selected_steam_id=selected_steam_id,
+        )
+        updated_account = self._account_repository.update_account(
+            account_id,
+            disabled=bool(disabled),
+            updated_at=datetime.now().isoformat(timespec="seconds"),
+        )
+
+        if self._sync_runtime_purchase_config(
+            account_id=account_id,
+            disabled=bool(disabled),
+            selected_steam_id=next_selected_steam_id,
+        ):
+            refreshed_account = self._find_account(account_id)
+            if refreshed_account is not None:
+                updated_account = refreshed_account
+        else:
+            self._persist_selected_inventory(
+                account_id=account_id,
+                inventory_detail=inventory_detail,
+                selected_steam_id=next_selected_steam_id,
+            )
+
+        return self._build_account_center_row(updated_account)
+
+    def update_settings(self, *, whitelist_account_ids: list[str]) -> dict[str, object]:
         updated_settings = self._settings_repository.save(
-            query_only=bool(query_only),
             whitelist_account_ids=list(whitelist_account_ids),
             updated_at=datetime.now().isoformat(timespec="seconds"),
         )
@@ -117,6 +184,15 @@ class PurchaseRuntimeService:
             return {"accepted": False, "status": "ignored_not_supported"}
         return dict(accept_query_hit(hit))
 
+    def mark_account_auth_invalid(self, *, account_id: str, error: str | None = None) -> None:
+        normalized_error = str(error or "Not login")
+        if self._has_running_runtime():
+            mark_account_auth_invalid = getattr(self._runtime, "mark_account_auth_invalid", None)
+            if callable(mark_account_auth_invalid):
+                mark_account_auth_invalid(account_id=account_id, error=normalized_error)
+                return
+        self._mark_account_auth_invalid_in_repository(account_id=account_id, error=normalized_error)
+
     def _has_running_runtime(self) -> bool:
         if self._runtime is None:
             return False
@@ -135,6 +211,32 @@ class PurchaseRuntimeService:
                 execution_gateway_factory=self._execution_gateway_factory,
             )
         return self._runtime_factory(accounts, settings)
+
+    def _bind_runtime_callbacks(self, runtime) -> None:
+        set_callbacks = getattr(runtime, "set_availability_callbacks", None)
+        if callable(set_callbacks):
+            set_callbacks(
+                on_no_available_accounts=self._notify_no_available_accounts,
+                on_accounts_available=self._notify_accounts_available,
+            )
+
+    def _notify_no_available_accounts(self) -> None:
+        callback = self._on_no_available_accounts
+        if not callable(callback):
+            return
+        try:
+            callback()
+        except Exception:
+            return
+
+    def _notify_accounts_available(self) -> None:
+        callback = self._on_accounts_available
+        if not callable(callback):
+            return
+        try:
+            callback()
+        except Exception:
+            return
 
     def _runtime_factory_accepts_extended_kwargs(self) -> bool:
         try:
@@ -169,7 +271,6 @@ class PurchaseRuntimeService:
             "recent_events": [],
             "accounts": [],
             "settings": {
-                "query_only": settings.query_only,
                 "whitelist_account_ids": list(settings.whitelist_account_ids),
                 "updated_at": settings.updated_at,
             },
@@ -189,7 +290,6 @@ class PurchaseRuntimeService:
             "recent_events": list(snapshot.get("recent_events") or []),
             "accounts": PurchaseRuntimeService._normalize_accounts(snapshot.get("accounts")),
             "settings": {
-                "query_only": settings.query_only,
                 "whitelist_account_ids": list(settings.whitelist_account_ids),
                 "updated_at": settings.updated_at,
             },
@@ -241,6 +341,210 @@ class PurchaseRuntimeService:
             if str(getattr(account, "account_id", "")) == str(account_id):
                 return account
         return None
+
+    def _runtime_account_map(self) -> dict[str, dict[str, object]]:
+        if not self._has_running_runtime():
+            return {}
+        return {
+            str(account.get("account_id") or ""): dict(account)
+            for account in self.get_status().get("accounts") or []
+            if isinstance(account, dict)
+        }
+
+    def _build_account_center_row(
+        self,
+        account,
+        *,
+        runtime_account: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        account_id = str(getattr(account, "account_id", "") or "")
+        inventory_detail = self.get_account_inventory_detail(account_id)
+        selected_row = self._selected_inventory_row(inventory_detail)
+        selected_steam_id = str(selected_row.get("steamId") or "") if selected_row is not None else ""
+        purchase_capability_state = (
+            str(runtime_account.get("purchase_capability_state") or "")
+            if runtime_account is not None
+            else str(getattr(account, "purchase_capability_state", "") or "")
+        )
+        purchase_pool_state = (
+            str(runtime_account.get("purchase_pool_state") or "")
+            if runtime_account is not None
+            else str(getattr(account, "purchase_pool_state", "") or "")
+        )
+        purchase_status_code, purchase_status_text = self._build_purchase_status(
+            purchase_capability_state=purchase_capability_state,
+            purchase_pool_state=purchase_pool_state,
+            disabled=bool(getattr(account, "disabled", False)),
+            selected_row=selected_row,
+        )
+        proxy_url = getattr(account, "proxy_url", None) or None
+        api_key = getattr(account, "api_key", None) or None
+        return {
+            "account_id": account_id,
+            "display_name": str(getattr(account, "display_name", "") or account_id),
+            "remark_name": getattr(account, "remark_name", None),
+            "c5_nick_name": getattr(account, "c5_nick_name", None),
+            "default_name": str(getattr(account, "default_name", "") or ""),
+            "api_key_present": bool(api_key),
+            "api_key": api_key,
+            "proxy_mode": str(getattr(account, "proxy_mode", "") or "direct"),
+            "proxy_url": proxy_url,
+            "proxy_display": proxy_url or "直连",
+            "purchase_capability_state": purchase_capability_state,
+            "purchase_pool_state": purchase_pool_state,
+            "disabled": bool(getattr(account, "disabled", False)),
+            "selected_steam_id": selected_steam_id or None,
+            "selected_warehouse_text": selected_steam_id or None,
+            "purchase_status_code": purchase_status_code,
+            "purchase_status_text": purchase_status_text,
+        }
+
+    @staticmethod
+    def _selected_inventory_row(inventory_detail: dict[str, object] | None) -> dict[str, object] | None:
+        if inventory_detail is None:
+            return None
+        for row in inventory_detail.get("inventories") or []:
+            if isinstance(row, dict) and row.get("is_selected"):
+                return row
+        return None
+
+    @staticmethod
+    def _build_purchase_status(
+        *,
+        purchase_capability_state: str,
+        purchase_pool_state: str,
+        disabled: bool,
+        selected_row: dict[str, object] | None,
+    ) -> tuple[str, str]:
+        if purchase_capability_state != PurchaseCapabilityState.BOUND or purchase_pool_state == PurchasePoolState.PAUSED_AUTH_INVALID:
+            return "not_logged_in", "未登录"
+        if disabled:
+            return "disabled", "禁用"
+        if selected_row is None or not bool(selected_row.get("is_available")) or purchase_pool_state == PurchasePoolState.PAUSED_NO_INVENTORY:
+            return "inventory_full", "库存已满"
+        selected_steam_id = str(selected_row.get("steamId") or "")
+        return "selected_warehouse", selected_steam_id
+
+    def _resolve_selected_steam_id(
+        self,
+        *,
+        account,
+        inventory_detail: dict[str, object] | None,
+        selected_steam_id: str | None,
+    ) -> str | None:
+        if selected_steam_id is None:
+            return (
+                str(inventory_detail.get("selected_steam_id") or "")
+                if inventory_detail is not None and inventory_detail.get("selected_steam_id") is not None
+                else None
+            )
+
+        capability_state = str(getattr(account, "purchase_capability_state", "") or "")
+        pool_state = str(getattr(account, "purchase_pool_state", "") or "")
+        if capability_state != PurchaseCapabilityState.BOUND or pool_state == PurchasePoolState.PAUSED_AUTH_INVALID:
+            raise ValueError("当前账号未登录，无法设置购买仓库")
+
+        if inventory_detail is None:
+            raise ValueError("当前账号未登录，无法设置购买仓库")
+
+        for row in inventory_detail.get("inventories") or []:
+            if str(row.get("steamId") or "") != str(selected_steam_id):
+                continue
+            if not bool(row.get("is_available")):
+                raise ValueError("目标仓库不可用，无法选中")
+            return str(selected_steam_id)
+
+        raise ValueError("目标仓库不可用，无法选中")
+
+    def _persist_selected_inventory(
+        self,
+        *,
+        account_id: str,
+        inventory_detail: dict[str, object] | None,
+        selected_steam_id: str | None,
+    ) -> None:
+        if self._inventory_snapshot_repository is None or selected_steam_id is None:
+            return
+        inventories = self._snapshot_rows_from_detail(inventory_detail)
+        if inventories:
+            self._inventory_snapshot_repository.save(
+                account_id=account_id,
+                selected_steam_id=selected_steam_id,
+                inventories=inventories,
+                refreshed_at=inventory_detail.get("refreshed_at") if inventory_detail is not None else None,
+                last_error=inventory_detail.get("last_error") if inventory_detail is not None else None,
+            )
+            return
+        self._inventory_snapshot_repository.update_selected_steam_id(
+            account_id=account_id,
+            selected_steam_id=selected_steam_id,
+        )
+
+    def _sync_runtime_purchase_config(
+        self,
+        *,
+        account_id: str,
+        disabled: bool,
+        selected_steam_id: str | None,
+    ) -> bool:
+        if not self._has_running_runtime() or self._runtime is None:
+            return False
+        account_states = getattr(self._runtime, "_account_states", None)
+        if not isinstance(account_states, dict):
+            return False
+        state = account_states.get(account_id)
+        if state is None:
+            return False
+
+        setattr(state.account, "disabled", bool(disabled))
+        if selected_steam_id is not None:
+            state.inventory_state.selected_steam_id = selected_steam_id
+
+        previous_active_count = self._runtime._scheduler.active_account_count()
+        if disabled:
+            self._runtime._scheduler.mark_unavailable(account_id, reason="disabled")
+        elif state.capability_state == PurchaseCapabilityState.BOUND and state.inventory_state.selected_steam_id is not None:
+            state.pool_state = PurchasePoolState.ACTIVE
+            state.last_error = None
+            self._runtime._scheduler.mark_available(account_id)
+        else:
+            state.pool_state = PurchasePoolState.PAUSED_NO_INVENTORY
+            self._runtime._scheduler.mark_no_inventory(account_id)
+
+        self._runtime._handle_active_account_count_change(previous_active_count)
+        self._runtime._persist_inventory_snapshot(state, last_error=state.last_error)
+        self._runtime._sync_account_repository_state(state)
+        return True
+
+    @staticmethod
+    def _snapshot_rows_from_detail(inventory_detail: dict[str, object] | None) -> list[dict[str, object]]:
+        if inventory_detail is None:
+            return []
+        return [
+            {
+                "steamId": str(row.get("steamId") or ""),
+                "inventory_num": int(row.get("inventory_num", 0)),
+                "inventory_max": int(row.get("inventory_max", 0)),
+                "remaining_capacity": int(row.get("remaining_capacity", 0)),
+            }
+            for row in inventory_detail.get("inventories") or []
+            if isinstance(row, dict)
+        ]
+
+    def _mark_account_auth_invalid_in_repository(self, *, account_id: str, error: str) -> None:
+        update_account = getattr(self._account_repository, "update_account", None)
+        if not callable(update_account):
+            return
+        try:
+            update_account(
+                account_id,
+                purchase_capability_state=PurchaseCapabilityState.EXPIRED,
+                purchase_pool_state=PurchasePoolState.PAUSED_AUTH_INVALID,
+                last_error=error,
+                updated_at=datetime.now().isoformat(timespec="seconds"),
+            )
+        except Exception:
+            return
 
     def _get_runtime_inventory_detail(self, account_id: str) -> dict[str, object] | None:
         if not self._has_running_runtime():
@@ -388,6 +692,18 @@ class _DefaultPurchaseRuntime:
         self._account_states: dict[str, _RuntimeAccountState] = {}
         self._total_purchased_count = 0
         self._recovery_timers: dict[str, threading.Timer] = {}
+        self._on_no_available_accounts = None
+        self._on_accounts_available = None
+        self._active_account_count = 0
+
+    def set_availability_callbacks(
+        self,
+        *,
+        on_no_available_accounts=None,
+        on_accounts_available=None,
+    ) -> None:
+        self._on_no_available_accounts = on_no_available_accounts
+        self._on_accounts_available = on_accounts_available
 
     def start(self) -> None:
         self._cancel_all_recovery_checks()
@@ -401,6 +717,7 @@ class _DefaultPurchaseRuntime:
         self._total_purchased_count = 0
         self._recovery_timers = {}
         self._initialize_accounts()
+        self._active_account_count = self._scheduler.active_account_count()
 
     def stop(self) -> None:
         self._running = False
@@ -410,16 +727,22 @@ class _DefaultPurchaseRuntime:
     def apply_settings(self, settings: PurchaseRuntimeSettings) -> None:
         self._settings = settings
         if self._running:
+            previous_active_account_count = self._scheduler.active_account_count()
             self._cancel_all_recovery_checks()
             self._scheduler = PurchaseScheduler()
             self._account_states = {}
             self._recovery_timers = {}
             self._initialize_accounts()
+            self._handle_active_account_count_change(previous_active_account_count)
 
     async def accept_query_hit_async(self, hit: dict[str, object]) -> dict[str, object]:
-        if self._settings.query_only:
-            self._push_event(hit, status="blocked_query_only", message="仅查询模式已拦截")
-            return {"accepted": False, "status": "blocked_query_only"}
+        if self._scheduler.active_account_count() <= 0:
+            self._push_event(
+                hit,
+                status="ignored_no_available_accounts",
+                message="当前没有可用购买账号，命中已忽略",
+            )
+            return {"accepted": False, "status": "ignored_no_available_accounts"}
 
         batch = self._hit_inbox.accept(hit)
         if batch is None:
@@ -473,6 +796,26 @@ class _DefaultPurchaseRuntime:
                 selected_steam_id=state.inventory_state.selected_steam_id,
             ),
         }
+
+    def mark_account_auth_invalid(self, *, account_id: str, error: str | None = None) -> None:
+        state = self._account_states.get(account_id)
+        if state is None:
+            return
+        normalized_error = str(error or "Not login")
+        state.capability_state = PurchaseCapabilityState.EXPIRED
+        state.pool_state = PurchasePoolState.PAUSED_AUTH_INVALID
+        state.last_error = normalized_error
+        setattr(state.account, "purchase_capability_state", state.capability_state)
+        setattr(state.account, "purchase_pool_state", state.pool_state)
+        setattr(state.account, "last_error", state.last_error)
+        self._sync_scheduler_state(state)
+        self._persist_inventory_snapshot(state, last_error=state.last_error)
+        self._sync_account_repository_state(state)
+        self._push_runtime_event(
+            state,
+            status="auth_invalid",
+            message=normalized_error or "登录已失效",
+        )
 
     def _initialize_accounts(self) -> None:
         for account in self._accounts:
@@ -697,16 +1040,50 @@ class _DefaultPurchaseRuntime:
         return "paused_no_inventory", f"购买成功 {purchased_count} 件，当前没有可用仓库"
 
     def _sync_scheduler_state(self, state: _RuntimeAccountState) -> None:
+        previous_active_account_count = self._scheduler.active_account_count()
         if state.pool_state == PurchasePoolState.ACTIVE:
             self._scheduler.mark_available(state.account_id)
             self._cancel_recovery_check(state.account_id)
-            return
-        if state.pool_state == PurchasePoolState.PAUSED_AUTH_INVALID:
+        elif state.pool_state == PurchasePoolState.PAUSED_AUTH_INVALID:
             self._scheduler.mark_unavailable(state.account_id, reason="auth_invalid")
             self._cancel_recovery_check(state.account_id)
+        else:
+            self._scheduler.mark_no_inventory(state.account_id)
+            self._schedule_recovery_check(state.account_id)
+        self._handle_active_account_count_change(previous_active_account_count)
+
+    def _handle_active_account_count_change(self, previous_active_account_count: int) -> None:
+        current_active_account_count = self._scheduler.active_account_count()
+        self._active_account_count = current_active_account_count
+        if previous_active_account_count > 0 and current_active_account_count == 0:
+            cleared = self._scheduler.clear_queue()
+            if cleared > 0:
+                self._push_scheduler_event(
+                    status="backlog_cleared_no_purchase_accounts",
+                    message=f"没有可用购买账号，已清空 {cleared} 条积压任务",
+                )
+            self._notify_no_available_accounts()
             return
-        self._scheduler.mark_no_inventory(state.account_id)
-        self._schedule_recovery_check(state.account_id)
+        if previous_active_account_count == 0 and current_active_account_count > 0:
+            self._notify_accounts_available()
+
+    def _notify_no_available_accounts(self) -> None:
+        callback = self._on_no_available_accounts
+        if not callable(callback):
+            return
+        try:
+            callback()
+        except Exception:
+            return
+
+    def _notify_accounts_available(self) -> None:
+        callback = self._on_accounts_available
+        if not callable(callback):
+            return
+        try:
+            callback()
+        except Exception:
+            return
 
     def _schedule_recovery_check(self, account_id: str) -> None:
         if not self._running:
@@ -839,6 +1216,27 @@ class _DefaultPurchaseRuntime:
                 "account_id": state.account_id,
                 "account_display_name": state.display_name,
                 "selected_steam_id": state.inventory_state.selected_steam_id,
+                "query_item_name": "",
+                "external_item_id": None,
+                "product_url": None,
+                "product_list": [],
+                "total_price": 0.0,
+                "total_wear_sum": None,
+                "source_mode_type": "",
+            },
+        )
+        del self._recent_events[self._RECENT_EVENT_LIMIT :]
+
+    def _push_scheduler_event(self, *, status: str, message: str) -> None:
+        self._recent_events.insert(
+            0,
+            {
+                "occurred_at": datetime.now().isoformat(timespec="seconds"),
+                "status": status,
+                "message": message,
+                "account_id": "",
+                "account_display_name": "",
+                "selected_steam_id": None,
                 "query_item_name": "",
                 "external_item_id": None,
                 "product_url": None,

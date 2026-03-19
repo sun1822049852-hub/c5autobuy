@@ -29,6 +29,11 @@ class PurchaseScheduler:
     def queue_size(self) -> int:
         return len(self._queue)
 
+    def clear_queue(self) -> int:
+        cleared = len(self._queue)
+        self._queue.clear()
+        return cleared
+
     def total_account_count(self) -> int:
         return len(self._account_status)
 

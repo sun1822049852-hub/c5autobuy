@@ -53,3 +53,15 @@ def test_purchase_scheduler_queues_batches():
     assert scheduler.queue_size() == 2
     assert scheduler.pop_next_batch().query_item_name == "AK"
     assert scheduler.pop_next_batch().query_item_name == "M4A1"
+
+
+def test_purchase_scheduler_can_clear_backlog_batches():
+    scheduler = PurchaseScheduler()
+
+    scheduler.submit(build_batch("AK"))
+    scheduler.submit(build_batch("M4A1"))
+
+    cleared = scheduler.clear_queue()
+
+    assert cleared == 2
+    assert scheduler.queue_size() == 0

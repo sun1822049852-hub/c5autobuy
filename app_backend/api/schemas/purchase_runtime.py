@@ -4,13 +4,11 @@ from pydantic import BaseModel
 
 
 class PurchaseRuntimeSettingsResponse(BaseModel):
-    query_only: bool
     whitelist_account_ids: list[str]
     updated_at: str | None
 
 
 class PurchaseRuntimeSettingsUpdateRequest(BaseModel):
-    query_only: bool
     whitelist_account_ids: list[str]
 
 

@@ -9,12 +9,10 @@ def test_purchase_runtime_settings_round_trip(tmp_path):
     create_schema(engine)
     repository = SqlitePurchaseRuntimeSettingsRepository(build_session_factory(engine))
 
-    saved = repository.save(query_only=True, whitelist_account_ids=["a1", "a2"])
+    saved = repository.save(whitelist_account_ids=["a1", "a2"])
     loaded = repository.get()
 
-    assert saved.query_only is True
     assert saved.whitelist_account_ids == ["a1", "a2"]
-    assert loaded.query_only is True
     assert loaded.whitelist_account_ids == ["a1", "a2"]
 
 
@@ -25,5 +23,4 @@ def test_purchase_runtime_settings_defaults_when_missing(tmp_path):
 
     settings = repository.get()
 
-    assert settings.query_only is False
     assert settings.whitelist_account_ids == []

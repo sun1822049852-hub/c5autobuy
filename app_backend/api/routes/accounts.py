@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request, Response, status
 
+from app_backend.api.schemas.account_center import (
+    AccountCenterAccountResponse,
+    AccountPurchaseConfigUpdateRequest,
+)
 from app_backend.api.schemas.accounts import (
     AccountCreateRequest,
     AccountQueryModeUpdateRequest,
@@ -17,6 +21,9 @@ from app_backend.application.use_cases.create_account import CreateAccountUseCas
 from app_backend.application.use_cases.delete_account import DeleteAccountUseCase
 from app_backend.application.use_cases.start_login_task import StartLoginTaskUseCase
 from app_backend.application.use_cases.update_account import UpdateAccountUseCase
+from app_backend.application.use_cases.update_account_purchase_config import (
+    UpdateAccountPurchaseConfigUseCase,
+)
 from app_backend.application.use_cases.update_account_query_modes import UpdateAccountQueryModesUseCase
 from app_backend.application.use_cases.resolve_login_conflict import ResolveLoginConflictUseCase
 
@@ -103,6 +110,26 @@ async def update_account_query_modes(
     except KeyError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found") from exc
     return AccountResponse.model_validate(account)
+
+
+@router.patch("/{account_id}/purchase-config", response_model=AccountCenterAccountResponse)
+async def update_account_purchase_config(
+    account_id: str,
+    payload: AccountPurchaseConfigUpdateRequest,
+    request: Request,
+) -> AccountCenterAccountResponse:
+    use_case = UpdateAccountPurchaseConfigUseCase(request.app.state.purchase_runtime_service)
+    try:
+        row = use_case.execute(
+            account_id=account_id,
+            disabled=payload.disabled,
+            selected_steam_id=payload.selected_steam_id,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    return AccountCenterAccountResponse.model_validate(row)
 
 
 @router.post("/{account_id}/purchase-capability/clear", response_model=AccountResponse)

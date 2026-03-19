@@ -17,7 +17,6 @@ def test_purchase_runtime_service_uses_purchase_execution_gateway_by_default():
                     "Settings",
                     (),
                     {
-                        "query_only": False,
                         "whitelist_account_ids": [],
                         "updated_at": None,
                     },

@@ -22,12 +22,13 @@ class CreateAccountUseCase:
         api_key: str | None,
     ) -> Account:
         now = datetime.now().isoformat(timespec="seconds")
+        normalized_proxy_url = normalize_proxy_input(proxy_mode=proxy_mode, proxy_url=proxy_url)
         account = Account(
             account_id=str(uuid4()),
             default_name=AccountNameService.build_default_name(),
             remark_name=remark_name,
-            proxy_mode=proxy_mode,
-            proxy_url=normalize_proxy_input(proxy_mode=proxy_mode, proxy_url=proxy_url),
+            proxy_mode="custom" if normalized_proxy_url else "direct",
+            proxy_url=normalized_proxy_url,
             api_key=(api_key or None),
             c5_user_id=None,
             c5_nick_name=None,

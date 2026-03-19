@@ -1,4 +1,5 @@
 from app_backend.domain.models.account import Account
+from app_backend.infrastructure.purchase.runtime.runtime_events import PurchaseExecutionResult
 
 
 def _build_account(account_id: str) -> Account:
@@ -38,7 +39,6 @@ async def test_purchase_runtime_status_defaults_to_idle(client):
         "recent_events": [],
         "accounts": [],
         "settings": {
-            "query_only": False,
             "whitelist_account_ids": [],
             "updated_at": None,
         },
@@ -61,7 +61,6 @@ async def test_start_purchase_runtime_returns_running_snapshot(client):
     assert payload["started_at"] is not None
     assert payload["stopped_at"] is None
     assert payload["settings"] == {
-        "query_only": False,
         "whitelist_account_ids": [],
         "updated_at": None,
     }
@@ -85,7 +84,6 @@ async def test_stop_purchase_runtime_returns_idle_snapshot(client):
         "recent_events": [],
         "accounts": [],
         "settings": {
-            "query_only": False,
             "whitelist_account_ids": [],
             "updated_at": None,
         },
@@ -96,14 +94,12 @@ async def test_purchase_runtime_settings_routes_update_whitelist(client):
     update_response = await client.put(
         "/purchase-runtime/settings",
         json={
-            "query_only": True,
             "whitelist_account_ids": ["a1"],
         },
     )
 
     assert update_response.status_code == 200
     payload = update_response.json()
-    assert payload["settings"]["query_only"] is True
     assert payload["settings"]["whitelist_account_ids"] == ["a1"]
     assert payload["settings"]["updated_at"] is not None
 
@@ -114,11 +110,27 @@ async def test_purchase_runtime_settings_routes_update_whitelist(client):
 
 
 async def test_purchase_runtime_end_to_end_handles_hit(client, app):
+    class StubExecutionGateway:
+        async def execute(self, *, account, batch, selected_steam_id: str):
+            return PurchaseExecutionResult.success(purchased_count=1)
+
+    app.state.account_repository.create_account(_build_account("a1"))
+    app.state.purchase_runtime_service._inventory_refresh_gateway_factory = None
+    app.state.purchase_runtime_service._execution_gateway_factory = lambda: StubExecutionGateway()
+    app.state.purchase_runtime_service._inventory_snapshot_repository.save(
+        account_id="a1",
+        selected_steam_id="steam-1",
+        inventories=[{"steamId": "steam-1", "inventory_num": 910, "inventory_max": 1000}],
+        refreshed_at="2026-03-16T20:00:00",
+        last_error=None,
+    )
     await client.post("/purchase-runtime/start")
 
     result = app.state.purchase_runtime_service.accept_query_hit(
         {
+            "external_item_id": "1380979899390261111",
             "query_item_name": "AK",
+            "product_url": "https://www.c5game.com/csgo/730/asset/1380979899390261111",
             "product_list": [{"productId": "p-1", "price": 88.0, "actRebateAmount": 0}],
             "total_price": 88.0,
             "total_wear_sum": 0.1234,
@@ -129,8 +141,9 @@ async def test_purchase_runtime_end_to_end_handles_hit(client, app):
 
     assert result == {"accepted": True, "status": "queued"}
     assert response.status_code == 200
-    assert response.json()["queue_size"] == 1
-    assert response.json()["recent_events"][0]["status"] == "queued"
+    assert response.json()["queue_size"] == 0
+    assert response.json()["total_purchased_count"] == 1
+    assert response.json()["recent_events"][0]["status"] == "success"
 
 
 async def test_purchase_runtime_status_returns_selected_inventory_summary(client, app):

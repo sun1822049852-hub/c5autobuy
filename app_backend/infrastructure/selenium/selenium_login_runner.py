@@ -5,6 +5,9 @@ import json
 import os
 import random
 import re
+import shutil
+import socket
+import subprocess
 import tempfile
 import time
 import zipfile
@@ -35,6 +38,8 @@ async def _safe_emit(callback: ProgressCallback, state: str) -> None:
 class BrowserSession:
     driver: Any
     cleanup: Callable[[], None] | None = None
+    preloaded_url: str | None = None
+    login_handle: str | None = None
 
 
 class SeleniumLoginRunner:
@@ -81,8 +86,9 @@ class SeleniumLoginRunner:
         browser_closed_before_login = False
 
         try:
+            self._activate_login_page(driver, session.login_handle)
             self._setup_request_monitor(driver)
-            driver.get(self.LOGIN_URL)
+            self._open_login_page_if_needed(driver, session.preloaded_url)
             if self._page_ready_wait_seconds > 0:
                 await self._sleep(self._page_ready_wait_seconds)
 
@@ -93,7 +99,7 @@ class SeleniumLoginRunner:
             started_at = self._time()
 
             while self._time() - started_at < self._login_timeout_seconds:
-                if not self._browser_alive_checker(driver):
+                if not self._is_login_browser_alive(driver, session.login_handle):
                     browser_closed_before_login = True
                     raise RuntimeError("用户取消了登录")
 
@@ -135,7 +141,7 @@ class SeleniumLoginRunner:
             await _safe_emit(callback, "captured_login_info")
             await _safe_emit(callback, "waiting_for_browser_close")
 
-            while self._browser_alive_checker(driver):
+            while self._is_login_browser_alive(driver, session.login_handle):
                 if self._browser_close_poll_seconds > 0:
                     await self._sleep(self._browser_close_poll_seconds)
                 else:
@@ -161,9 +167,36 @@ class SeleniumLoginRunner:
                 except Exception:
                     pass
 
+    @staticmethod
+    def _activate_login_page(driver: Any, login_handle: str | None) -> None:
+        if not login_handle:
+            return
+        try:
+            driver.switch_to.window(login_handle)
+        except Exception:
+            return
+
+    def _open_login_page_if_needed(self, driver: Any, preloaded_url: str | None) -> None:
+        current_url = self._current_url(driver)
+        if preloaded_url == self.LOGIN_URL and self._is_login_page_url(current_url):
+            return
+        driver.get(self.LOGIN_URL)
+
+    @staticmethod
+    def _current_url(driver: Any) -> str:
+        try:
+            return str(getattr(driver, "current_url", "") or "")
+        except Exception:
+            return ""
+
+    def _is_login_page_url(self, url: str) -> bool:
+        if not url:
+            return False
+        return url.startswith(self.LOGIN_URL) or url.startswith("https://www.c5game.com/login?")
+
     @classmethod
     def _build_monitor_script(cls) -> str:
-        return r"""
+        return cls._build_anti_debug_script() + r"""
 (function() {
     'use strict';
     if (window.__C5GAME_USERINFO_MONITOR__) {
@@ -245,6 +278,40 @@ class SeleniumLoginRunner:
             monitor.loginDetected = true;
         }
     }, 1000);
+})();
+"""
+
+    @staticmethod
+    def _build_anti_debug_script() -> str:
+        return r"""
+(function() {
+    'use strict';
+    if (window.__C5GAME_ANTI_ANTI_DEBUG_LOADED__) {
+        return;
+    }
+    window.__C5GAME_ANTI_ANTI_DEBUG_LOADED__ = true;
+
+    try {
+        const OriginalFunction = Function;
+        window.Function = function(...args) {
+            const body = args[args.length - 1];
+            if (typeof body === 'string') {
+                args[args.length - 1] = body.replace(/debugger\s*;/gi, '// debugger removed;');
+            }
+            return OriginalFunction.apply(this, args);
+        };
+        window.Function.prototype = OriginalFunction.prototype;
+    } catch (e) {}
+
+    try {
+        console.clear = function() {};
+        console.table = function() {};
+        Object.defineProperty(window, 'console', {
+            value: console,
+            writable: false,
+            configurable: false
+        });
+    } catch (e) {}
 })();
 """
 
@@ -394,6 +461,29 @@ class SeleniumLoginRunner:
         except Exception:
             return False
 
+    def _is_login_browser_alive(self, driver: Any, login_handle: str | None) -> bool:
+        if login_handle:
+            return self._is_window_handle_alive(driver, login_handle)
+        return self._browser_alive_checker(driver)
+
+    @classmethod
+    def _is_window_handle_alive(cls, driver: Any, handle: str) -> bool:
+        if driver is None or not handle:
+            return False
+        try:
+            handles = list(getattr(driver, "window_handles", []) or [])
+        except Exception:
+            return False
+        if handle not in handles:
+            return False
+        try:
+            driver.switch_to.window(handle)
+            return True
+        except Exception as exc:
+            if cls._is_browser_error(exc):
+                return False
+            return False
+
     @staticmethod
     def _is_browser_error(exception: Exception) -> bool:
         error_str = str(exception).lower()
@@ -433,57 +523,41 @@ class SeleniumLoginRunner:
         os.environ["WEBDRIVER_CHROME_LOG"] = "false"
         os.environ["EDGE_LOG_LEVEL"] = "0"
 
-        options = Options()
-        options.add_argument("--log-level=3")
-        options.add_argument("--silent")
-        options.add_argument("--disable-logging")
-        options.add_experimental_option("excludeSwitches", ["enable-logging"])
-        options.add_argument("--disable-component-extensions-with-background-pages")
-        options.add_argument("--disable-default-apps")
-        options.add_argument("--disable-notifications")
-        options.add_argument("--no-first-run")
-        options.add_argument("--no-default-browser-check")
-        options.add_argument("--disable-blink-features=AutomationControlled")
-        options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        options.add_experimental_option("useAutomationExtension", False)
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--window-size=1200,800")
-        options.add_argument("--disable-gpu")
-        options.add_argument("--ignore-certificate-errors")
-        options.add_argument("--disable-web-security")
-        options.add_argument(
-            f"--user-agent={random.choice(cls._default_user_agents())}"
+        cleanup_callbacks: list[Callable[[], None]] = []
+        user_data_dir = tempfile.mkdtemp(prefix="c5_edge_login_")
+        cleanup_callbacks.append(lambda path=user_data_dir: cls._remove_temp_path(path))
+        port = cls._reserve_debug_port()
+        edge_path = cls._find_edge_binary()
+        command = cls._build_edge_launch_command(
+            edge_path=edge_path,
+            port=port,
+            user_data_dir=user_data_dir,
+            proxy_url=proxy_url,
+            cleanup_callbacks=cleanup_callbacks,
         )
 
-        cleanup_callbacks: list[Callable[[], None]] = []
-        if proxy_url and proxy_url != "direct":
-            plugin_path = cls._build_proxy_plugin(proxy_url)
-            if plugin_path is not None:
-                options.add_extension(plugin_path)
-                cleanup_callbacks.append(lambda path=plugin_path: cls._remove_temp_file(path))
-            else:
-                pure_proxy = re.sub(r"https?://[^@]*@", "", proxy_url)
-                pure_proxy = re.sub(r"^https?://", "", pure_proxy)
-                options.add_argument(f"--proxy-server={pure_proxy}")
+        browser_process = subprocess.Popen(command)
+        cleanup_callbacks.append(lambda process=browser_process: cls._terminate_process(process))
 
-        project_root = Path(__file__).resolve().parents[3]
-        driver_path = project_root / "msedgedriver.exe"
-        if not driver_path.exists():
-            raise RuntimeError(f"未找到Edge驱动: {driver_path}")
+        try:
+            cls._wait_for_debugger_port(port, process=browser_process)
 
-        service = Service(str(driver_path))
-        driver = webdriver.Edge(service=service, options=options)
-        driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+            options = Options()
+            options.add_experimental_option("debuggerAddress", f"127.0.0.1:{port}")
 
-        if proxy_url and proxy_url != "direct":
-            try:
-                driver.set_page_load_timeout(10)
-                driver.get("http://httpbin.org/ip")
-            except Exception:
-                pass
-
-        return BrowserSession(driver=driver, cleanup=lambda: cls._run_cleanups(cleanup_callbacks))
+            service = Service()
+            driver = webdriver.Edge(service=service, options=options)
+            login_handle = cls._find_login_handle(driver)
+            cls._activate_handle(driver, login_handle)
+            return BrowserSession(
+                driver=driver,
+                cleanup=lambda: cls._run_cleanups(cleanup_callbacks),
+                preloaded_url=None,
+                login_handle=login_handle,
+            )
+        except Exception:
+            cls._run_cleanups(cleanup_callbacks)
+            raise
 
     @staticmethod
     def _default_user_agents() -> list[str]:
@@ -499,6 +573,115 @@ class SeleniumLoginRunner:
                 "Safari/537.36 Edg/119.0.0.0"
             ),
         ]
+
+    @classmethod
+    def _build_edge_launch_command(
+        cls,
+        *,
+        edge_path: str,
+        port: int,
+        user_data_dir: str,
+        proxy_url: str | None,
+        cleanup_callbacks: list[Callable[[], None]],
+    ) -> list[str]:
+        command = [
+            edge_path,
+            f"--remote-debugging-port={port}",
+            f"--user-data-dir={user_data_dir}",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-sync",
+            "--new-window",
+        ]
+
+        if proxy_url and proxy_url != "direct":
+            plugin_path = cls._build_proxy_plugin(proxy_url)
+            if plugin_path is not None:
+                cleanup_callbacks.append(lambda path=plugin_path: cls._remove_temp_path(path))
+                command.extend(
+                    [
+                        f"--disable-extensions-except={plugin_path}",
+                        f"--load-extension={plugin_path}",
+                    ]
+                )
+            else:
+                pure_proxy = re.sub(r"https?://[^@]*@", "", proxy_url)
+                pure_proxy = re.sub(r"^https?://", "", pure_proxy)
+                command.append(f"--proxy-server={pure_proxy}")
+
+        command.append("about:blank")
+        return command
+
+    @staticmethod
+    def _reserve_debug_port() -> int:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", 0))
+            return int(sock.getsockname()[1])
+
+    @staticmethod
+    def _find_edge_binary() -> str:
+        candidates = [
+            os.environ.get("EDGE_BINARY"),
+            shutil.which("msedge.exe"),
+            shutil.which("msedge"),
+            str(Path(os.environ.get("PROGRAMFILES(X86)", "")).joinpath("Microsoft", "Edge", "Application", "msedge.exe")),
+            str(Path(os.environ.get("PROGRAMFILES", "")).joinpath("Microsoft", "Edge", "Application", "msedge.exe")),
+        ]
+        for candidate in candidates:
+            if candidate and Path(candidate).exists():
+                return candidate
+        raise RuntimeError("未找到 Microsoft Edge 可执行文件")
+
+    @staticmethod
+    def _wait_for_debugger_port(port: int, *, process: subprocess.Popen[Any], timeout_seconds: float = 15.0) -> None:
+        deadline = time.time() + timeout_seconds
+        while time.time() < deadline:
+            if process.poll() is not None:
+                raise RuntimeError("Edge 调试浏览器启动失败")
+            try:
+                with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+                    return
+            except OSError:
+                time.sleep(0.2)
+        raise RuntimeError("等待 Edge 调试端口超时")
+
+    @staticmethod
+    def _wait_for_browser_settle(seconds: float = 5.0) -> None:
+        time.sleep(seconds)
+
+    @classmethod
+    def _find_login_handle(cls, driver: Any) -> str:
+        handles = list(getattr(driver, "window_handles", []) or [])
+        for handle in handles:
+            try:
+                driver.switch_to.window(handle)
+                current_url = cls._current_url(driver)
+            except Exception:
+                continue
+            if current_url.startswith(cls.LOGIN_URL):
+                return handle
+        if handles:
+            return str(handles[0])
+        raise RuntimeError("未能定位 C5 登录页面窗口")
+
+    @staticmethod
+    def _close_other_windows(driver: Any, *, keep_handle: str) -> None:
+        handles = list(getattr(driver, "window_handles", []) or [])
+        for handle in handles:
+            if handle == keep_handle:
+                continue
+            try:
+                driver.switch_to.window(handle)
+                driver.close()
+            except Exception:
+                continue
+
+    @staticmethod
+    def _activate_handle(driver: Any, handle: str) -> None:
+        try:
+            driver.switch_to.window(handle)
+        except Exception:
+            return
 
     @classmethod
     def _build_proxy_plugin(cls, proxy_url: str) -> str | None:
@@ -565,23 +748,30 @@ class SeleniumLoginRunner:
             chrome.proxy.settings.set({{value: config, scope: "regular"}}, function() {{}});
             """
 
-        with tempfile.NamedTemporaryFile(
-            prefix="proxy_auth_plugin_",
-            suffix=".zip",
-            delete=False,
-        ) as temp_file:
-            temp_path = temp_file.name
-
-        with zipfile.ZipFile(temp_path, "w") as archive:
-            archive.writestr("manifest.json", manifest_json)
-            archive.writestr("background.js", background_js)
-        return temp_path
+        extension_dir = tempfile.mkdtemp(prefix="proxy_auth_plugin_")
+        try:
+            Path(extension_dir, "manifest.json").write_text(manifest_json, encoding="utf-8")
+            Path(extension_dir, "background.js").write_text(background_js, encoding="utf-8")
+        except Exception:
+            cls._remove_temp_path(extension_dir)
+            raise
+        return extension_dir
 
     @staticmethod
-    def _remove_temp_file(path: str) -> None:
+    def _remove_temp_path(path: str) -> None:
         try:
-            if path and os.path.exists(path):
+            if path and os.path.isdir(path):
+                shutil.rmtree(path, ignore_errors=True)
+            elif path and os.path.exists(path):
                 os.remove(path)
+        except Exception:
+            return
+
+    @staticmethod
+    def _terminate_process(process: subprocess.Popen[Any]) -> None:
+        try:
+            if process.poll() is None:
+                process.kill()
         except Exception:
             return
 

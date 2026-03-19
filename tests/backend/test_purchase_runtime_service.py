@@ -33,6 +33,21 @@ class FakeAccountRepository:
     def list_accounts(self):
         return list(self._accounts)
 
+    def get_account(self, account_id: str):
+        for account in self._accounts:
+            if account.account_id == account_id:
+                return account
+        return None
+
+    def update_account(self, account_id: str, **changes):
+        account = self.get_account(account_id)
+        if account is None:
+            raise KeyError(account_id)
+        for key, value in changes.items():
+            if hasattr(account, key):
+                setattr(account, key, value)
+        return account
+
 
 class FakeSettingsRepository:
     def __init__(self, settings: PurchaseRuntimeSettings | None = None) -> None:
@@ -41,9 +56,8 @@ class FakeSettingsRepository:
     def get(self) -> PurchaseRuntimeSettings:
         return self._settings
 
-    def save(self, *, query_only: bool, whitelist_account_ids: list[str], updated_at: str | None = None):
+    def save(self, *, whitelist_account_ids: list[str], updated_at: str | None = None):
         self._settings = PurchaseRuntimeSettings(
-            query_only=query_only,
             whitelist_account_ids=list(whitelist_account_ids),
             updated_at=updated_at,
         )
@@ -181,7 +195,6 @@ def test_purchase_runtime_service_returns_idle_snapshot_when_stopped():
     assert snapshot["total_account_count"] == 0
     assert snapshot["recent_events"] == []
     assert snapshot["accounts"] == []
-    assert snapshot["settings"]["query_only"] is False
     assert snapshot["settings"]["whitelist_account_ids"] == []
 
 
@@ -335,12 +348,11 @@ def test_purchase_runtime_service_updates_global_settings():
     )
     service.start()
 
-    updated = service.update_settings(query_only=True, whitelist_account_ids=["a1"])
+    updated = service.update_settings(whitelist_account_ids=["a1"])
 
-    assert updated["settings"]["query_only"] is True
     assert updated["settings"]["whitelist_account_ids"] == ["a1"]
     assert created_runtime["runtime"].applied_settings is not None
-    assert created_runtime["runtime"].applied_settings.query_only is True
+    assert created_runtime["runtime"].applied_settings.whitelist_account_ids == ["a1"]
 
 
 def test_purchase_runtime_service_returns_inventory_detail_from_runtime_memory():
@@ -470,18 +482,40 @@ def test_purchase_runtime_service_stops_running_runtime():
     assert snapshot["running"] is False
 
 
-def test_purchase_runtime_service_accepts_query_hit_when_running():
+def test_purchase_runtime_service_accepts_query_hit_when_running_with_available_account():
     from app_backend.infrastructure.purchase.runtime.purchase_runtime_service import PurchaseRuntimeService
 
+    snapshot_repository = FakeInventorySnapshotRepository(
+        {
+            "a1": type(
+                "Snapshot",
+                (),
+                {
+                    "account_id": "a1",
+                    "selected_steam_id": "steam-1",
+                    "inventories": [
+                        {"steamId": "steam-1", "inventory_num": 910, "inventory_max": 1000},
+                    ],
+                    "refreshed_at": "2026-03-16T20:00:00",
+                    "last_error": None,
+                },
+            )()
+        }
+    )
+    gateway = StubExecutionGateway(PurchaseExecutionResult.success(purchased_count=1))
     service = PurchaseRuntimeService(
         account_repository=FakeAccountRepository([build_account("a1")]),
         settings_repository=FakeSettingsRepository(),
+        inventory_snapshot_repository=snapshot_repository,
+        execution_gateway_factory=lambda: gateway,
     )
     service.start()
 
     result = service.accept_query_hit(
         {
+            "external_item_id": "1380979899390261111",
             "query_item_name": "AK",
+            "product_url": "https://www.c5game.com/csgo/730/asset/1380979899390261111",
             "product_list": [{"productId": "p-1", "price": 88.0, "actRebateAmount": 0}],
             "total_price": 88.0,
             "total_wear_sum": 0.1234,
@@ -491,23 +525,32 @@ def test_purchase_runtime_service_accepts_query_hit_when_running():
 
     assert result == {"accepted": True, "status": "queued"}
     snapshot = service.get_status()
-    assert snapshot["queue_size"] == 1
-    assert snapshot["recent_events"][0]["status"] == "queued"
+    assert snapshot["queue_size"] == 0
+    assert snapshot["total_purchased_count"] == 1
+    assert snapshot["recent_events"][0]["status"] == "success"
     assert snapshot["recent_events"][0]["query_item_name"] == "AK"
 
 
-def test_purchase_runtime_service_blocks_query_hit_when_query_only_enabled():
+def test_purchase_runtime_service_rejects_hit_when_no_available_accounts():
     from app_backend.infrastructure.purchase.runtime.purchase_runtime_service import PurchaseRuntimeService
+    from app_backend.infrastructure.purchase.runtime.runtime_events import InventoryRefreshResult
 
+    account_repository = FakeAccountRepository([build_account("a1")])
+    snapshot_repository = FakeInventorySnapshotRepository()
+    refresh_gateway = StubInventoryRefreshGateway(InventoryRefreshResult.success(inventories=[]))
     service = PurchaseRuntimeService(
-        account_repository=FakeAccountRepository([build_account("a1")]),
-        settings_repository=FakeSettingsRepository(PurchaseRuntimeSettings(query_only=True)),
+        account_repository=account_repository,
+        settings_repository=FakeSettingsRepository(),
+        inventory_snapshot_repository=snapshot_repository,
+        inventory_refresh_gateway_factory=lambda: refresh_gateway,
     )
     service.start()
 
     result = service.accept_query_hit(
         {
+            "external_item_id": "1380979899390261111",
             "query_item_name": "AK",
+            "product_url": "https://www.c5game.com/csgo/730/asset/1380979899390261111",
             "product_list": [{"productId": "p-1", "price": 88.0, "actRebateAmount": 0}],
             "total_price": 88.0,
             "total_wear_sum": 0.1234,
@@ -515,10 +558,12 @@ def test_purchase_runtime_service_blocks_query_hit_when_query_only_enabled():
         }
     )
 
-    assert result == {"accepted": False, "status": "blocked_query_only"}
     snapshot = service.get_status()
+
+    assert result == {"accepted": False, "status": "ignored_no_available_accounts"}
+    assert snapshot["active_account_count"] == 0
     assert snapshot["queue_size"] == 0
-    assert snapshot["recent_events"][0]["status"] == "blocked_query_only"
+    assert snapshot["recent_events"][0]["status"] == "ignored_no_available_accounts"
 
 
 def test_purchase_runtime_service_consumes_queued_hit_and_updates_runtime_snapshot():
@@ -830,3 +875,56 @@ def test_purchase_runtime_service_recovery_check_reschedules_when_inventory_stil
         assert snapshot["accounts"][0]["selected_steam_id"] == "steam-restore-2"
     finally:
         service.stop()
+
+
+def test_purchase_runtime_service_marks_account_auth_invalid_from_query_not_login_signal():
+    from app_backend.infrastructure.purchase.runtime.purchase_runtime_service import PurchaseRuntimeService
+
+    account_repository = FakeAccountRepository([build_account("a1")])
+    service = PurchaseRuntimeService(
+        account_repository=account_repository,
+        settings_repository=FakeSettingsRepository(),
+    )
+
+    service.start()
+    service.mark_account_auth_invalid(account_id="a1", error="Not login")
+    snapshot = service.get_status()
+
+    assert snapshot["active_account_count"] == 0
+    assert snapshot["accounts"][0]["purchase_capability_state"] == "expired"
+    assert snapshot["accounts"][0]["purchase_pool_state"] == "paused_auth_invalid"
+    assert snapshot["accounts"][0]["last_error"] == "Not login"
+    assert snapshot["recent_events"][0]["status"] == "auth_invalid"
+    assert account_repository.get_account("a1").purchase_capability_state == "expired"
+
+
+def test_purchase_runtime_service_rejects_hit_after_last_account_becomes_unavailable():
+    from app_backend.infrastructure.purchase.runtime.purchase_runtime_service import PurchaseRuntimeService
+
+    account_repository = FakeAccountRepository([build_account("a1")])
+    service = PurchaseRuntimeService(
+        account_repository=account_repository,
+        settings_repository=FakeSettingsRepository(),
+    )
+
+    service.start()
+    service.mark_account_auth_invalid(account_id="a1", error="Not login")
+
+    result = service.accept_query_hit(
+        {
+            "external_item_id": "1380979899390261111",
+            "query_item_name": "AK",
+            "product_url": "https://www.c5game.com/csgo/730/asset/1380979899390261111",
+            "product_list": [{"productId": "p-1", "price": 88.0, "actRebateAmount": 0}],
+            "total_price": 88.0,
+            "total_wear_sum": 0.1234,
+            "mode_type": "new_api",
+        }
+    )
+
+    snapshot = service.get_status()
+
+    assert result == {"accepted": False, "status": "ignored_no_available_accounts"}
+    assert snapshot["active_account_count"] == 0
+    assert snapshot["queue_size"] == 0
+    assert snapshot["recent_events"][0]["status"] == "ignored_no_available_accounts"

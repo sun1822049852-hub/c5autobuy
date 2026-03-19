@@ -1,0 +1,28 @@
+import { describe, expect, it, vi } from "vitest";
+
+import { createAccountCenterClient } from "../../src/api/account_center_client.js";
+
+
+describe("account center client", () => {
+  it("loads account center rows from bootstrap api base url", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [{ account_id: "a-1", display_name: "账号 A" }],
+    });
+
+    const client = createAccountCenterClient({
+      apiBaseUrl: "http://127.0.0.1:8123",
+      fetchImpl,
+    });
+
+    const rows = await client.listAccountCenterAccounts();
+
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "http://127.0.0.1:8123/account-center/accounts",
+      expect.objectContaining({
+        method: "GET",
+      }),
+    );
+    expect(rows).toEqual([{ account_id: "a-1", display_name: "账号 A" }]);
+  });
+});

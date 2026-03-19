@@ -2,12 +2,13 @@ from __future__ import annotations
 
 
 def normalize_proxy_input(*, proxy_mode: str, proxy_url: str | None) -> str | None:
-    if proxy_mode == "direct":
+    normalized = (proxy_url or "").strip()
+    if proxy_mode == "direct" or not normalized or normalized.lower() == "direct":
         return None
 
-    normalized = (proxy_url or "").strip()
-    if not normalized:
-        return None
+    if "://" not in normalized:
+        return f"http://{normalized}"
+
     return normalized
 
 

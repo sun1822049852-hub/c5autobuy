@@ -16,6 +16,24 @@ def test_full_proxy_url_with_auth_is_preserved():
     assert normalized == "http://user:pass@127.0.0.1:8080"
 
 
+def test_proxy_host_and_port_without_scheme_normalize_to_http():
+    normalized = normalize_proxy_input(
+        proxy_mode="custom",
+        proxy_url="127.0.0.1:8080",
+    )
+
+    assert normalized == "http://127.0.0.1:8080"
+
+
+def test_proxy_auth_host_and_port_without_scheme_normalize_to_http():
+    normalized = normalize_proxy_input(
+        proxy_mode="custom",
+        proxy_url="user:pass@127.0.0.1:8080",
+    )
+
+    assert normalized == "http://user:pass@127.0.0.1:8080"
+
+
 def test_split_proxy_fields_render_to_full_url():
     rendered = render_proxy_url(
         scheme="http",
