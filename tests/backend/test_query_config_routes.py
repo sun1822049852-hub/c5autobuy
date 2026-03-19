@@ -521,6 +521,39 @@ async def test_patch_query_item_updates_detail_wear_thresholds(client, app):
     assert payload["detail_max_wear"] == 0.25
 
 
+async def test_patch_query_item_backfills_missing_final_detail_wear_from_saved_range(client, app):
+    repository = app.state.query_config_repository
+    config = repository.create_config(name="脏配置修复", description="测试补齐 detail wear")
+    item = repository.add_item(
+        config_id=config.config_id,
+        product_url="https://www.c5game.com/csgo/730/asset/1380979899390267777",
+        external_item_id="1380979899390267777",
+        item_name="AK-47 | Redline",
+        market_hash_name="AK-47 | Redline (Field-Tested)",
+        min_wear=0.02,
+        max_wear=0.8,
+        detail_min_wear=None,
+        detail_max_wear=None,
+        max_price=199.0,
+        last_market_price=155.0,
+    )
+
+    response = await client.patch(
+        f"/query-configs/{config.config_id}/items/{item.query_item_id}",
+        json={
+            "max_price": 188.0,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["min_wear"] == 0.02
+    assert payload["max_wear"] == 0.8
+    assert payload["detail_min_wear"] == 0.02
+    assert payload["detail_max_wear"] == 0.8
+    assert payload["max_price"] == 188.0
+
+
 async def test_query_capacity_summary_returns_available_accounts_by_mode(client, app):
     app.state.account_repository.create_account(_build_query_account("a1", api_key="api-1"))
     app.state.account_repository.create_account(

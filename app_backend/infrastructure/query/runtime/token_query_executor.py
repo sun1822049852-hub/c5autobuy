@@ -130,6 +130,11 @@ class TokenQueryExecutor:
             return self._build_failure_result("构建请求头失败", started_at=started_at)
 
         try:
+            query_item.require_configured_wear_range()
+        except ValueError as exc:
+            return self._build_failure_result(str(exc), started_at=started_at)
+
+        try:
             async with active_session.post(
                 url=self.build_request_url(),
                 json=self.build_request_body(query_item),

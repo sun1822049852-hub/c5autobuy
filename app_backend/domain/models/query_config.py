@@ -55,11 +55,16 @@ class QueryItem:
 
     @property
     def configured_min_wear(self) -> float | None:
-        return self.detail_min_wear if self.detail_min_wear is not None else self.min_wear
+        return self.detail_min_wear
 
     @property
     def configured_max_wear(self) -> float | None:
-        return self.detail_max_wear if self.detail_max_wear is not None else self.max_wear
+        return self.detail_max_wear
+
+    def require_configured_wear_range(self) -> tuple[float, float]:
+        if self.detail_min_wear is None or self.detail_max_wear is None:
+            raise ValueError("查询配置缺少最终磨损范围")
+        return float(self.detail_min_wear), float(self.detail_max_wear)
 
 
 @dataclass(slots=True)

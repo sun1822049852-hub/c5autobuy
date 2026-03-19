@@ -70,6 +70,11 @@ class FastApiQueryExecutor:
                 return self._build_failure_result("OpenAPI会话已关闭且无法重新创建", started_at=started_at)
 
         try:
+            query_item.require_configured_wear_range()
+        except ValueError as exc:
+            return self._build_failure_result(str(exc), started_at=started_at)
+
+        try:
             async with active_session.post(
                 url=self.build_request_url(),
                 params=self.build_request_params(runtime_account),

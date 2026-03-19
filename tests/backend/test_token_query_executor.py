@@ -31,7 +31,13 @@ def build_account() -> Account:
     )
 
 
-def build_item() -> QueryItem:
+def build_item(
+    *,
+    min_wear: float | None = 0.0,
+    max_wear: float | None = 0.8,
+    detail_min_wear: float | None = 0.1,
+    detail_max_wear: float | None = 0.25,
+) -> QueryItem:
     item_id = "1380979899390261111"
     return QueryItem(
         query_item_id="item-1",
@@ -40,10 +46,10 @@ def build_item() -> QueryItem:
         external_item_id=item_id,
         item_name="Test Item",
         market_hash_name="Test Item Name",
-        min_wear=0.0,
-        max_wear=0.8,
-        detail_min_wear=0.1,
-        detail_max_wear=0.25,
+        min_wear=min_wear,
+        max_wear=max_wear,
+        detail_min_wear=detail_min_wear,
+        detail_max_wear=detail_max_wear,
         max_price=100.0,
         last_market_price=90.0,
         last_detail_sync_at=None,
@@ -267,3 +273,21 @@ async def test_token_query_executor_returns_request_error_text():
 
     assert result.success is False
     assert result.error == "请求错误: boom"
+
+
+async def test_token_query_executor_rejects_missing_final_detail_wear_range():
+    from app_backend.infrastructure.query.runtime.token_query_executor import TokenQueryExecutor
+
+    signer = FakeSigner(result="fake-sign")
+    executor = TokenQueryExecutor(xsign_wrapper=signer)
+    session = FakeSession(status=200, text=json.dumps({"success": True, "data": {"sellList": [], "matchCount": 0}}))
+
+    result = await executor.execute_query(
+        account=RuntimeAccountAdapter(build_account()),
+        query_item=build_item(detail_min_wear=None, detail_max_wear=None),
+        session=session,
+    )
+
+    assert result.success is False
+    assert result.error == "查询配置缺少最终磨损范围"
+    assert session.calls == []

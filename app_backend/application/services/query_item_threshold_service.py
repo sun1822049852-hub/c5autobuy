@@ -45,5 +45,14 @@ def validate_detail_max_wear(
         )
 
 
+def ensure_final_detail_wear_range(
+    *,
+    detail_min_wear: float | None,
+    detail_max_wear: float | None,
+) -> None:
+    if detail_min_wear is None or detail_max_wear is None:
+        raise ValueError("查询配置缺少最终磨损范围")
+
+
 def _format_wear_value(value: float) -> str:
     return f"{value:g}"

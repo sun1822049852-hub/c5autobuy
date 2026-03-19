@@ -846,6 +846,9 @@ class _DefaultPurchaseRuntime:
         self._on_no_available_accounts = None
         self._on_accounts_available = None
         self._active_account_count = 0
+        self._drain_signal = threading.Event()
+        self._drain_stop_signal = threading.Event()
+        self._drain_thread: threading.Thread | None = None
 
     def set_availability_callbacks(
         self,
@@ -869,10 +872,19 @@ class _DefaultPurchaseRuntime:
         self._recovery_timers = {}
         self._initialize_accounts()
         self._active_account_count = self._scheduler.active_account_count()
+        self._drain_stop_signal = threading.Event()
+        self._drain_signal = threading.Event()
+        self._start_drain_worker()
 
     def stop(self) -> None:
         self._running = False
         self._cancel_all_recovery_checks()
+        self._drain_stop_signal.set()
+        self._drain_signal.set()
+        drain_thread = self._drain_thread
+        if drain_thread is not None and drain_thread.is_alive():
+            drain_thread.join(timeout=0.2)
+        self._drain_thread = None
         self._stopped_at = datetime.now().isoformat(timespec="seconds")
 
     def apply_settings(self, settings: PurchaseRuntimeSettings) -> None:
@@ -902,7 +914,7 @@ class _DefaultPurchaseRuntime:
 
         self._scheduler.submit(batch)
         self._push_event(hit, status="queued", message="已转入购买")
-        await self._drain_scheduler()
+        self._signal_drain_worker()
         return {"accepted": True, "status": "queued"}
 
     def snapshot(self) -> dict[str, object]:
@@ -1151,7 +1163,10 @@ class _DefaultPurchaseRuntime:
                 self._scheduler.mark_unavailable(account_id, reason="missing_account_state")
                 continue
 
-            batch = self._scheduler.pop_next_batch()
+            try:
+                batch = self._scheduler.pop_next_batch()
+            except IndexError:
+                return
             outcome = await state.worker.process(batch)
             self._apply_worker_outcome(state, batch, outcome)
 
@@ -1277,6 +1292,8 @@ class _DefaultPurchaseRuntime:
             self._notify_no_available_accounts()
             return
         if previous_active_account_count == 0 and current_active_account_count > 0:
+            if self._scheduler.queue_size() > 0:
+                self._signal_drain_worker()
             self._notify_accounts_available()
 
     def _notify_no_available_accounts(self) -> None:
@@ -1533,6 +1550,46 @@ class _DefaultPurchaseRuntime:
             },
         )
         del self._recent_events[self._RECENT_EVENT_LIMIT :]
+
+    def _start_drain_worker(self) -> None:
+        if self._drain_thread is not None and self._drain_thread.is_alive():
+            return
+
+        def runner() -> None:
+            self._drain_worker_loop()
+
+        self._drain_thread = threading.Thread(
+            target=runner,
+            name="purchase-runtime-drain",
+            daemon=True,
+        )
+        self._drain_thread.start()
+
+    def _signal_drain_worker(self) -> None:
+        if not self._running or self._scheduler.active_account_count() <= 0:
+            return
+        self._drain_signal.set()
+
+    def _drain_worker_loop(self) -> None:
+        while not self._drain_stop_signal.is_set():
+            self._drain_signal.wait()
+            self._drain_signal.clear()
+            if self._drain_stop_signal.is_set():
+                return
+
+            while (
+                self._running
+                and self._scheduler.active_account_count() > 0
+                and self._scheduler.queue_size() > 0
+            ):
+                try:
+                    asyncio.run(self._drain_scheduler())
+                except Exception as exc:  # pragma: no cover - defensive background worker guard
+                    self._push_scheduler_event(
+                        status="drain_worker_error",
+                        message=f"后台购买线程异常: {exc}",
+                    )
+                    break
 
 
 def _run_coroutine_sync(coroutine):

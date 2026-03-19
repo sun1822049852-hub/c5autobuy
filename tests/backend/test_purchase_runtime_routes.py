@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 
+import asyncio
 from app_backend.domain.models.account import Account
 from app_backend.infrastructure.purchase.runtime.runtime_events import PurchaseExecutionResult
 
@@ -100,6 +101,17 @@ async def test_purchase_runtime_settings_routes_update_whitelist(client):
         },
     )
 
+
+async def _wait_until_status(client, predicate, *, timeout: float = 1.0, interval: float = 0.01):
+    deadline = asyncio.get_running_loop().time() + timeout
+    while True:
+        response = await client.get("/purchase-runtime/status")
+        if predicate(response.json()):
+            return response
+        if asyncio.get_running_loop().time() >= deadline:
+            return response
+        await asyncio.sleep(interval)
+
     assert update_response.status_code == 200
     payload = update_response.json()
     assert payload["settings"]["whitelist_account_ids"] == ["a1"]
@@ -139,7 +151,10 @@ async def test_purchase_runtime_end_to_end_handles_hit(client, app):
             "mode_type": "new_api",
         }
     )
-    response = await client.get("/purchase-runtime/status")
+    response = await _wait_until_status(
+        client,
+        lambda payload: payload["total_purchased_count"] == 1 and payload["recent_events"][0]["status"] == "success",
+    )
 
     assert result == {"accepted": True, "status": "queued"}
     assert response.status_code == 200

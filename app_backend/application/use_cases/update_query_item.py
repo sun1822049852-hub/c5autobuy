@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from app_backend.application.services.query_item_settings_service import normalize_mode_allocations, validate_max_price
 from app_backend.application.services.query_item_threshold_service import (
+    ensure_final_detail_wear_range,
     validate_detail_max_wear,
     validate_detail_min_wear,
 )
@@ -24,9 +25,25 @@ class UpdateQueryItemUseCase:
         existing_item = self._repository.get_item(query_item_id)
         if existing_item is None:
             raise KeyError(query_item_id)
-        next_detail_min_wear = existing_item.detail_min_wear if detail_min_wear is None else detail_min_wear
-        next_detail_max_wear = existing_item.detail_max_wear if detail_max_wear is None else detail_max_wear
+        next_detail_min_wear = (
+            existing_item.detail_min_wear
+            if existing_item.detail_min_wear is not None
+            else existing_item.min_wear
+        )
+        if detail_min_wear is not None:
+            next_detail_min_wear = detail_min_wear
+        next_detail_max_wear = (
+            existing_item.detail_max_wear
+            if existing_item.detail_max_wear is not None
+            else existing_item.max_wear
+        )
+        if detail_max_wear is not None:
+            next_detail_max_wear = detail_max_wear
         next_max_price = existing_item.max_price if max_price is None else max_price
+        ensure_final_detail_wear_range(
+            detail_min_wear=next_detail_min_wear,
+            detail_max_wear=next_detail_max_wear,
+        )
         validate_detail_min_wear(
             detail_min_wear=next_detail_min_wear,
             min_wear=existing_item.min_wear,
