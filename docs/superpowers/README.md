@@ -4,8 +4,7 @@
 
 当前仓库实际状态已经和这些历史文档里的很多“当时现状”不同：
 
-- `autobuy.py` 已从仓库删除
-- `c5_layered` 过渡包已从仓库删除
+- `autobuy.py` 与 `c5_layered` 目前保留在仓库中，但不属于默认运行链路
 - 当前运行入口是 `run_app.py -> app_frontend.main -> app_backend.main`
 
 因此：

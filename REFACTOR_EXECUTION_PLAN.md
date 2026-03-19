@@ -3,8 +3,7 @@
 更新时间：2026-03-18
 
 ## 1. 当前状态
-- `autobuy.py` 已从仓库删除。
-- `c5_layered` 过渡包已从仓库删除。
+- `autobuy.py` 与 `c5_layered` 已退出默认运行链路，但源码当前仍保留在仓库中。
 - 当前运行入口为 `run_app.py -> app_frontend.main.main() -> LocalBackendServer -> app_backend.main.create_app()`。
 - 查询、购买、库存刷新、登录运行时都已收口到 `app_backend`。
 
@@ -30,13 +29,13 @@
 - 查询命中到购买运行时的联动已落地
 - 无可用购买账号时，查询停机并清空 backlog；账号恢复后自动恢复查询
 - 购买执行、库存刷新、登录链路都已迁入新模块
-- 旧版 CLI 入口、`c5_layered` 过渡层、`autobuy.py` 本体都已移除
+- 默认运行链路已不再依赖旧版 CLI 入口、`c5_layered` 过渡层与 `autobuy.py`
 
 ## 4. 当前约束
-- 不要重新引入 `autobuy.py`、`c5_layered` 或任何 `legacy_*` 兼容壳
+- 新增默认行为不要重新依赖 `autobuy.py`、`c5_layered` 或任何 `legacy_*` 兼容壳
 - UI 只通过 `app_frontend` 调后端接口，不直接持有后端运行时对象
 - 新增行为必须继续对照旧语义，但实现只能落在当前前后端分层内
-- 历史设计文档里提到的 `autobuy.py / c5_layered` 仅表示迁移背景，不代表当前代码仍依赖它们
+- `autobuy.py / c5_layered` 当前保留为历史 UI/legacy 源码与过渡重构区，不代表默认运行链路仍依赖它们
 
 ## 5. 建议验证命令
 

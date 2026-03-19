@@ -10,6 +10,8 @@
 
 旧版 `autobuy.py` 已退出当前运行链路，后续维护不要再按单文件脚本思路理解项目。现在的 GUI 只负责输入、展示和调用后端接口，实际业务状态和运行时逻辑都在后端。
 
+仓库中目前仍保留 `autobuy.py` 与 `c5_layered/`，作为历史 UI/legacy 源码参考和过渡重构区；默认启动与日常功能维护仍以 `app_frontend/` + `app_backend/` 为准。
+
 ## 快速开始
 
 ### 环境要求
@@ -85,6 +87,9 @@ node main_ui_account_center_desktop.js
 - `app_desktop_web/`
   - Electron + React 桌面化 Web 前端
   - 负责新的账号中心界面和后续模块迁移骨架
+- `c5_layered/`
+  - 历史 Tk UI 与 legacy 分层源码
+  - 当前默认入口不再使用，但仓库中仍保留以便继续重构或对照旧行为
 - `tests/`
   - 当前行为的自动化测试，改动前后都应优先看这里
 - `data/`
