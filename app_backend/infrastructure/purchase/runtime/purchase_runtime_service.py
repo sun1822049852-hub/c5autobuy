@@ -5,7 +5,7 @@ import random
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from inspect import Parameter, signature
 
 from app_backend.domain.enums.account_states import PurchaseCapabilityState, PurchasePoolState
@@ -120,7 +120,7 @@ class PurchaseRuntimeService:
         self,
         *,
         account_id: str,
-        disabled: bool,
+        purchase_disabled: bool,
         selected_steam_id: str | None,
     ) -> dict[str, object]:
         account = self._find_account(account_id)
@@ -135,13 +135,13 @@ class PurchaseRuntimeService:
         )
         updated_account = self._account_repository.update_account(
             account_id,
-            disabled=bool(disabled),
+            purchase_disabled=bool(purchase_disabled),
             updated_at=datetime.now().isoformat(timespec="seconds"),
         )
 
         if self._sync_runtime_purchase_config(
             account_id=account_id,
-            disabled=bool(disabled),
+            purchase_disabled=bool(purchase_disabled),
             selected_steam_id=next_selected_steam_id,
         ):
             refreshed_account = self._find_account(account_id)
@@ -374,11 +374,12 @@ class PurchaseRuntimeService:
         purchase_status_code, purchase_status_text = self._build_purchase_status(
             purchase_capability_state=purchase_capability_state,
             purchase_pool_state=purchase_pool_state,
-            disabled=bool(getattr(account, "disabled", False)),
+            purchase_disabled=bool(getattr(account, "purchase_disabled", False)),
             selected_row=selected_row,
         )
         proxy_url = getattr(account, "proxy_url", None) or None
         api_key = getattr(account, "api_key", None) or None
+        purchase_disabled = bool(getattr(account, "purchase_disabled", False))
         return {
             "account_id": account_id,
             "display_name": str(getattr(account, "display_name", "") or account_id),
@@ -393,6 +394,7 @@ class PurchaseRuntimeService:
             "purchase_capability_state": purchase_capability_state,
             "purchase_pool_state": purchase_pool_state,
             "disabled": bool(getattr(account, "disabled", False)),
+            "purchase_disabled": purchase_disabled,
             "selected_steam_id": selected_steam_id or None,
             "selected_warehouse_text": selected_steam_id or None,
             "purchase_status_code": purchase_status_code,
@@ -413,12 +415,12 @@ class PurchaseRuntimeService:
         *,
         purchase_capability_state: str,
         purchase_pool_state: str,
-        disabled: bool,
+        purchase_disabled: bool,
         selected_row: dict[str, object] | None,
     ) -> tuple[str, str]:
         if purchase_capability_state != PurchaseCapabilityState.BOUND or purchase_pool_state == PurchasePoolState.PAUSED_AUTH_INVALID:
             return "not_logged_in", "未登录"
-        if disabled:
+        if purchase_disabled:
             return "disabled", "禁用"
         if selected_row is None or not bool(selected_row.get("is_available")) or purchase_pool_state == PurchasePoolState.PAUSED_NO_INVENTORY:
             return "inventory_full", "库存已满"
@@ -484,7 +486,7 @@ class PurchaseRuntimeService:
         self,
         *,
         account_id: str,
-        disabled: bool,
+        purchase_disabled: bool,
         selected_steam_id: str | None,
     ) -> bool:
         if not self._has_running_runtime() or self._runtime is None:
@@ -496,22 +498,20 @@ class PurchaseRuntimeService:
         if state is None:
             return False
 
-        setattr(state.account, "disabled", bool(disabled))
+        state.purchase_disabled = bool(purchase_disabled)
+        setattr(state.account, "purchase_disabled", state.purchase_disabled)
         if selected_steam_id is not None:
             state.inventory_state.selected_steam_id = selected_steam_id
 
-        previous_active_count = self._runtime._scheduler.active_account_count()
-        if disabled:
-            self._runtime._scheduler.mark_unavailable(account_id, reason="disabled")
-        elif state.capability_state == PurchaseCapabilityState.BOUND and state.inventory_state.selected_steam_id is not None:
+        if state.capability_state == PurchaseCapabilityState.BOUND and state.inventory_state.selected_steam_id is not None:
             state.pool_state = PurchasePoolState.ACTIVE
             state.last_error = None
-            self._runtime._scheduler.mark_available(account_id)
+        elif state.capability_state == PurchaseCapabilityState.EXPIRED:
+            state.pool_state = PurchasePoolState.PAUSED_AUTH_INVALID
         else:
             state.pool_state = PurchasePoolState.PAUSED_NO_INVENTORY
-            self._runtime._scheduler.mark_no_inventory(account_id)
 
-        self._runtime._handle_active_account_count_change(previous_active_count)
+        self._runtime._sync_scheduler_state(state)
         self._runtime._persist_inventory_snapshot(state, last_error=state.last_error)
         self._runtime._sync_account_repository_state(state)
         return True
@@ -647,9 +647,11 @@ class _RuntimeAccountState:
     worker: AccountPurchaseWorker
     capability_state: str
     pool_state: str
+    purchase_disabled: bool = False
     last_error: str | None = None
     total_purchased_count: int = 0
     inventory_refreshed_at: str | None = None
+    recovery_due_at: datetime | None = None
 
     @property
     def account_id(self) -> str:
@@ -771,6 +773,8 @@ class _DefaultPurchaseRuntime:
                     "display_name": state.display_name,
                     "purchase_capability_state": state.capability_state,
                     "purchase_pool_state": state.pool_state,
+                    "purchase_disabled": state.purchase_disabled,
+                    "purchase_recovery_due_at": self._format_recovery_due_at(state.recovery_due_at),
                     "selected_steam_id": state.inventory_state.selected_steam_id,
                     "selected_inventory_remaining_capacity": self._selected_inventory_remaining_capacity(state),
                     "selected_inventory_max": self._selected_inventory_max(state),
@@ -841,7 +845,11 @@ class _DefaultPurchaseRuntime:
             )
             last_error = getattr(snapshot, "last_error", None)
             inventory_refreshed_at = getattr(snapshot, "refreshed_at", None)
-            refresh_result = self._refresh_inventory_from_remote(account, inventory_state)
+            purchase_disabled = bool(getattr(account, "purchase_disabled", False))
+            recovery_due_at = self._parse_recovery_due_at(
+                getattr(account, "purchase_recovery_due_at", None)
+            )
+            refresh_result = None if purchase_disabled else self._refresh_inventory_from_remote(account, inventory_state)
             should_persist_snapshot = False
             if refresh_result is None:
                 pass
@@ -860,6 +868,7 @@ class _DefaultPurchaseRuntime:
             available = (
                 capability_state == PurchaseCapabilityState.BOUND
                 and inventory_state.selected_steam_id is not None
+                and not purchase_disabled
             )
             pool_state = (
                 PurchasePoolState.PAUSED_AUTH_INVALID
@@ -880,12 +889,14 @@ class _DefaultPurchaseRuntime:
                 ),
                 capability_state=capability_state,
                 pool_state=pool_state,
+                purchase_disabled=purchase_disabled,
                 last_error=last_error,
                 inventory_refreshed_at=inventory_refreshed_at,
+                recovery_due_at=recovery_due_at,
             )
             self._account_states[account_id] = state
             self._scheduler.register_account(account_id, available=available)
-            if state.pool_state == PurchasePoolState.PAUSED_NO_INVENTORY:
+            if state.pool_state == PurchasePoolState.PAUSED_NO_INVENTORY and not state.purchase_disabled:
                 self._schedule_recovery_check(state.account_id)
             if should_persist_snapshot:
                 self._persist_inventory_snapshot(state, last_error=state.last_error)
@@ -1041,12 +1052,22 @@ class _DefaultPurchaseRuntime:
 
     def _sync_scheduler_state(self, state: _RuntimeAccountState) -> None:
         previous_active_account_count = self._scheduler.active_account_count()
-        if state.pool_state == PurchasePoolState.ACTIVE:
+        if state.purchase_disabled:
+            if state.pool_state == PurchasePoolState.PAUSED_NO_INVENTORY and state.capability_state == PurchaseCapabilityState.BOUND:
+                if state.recovery_due_at is None:
+                    state.recovery_due_at = self._build_next_recovery_due_at()
+            else:
+                state.recovery_due_at = None
+            self._scheduler.mark_unavailable(state.account_id, reason="purchase_disabled")
+            self._cancel_recovery_check(state.account_id)
+        elif state.pool_state == PurchasePoolState.ACTIVE:
             self._scheduler.mark_available(state.account_id)
             self._cancel_recovery_check(state.account_id)
+            state.recovery_due_at = None
         elif state.pool_state == PurchasePoolState.PAUSED_AUTH_INVALID:
             self._scheduler.mark_unavailable(state.account_id, reason="auth_invalid")
             self._cancel_recovery_check(state.account_id)
+            state.recovery_due_at = None
         else:
             self._scheduler.mark_no_inventory(state.account_id)
             self._schedule_recovery_check(state.account_id)
@@ -1097,7 +1118,11 @@ class _DefaultPurchaseRuntime:
             return
 
         self._cancel_recovery_check(account_id)
-        delay_seconds = max(float(self._recovery_delay_seconds_provider()), 0.0)
+        if state.recovery_due_at is None:
+            state.recovery_due_at = self._build_next_recovery_due_at()
+        if state.purchase_disabled:
+            return
+        delay_seconds = max((state.recovery_due_at - datetime.now()).total_seconds(), 0.0)
         timer = threading.Timer(delay_seconds, self._run_recovery_check, args=(account_id,))
         timer.daemon = True
         self._recovery_timers[account_id] = timer
@@ -1120,7 +1145,10 @@ class _DefaultPurchaseRuntime:
         state = self._account_states.get(account_id)
         if state is None or state.pool_state != PurchasePoolState.PAUSED_NO_INVENTORY:
             return
+        if state.purchase_disabled:
+            return
 
+        state.recovery_due_at = None
         refresh_result = self._refresh_inventory_from_remote(state.account, state.inventory_state)
         if refresh_result is None:
             self._schedule_recovery_check(account_id)
@@ -1179,6 +1207,25 @@ class _DefaultPurchaseRuntime:
     def _default_recovery_delay_seconds() -> float:
         return random.uniform(30 * 60, 40 * 60)
 
+    def _build_next_recovery_due_at(self) -> datetime:
+        delay_seconds = max(float(self._recovery_delay_seconds_provider()), 0.0)
+        return datetime.now() + timedelta(seconds=delay_seconds)
+
+    @staticmethod
+    def _parse_recovery_due_at(value: str | None) -> datetime | None:
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(str(value))
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _format_recovery_due_at(value: datetime | None) -> str | None:
+        if value is None:
+            return None
+        return value.isoformat()
+
     def _persist_inventory_snapshot(self, state: _RuntimeAccountState, *, last_error: str | None = None) -> None:
         refreshed_at = datetime.now().isoformat(timespec="seconds")
         state.inventory_refreshed_at = refreshed_at
@@ -1195,12 +1242,20 @@ class _DefaultPurchaseRuntime:
     def _sync_account_repository_state(self, state: _RuntimeAccountState) -> None:
         if self._account_repository is None or not hasattr(self._account_repository, "update_account"):
             return
+        setattr(state.account, "purchase_capability_state", state.capability_state)
+        setattr(state.account, "purchase_pool_state", state.pool_state)
+        setattr(state.account, "last_error", state.last_error)
+        setattr(state.account, "purchase_disabled", state.purchase_disabled)
+        recovery_due_at = self._format_recovery_due_at(state.recovery_due_at)
+        setattr(state.account, "purchase_recovery_due_at", recovery_due_at)
         try:
             self._account_repository.update_account(
                 state.account_id,
                 purchase_capability_state=state.capability_state,
                 purchase_pool_state=state.pool_state,
                 last_error=state.last_error,
+                purchase_disabled=state.purchase_disabled,
+                purchase_recovery_due_at=recovery_due_at,
                 updated_at=datetime.now().isoformat(timespec="seconds"),
             )
         except Exception:

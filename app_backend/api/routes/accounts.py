@@ -122,7 +122,7 @@ async def update_account_purchase_config(
     try:
         row = use_case.execute(
             account_id=account_id,
-            disabled=payload.disabled,
+            purchase_disabled=payload.purchase_disabled,
             selected_steam_id=payload.selected_steam_id,
         )
     except KeyError as exc:

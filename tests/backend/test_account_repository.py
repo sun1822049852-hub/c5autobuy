@@ -22,6 +22,8 @@ def build_account(account_id: str, default_name: str) -> Account:
         created_at="2026-03-16T10:00:00",
         updated_at="2026-03-16T10:00:00",
         disabled=False,
+        purchase_disabled=False,
+        purchase_recovery_due_at=None,
     )
 
 
@@ -54,6 +56,27 @@ def test_repository_can_update_account(tmp_path):
     assert updated.remark_name == "新备注"
     assert updated.proxy_url == "http://127.0.0.1:8080"
     assert updated.api_key == "abc123"
+
+
+def test_repository_persists_purchase_disable_fields(tmp_path):
+    engine = build_engine(tmp_path / "app.db")
+    create_schema(engine)
+    repository = SqliteAccountRepository(build_session_factory(engine))
+    repository.create_account(build_account("a1", "账号1"))
+
+    updated = repository.update_account(
+        "a1",
+        purchase_disabled=True,
+        purchase_recovery_due_at="2026-03-19T18:00:00.123456",
+    )
+
+    reloaded = repository.get_account("a1")
+
+    assert updated.purchase_disabled is True
+    assert updated.purchase_recovery_due_at == "2026-03-19T18:00:00.123456"
+    assert reloaded is not None
+    assert reloaded.purchase_disabled is True
+    assert reloaded.purchase_recovery_due_at == "2026-03-19T18:00:00.123456"
 
 
 def test_clear_purchase_capability_keeps_api_key(tmp_path):

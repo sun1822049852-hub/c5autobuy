@@ -21,6 +21,8 @@ class Account:
     created_at: str
     updated_at: str
     disabled: bool
+    purchase_disabled: bool = False
+    purchase_recovery_due_at: str | None = None
     new_api_enabled: bool = True
     fast_api_enabled: bool = True
     token_enabled: bool = True

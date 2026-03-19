@@ -37,6 +37,8 @@ class AccountResponse(BaseModel):
     created_at: str
     updated_at: str
     disabled: bool
+    purchase_disabled: bool
+    purchase_recovery_due_at: str | None = None
     new_api_enabled: bool
     fast_api_enabled: bool
     token_enabled: bool

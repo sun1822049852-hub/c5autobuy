@@ -10,6 +10,7 @@ def build_account(
     *,
     cookie_raw: str | None = None,
     disabled: bool = False,
+    purchase_disabled: bool = False,
 ) -> Account:
     return Account(
         account_id=account_id,
@@ -28,6 +29,7 @@ def build_account(
         created_at="2026-03-17T00:00:00",
         updated_at="2026-03-17T00:00:00",
         disabled=disabled,
+        purchase_disabled=purchase_disabled,
         new_api_enabled=True,
         fast_api_enabled=True,
         token_enabled=True,
@@ -75,3 +77,18 @@ def test_detail_account_selector_raises_when_no_eligible_account_exists():
 
     with pytest.raises(ValueError, match="没有可用于商品信息补全的已登录账号"):
         selector.build_attempt_order()
+
+
+def test_detail_account_selector_keeps_purchase_disabled_accounts_query_eligible():
+    from app_backend.infrastructure.query.collectors.detail_account_selector import DetailAccountSelector
+
+    selector = DetailAccountSelector(
+        FakeAccountRepository(
+            [
+                build_account("a1", cookie_raw="NC5_accessToken=token-1", purchase_disabled=True),
+                build_account("a2", cookie_raw="NC5_accessToken=token-2"),
+            ]
+        )
+    )
+
+    assert [account.account_id for account in selector.build_attempt_order()] == ["a1", "a2"]

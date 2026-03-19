@@ -23,6 +23,8 @@ def build_account(account_id: str, *, bound: bool = True) -> Account:
         created_at="2026-03-16T20:00:00",
         updated_at="2026-03-16T20:00:00",
         disabled=False,
+        purchase_disabled=False,
+        purchase_recovery_due_at=None,
     )
 
 
@@ -928,3 +930,102 @@ def test_purchase_runtime_service_rejects_hit_after_last_account_becomes_unavail
     assert snapshot["active_account_count"] == 0
     assert snapshot["queue_size"] == 0
     assert snapshot["recent_events"][0]["status"] == "ignored_no_available_accounts"
+
+
+def test_purchase_runtime_service_purchase_disable_removes_account_from_pool_without_global_disable():
+    from app_backend.infrastructure.purchase.runtime.purchase_runtime_service import PurchaseRuntimeService
+
+    account_repository = FakeAccountRepository([build_account("a1")])
+    snapshot_repository = FakeInventorySnapshotRepository(
+        {
+            "a1": type(
+                "Snapshot",
+                (),
+                {
+                    "account_id": "a1",
+                    "selected_steam_id": "steam-1",
+                    "inventories": [
+                        {"steamId": "steam-1", "inventory_num": 900, "inventory_max": 1000},
+                    ],
+                    "refreshed_at": "2026-03-16T20:00:00",
+                    "last_error": None,
+                },
+            )()
+        }
+    )
+    service = PurchaseRuntimeService(
+        account_repository=account_repository,
+        settings_repository=FakeSettingsRepository(),
+        inventory_snapshot_repository=snapshot_repository,
+    )
+    service.start()
+
+    updated = service.update_account_purchase_config(
+        account_id="a1",
+        purchase_disabled=True,
+        selected_steam_id="steam-1",
+    )
+
+    snapshot = service.get_status()
+    stored = account_repository.get_account("a1")
+
+    assert updated["disabled"] is False
+    assert updated["purchase_disabled"] is True
+    assert snapshot["active_account_count"] == 0
+    assert stored is not None
+    assert stored.disabled is False
+    assert stored.purchase_disabled is True
+
+
+def test_purchase_runtime_service_reenabling_purchase_runs_overdue_recovery_immediately():
+    from app_backend.infrastructure.purchase.runtime.purchase_runtime_service import PurchaseRuntimeService
+    from app_backend.infrastructure.purchase.runtime.runtime_events import InventoryRefreshResult
+
+    overdue_account = build_account("a1")
+    overdue_account.purchase_disabled = True
+    overdue_account.purchase_recovery_due_at = "2026-03-16T19:59:00.000000"
+    account_repository = FakeAccountRepository([overdue_account])
+    snapshot_repository = FakeInventorySnapshotRepository(
+        {
+            "a1": type(
+                "Snapshot",
+                (),
+                {
+                    "account_id": "a1",
+                    "selected_steam_id": None,
+                    "inventories": [],
+                    "refreshed_at": "2026-03-16T20:00:00",
+                    "last_error": "没有可用仓库",
+                },
+            )()
+        }
+    )
+    refresh_gateway = StubInventoryRefreshGateway(
+        InventoryRefreshResult.success(
+            inventories=[
+                {"steamId": "steam-recovered", "inventory_num": 920, "inventory_max": 1000},
+            ]
+        )
+    )
+    service = PurchaseRuntimeService(
+        account_repository=account_repository,
+        settings_repository=FakeSettingsRepository(),
+        inventory_snapshot_repository=snapshot_repository,
+        inventory_refresh_gateway_factory=lambda: refresh_gateway,
+        recovery_delay_seconds_provider=lambda: 60.0,
+    )
+    service.start()
+    refresh_gateway.calls.clear()
+
+    updated = service.update_account_purchase_config(
+        account_id="a1",
+        purchase_disabled=False,
+        selected_steam_id=None,
+    )
+
+    assert wait_until(lambda: service.get_status()["active_account_count"] == 1)
+    snapshot = service.get_status()
+    assert updated["purchase_disabled"] is False
+    assert refresh_gateway.calls == [{"account_id": "a1"}]
+    assert snapshot["accounts"][0]["purchase_pool_state"] == "active"
+    assert snapshot["accounts"][0]["selected_steam_id"] == "steam-recovered"

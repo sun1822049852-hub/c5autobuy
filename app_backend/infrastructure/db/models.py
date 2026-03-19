@@ -25,6 +25,8 @@ class AccountRecord(Base):
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[str] = mapped_column(Text, nullable=False)
     disabled: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    purchase_disabled: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    purchase_recovery_due_at: Mapped[str | None] = mapped_column(Text, nullable=True)
     new_api_enabled: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     fast_api_enabled: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     token_enabled: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
@@ -50,6 +52,21 @@ class QueryConfigRecord(Base):
     )
 
 
+class QueryProductRecord(Base):
+    __tablename__ = "query_products"
+
+    external_item_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    product_url: Mapped[str] = mapped_column(Text, nullable=False)
+    item_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    market_hash_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    min_wear: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_wear: Mapped[float | None] = mapped_column(Float, nullable=True)
+    last_market_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    last_detail_sync_at: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+
 class QueryConfigItemRecord(Base):
     __tablename__ = "query_config_items"
 
@@ -60,16 +77,37 @@ class QueryConfigItemRecord(Base):
     item_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     market_hash_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     min_wear: Mapped[float | None] = mapped_column(Float, nullable=True)
-    detail_max_wear: Mapped[float | None] = mapped_column(Float, nullable=True)
     max_wear: Mapped[float | None] = mapped_column(Float, nullable=True)
+    detail_min_wear: Mapped[float | None] = mapped_column(Float, nullable=True)
+    detail_max_wear: Mapped[float | None] = mapped_column(Float, nullable=True)
     max_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     last_market_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     last_detail_sync_at: Mapped[str | None] = mapped_column(Text, nullable=True)
+    manual_paused: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[str] = mapped_column(Text, nullable=False)
 
     config: Mapped[QueryConfigRecord] = relationship(back_populates="items")
+    mode_allocations: Mapped[list["QueryItemModeAllocationRecord"]] = relationship(
+        back_populates="item",
+        cascade="all, delete-orphan",
+    )
+
+
+class QueryItemModeAllocationRecord(Base):
+    __tablename__ = "query_item_mode_allocations"
+
+    query_item_id: Mapped[str] = mapped_column(
+        ForeignKey("query_config_items.query_item_id"),
+        primary_key=True,
+    )
+    mode_type: Mapped[str] = mapped_column(Text, primary_key=True)
+    target_dedicated_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+    item: Mapped[QueryConfigItemRecord] = relationship(back_populates="mode_allocations")
 
 
 class QueryModeSettingRecord(Base):

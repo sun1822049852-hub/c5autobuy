@@ -10,7 +10,7 @@ export function PurchaseConfigDrawer({
   onSubmit,
 }) {
   const [selectedSteamId, setSelectedSteamId] = useState("");
-  const [disabled, setDisabled] = useState(false);
+  const [purchaseDisabled, setPurchaseDisabled] = useState(false);
 
   useEffect(() => {
     if (!open) {
@@ -18,7 +18,7 @@ export function PurchaseConfigDrawer({
     }
 
     setSelectedSteamId(detail?.selected_steam_id ?? account?.selected_steam_id ?? "");
-    setDisabled(Boolean(account?.disabled));
+    setPurchaseDisabled(Boolean(account?.purchase_disabled));
   }, [account, detail, open]);
 
   if (!open || !account) {
@@ -31,7 +31,7 @@ export function PurchaseConfigDrawer({
         onSubmit={async (event) => {
           event.preventDefault();
           await onSubmit?.({
-            disabled,
+            purchase_disabled: purchaseDisabled,
             selected_steam_id: selectedSteamId || null,
           });
         }}
@@ -39,7 +39,7 @@ export function PurchaseConfigDrawer({
         <div className="surface-header">
           <div>
             <h2 className="surface-title">购买配置</h2>
-            <p className="surface-subtitle">库存已满的仓库不可选，禁用后账号不再参与购买任务分配。</p>
+            <p className="surface-subtitle">库存已满的仓库不可选，禁用后账号会立刻移出购买池，但不会影响查询能力。</p>
           </div>
           <button className="ghost-button" type="button" onClick={onClose}>关闭</button>
         </div>
@@ -75,9 +75,9 @@ export function PurchaseConfigDrawer({
 
               <label className="drawer-checkbox">
                 <input
-                  checked={disabled}
+                  checked={purchaseDisabled}
                   type="checkbox"
-                  onChange={(event) => setDisabled(event.target.checked)}
+                  onChange={(event) => setPurchaseDisabled(event.target.checked)}
                 />
                 <span>禁用该账号的购买能力</span>
               </label>

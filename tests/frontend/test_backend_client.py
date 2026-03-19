@@ -370,13 +370,14 @@ async def test_backend_client_updates_account_purchase_config(backend_client):
     updated = await client.update_account_purchase_config(
         "a-config",
         {
-            "disabled": True,
+            "purchase_disabled": True,
             "selected_steam_id": "steam-2",
         },
     )
 
     assert updated["account_id"] == "a-config"
-    assert updated["disabled"] is True
+    assert updated["disabled"] is False
+    assert updated["purchase_disabled"] is True
     assert updated["selected_steam_id"] == "steam-2"
     assert updated["purchase_status_code"] == "disabled"
     assert updated["purchase_status_text"] == "禁用"

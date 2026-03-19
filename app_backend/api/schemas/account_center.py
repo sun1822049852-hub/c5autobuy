@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 
 class AccountCenterAccountResponse(BaseModel):
@@ -17,6 +17,7 @@ class AccountCenterAccountResponse(BaseModel):
     purchase_capability_state: str
     purchase_pool_state: str
     disabled: bool
+    purchase_disabled: bool
     selected_steam_id: str | None = None
     selected_warehouse_text: str | None = None
     purchase_status_code: str
@@ -24,5 +25,12 @@ class AccountCenterAccountResponse(BaseModel):
 
 
 class AccountPurchaseConfigUpdateRequest(BaseModel):
-    disabled: bool
+    purchase_disabled: bool = False
+    disabled: bool | None = None
     selected_steam_id: str | None = None
+
+    @model_validator(mode="after")
+    def merge_legacy_disabled_field(self) -> "AccountPurchaseConfigUpdateRequest":
+        if self.disabled is not None:
+            self.purchase_disabled = bool(self.disabled)
+        return self

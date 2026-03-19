@@ -40,6 +40,8 @@ class CreateAccountUseCase:
             created_at=now,
             updated_at=now,
             disabled=False,
+            purchase_disabled=False,
+            purchase_recovery_due_at=None,
             new_api_enabled=True,
             fast_api_enabled=True,
             token_enabled=True,
