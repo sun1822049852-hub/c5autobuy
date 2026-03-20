@@ -1,4 +1,5 @@
 import { PurchaseAccountTable } from "./components/purchase_account_table.jsx";
+import { PurchaseConfigSelectorDialog } from "./components/purchase_config_selector_dialog.jsx";
 import { PurchaseRecentEvents } from "./components/purchase_recent_events.jsx";
 import { PurchaseItemPanel } from "./components/purchase_item_panel.jsx";
 import { PurchaseRuntimeActions } from "./components/purchase_runtime_actions.jsx";
@@ -11,14 +12,25 @@ export function PurchaseSystemPage({ bootstrapConfig, client }) {
     accountRows,
     activeQueryConfig,
     actionLabel,
+    configActionLabel,
+    configDisplayName,
+    configList,
+    dialogActionLabel,
+    isActionDisabled,
     isActionPending,
+    isConfigDialogOpen,
     isLoading,
     itemRows,
     loadError,
+    onCloseConfigDialog,
+    onConfigDialogSelect,
+    onConfirmConfigDialog,
+    onOpenConfigDialog,
     onRuntimeAction,
     queueSize,
     recentEvents,
     runtimeMessage,
+    selectedDialogConfigId,
     status,
     totalAccountCount,
     totalPurchasedCount,
@@ -48,6 +60,7 @@ export function PurchaseSystemPage({ bootstrapConfig, client }) {
       <PurchaseRuntimeHeader
         activeQueryConfig={activeQueryConfig}
         activeAccountCount={activeAccountCount}
+        displayConfigName={configDisplayName}
         isLoading={isLoading}
         matchedProductCount={status.matched_product_count}
         queueSize={queueSize}
@@ -83,8 +96,23 @@ export function PurchaseSystemPage({ bootstrapConfig, client }) {
 
       <PurchaseRuntimeActions
         actionLabel={actionLabel}
+        configActionLabel={configActionLabel}
+        configDisplayName={configDisplayName}
+        isActionDisabled={isActionDisabled}
         isPending={isActionPending}
         onAction={onRuntimeAction}
+        onOpenConfigDialog={onOpenConfigDialog}
+      />
+
+      <PurchaseConfigSelectorDialog
+        actionLabel={dialogActionLabel}
+        configs={configList}
+        isOpen={isConfigDialogOpen}
+        isSubmitting={isActionPending}
+        onClose={onCloseConfigDialog}
+        onConfirm={onConfirmConfigDialog}
+        onSelect={onConfigDialogSelect}
+        selectedConfigId={selectedDialogConfigId}
       />
     </section>
   );

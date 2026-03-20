@@ -26,6 +26,17 @@ def _build_account(account_id: str) -> Account:
     )
 
 
+async def _create_query_config(client, *, name: str = "查询配置A") -> str:
+    response = await client.post(
+        "/query-configs",
+        json={
+            "name": name,
+            "description": "用于购买运行时",
+        },
+    )
+    return response.json()["config_id"]
+
+
 async def test_purchase_runtime_status_defaults_to_idle(client):
     response = await client.get("/purchase-runtime/status")
 
@@ -50,25 +61,48 @@ async def test_purchase_runtime_status_defaults_to_idle(client):
     }
 
 
-async def test_start_purchase_runtime_returns_running_snapshot(client):
-    response = await client.post("/purchase-runtime/start")
+async def test_start_purchase_runtime_requires_config_id(client):
+    response = await client.post("/purchase-runtime/start", json={})
+
+    assert response.status_code == 422
+
+
+async def test_start_purchase_runtime_returns_running_snapshot_with_selected_config(client, app):
+    config_id = await _create_query_config(client)
+    app.state.account_repository.create_account(_build_account("a1"))
+    app.state.purchase_runtime_service._inventory_refresh_gateway_factory = None
+    app.state.purchase_runtime_service._inventory_snapshot_repository.save(
+        account_id="a1",
+        selected_steam_id="steam-1",
+        inventories=[{"steamId": "steam-1", "inventory_num": 910, "inventory_max": 1000}],
+        refreshed_at="2026-03-16T20:00:00",
+        last_error=None,
+    )
+    response = await client.post("/purchase-runtime/start", json={"config_id": config_id})
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["running"] is True
     assert payload["message"] == "运行中"
     assert payload["queue_size"] == 0
-    assert payload["active_account_count"] == 0
-    assert payload["total_account_count"] == 0
+    assert payload["active_account_count"] == 1
+    assert payload["total_account_count"] == 1
     assert payload["total_purchased_count"] == 0
     assert payload["recent_events"] == []
-    assert payload["accounts"] == []
+    assert payload["accounts"][0]["account_id"] == "a1"
     assert payload["started_at"] is not None
     assert payload["stopped_at"] is None
+    assert payload["active_query_config"] == {
+        "config_id": config_id,
+        "config_name": "查询配置A",
+        "state": "running",
+        "message": "运行中",
+    }
 
 
 async def test_stop_purchase_runtime_returns_idle_snapshot(client):
-    await client.post("/purchase-runtime/start")
+    config_id = await _create_query_config(client)
+    await client.post("/purchase-runtime/start", json={"config_id": config_id})
 
     response = await client.post("/purchase-runtime/stop")
 
@@ -128,7 +162,8 @@ async def test_purchase_runtime_end_to_end_handles_hit(client, app):
         refreshed_at="2026-03-16T20:00:00",
         last_error=None,
     )
-    await client.post("/purchase-runtime/start")
+    config_id = await _create_query_config(client)
+    await client.post("/purchase-runtime/start", json={"config_id": config_id})
 
     result = app.state.purchase_runtime_service.accept_query_hit(
         {
@@ -163,7 +198,8 @@ async def test_purchase_runtime_status_returns_selected_inventory_summary(client
         refreshed_at="2026-03-16T20:00:00",
         last_error=None,
     )
-    await client.post("/purchase-runtime/start")
+    config_id = await _create_query_config(client)
+    await client.post("/purchase-runtime/start", json={"config_id": config_id})
 
     response = await client.get("/purchase-runtime/status")
 

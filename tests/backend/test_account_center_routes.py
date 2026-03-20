@@ -201,7 +201,15 @@ async def test_account_center_accounts_route_prefers_runtime_selected_inventory_
         refreshed_at="2026-03-16T20:05:00",
         last_error=None,
     )
-    start_response = await client.post("/purchase-runtime/start")
+    config_response = await client.post(
+        "/query-configs",
+        json={
+            "name": "运行时配置",
+            "description": "用于账号中心测试",
+        },
+    )
+    config_id = config_response.json()["config_id"]
+    start_response = await client.post("/purchase-runtime/start", json={"config_id": config_id})
     assert start_response.status_code == 200
     runtime = app.state.purchase_runtime_service._runtime
     runtime._account_states["runtime-first"].inventory_state.selected_steam_id = "steam-runtime"

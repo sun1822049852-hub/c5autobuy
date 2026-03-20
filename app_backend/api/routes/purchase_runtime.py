@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 
 from app_backend.api.schemas.purchase_runtime import (
     PurchaseRuntimeInventoryDetailResponse,
+    PurchaseRuntimeStartRequest,
     PurchaseRuntimeStatusResponse,
 )
 from app_backend.application.use_cases.get_purchase_runtime_inventory_detail import (
@@ -61,18 +62,28 @@ async def refresh_purchase_runtime_inventory_detail(
 
 
 @router.post("/start", response_model=PurchaseRuntimeStatusResponse)
-async def start_purchase_runtime(request: Request) -> PurchaseRuntimeStatusResponse:
+async def start_purchase_runtime(
+    payload: PurchaseRuntimeStartRequest,
+    request: Request,
+) -> PurchaseRuntimeStatusResponse:
     runtime_service = _runtime_service(request)
-    started, message = StartPurchaseRuntimeUseCase(runtime_service).execute()
+    query_runtime_service = _query_runtime_service(request)
+    started, message = StartPurchaseRuntimeUseCase(query_runtime_service).execute(
+        config_id=payload.config_id,
+    )
     if not started:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=message)
-    return PurchaseRuntimeStatusResponse.model_validate(runtime_service.get_status())
+        status_code = status.HTTP_404_NOT_FOUND if message == "查询配置不存在" else status.HTTP_409_CONFLICT
+        raise HTTPException(status_code=status_code, detail=message)
+    snapshot = GetPurchaseRuntimeStatusUseCase(runtime_service, query_runtime_service).execute()
+    return PurchaseRuntimeStatusResponse.model_validate(snapshot)
 
 
 @router.post("/stop", response_model=PurchaseRuntimeStatusResponse)
 async def stop_purchase_runtime(request: Request) -> PurchaseRuntimeStatusResponse:
     runtime_service = _runtime_service(request)
-    stopped, message = StopPurchaseRuntimeUseCase(runtime_service).execute()
+    query_runtime_service = _query_runtime_service(request)
+    stopped, message = StopPurchaseRuntimeUseCase(query_runtime_service).execute()
     if not stopped:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=message)
-    return PurchaseRuntimeStatusResponse.model_validate(runtime_service.get_status())
+    snapshot = GetPurchaseRuntimeStatusUseCase(runtime_service, query_runtime_service).execute()
+    return PurchaseRuntimeStatusResponse.model_validate(snapshot)

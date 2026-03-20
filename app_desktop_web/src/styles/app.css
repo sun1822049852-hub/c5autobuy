@@ -1079,6 +1079,59 @@ button {
   background: rgba(255, 122, 122, 0.08);
 }
 
+.purchase-config-dialog {
+  width: min(640px, 100%);
+}
+
+.purchase-config-dialog__list {
+  display: grid;
+  gap: 12px;
+  margin-top: 22px;
+}
+
+.purchase-config-dialog__item {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  padding: 16px 18px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.03);
+  color: inherit;
+  text-align: left;
+  transition: border-color 160ms ease, transform 160ms ease, background 160ms ease;
+}
+
+.purchase-config-dialog__item:hover {
+  transform: translateY(-1px);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.purchase-config-dialog__item.is-selected {
+  border-color: rgba(255, 182, 77, 0.52);
+  background: rgba(255, 182, 77, 0.12);
+}
+
+.purchase-config-dialog__item-name {
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.purchase-config-dialog__item-description,
+.purchase-config-dialog__empty {
+  color: var(--text-soft);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.purchase-config-dialog__empty {
+  margin-top: 22px;
+  padding: 18px;
+  border: 1px dashed rgba(255, 255, 255, 0.12);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
 .query-save-bar {
   display: flex;
   justify-content: space-between;
@@ -1496,12 +1549,56 @@ button {
   pointer-events: none;
 }
 
+.purchase-runtime-actions__surface {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: min(560px, calc(100vw - 48px));
+  padding: 14px 16px;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(23, 27, 33, 0.96), rgba(15, 18, 22, 0.96));
+  box-shadow: var(--shadow-panel);
+  pointer-events: auto;
+}
+
+.purchase-runtime-actions__copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.purchase-runtime-actions__label {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-soft);
+}
+
+.purchase-runtime-actions__value {
+  min-width: 0;
+  font-size: 16px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.purchase-runtime-actions__buttons {
+  display: flex;
+  gap: 10px;
+  margin-left: auto;
+}
+
 .purchase-runtime-actions__button {
   min-width: 160px;
   min-height: 56px;
   border-radius: 999px;
-  pointer-events: auto;
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.34);
+}
+
+.purchase-runtime-actions__button--secondary {
+  min-width: 132px;
 }
 
 @media (max-width: 1080px) {
@@ -1598,6 +1695,17 @@ button {
     left: 12px;
     right: 12px;
     bottom: 12px;
+  }
+
+  .purchase-runtime-actions__surface {
+    width: 100%;
+    min-width: 0;
+    border-radius: 28px;
+  }
+
+  .purchase-runtime-actions__buttons {
+    width: 100%;
+    flex-direction: column;
   }
 
   .purchase-runtime-actions__button {

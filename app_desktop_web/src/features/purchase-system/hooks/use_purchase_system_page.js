@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 
 const EMPTY_STATUS = {
@@ -44,8 +44,34 @@ function normalizeStatus(status) {
 }
 
 
+function normalizeConfigList(configs) {
+  if (!Array.isArray(configs)) {
+    return [];
+  }
+
+  return configs.map((config) => ({
+    config_id: String(config?.config_id ?? ""),
+    name: String(config?.name ?? ""),
+    description: config?.description ? String(config.description) : "",
+  })).filter((config) => config.config_id && config.name);
+}
+
+
+function getConfigById(configs, configId) {
+  if (!configId) {
+    return null;
+  }
+
+  return configs.find((config) => config.config_id === configId) || null;
+}
+
+
 export function usePurchaseSystemPage({ client }) {
   const [status, setStatus] = useState(EMPTY_STATUS);
+  const [configList, setConfigList] = useState([]);
+  const [selectedConfigId, setSelectedConfigId] = useState(null);
+  const [selectorDraftId, setSelectorDraftId] = useState(null);
+  const [isConfigDialogOpen, setIsConfigDialogOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isActionPending, setIsActionPending] = useState(false);
   const [loadError, setLoadError] = useState("");
@@ -76,7 +102,32 @@ export function usePurchaseSystemPage({ client }) {
       }
     };
 
-    refreshStatus();
+    const loadPage = async () => {
+      setIsLoading(true);
+      try {
+        const [nextStatus, nextConfigs] = await Promise.all([
+          client.getPurchaseRuntimeStatus(),
+          client.listQueryConfigs(),
+        ]);
+        if (!active) {
+          return;
+        }
+        setStatus(normalizeStatus(nextStatus));
+        setConfigList(normalizeConfigList(nextConfigs));
+        setLoadError("");
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setLoadError(toErrorMessage(error));
+      } finally {
+        if (active) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    loadPage();
     const timerId = window.setInterval(() => {
       refreshStatus({ silent: true });
     }, 1500);
@@ -87,12 +138,48 @@ export function usePurchaseSystemPage({ client }) {
     };
   }, [client]);
 
+  useEffect(() => {
+    const activeConfigId = status.active_query_config?.config_id || null;
+    if (activeConfigId) {
+      setSelectedConfigId(activeConfigId);
+      return;
+    }
+
+    if (selectedConfigId && !getConfigById(configList, selectedConfigId)) {
+      setSelectedConfigId(null);
+    }
+  }, [configList, selectedConfigId, status.active_query_config]);
+
+  const selectedConfig = useMemo(
+    () => getConfigById(configList, selectedConfigId),
+    [configList, selectedConfigId],
+  );
+  const activeConfig = status.active_query_config;
+  const configDisplayName = activeConfig?.config_name || selectedConfig?.name || "未选择配置";
+  const runtimeMessage = activeConfig?.message || status.message || "未运行";
+  const isRuntimeRunning = Boolean(status.running);
+  const actionLabel = isRuntimeRunning ? "停止扫货" : "开始扫货";
+  const configActionLabel = isRuntimeRunning ? "切换配置" : "选择配置";
+  const isActionDisabled = isActionPending || (!isRuntimeRunning && !selectedConfigId);
+  const dialogActionLabel = isRuntimeRunning ? "切换到该配置" : "使用该配置";
+
+  async function refreshConfigList() {
+    const nextConfigs = await client.listQueryConfigs();
+    const normalized = normalizeConfigList(nextConfigs);
+    setConfigList(normalized);
+    return normalized;
+  }
+
   async function onRuntimeAction() {
+    if (!isRuntimeRunning && !selectedConfigId) {
+      return;
+    }
+
     setIsActionPending(true);
     try {
-      const nextStatus = status.running
+      const nextStatus = isRuntimeRunning
         ? await client.stopPurchaseRuntime()
-        : await client.startPurchaseRuntime();
+        : await client.startPurchaseRuntime(selectedConfigId);
       setStatus(normalizeStatus(nextStatus));
       setLoadError("");
     } catch (error) {
@@ -102,22 +189,82 @@ export function usePurchaseSystemPage({ client }) {
     }
   }
 
+  async function openConfigDialog() {
+    try {
+      const nextConfigs = await refreshConfigList();
+      const nextSelectionId = activeConfig?.config_id
+        || selectedConfigId
+        || nextConfigs[0]?.config_id
+        || null;
+      setSelectorDraftId(nextSelectionId);
+      setIsConfigDialogOpen(true);
+      setLoadError("");
+    } catch (error) {
+      setLoadError(toErrorMessage(error));
+    }
+  }
+
+  function closeConfigDialog() {
+    if (isActionPending) {
+      return;
+    }
+    setIsConfigDialogOpen(false);
+    setSelectorDraftId(null);
+  }
+
+  async function confirmConfigSelection() {
+    if (!selectorDraftId) {
+      return;
+    }
+
+    setSelectedConfigId(selectorDraftId);
+    if (!isRuntimeRunning || selectorDraftId === activeConfig?.config_id) {
+      setIsConfigDialogOpen(false);
+      setSelectorDraftId(null);
+      return;
+    }
+
+    setIsActionPending(true);
+    try {
+      const nextStatus = await client.startPurchaseRuntime(selectorDraftId);
+      setStatus(normalizeStatus(nextStatus));
+      setLoadError("");
+      setIsConfigDialogOpen(false);
+      setSelectorDraftId(null);
+    } catch (error) {
+      setLoadError(toErrorMessage(error));
+    } finally {
+      setIsActionPending(false);
+    }
+  }
+
   return {
     accountRows: status.accounts,
-    activeQueryConfig: status.active_query_config,
-    actionLabel: status.running ? "停止扫货" : "开始扫货",
+    actionLabel,
+    configActionLabel,
+    configDisplayName,
+    configList,
+    dialogActionLabel,
+    activeQueryConfig: activeConfig,
+    isActionDisabled,
     isActionPending,
+    isConfigDialogOpen,
     isLoading,
     itemRows: status.item_rows,
     loadError,
+    onConfigDialogSelect: setSelectorDraftId,
+    onOpenConfigDialog: openConfigDialog,
+    onCloseConfigDialog: closeConfigDialog,
+    onConfirmConfigDialog: confirmConfigSelection,
     onRuntimeAction,
     queueSize: status.queue_size,
     recentEvents: status.recent_events,
-    runtimeMessage: status.active_query_config?.message || status.message,
+    runtimeMessage,
+    runtimeSessionId: status.runtime_session_id || null,
+    selectedDialogConfigId: selectorDraftId,
+    status,
     totalAccountCount: status.total_account_count,
     totalPurchasedCount: status.total_purchased_count,
     activeAccountCount: status.active_account_count,
-    runtimeSessionId: status.runtime_session_id || null,
-    status,
   };
 }

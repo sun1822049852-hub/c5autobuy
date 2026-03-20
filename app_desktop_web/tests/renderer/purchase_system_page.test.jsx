@@ -9,6 +9,30 @@ import { describe, expect, it, vi } from "vitest";
 import { App } from "../../src/App.jsx";
 
 
+const QUERY_CONFIGS = [
+  {
+    config_id: "cfg-1",
+    name: "白天配置",
+    description: "白天轮询",
+    enabled: true,
+    created_at: "2026-03-20T09:00:00",
+    updated_at: "2026-03-20T09:00:00",
+    items: [],
+    mode_settings: [],
+  },
+  {
+    config_id: "cfg-2",
+    name: "夜刀配置",
+    description: "夜间专用",
+    enabled: true,
+    created_at: "2026-03-20T09:05:00",
+    updated_at: "2026-03-20T09:05:00",
+    items: [],
+    mode_settings: [],
+  },
+];
+
+
 function jsonResponse(payload, status = 200) {
   return Promise.resolve({
     ok: status >= 200 && status < 300,
@@ -43,12 +67,7 @@ function buildPurchaseRuntimeStatus(overrides = {}) {
     total_account_count: 2,
     total_purchased_count: 4,
     runtime_session_id: "run-1",
-    active_query_config: {
-      config_id: "cfg-1",
-      config_name: "白天配置",
-      state: "running",
-      message: "运行中",
-    },
+    active_query_config: null,
     matched_product_count: 3,
     purchase_success_count: 1,
     purchase_failed_count: 2,
@@ -135,7 +154,9 @@ function createFetchHarness({ initialStatus } = {}) {
   const fetchImpl = vi.fn(async (input, options = {}) => {
     const url = new URL(input);
     const method = String(options.method ?? "GET").toUpperCase();
+    const body = typeof options.body === "string" ? JSON.parse(options.body) : null;
     calls.push({
+      body,
       method,
       pathname: url.pathname,
     });
@@ -143,16 +164,28 @@ function createFetchHarness({ initialStatus } = {}) {
     if (url.pathname === "/account-center/accounts" && method === "GET") {
       return jsonResponse([]);
     }
+    if (url.pathname === "/query-configs" && method === "GET") {
+      return jsonResponse(QUERY_CONFIGS);
+    }
     if (url.pathname === "/purchase-runtime/status" && method === "GET") {
       return jsonResponse(purchaseRuntimeStatus);
     }
     if (url.pathname === "/purchase-runtime/start" && method === "POST") {
+      const nextConfig = QUERY_CONFIGS.find((config) => config.config_id === body?.config_id) || null;
       purchaseRuntimeStatus = buildPurchaseRuntimeStatus({
         ...purchaseRuntimeStatus,
         running: true,
         message: "运行中",
         started_at: "2026-03-19T14:00:00",
         stopped_at: null,
+        active_query_config: nextConfig
+          ? {
+            config_id: nextConfig.config_id,
+            config_name: nextConfig.name,
+            state: "running",
+            message: "运行中",
+          }
+          : null,
       });
       return jsonResponse(purchaseRuntimeStatus);
     }
@@ -163,6 +196,7 @@ function createFetchHarness({ initialStatus } = {}) {
         message: "未运行",
         started_at: null,
         stopped_at: null,
+        active_query_config: null,
       });
       return jsonResponse(purchaseRuntimeStatus);
     }
@@ -214,6 +248,12 @@ describe("purchase system page", () => {
         running: true,
         message: "运行中",
         started_at: "2026-03-19T14:00:00",
+        active_query_config: {
+          config_id: "cfg-1",
+          config_name: "白天配置",
+          state: "running",
+          message: "运行中",
+        },
       }),
     });
     installDesktopApp(harness.fetchImpl);
@@ -237,8 +277,8 @@ describe("purchase system page", () => {
   it("keeps showing the bound config when purchase runtime is waiting", async () => {
     const harness = createFetchHarness({
       initialStatus: buildPurchaseRuntimeStatus({
-        running: false,
-        message: "等待购买账号恢复",
+        running: true,
+        message: "运行中",
         active_query_config: {
           config_id: "cfg-1",
           config_name: "白天配置",
@@ -257,7 +297,7 @@ describe("purchase system page", () => {
     const commandDeck = screen.getByRole("region", { name: "购买运行控制台" });
     expect(within(commandDeck).getByText("白天配置")).toBeInTheDocument();
     expect(within(commandDeck).getByText("等待购买账号恢复")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "开始扫货" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "停止扫货" })).toBeInTheDocument();
   });
 
   it("renders item accordion, account monitor, recent events and removes runtime whitelist editor", async () => {
@@ -294,7 +334,7 @@ describe("purchase system page", () => {
     expect(screen.queryByRole("region", { name: "购买账号启用设置" })).not.toBeInTheDocument();
   });
 
-  it("starts runtime from the floating action area", async () => {
+  it("requires selecting a config before starting runtime", async () => {
     const harness = createFetchHarness();
     installDesktopApp(harness.fetchImpl);
     const user = userEvent.setup();
@@ -303,13 +343,87 @@ describe("purchase system page", () => {
     await user.click(await screen.findByRole("button", { name: "购买系统" }));
 
     const actionRegion = screen.getByRole("region", { name: "购买运行动作" });
+    expect(within(actionRegion).getByText("未选择配置")).toBeInTheDocument();
+    expect(within(actionRegion).getByRole("button", { name: "选择配置" })).toBeInTheDocument();
+    expect(within(actionRegion).getByRole("button", { name: "开始扫货" })).toBeDisabled();
+  });
+
+  it("selects a config from the dialog before starting runtime", async () => {
+    const harness = createFetchHarness();
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "购买系统" }));
+
+    const actionRegion = screen.getByRole("region", { name: "购买运行动作" });
+    await user.click(within(actionRegion).getByRole("button", { name: "选择配置" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "选择查询配置" });
+    await user.click(within(dialog).getByRole("button", { name: /^夜刀配置/ }));
+    await user.click(within(dialog).getByRole("button", { name: "使用该配置" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "选择查询配置" })).not.toBeInTheDocument();
+    });
+    expect(within(actionRegion).getByText("夜刀配置")).toBeInTheDocument();
+    expect(within(actionRegion).getByRole("button", { name: "开始扫货" })).not.toBeDisabled();
+
     await user.click(within(actionRegion).getByRole("button", { name: "开始扫货" }));
 
     await waitFor(() => {
-      expect(
-        harness.calls.some((call) => call.pathname === "/purchase-runtime/start" && call.method === "POST"),
-      ).toBe(true);
+      expect(harness.calls).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            body: { config_id: "cfg-2" },
+            method: "POST",
+            pathname: "/purchase-runtime/start",
+          }),
+        ]),
+      );
     });
+    expect(within(actionRegion).getByRole("button", { name: "停止扫货" })).toBeInTheDocument();
+  });
+
+  it("uses the same dialog as a switch-config entry while runtime is running", async () => {
+    const harness = createFetchHarness({
+      initialStatus: buildPurchaseRuntimeStatus({
+        running: true,
+        message: "运行中",
+        started_at: "2026-03-19T14:00:00",
+        active_query_config: {
+          config_id: "cfg-1",
+          config_name: "白天配置",
+          state: "running",
+          message: "运行中",
+        },
+      }),
+    });
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "购买系统" }));
+
+    const actionRegion = screen.getByRole("region", { name: "购买运行动作" });
+    await user.click(within(actionRegion).getByRole("button", { name: "切换配置" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "选择查询配置" });
+    await user.click(within(dialog).getByRole("button", { name: /^夜刀配置/ }));
+    await user.click(within(dialog).getByRole("button", { name: "切换到该配置" }));
+
+    await waitFor(() => {
+      expect(harness.calls).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            body: { config_id: "cfg-2" },
+            method: "POST",
+            pathname: "/purchase-runtime/start",
+          }),
+        ]),
+      );
+    });
+    expect(within(actionRegion).getByText("夜刀配置")).toBeInTheDocument();
     expect(within(actionRegion).getByRole("button", { name: "停止扫货" })).toBeInTheDocument();
   });
 });

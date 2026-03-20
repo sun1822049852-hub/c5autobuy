@@ -186,7 +186,8 @@ describe("query system page", () => {
     expect(nav).toBeInTheDocument();
     const currentConfigSection = screen.getByText("当前配置").closest("section");
     expect(screen.getByRole("button", { name: "新建配置" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "启动当前配置" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "启动当前配置" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "停止当前配置" })).not.toBeInTheDocument();
     expect(within(nav).getByText("白天配置")).toBeInTheDocument();
     expect(within(nav).getByText("夜刀配置")).toBeInTheDocument();
     expect(screen.getByText("当前配置")).toBeInTheDocument();
@@ -288,10 +289,10 @@ describe("query system page", () => {
     expect(currentConfigSection).not.toBeNull();
     expect(within(currentConfigSection).getByText("等待账号")).toBeInTheDocument();
     expect(screen.getByText("等待购买账号恢复")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "停止当前配置" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "停止当前配置" })).not.toBeInTheDocument();
   });
 
-  it("starts another config and keeps only one config marked as running", async () => {
+  it("shows backend runtime ownership but keeps query page as config-only management", async () => {
     const harness = createFetchHarness({
       initialRuntimeStatus: {
         ...buildIdleRuntimeStatus(),
@@ -310,24 +311,8 @@ describe("query system page", () => {
 
     const nav = screen.getByRole("navigation", { name: "查询配置导航" });
     expect(within(nav).getByRole("button", { name: /^白天配置/ })).toHaveTextContent("运行中");
-
-    await user.click(within(nav).getByRole("button", { name: /^夜刀配置/ }));
-    await screen.findByRole("heading", { name: "夜刀配置" });
-    await user.click(screen.getByRole("button", { name: "启动当前配置" }));
-
-    await waitFor(() => {
-      expect(within(nav).getByRole("button", { name: /^夜刀配置/ })).toHaveTextContent("运行中");
-    });
-    expect(within(nav).getByRole("button", { name: /^白天配置/ })).toHaveTextContent("已停止");
-    expect(screen.getByRole("button", { name: "停止当前配置" })).toBeInTheDocument();
-    expect(harness.calls).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          body: { config_id: "cfg-2" },
-          method: "POST",
-          pathname: "/query-runtime/start",
-        }),
-      ]),
-    );
+    expect(within(nav).getByRole("button", { name: /^夜刀配置/ })).toHaveTextContent("已停止");
+    expect(screen.queryByRole("button", { name: "启动当前配置" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "停止当前配置" })).not.toBeInTheDocument();
   });
 });

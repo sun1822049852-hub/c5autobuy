@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
+
+class PurchaseRuntimeStartRequest(BaseModel):
+    config_id: str
+
 class PurchaseRuntimeRecentEventResponse(BaseModel):
     class ProductResponse(BaseModel):
         productId: str

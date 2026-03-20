@@ -366,7 +366,6 @@ export function useQuerySystemPage({ client }) {
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [isSaving, setIsSaving] = useState(false);
-  const [isRuntimeActionPending, setIsRuntimeActionPending] = useState(false);
 
   const [isCreateConfigDialogOpen, setIsCreateConfigDialogOpen] = useState(false);
   const [createConfigForm, setCreateConfigForm] = useState(EMPTY_CONFIG_FORM);
@@ -516,13 +515,6 @@ export function useQuerySystemPage({ client }) {
     isRuntimeRunningForConfig(runtimeStatus, currentConfig?.config_id)
     || isRuntimeWaitingForConfig(runtimeStatus, currentConfig?.config_id)
   );
-  const runtimeActionLabel = isCurrentConfigRuntimeActive ? "停止当前配置" : "启动当前配置";
-  const runtimeActionDisabled = !currentConfig
-    || isLoading
-    || isSaving
-    || isRuntimeActionPending
-    || hasUnsavedChanges
-    || Boolean(saveError);
 
   function updateDraftConfig(updater) {
     setDraftConfig((current) => {
@@ -853,46 +845,6 @@ export function useQuerySystemPage({ client }) {
     }
   }
 
-  async function refreshRuntimeStatus() {
-    const nextRuntimeStatus = await client.getQueryRuntimeStatus();
-    setRuntimeStatus(nextRuntimeStatus);
-    return nextRuntimeStatus;
-  }
-
-  async function startCurrentConfig() {
-    if (!currentConfig) {
-      return;
-    }
-
-    setIsRuntimeActionPending(true);
-    setLoadError("");
-
-    try {
-      const nextRuntimeStatus = await client.startQueryRuntime(currentConfig.config_id);
-      setRuntimeStatus(nextRuntimeStatus);
-    } catch (error) {
-      setLoadError(toErrorMessage(error));
-      await refreshRuntimeStatus();
-    } finally {
-      setIsRuntimeActionPending(false);
-    }
-  }
-
-  async function stopCurrentConfig() {
-    setIsRuntimeActionPending(true);
-    setLoadError("");
-
-    try {
-      const nextRuntimeStatus = await client.stopQueryRuntime();
-      setRuntimeStatus(nextRuntimeStatus);
-    } catch (error) {
-      setLoadError(toErrorMessage(error));
-      await refreshRuntimeStatus();
-    } finally {
-      setIsRuntimeActionPending(false);
-    }
-  }
-
   return {
     capacityModes,
     configList,
@@ -911,7 +863,6 @@ export function useQuerySystemPage({ client }) {
     isCurrentConfigRuntimeActive,
     isDeletingConfig,
     isLoading,
-    isRuntimeActionPending,
     isSaving,
     itemViewModels,
     loadError,
@@ -935,8 +886,6 @@ export function useQuerySystemPage({ client }) {
     updateEditItemAllocation,
     applyEditItem,
     runtimeMessage: runtimeStatus.message || "未运行",
-    runtimeActionDisabled,
-    runtimeActionLabel,
     saveBarDisabled: !currentConfig || isSaving || !hasUnsavedChanges,
     saveBarMessage: (
       !currentConfig
@@ -951,7 +900,5 @@ export function useQuerySystemPage({ client }) {
     ),
     saveConfig,
     selectConfig,
-    startCurrentConfig,
-    stopCurrentConfig,
   };
 }

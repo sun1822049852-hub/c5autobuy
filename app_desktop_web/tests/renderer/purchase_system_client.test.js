@@ -40,7 +40,7 @@ describe("purchase system client", () => {
       fetchImpl,
     });
 
-    const started = await client.startPurchaseRuntime();
+    const started = await client.startPurchaseRuntime("cfg-2");
     const stopped = await client.stopPurchaseRuntime();
 
     expect(fetchImpl).toHaveBeenNthCalledWith(
@@ -48,6 +48,7 @@ describe("purchase system client", () => {
       "http://127.0.0.1:8123/purchase-runtime/start",
       expect.objectContaining({
         method: "POST",
+        body: JSON.stringify({ config_id: "cfg-2" }),
       }),
     );
     expect(fetchImpl).toHaveBeenNthCalledWith(

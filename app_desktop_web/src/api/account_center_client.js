@@ -145,8 +145,10 @@ export function createAccountCenterClient({
     async stopQueryRuntime() {
       return http.postJson("/query-runtime/stop", {});
     },
-    async startPurchaseRuntime() {
-      return http.postJson("/purchase-runtime/start", {});
+    async startPurchaseRuntime(configId) {
+      return http.postJson("/purchase-runtime/start", {
+        config_id: configId,
+      });
     },
     async stopPurchaseRuntime() {
       return http.postJson("/purchase-runtime/stop", {});

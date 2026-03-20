@@ -31,10 +31,8 @@ export function QuerySystemPage({ bootstrapConfig, client }) {
     isCreateConfigDialogOpen,
     isCreateItemDialogOpen,
     isCreatingConfig,
-    isCurrentConfigRuntimeActive,
     isDeletingConfig,
     isLoading,
-    isRuntimeActionPending,
     isSaving,
     itemViewModels,
     loadError,
@@ -44,14 +42,10 @@ export function QuerySystemPage({ bootstrapConfig, client }) {
     openDeleteConfigDialog,
     openEditItemDialog,
     runtimeMessage,
-    runtimeActionDisabled,
-    runtimeActionLabel,
     saveBarDisabled,
     saveBarMessage,
     saveConfig,
     selectConfig,
-    startCurrentConfig,
-    stopCurrentConfig,
     submitCreateConfig,
     updateCreateItemAllocation,
     updateCreateConfigField,
@@ -109,13 +103,9 @@ export function QuerySystemPage({ bootstrapConfig, client }) {
 
           <QuerySaveBar
             disabled={saveBarDisabled}
-            isRuntimeActionPending={isRuntimeActionPending}
             isSaving={isSaving}
             message={saveBarMessage}
-            onRuntimeAction={isCurrentConfigRuntimeActive ? stopCurrentConfig : startCurrentConfig}
             onSave={saveConfig}
-            runtimeActionDisabled={runtimeActionDisabled}
-            runtimeActionLabel={runtimeActionLabel}
           />
         </div>
       </div>

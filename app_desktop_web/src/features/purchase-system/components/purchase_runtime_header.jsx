@@ -22,6 +22,7 @@ function formatRuntimeSession(runtimeSessionId) {
 export function PurchaseRuntimeHeader({
   activeAccountCount,
   activeQueryConfig,
+  displayConfigName,
   isLoading,
   matchedProductCount,
   queueSize,
@@ -32,7 +33,7 @@ export function PurchaseRuntimeHeader({
   totalAccountCount,
   totalPurchasedCount,
 }) {
-  const configName = activeQueryConfig?.config_name || "当前未绑定查询配置";
+  const configName = displayConfigName || activeQueryConfig?.config_name || "未选择配置";
   const stateText = isLoading ? "加载中..." : (runtimeMessage || "未运行");
 
   return (
