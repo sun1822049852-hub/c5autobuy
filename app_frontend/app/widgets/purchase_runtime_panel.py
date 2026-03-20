@@ -34,7 +34,6 @@ class PurchaseRuntimePanel(QWidget):
         self.total_account_count_input = _readonly_line_edit()
         self.recovery_waiting_count_input = _readonly_line_edit()
         self.total_purchased_count_input = _readonly_line_edit()
-        self.whitelist_input = _readonly_line_edit()
         self.account_table = QTableWidget(0, 7)
         self.account_table.setHorizontalHeaderLabels(
             ["显示名", "购买能力", "购买池", "目标仓库", "容量", "恢复状态", "已购"]
@@ -60,7 +59,6 @@ class PurchaseRuntimePanel(QWidget):
         summary_form.addRow("账号总数", self.total_account_count_input)
         summary_form.addRow("等待恢复", self.recovery_waiting_count_input)
         summary_form.addRow("累计购买", self.total_purchased_count_input)
-        summary_form.addRow("白名单", self.whitelist_input)
 
         accounts_group = QGroupBox("购买账号")
         accounts_layout = QVBoxLayout(accounts_group)
@@ -86,9 +84,6 @@ class PurchaseRuntimePanel(QWidget):
                 "total_purchased_count": 0,
                 "accounts": [],
                 "recent_events": [],
-                "settings": {
-                    "whitelist_account_ids": [],
-                },
             }
         )
 
@@ -107,7 +102,6 @@ class PurchaseRuntimePanel(QWidget):
         self.total_account_count_input.setText(summary["total_account_count"])
         self.recovery_waiting_count_input.setText(summary["recovery_waiting_count"])
         self.total_purchased_count_input.setText(summary["total_purchased_count"])
-        self.whitelist_input.setText(str(view_model.settings["whitelist_text"] or ""))
 
         accounts = view_model.account_rows
         self.account_table.setRowCount(len(accounts))

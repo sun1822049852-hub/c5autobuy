@@ -259,21 +259,7 @@ async def test_backend_client_fetches_purchase_runtime_status(backend_client):
     payload = await client.get_purchase_runtime_status()
 
     assert payload["running"] is False
-    assert payload["settings"]["whitelist_account_ids"] == []
-
-
-async def test_backend_client_updates_purchase_runtime_settings(backend_client):
-    _app, client = backend_client
-
-    updated = await client.update_purchase_runtime_settings(
-        {
-            "whitelist_account_ids": ["a1"],
-        }
-    )
-    settings = await client.get_purchase_runtime_settings()
-
-    assert updated["settings"]["whitelist_account_ids"] == ["a1"]
-    assert settings["whitelist_account_ids"] == ["a1"]
+    assert "settings" not in payload
 
 
 async def test_backend_client_fetches_purchase_runtime_inventory_detail(backend_client):

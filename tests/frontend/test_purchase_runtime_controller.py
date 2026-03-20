@@ -16,10 +16,6 @@ def build_snapshot(*, running: bool = False) -> dict:
         "total_purchased_count": 3,
         "recent_events": [],
         "accounts": [],
-        "settings": {
-            "whitelist_account_ids": ["a1"],
-            "updated_at": "2026-03-16T12:05:00",
-        },
     }
 
 
@@ -45,7 +41,6 @@ def build_inventory_detail() -> dict:
 
 class FakeBackendClient:
     def __init__(self) -> None:
-        self.updated_payloads: list[dict] = []
         self.start_calls = 0
         self.stop_calls = 0
         self.detail_calls: list[str] = []
@@ -59,10 +54,6 @@ class FakeBackendClient:
 
     async def stop_purchase_runtime(self) -> dict:
         self.stop_calls += 1
-        return build_snapshot(running=False)
-
-    async def update_purchase_runtime_settings(self, payload: dict) -> dict:
-        self.updated_payloads.append(dict(payload))
         return build_snapshot(running=False)
 
     async def get_purchase_runtime_inventory_detail(self, account_id: str) -> dict:
@@ -115,18 +106,16 @@ def test_purchase_runtime_controller_loads_status():
     assert statuses[-1] == "购买运行状态已刷新"
 
 
-def test_purchase_runtime_controller_updates_settings_and_controls_runtime():
+def test_purchase_runtime_controller_controls_runtime():
     controller, view_model, backend_client, statuses, errors, refresh_counter = _build_controller()
 
-    controller.save_settings({"whitelist_account_ids": ["a1"]})
     controller.start_runtime()
     controller.stop_runtime()
 
-    assert backend_client.updated_payloads == [{"whitelist_account_ids": ["a1"]}]
     assert backend_client.start_calls == 1
     assert backend_client.stop_calls == 1
     assert view_model.summary["message"] == "未运行"
-    assert refresh_counter["count"] == 3
+    assert refresh_counter["count"] == 2
     assert errors == []
     assert statuses[-1] == "购买运行已停止"
 

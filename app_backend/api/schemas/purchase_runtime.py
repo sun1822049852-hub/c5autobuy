@@ -2,16 +2,6 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-
-class PurchaseRuntimeSettingsResponse(BaseModel):
-    whitelist_account_ids: list[str]
-    updated_at: str | None
-
-
-class PurchaseRuntimeSettingsUpdateRequest(BaseModel):
-    whitelist_account_ids: list[str]
-
-
 class PurchaseRuntimeRecentEventResponse(BaseModel):
     class ProductResponse(BaseModel):
         productId: str
@@ -33,6 +23,7 @@ class PurchaseRuntimeAccountResponse(BaseModel):
     display_name: str | None = None
     purchase_capability_state: str | None = None
     purchase_pool_state: str | None = None
+    purchase_disabled: bool = False
     selected_steam_id: str | None = None
     selected_inventory_remaining_capacity: int | None = None
     selected_inventory_max: int | None = None
@@ -101,4 +92,3 @@ class PurchaseRuntimeStatusResponse(BaseModel):
     recent_events: list[PurchaseRuntimeRecentEventResponse]
     accounts: list[PurchaseRuntimeAccountResponse]
     item_rows: list[PurchaseRuntimeItemRowResponse] = []
-    settings: PurchaseRuntimeSettingsResponse

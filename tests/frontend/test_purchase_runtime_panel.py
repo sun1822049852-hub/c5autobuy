@@ -61,10 +61,6 @@ def build_snapshot(*, running: bool = False) -> dict:
                 "total_purchased_count": 0,
             },
         ],
-        "settings": {
-            "whitelist_account_ids": ["a1", "a2"],
-            "updated_at": "2026-03-16T12:05:00",
-        },
     }
 
 
@@ -81,7 +77,6 @@ def test_purchase_runtime_panel_renders_summary_accounts_and_events(qtbot):
     assert panel.active_account_count_input.text() == "1"
     assert panel.total_account_count_input.text() == "2"
     assert panel.recovery_waiting_count_input.text() == "1"
-    assert panel.whitelist_input.text() == "a1, a2"
     assert panel.account_table.columnCount() == 7
     assert panel.account_table.item(0, 0).text() == "主号"
     assert panel.account_table.item(0, 3).text() == "steam-1"

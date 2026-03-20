@@ -21,7 +21,27 @@ function resolveElectronInstallScript(rootDirectory = __dirname) {
 }
 
 
-function buildElectronLaunchSpec(rootDirectory = __dirname) {
+function buildElectronLaunchSpec(
+  rootDirectory = __dirname,
+  {
+    existsSync = fs.existsSync,
+    readFileSync = fs.readFileSync,
+  } = {},
+) {
+  const runtimeExecutablePath = resolveElectronRuntimeExecutablePath(rootDirectory, {
+    existsSync,
+    readFileSync,
+  });
+
+  if (runtimeExecutablePath && existsSync(runtimeExecutablePath)) {
+    return {
+      command: runtimeExecutablePath,
+      args: [
+        path.join(rootDirectory, "app_desktop_web"),
+      ],
+    };
+  }
+
   return {
     command: process.execPath,
     args: [
@@ -219,9 +239,10 @@ function ensureRendererBuild(
 
 function main() {
   const appDirectory = resolveRootPath("app_desktop_web");
+  const electronExecutablePath = resolveElectronRuntimeExecutablePath();
   const electronCliScript = resolveElectronCliScript();
 
-  if (!fs.existsSync(electronCliScript)) {
+  if (!electronExecutablePath && !fs.existsSync(electronCliScript)) {
     console.error("未找到 Electron 可执行文件，请先执行 npm --prefix app_desktop_web install");
     process.exit(1);
   }

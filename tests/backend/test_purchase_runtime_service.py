@@ -4,7 +4,6 @@ import time
 from datetime import datetime, timedelta
 
 from app_backend.domain.models.account import Account
-from app_backend.domain.models.purchase_runtime_settings import PurchaseRuntimeSettings
 from app_backend.infrastructure.purchase.runtime.runtime_events import PurchaseExecutionResult
 
 
@@ -55,36 +54,21 @@ class FakeAccountRepository:
 
 
 class FakeSettingsRepository:
-    def __init__(self, settings: PurchaseRuntimeSettings | None = None) -> None:
-        self._settings = settings or PurchaseRuntimeSettings()
-
-    def get(self) -> PurchaseRuntimeSettings:
-        return self._settings
-
-    def save(self, *, whitelist_account_ids: list[str], updated_at: str | None = None):
-        self._settings = PurchaseRuntimeSettings(
-            whitelist_account_ids=list(whitelist_account_ids),
-            updated_at=updated_at,
-        )
-        return self._settings
+    def __init__(self, *_args, **_kwargs) -> None:
+        pass
 
 
 class FakeRuntime:
-    def __init__(self, accounts, settings) -> None:
+    def __init__(self, accounts, _legacy_settings=None) -> None:
         self.accounts = list(accounts)
-        self.settings = settings
         self.started = False
         self.stopped = False
-        self.applied_settings = None
 
     def start(self) -> None:
         self.started = True
 
     def stop(self) -> None:
         self.stopped = True
-
-    def apply_settings(self, settings) -> None:
-        self.applied_settings = settings
 
     def snapshot(self) -> dict:
         return {
@@ -220,7 +204,6 @@ def test_purchase_runtime_service_returns_idle_snapshot_when_stopped():
     assert snapshot["total_account_count"] == 0
     assert snapshot["recent_events"] == []
     assert snapshot["accounts"] == []
-    assert snapshot["settings"]["whitelist_account_ids"] == []
 
 
 def test_purchase_runtime_service_starts_runtime_and_exposes_snapshot():
@@ -240,6 +223,23 @@ def test_purchase_runtime_service_starts_runtime_and_exposes_snapshot():
     assert snapshot["running"] is True
     assert snapshot["active_account_count"] == 1
     assert snapshot["accounts"][0]["selected_steam_id"] == "steam-1"
+
+
+def test_purchase_runtime_service_ignores_legacy_settings_repository_when_initializing_accounts():
+    from app_backend.infrastructure.purchase.runtime.purchase_runtime_service import PurchaseRuntimeService
+
+    service = PurchaseRuntimeService(
+        account_repository=FakeAccountRepository([build_account("a1")]),
+        settings_repository=FakeSettingsRepository({"whitelist_account_ids": ["other-account"]}),
+    )
+
+    started, message = service.start()
+
+    assert started is True
+    assert message == "购买运行时已启动"
+    snapshot = service.get_status()
+    assert snapshot["total_account_count"] == 1
+    assert snapshot["accounts"][0]["account_id"] == "a1"
 
 
 def test_purchase_runtime_service_exposes_selected_inventory_summary_in_status():
@@ -354,30 +354,6 @@ def test_purchase_runtime_service_marks_account_auth_invalid_when_startup_invent
     assert snapshot["accounts"][0]["purchase_pool_state"] == "paused_auth_invalid"
     assert snapshot["accounts"][0]["selected_steam_id"] is None
     assert snapshot["accounts"][0]["last_error"] == "Not login"
-
-
-def test_purchase_runtime_service_updates_global_settings():
-    from app_backend.infrastructure.purchase.runtime.purchase_runtime_service import PurchaseRuntimeService
-
-    created_runtime = {}
-
-    def runtime_factory(accounts, settings):
-        runtime = FakeRuntime(accounts, settings)
-        created_runtime["runtime"] = runtime
-        return runtime
-
-    service = PurchaseRuntimeService(
-        account_repository=FakeAccountRepository([build_account("a1")]),
-        settings_repository=FakeSettingsRepository(),
-        runtime_factory=runtime_factory,
-    )
-    service.start()
-
-    updated = service.update_settings(whitelist_account_ids=["a1"])
-
-    assert updated["settings"]["whitelist_account_ids"] == ["a1"]
-    assert created_runtime["runtime"].applied_settings is not None
-    assert created_runtime["runtime"].applied_settings.whitelist_account_ids == ["a1"]
 
 
 def test_purchase_runtime_service_returns_inventory_detail_from_runtime_memory():

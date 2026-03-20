@@ -73,16 +73,6 @@ class PurchaseRuntimeViewModel:
             )
         return rows
 
-    @property
-    def settings(self) -> dict[str, Any]:
-        settings = dict(self._status.get("settings") or {})
-        whitelist = [str(account_id) for account_id in settings.get("whitelist_account_ids") or []]
-        return {
-            "whitelist_account_ids": whitelist,
-            "whitelist_text": ", ".join(whitelist),
-            "updated_at": settings.get("updated_at"),
-        }
-
     @staticmethod
     def _build_default_status() -> dict[str, Any]:
         return {
@@ -96,10 +86,6 @@ class PurchaseRuntimeViewModel:
             "total_purchased_count": 0,
             "recent_events": [],
             "accounts": [],
-            "settings": {
-                "whitelist_account_ids": [],
-                "updated_at": None,
-            },
         }
 
     @staticmethod

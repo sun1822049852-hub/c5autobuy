@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Callable
 
 
 class PurchaseRuntimeController:
@@ -37,16 +37,6 @@ class PurchaseRuntimeController:
             lambda: self.backend_client.get_purchase_runtime_status(),
             on_success=lambda status: self._handle_status_loaded(status, success_message="购买运行状态已刷新", on_complete=on_complete),
             on_error=self._build_error_handler(on_complete),
-        )
-
-    def save_settings(self, payload: dict[str, Any]) -> None:
-        if self.backend_client is None:
-            return
-        self.publish_status("正在保存购买设置...")
-        self.task_runner.submit(
-            lambda: self.backend_client.update_purchase_runtime_settings(payload),
-            on_success=lambda status: self._handle_status_loaded(status, success_message="购买设置已保存"),
-            on_error=self.publish_error,
         )
 
     def start_runtime(self) -> None:

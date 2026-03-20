@@ -1193,10 +1193,145 @@ button {
   min-height: 0;
 }
 
+.purchase-system-page__main-stack,
+.purchase-system-page__side-stack {
+  display: grid;
+  gap: 16px;
+  align-content: start;
+}
+
 .purchase-system-page__items {
   display: grid;
   gap: 14px;
   align-content: start;
+}
+
+.purchase-runtime-overview,
+.purchase-recent-events,
+.purchase-settings-panel {
+  border: 1px solid var(--line-soft);
+  border-radius: 24px;
+  background: linear-gradient(180deg, rgba(23, 27, 33, 0.95), rgba(15, 18, 22, 0.95));
+  box-shadow: var(--shadow-panel);
+}
+
+.purchase-runtime-overview,
+.purchase-recent-events,
+.purchase-settings-panel {
+  padding: 20px 22px;
+}
+
+.purchase-runtime-overview__title,
+.purchase-recent-events__title,
+.purchase-settings-panel__title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.purchase-runtime-overview__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.purchase-runtime-overview__card {
+  padding: 16px 18px;
+  border: 1px solid var(--line-soft);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.purchase-runtime-overview__card-label {
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.purchase-runtime-overview__card-value {
+  margin-top: 8px;
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.purchase-recent-events__list {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.purchase-recent-events__item {
+  padding: 14px 16px;
+  border: 1px solid var(--line-soft);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.purchase-recent-events__item-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: start;
+}
+
+.purchase-recent-events__item-message {
+  font-weight: 700;
+}
+
+.purchase-recent-events__item-status {
+  flex-shrink: 0;
+  padding: 6px 10px;
+  border: 1px solid rgba(220, 164, 76, 0.24);
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--accent-strong);
+  background: rgba(220, 164, 76, 0.08);
+}
+
+.purchase-recent-events__item-meta,
+.purchase-settings-panel__subtitle,
+.purchase-settings-panel__row-label,
+.purchase-recent-events__empty {
+  color: var(--text-soft);
+}
+
+.purchase-recent-events__item-meta {
+  margin-top: 8px;
+  font-size: 13px;
+}
+
+.purchase-settings-panel__subtitle {
+  margin: 6px 0 0;
+}
+
+.purchase-settings-panel__list {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.purchase-settings-panel__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 12px 14px;
+  border: 1px solid var(--line-soft);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.purchase-settings-panel__actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+.purchase-settings-panel__empty,
+.purchase-recent-events__empty {
+  margin-top: 16px;
 }
 
 .purchase-item-panel {
@@ -1268,6 +1403,7 @@ button {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .purchase-runtime-overview__grid,
   .purchase-system-page__layout,
   .query-system-page__layout {
     grid-template-columns: 1fr;
@@ -1294,6 +1430,7 @@ button {
     grid-template-columns: 1fr;
   }
 
+  .purchase-recent-events__item-top,
   .purchase-runtime-header,
   .query-item-row__headline,
   .query-save-bar {

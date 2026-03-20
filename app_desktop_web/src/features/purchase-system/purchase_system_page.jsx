@@ -1,7 +1,10 @@
 import { PurchaseAccountTable } from "./components/purchase_account_table.jsx";
+import { PurchaseRecentEvents } from "./components/purchase_recent_events.jsx";
 import { PurchaseItemPanel } from "./components/purchase_item_panel.jsx";
 import { PurchaseRuntimeActions } from "./components/purchase_runtime_actions.jsx";
 import { PurchaseRuntimeHeader } from "./components/purchase_runtime_header.jsx";
+import { PurchaseRuntimeOverview } from "./components/purchase_runtime_overview.jsx";
+import { PurchaseSettingsPanel } from "./components/purchase_settings_panel.jsx";
 import { usePurchaseSystemPage } from "./hooks/use_purchase_system_page.js";
 
 
@@ -10,13 +13,23 @@ export function PurchaseSystemPage({ bootstrapConfig, client }) {
     accountRows,
     activeQueryConfig,
     actionLabel,
+    enabledAccountDraft,
     isActionPending,
     isLoading,
+    isSettingsPending,
     itemRows,
     loadError,
     onRuntimeAction,
+    onSavePurchaseAccounts,
+    onTogglePurchaseAccount,
+    queueSize,
+    recentEvents,
     runtimeMessage,
+    settingsDirty,
     status,
+    totalAccountCount,
+    totalPurchasedCount,
+    activeAccountCount,
   } = usePurchaseSystemPage({ client });
 
   return (
@@ -48,26 +61,46 @@ export function PurchaseSystemPage({ bootstrapConfig, client }) {
       />
 
       <div className="purchase-system-page__layout">
-        <section className="purchase-system-page__items" aria-label="商品统计列表">
-          {(itemRows || []).length ? (
-            itemRows.map((row) => (
-              <PurchaseItemPanel key={row.query_item_id} row={row} />
-            ))
-          ) : (
-            <div className="purchase-system-page__empty">
-              当前没有可展示的商品统计。
-            </div>
-          )}
-        </section>
+        <div className="purchase-system-page__main-stack">
+          <PurchaseRuntimeOverview
+            activeAccountCount={activeAccountCount}
+            queueSize={queueSize}
+            totalAccountCount={totalAccountCount}
+            totalPurchasedCount={totalPurchasedCount}
+          />
 
-        <PurchaseAccountTable rows={accountRows} />
+          <section className="purchase-system-page__items" aria-label="商品统计列表">
+            {(itemRows || []).length ? (
+              itemRows.map((row) => (
+                <PurchaseItemPanel key={row.query_item_id} row={row} />
+              ))
+            ) : (
+              <div className="purchase-system-page__empty">
+                当前没有可展示的商品统计。
+              </div>
+            )}
+          </section>
+
+          <PurchaseRecentEvents events={recentEvents} />
+        </div>
+
+        <div className="purchase-system-page__side-stack">
+          <PurchaseAccountTable rows={accountRows} />
+          <PurchaseSettingsPanel
+            enabledAccountIds={enabledAccountDraft}
+            isPending={isSettingsPending}
+            isSaving={settingsDirty}
+            onSave={onSavePurchaseAccounts}
+            onToggleAccount={onTogglePurchaseAccount}
+            rows={accountRows}
+          />
+          <PurchaseRuntimeActions
+            actionLabel={actionLabel}
+            isPending={isActionPending}
+            onAction={onRuntimeAction}
+          />
+        </div>
       </div>
-
-      <PurchaseRuntimeActions
-        actionLabel={actionLabel}
-        isPending={isActionPending}
-        onAction={onRuntimeAction}
-      />
     </section>
   );
 }

@@ -210,18 +210,6 @@ class BackendClient:
             response.raise_for_status()
             return response.json()
 
-    async def get_purchase_runtime_settings(self) -> dict[str, Any]:
-        async with self._client() as http_client:
-            response = await http_client.get("/purchase-runtime/settings")
-            response.raise_for_status()
-            return response.json()
-
-    async def update_purchase_runtime_settings(self, payload: dict[str, Any]) -> dict[str, Any]:
-        async with self._client() as http_client:
-            response = await http_client.put("/purchase-runtime/settings", json=payload)
-            response.raise_for_status()
-            return response.json()
-
     async def start_login(self, account_id: str) -> dict[str, Any]:
         async with self._client() as http_client:
             response = await http_client.post(f"/accounts/{account_id}/login")

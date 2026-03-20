@@ -47,10 +47,6 @@ async def test_purchase_runtime_status_defaults_to_idle(client):
         "recent_events": [],
         "accounts": [],
         "item_rows": [],
-        "settings": {
-            "whitelist_account_ids": [],
-            "updated_at": None,
-        },
     }
 
 
@@ -69,10 +65,6 @@ async def test_start_purchase_runtime_returns_running_snapshot(client):
     assert payload["accounts"] == []
     assert payload["started_at"] is not None
     assert payload["stopped_at"] is None
-    assert payload["settings"] == {
-        "whitelist_account_ids": [],
-        "updated_at": None,
-    }
 
 
 async def test_stop_purchase_runtime_returns_idle_snapshot(client):
@@ -98,20 +90,18 @@ async def test_stop_purchase_runtime_returns_idle_snapshot(client):
         "recent_events": [],
         "accounts": [],
         "item_rows": [],
-        "settings": {
-            "whitelist_account_ids": [],
-            "updated_at": None,
-        },
     }
 
 
-async def test_purchase_runtime_settings_routes_update_whitelist(client):
-    update_response = await client.put(
+async def test_purchase_runtime_settings_routes_are_removed(client):
+    get_response = await client.get("/purchase-runtime/settings")
+    put_response = await client.put(
         "/purchase-runtime/settings",
-        json={
-            "whitelist_account_ids": ["a1"],
-        },
+        json={"whitelist_account_ids": ["a1"]},
     )
+
+    assert get_response.status_code == 404
+    assert put_response.status_code == 404
 
 
 async def _wait_until_status(client, predicate, *, timeout: float = 1.0, interval: float = 0.01):
@@ -123,18 +113,6 @@ async def _wait_until_status(client, predicate, *, timeout: float = 1.0, interva
         if asyncio.get_running_loop().time() >= deadline:
             return response
         await asyncio.sleep(interval)
-
-    assert update_response.status_code == 200
-    payload = update_response.json()
-    assert payload["settings"]["whitelist_account_ids"] == ["a1"]
-    assert payload["settings"]["updated_at"] is not None
-
-    get_response = await client.get("/purchase-runtime/settings")
-
-    assert get_response.status_code == 200
-    assert get_response.json() == payload["settings"]
-
-
 async def test_purchase_runtime_end_to_end_handles_hit(client, app):
     class StubExecutionGateway:
         async def execute(self, *, account, batch, selected_steam_id: str):
@@ -237,10 +215,6 @@ async def test_purchase_runtime_status_includes_stats_and_keeps_accounts_shape(c
                         "purchase_failed_count": 2,
                     }
                 ],
-                "settings": {
-                    "whitelist_account_ids": [],
-                    "updated_at": None,
-                },
             }
 
     class FakeQueryRuntimeService:

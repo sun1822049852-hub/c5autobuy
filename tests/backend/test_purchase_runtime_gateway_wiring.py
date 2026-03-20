@@ -9,20 +9,6 @@ def test_purchase_runtime_service_uses_purchase_execution_gateway_by_default():
 
     service = PurchaseRuntimeService(
         account_repository=type("Repo", (), {"list_accounts": lambda self: []})(),
-        settings_repository=type(
-            "SettingsRepo",
-            (),
-            {
-                "get": lambda self: type(
-                    "Settings",
-                    (),
-                    {
-                        "whitelist_account_ids": [],
-                        "updated_at": None,
-                    },
-                )()
-            },
-        )(),
     )
 
     assert service._execution_gateway_factory is PurchaseExecutionGateway

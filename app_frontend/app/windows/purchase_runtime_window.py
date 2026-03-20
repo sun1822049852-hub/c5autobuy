@@ -1,14 +1,9 @@
 from __future__ import annotations
 
-import re
-
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
-    QFormLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QMessageBox,
     QPushButton,
     QVBoxLayout,
@@ -59,33 +54,23 @@ class PurchaseRuntimeWindow(QWidget):
         self.setWindowTitle("C5 购买运行")
         self.status_label = QLabel("准备就绪")
         self.status_label.setProperty("tone", "neutral")
-        self.whitelist_input = QLineEdit()
-        self.whitelist_input.setPlaceholderText("账号 ID，使用逗号分隔")
         self.refresh_button = QPushButton("刷新状态")
-        self.save_settings_button = QPushButton("保存设置")
         self.start_button = QPushButton("启动购买")
         self.stop_button = QPushButton("停止购买")
         self.runtime_panel = PurchaseRuntimePanel()
 
-        settings_group = QGroupBox("运行设置")
-        settings_form = QFormLayout(settings_group)
-        settings_form.addRow("白名单", self.whitelist_input)
-
         action_layout = QHBoxLayout()
         action_layout.addWidget(self.refresh_button)
-        action_layout.addWidget(self.save_settings_button)
         action_layout.addWidget(self.start_button)
         action_layout.addWidget(self.stop_button)
         action_layout.addStretch(1)
 
         layout = QVBoxLayout(self)
         layout.addWidget(self.status_label)
-        layout.addWidget(settings_group)
         layout.addLayout(action_layout)
         layout.addWidget(self.runtime_panel, 1)
 
         self.refresh_button.clicked.connect(self.load_status)
-        self.save_settings_button.clicked.connect(self._save_settings)
         self.start_button.clicked.connect(self._start_runtime)
         self.stop_button.clicked.connect(self._stop_runtime)
         self.runtime_panel.account_table.cellDoubleClicked.connect(self._open_inventory_detail_for_row)
@@ -167,19 +152,11 @@ class PurchaseRuntimeWindow(QWidget):
 
     def refresh_view(self) -> None:
         self.runtime_panel.load_status(self.view_model.raw_status)
-        settings = self.view_model.settings
-        self.whitelist_input.setText(str(settings["whitelist_text"] or ""))
         self._sync_action_states()
         self._sync_runtime_polling()
 
     def load_status(self) -> None:
         self.controller.load_status(silent=False)
-
-    def _save_settings(self) -> None:
-        payload = {
-            "whitelist_account_ids": self._parse_whitelist(self.whitelist_input.text()),
-        }
-        self.controller.save_settings(payload)
 
     def _start_runtime(self) -> None:
         self.controller.start_runtime()
@@ -190,7 +167,6 @@ class PurchaseRuntimeWindow(QWidget):
     def _sync_action_states(self) -> None:
         backend_ready = self.backend_client is not None or self.controller is not None
         self.refresh_button.setEnabled(backend_ready)
-        self.save_settings_button.setEnabled(backend_ready)
         self.start_button.setEnabled(backend_ready)
         self.stop_button.setEnabled(backend_ready)
 
@@ -266,17 +242,11 @@ class PurchaseRuntimeWindow(QWidget):
         if callable(show):
             show()
 
-    @staticmethod
-    def _parse_whitelist(raw_text: str) -> list[str]:
-        parts = [part.strip() for part in re.split(r"[\s,，]+", raw_text or "") if part.strip()]
-        return parts
-
-
 def _status_tone(message: str) -> str:
     if message.startswith("操作失败:"):
         return "error"
     if message.startswith("已取消"):
         return "warn"
-    if message.startswith("购买设置已保存") or message.endswith("运行中") or message.endswith("已停止"):
+    if message.endswith("运行中") or message.endswith("已停止"):
         return "ok"
     return "neutral"

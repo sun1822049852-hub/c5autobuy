@@ -38,10 +38,10 @@ function buildPurchaseRuntimeStatus(overrides = {}) {
     message: "未运行",
     started_at: null,
     stopped_at: null,
-    queue_size: 0,
+    queue_size: 2,
     active_account_count: 1,
-    total_account_count: 1,
-    total_purchased_count: 1,
+    total_account_count: 2,
+    total_purchased_count: 4,
     runtime_session_id: "run-1",
     active_query_config: {
       config_id: "cfg-1",
@@ -52,13 +52,35 @@ function buildPurchaseRuntimeStatus(overrides = {}) {
     matched_product_count: 3,
     purchase_success_count: 1,
     purchase_failed_count: 2,
-    recent_events: [],
+    recent_events: [
+      {
+        occurred_at: "2026-03-20T10:00:00",
+        status: "queued",
+        message: "命中已进入购买池",
+        query_item_name: "AK-47 | Redline",
+        product_list: [{ productId: "p-1", price: 123.45, actRebateAmount: 0 }],
+        total_price: 123.45,
+        total_wear_sum: 0.42,
+        source_mode_type: "new_api",
+      },
+      {
+        occurred_at: "2026-03-20T10:00:03",
+        status: "purchased",
+        message: "购买成功 1 件",
+        query_item_name: "AK-47 | Redline",
+        product_list: [{ productId: "p-2", price: 122.0, actRebateAmount: 0 }],
+        total_price: 122.0,
+        total_wear_sum: 0.38,
+        source_mode_type: "token",
+      },
+    ],
     accounts: [
       {
         account_id: "a1",
         display_name: "购买账号-A",
         purchase_capability_state: "bound",
         purchase_pool_state: "active",
+        purchase_disabled: false,
         selected_steam_id: "steam-1",
         selected_inventory_remaining_capacity: 90,
         selected_inventory_max: 1000,
@@ -67,6 +89,21 @@ function buildPurchaseRuntimeStatus(overrides = {}) {
         submitted_product_count: 3,
         purchase_success_count: 1,
         purchase_failed_count: 2,
+      },
+      {
+        account_id: "a2",
+        display_name: "购买账号-B",
+        purchase_capability_state: "bound",
+        purchase_pool_state: "paused_no_inventory",
+        purchase_disabled: true,
+        selected_steam_id: "steam-2",
+        selected_inventory_remaining_capacity: 0,
+        selected_inventory_max: 1000,
+        last_error: "没有可用仓库",
+        total_purchased_count: 3,
+        submitted_product_count: 0,
+        purchase_success_count: 0,
+        purchase_failed_count: 0,
       },
     ],
     item_rows: [
@@ -84,10 +121,6 @@ function buildPurchaseRuntimeStatus(overrides = {}) {
         purchase_failed_count: 2,
       },
     ],
-    settings: {
-      whitelist_account_ids: [],
-      updated_at: null,
-    },
     ...overrides,
   };
 }
@@ -128,6 +161,24 @@ function createFetchHarness({ initialStatus } = {}) {
         message: "未运行",
         started_at: null,
         stopped_at: null,
+      });
+      return jsonResponse(purchaseRuntimeStatus);
+    }
+    const purchaseConfigMatch = url.pathname.match(/^\/accounts\/([^/]+)\/purchase-config$/);
+    if (purchaseConfigMatch && method === "PATCH") {
+      const accountId = purchaseConfigMatch[1];
+      const payload = JSON.parse(options.body ?? "{}");
+      purchaseRuntimeStatus = buildPurchaseRuntimeStatus({
+        ...purchaseRuntimeStatus,
+        accounts: purchaseRuntimeStatus.accounts.map((account) => (
+          account.account_id === accountId
+            ? {
+              ...account,
+              purchase_disabled: Boolean(payload.purchase_disabled),
+              selected_steam_id: payload.selected_steam_id ?? account.selected_steam_id,
+            }
+            : account
+        )),
       });
       return jsonResponse(purchaseRuntimeStatus);
     }
@@ -212,5 +263,51 @@ describe("purchase system page", () => {
     expect(screen.getByText("白天配置")).toBeInTheDocument();
     expect(screen.getByText("等待购买账号恢复")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "开始扫货" })).toBeInTheDocument();
+  });
+
+  it("renders runtime overview, recent events and account purchase enablement", async () => {
+    const harness = createFetchHarness();
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "购买系统" }));
+
+    expect(await screen.findByRole("heading", { name: "购买系统" })).toBeInTheDocument();
+    const overviewRegion = screen.getByRole("region", { name: "运行总览" });
+    expect(overviewRegion).toHaveTextContent("队列中");
+    expect(overviewRegion).toHaveTextContent("2");
+    expect(overviewRegion).toHaveTextContent("活跃账号");
+    expect(overviewRegion).toHaveTextContent("1/2");
+    expect(overviewRegion).toHaveTextContent("累计购买");
+    expect(overviewRegion).toHaveTextContent("4");
+    expect(screen.getByRole("heading", { name: "最近事件" })).toBeInTheDocument();
+    expect(screen.getByText("命中已进入购买池")).toBeInTheDocument();
+    expect(screen.getByText("购买成功 1 件")).toBeInTheDocument();
+
+    const settingsRegion = screen.getByRole("region", { name: "购买账号启用设置" });
+    expect(within(settingsRegion).getByLabelText("购买账号-A")).toBeChecked();
+    expect(within(settingsRegion).getByLabelText("购买账号-B")).not.toBeChecked();
+    expect(within(settingsRegion).getByRole("button", { name: "保存账号购买配置" })).toBeInTheDocument();
+  });
+
+  it("updates account purchase config from the purchase page", async () => {
+    const harness = createFetchHarness();
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "购买系统" }));
+
+    const settingsRegion = await screen.findByRole("region", { name: "购买账号启用设置" });
+    await user.click(within(settingsRegion).getByLabelText("购买账号-B"));
+    await user.click(within(settingsRegion).getByRole("button", { name: "保存账号购买配置" }));
+
+    await waitFor(() => {
+      expect(
+        harness.calls.some((call) => call.pathname === "/accounts/a2/purchase-config" && call.method === "PATCH"),
+      ).toBe(true);
+    });
+    expect(within(settingsRegion).getByLabelText("购买账号-B")).toBeChecked();
   });
 });

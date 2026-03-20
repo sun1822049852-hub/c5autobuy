@@ -23,7 +23,6 @@ def create_schema(engine: Engine) -> None:
     from app_backend.infrastructure.db.models import (
         AccountRecord,
         AccountInventorySnapshotRecord,
-        PurchaseRuntimeSettingsRecord,
         QueryConfigItemRecord,
         QueryItemModeAllocationRecord,
         QueryProductRecord,
@@ -35,7 +34,6 @@ def create_schema(engine: Engine) -> None:
         bind=engine,
         tables=[
             AccountRecord.__table__,
-            PurchaseRuntimeSettingsRecord.__table__,
             AccountInventorySnapshotRecord.__table__,
             QueryConfigRecord.__table__,
             QueryProductRecord.__table__,

@@ -9,7 +9,6 @@ from datetime import datetime, timedelta
 from inspect import Parameter, signature
 
 from app_backend.domain.enums.account_states import PurchaseCapabilityState, PurchasePoolState
-from app_backend.domain.models.purchase_runtime_settings import PurchaseRuntimeSettings
 from app_backend.infrastructure.purchase.runtime.account_purchase_worker import AccountPurchaseWorker
 from app_backend.infrastructure.purchase.runtime.inventory_state import InventoryState
 from app_backend.infrastructure.purchase.runtime.purchase_hit_inbox import PurchaseHitInbox
@@ -29,7 +28,7 @@ class PurchaseRuntimeService:
         self,
         *,
         account_repository,
-        settings_repository,
+        settings_repository=None,
         inventory_snapshot_repository=None,
         inventory_refresh_gateway_factory: InventoryRefreshGatewayFactory | None = None,
         recovery_delay_seconds_provider: RecoveryDelaySecondsProvider | None = None,
@@ -37,7 +36,6 @@ class PurchaseRuntimeService:
         runtime_factory: RuntimeFactory | None = None,
     ) -> None:
         self._account_repository = account_repository
-        self._settings_repository = settings_repository
         self._inventory_snapshot_repository = inventory_snapshot_repository
         self._inventory_refresh_gateway_factory = inventory_refresh_gateway_factory
         self._recovery_delay_seconds_provider = recovery_delay_seconds_provider
@@ -51,9 +49,8 @@ class PurchaseRuntimeService:
         if self._has_running_runtime():
             return False, "已有购买运行时在运行"
 
-        settings = self._settings_repository.get()
         accounts = list(self._account_repository.list_accounts())
-        runtime = self._create_runtime(accounts, settings)
+        runtime = self._create_runtime(accounts)
         self._bind_runtime_callbacks(runtime)
         runtime.start()
         self._runtime = runtime
@@ -69,12 +66,11 @@ class PurchaseRuntimeService:
         return True, "购买运行时已停止"
 
     def get_status(self) -> dict[str, object]:
-        settings = self._settings_repository.get()
         if not self._has_running_runtime():
             self._runtime = None
-            return self._build_idle_snapshot(settings)
+            return self._build_idle_snapshot()
         snapshot = self._runtime.snapshot()
-        return self._normalize_snapshot(snapshot, settings)
+        return self._normalize_snapshot(snapshot)
 
     def has_available_accounts(self) -> bool:
         if not self._has_running_runtime():
@@ -233,17 +229,6 @@ class PurchaseRuntimeService:
 
         return self._build_account_center_row(updated_account)
 
-    def update_settings(self, *, whitelist_account_ids: list[str]) -> dict[str, object]:
-        updated_settings = self._settings_repository.save(
-            whitelist_account_ids=list(whitelist_account_ids),
-            updated_at=datetime.now().isoformat(timespec="seconds"),
-        )
-        if self._runtime is not None:
-            apply_settings = getattr(self._runtime, "apply_settings", None)
-            if callable(apply_settings):
-                apply_settings(updated_settings)
-        return self.get_status()
-
     def bind_query_runtime_session(
         self,
         *,
@@ -294,18 +279,18 @@ class PurchaseRuntimeService:
         snapshot = self._runtime.snapshot()
         return bool(snapshot.get("running"))
 
-    def _create_runtime(self, accounts: list[object], settings: PurchaseRuntimeSettings):
+    def _create_runtime(self, accounts: list[object]):
         if self._runtime_factory_accepts_extended_kwargs():
             return self._runtime_factory(
                 accounts,
-                settings,
+                None,
                 account_repository=self._account_repository,
                 inventory_snapshot_repository=self._inventory_snapshot_repository,
                 inventory_refresh_gateway_factory=self._inventory_refresh_gateway_factory,
                 recovery_delay_seconds_provider=self._recovery_delay_seconds_provider,
                 execution_gateway_factory=self._execution_gateway_factory,
             )
-        return self._runtime_factory(accounts, settings)
+        return self._runtime_factory(accounts, None)
 
     def _bind_runtime_callbacks(self, runtime) -> None:
         set_callbacks = getattr(runtime, "set_availability_callbacks", None)
@@ -353,7 +338,7 @@ class PurchaseRuntimeService:
         return False
 
     @staticmethod
-    def _build_idle_snapshot(settings: PurchaseRuntimeSettings) -> dict[str, object]:
+    def _build_idle_snapshot() -> dict[str, object]:
         return {
             "running": False,
             "message": "未运行",
@@ -371,14 +356,10 @@ class PurchaseRuntimeService:
             "accounts": [],
             "item_rows": [],
             "active_query_config": None,
-            "settings": {
-                "whitelist_account_ids": list(settings.whitelist_account_ids),
-                "updated_at": settings.updated_at,
-            },
         }
 
     @staticmethod
-    def _normalize_snapshot(snapshot: dict[str, object], settings: PurchaseRuntimeSettings) -> dict[str, object]:
+    def _normalize_snapshot(snapshot: dict[str, object]) -> dict[str, object]:
         return {
             "running": bool(snapshot.get("running")),
             "message": str(snapshot.get("message") or ("运行中" if snapshot.get("running") else "未运行")),
@@ -396,10 +377,6 @@ class PurchaseRuntimeService:
             "accounts": PurchaseRuntimeService._normalize_accounts(snapshot.get("accounts")),
             "item_rows": PurchaseRuntimeService._normalize_item_rows(snapshot.get("item_rows")),
             "active_query_config": snapshot.get("active_query_config"),
-            "settings": {
-                "whitelist_account_ids": list(settings.whitelist_account_ids),
-                "updated_at": settings.updated_at,
-            },
         }
 
     @staticmethod
@@ -417,6 +394,7 @@ class PurchaseRuntimeService:
                     "display_name": raw_account.get("display_name"),
                     "purchase_capability_state": raw_account.get("purchase_capability_state"),
                     "purchase_pool_state": raw_account.get("purchase_pool_state"),
+                    "purchase_disabled": bool(raw_account.get("purchase_disabled", False)),
                     "selected_steam_id": raw_account.get("selected_steam_id"),
                     "selected_inventory_remaining_capacity": (
                         int(raw_account["selected_inventory_remaining_capacity"])
@@ -823,7 +801,7 @@ class PurchaseRuntimeService:
     @staticmethod
     def _build_default_runtime(
         accounts: list[object],
-        settings: PurchaseRuntimeSettings,
+        _legacy_settings=None,
         *,
         account_repository=None,
         inventory_snapshot_repository=None,
@@ -833,7 +811,7 @@ class PurchaseRuntimeService:
     ):
         return _DefaultPurchaseRuntime(
             accounts,
-            settings,
+            _legacy_settings,
             account_repository=account_repository,
             inventory_snapshot_repository=inventory_snapshot_repository,
             inventory_refresh_gateway_factory=inventory_refresh_gateway_factory,
@@ -870,7 +848,7 @@ class _DefaultPurchaseRuntime:
     def __init__(
         self,
         accounts: list[object],
-        settings: PurchaseRuntimeSettings,
+        _legacy_settings=None,
         *,
         account_repository=None,
         inventory_snapshot_repository=None,
@@ -879,7 +857,6 @@ class _DefaultPurchaseRuntime:
         execution_gateway_factory: ExecutionGatewayFactory,
     ) -> None:
         self._accounts = list(accounts)
-        self._settings = settings
         self._account_repository = account_repository
         self._inventory_snapshot_repository = inventory_snapshot_repository
         self._inventory_refresh_gateway_factory = inventory_refresh_gateway_factory
@@ -948,17 +925,6 @@ class _DefaultPurchaseRuntime:
         self._drain_thread = None
         self._stats_aggregator.stop()
         self._stopped_at = datetime.now().isoformat(timespec="seconds")
-
-    def apply_settings(self, settings: PurchaseRuntimeSettings) -> None:
-        self._settings = settings
-        if self._running:
-            previous_active_account_count = self._scheduler.active_account_count()
-            self._cancel_all_recovery_checks()
-            self._scheduler = PurchaseScheduler()
-            self._account_states = {}
-            self._recovery_timers = {}
-            self._initialize_accounts()
-            self._handle_active_account_count_change(previous_active_account_count)
 
     def bind_query_runtime_session(
         self,
@@ -1235,9 +1201,6 @@ class _DefaultPurchaseRuntime:
         if bool(getattr(account, "disabled", False)):
             return False
         if str(getattr(account, "purchase_capability_state", "")) != PurchaseCapabilityState.BOUND:
-            return False
-        whitelist = {str(account_id) for account_id in self._settings.whitelist_account_ids}
-        if whitelist and str(getattr(account, "account_id", "")) not in whitelist:
             return False
         return True
 

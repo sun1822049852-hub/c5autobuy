@@ -24,9 +24,6 @@ from app_backend.infrastructure.repositories.account_inventory_snapshot_reposito
     SqliteAccountInventorySnapshotRepository,
 )
 from app_backend.infrastructure.repositories.account_repository import SqliteAccountRepository
-from app_backend.infrastructure.repositories.purchase_runtime_settings_repository import (
-    SqlitePurchaseRuntimeSettingsRepository,
-)
 from app_backend.infrastructure.repositories.query_config_repository import SqliteQueryConfigRepository
 from app_backend.infrastructure.query.collectors.detail_account_selector import DetailAccountSelector
 from app_backend.infrastructure.query.collectors.product_detail_collector import ProductDetailCollector
@@ -45,11 +42,9 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     session_factory = build_session_factory(engine)
     repository = SqliteAccountRepository(session_factory)
     query_config_repository = SqliteQueryConfigRepository(session_factory)
-    purchase_runtime_settings_repository = SqlitePurchaseRuntimeSettingsRepository(session_factory)
     inventory_snapshot_repository = SqliteAccountInventorySnapshotRepository(session_factory)
     purchase_runtime_service = PurchaseRuntimeService(
         account_repository=repository,
-        settings_repository=purchase_runtime_settings_repository,
         inventory_snapshot_repository=inventory_snapshot_repository,
         inventory_refresh_gateway_factory=InventoryRefreshGateway,
     )

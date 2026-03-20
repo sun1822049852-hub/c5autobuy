@@ -133,14 +133,6 @@ class QueryModeSettingRecord(Base):
     config: Mapped[QueryConfigRecord] = relationship(back_populates="mode_settings")
 
 
-class PurchaseRuntimeSettingsRecord(Base):
-    __tablename__ = "purchase_runtime_settings"
-
-    settings_id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
-    whitelist_account_ids_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
-    updated_at: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-
 class AccountInventorySnapshotRecord(Base):
     __tablename__ = "account_inventory_snapshots"
 

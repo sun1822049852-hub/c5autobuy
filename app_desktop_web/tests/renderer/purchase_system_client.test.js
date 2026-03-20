@@ -60,4 +60,38 @@ describe("purchase system client", () => {
     expect(started.running).toBe(true);
     expect(stopped.running).toBe(false);
   });
+
+  it("updates account purchase config for purchase enablement", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        account_id: "a1",
+        display_name: "购买账号-A",
+        purchase_disabled: false,
+        selected_steam_id: "steam-1",
+      }),
+    });
+    const client = createAccountCenterClient({
+      apiBaseUrl: "http://127.0.0.1:8123",
+      fetchImpl,
+    });
+
+    const updated = await client.updateAccountPurchaseConfig("a1", {
+      purchase_disabled: false,
+      selected_steam_id: "steam-1",
+    });
+
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "http://127.0.0.1:8123/accounts/a1/purchase-config",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({
+          purchase_disabled: false,
+          selected_steam_id: "steam-1",
+        }),
+      }),
+    );
+    expect(updated.purchase_disabled).toBe(false);
+    expect(updated.selected_steam_id).toBe("steam-1");
+  });
 });

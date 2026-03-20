@@ -9,10 +9,31 @@ const launcher = require("../../../main_ui_account_center_desktop.js");
 
 
 describe("desktop launcher", () => {
-  it("builds a node-driven electron launch command instead of spawning electron.cmd directly", () => {
+  it("builds a direct electron runtime launch command when the runtime payload is installed", () => {
+    const rootDir = "C:/demo/project";
+    const pathFile = path.join(rootDir, "app_desktop_web", "node_modules", "electron", "path.txt");
+    const electronExe = path.join(rootDir, "app_desktop_web", "node_modules", "electron", "dist", "electron.exe");
+
+    const spec = launcher.buildElectronLaunchSpec(rootDir, {
+      existsSync: (targetPath) => targetPath === pathFile || targetPath === electronExe,
+      readFileSync: () => "electron.exe",
+    });
+
+    expect(spec.command).toBe(electronExe);
+    expect(spec.args).toEqual([
+      path.join(rootDir, "app_desktop_web"),
+    ]);
+  });
+
+  it("falls back to the node-driven electron cli launch command when the runtime payload is unavailable", () => {
     const rootDir = "C:/demo/project";
 
-    const spec = launcher.buildElectronLaunchSpec(rootDir);
+    const spec = launcher.buildElectronLaunchSpec(rootDir, {
+      existsSync: () => false,
+      readFileSync: () => {
+        throw new Error("missing runtime");
+      },
+    });
 
     expect(spec.command).toBe(process.execPath);
     expect(spec.args).toEqual([
