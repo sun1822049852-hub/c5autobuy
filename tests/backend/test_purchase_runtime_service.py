@@ -255,7 +255,12 @@ def test_purchase_runtime_service_exposes_selected_inventory_summary_in_status()
                     "account_id": "a1",
                     "selected_steam_id": "steam-1",
                     "inventories": [
-                        {"steamId": "steam-1", "inventory_num": 910, "inventory_max": 1000},
+                        {
+                            "steamId": "steam-1",
+                            "nickname": "主仓",
+                            "inventory_num": 910,
+                            "inventory_max": 1000,
+                        },
                     ],
                     "refreshed_at": "2026-03-16T20:00:00",
                     "last_error": None,
@@ -273,6 +278,7 @@ def test_purchase_runtime_service_exposes_selected_inventory_summary_in_status()
     snapshot = service.get_status()
 
     assert snapshot["accounts"][0]["selected_steam_id"] == "steam-1"
+    assert snapshot["accounts"][0]["selected_inventory_name"] == "主仓"
     assert snapshot["accounts"][0]["selected_inventory_remaining_capacity"] == 90
     assert snapshot["accounts"][0]["selected_inventory_max"] == 1000
 
@@ -581,7 +587,7 @@ def test_purchase_runtime_service_accepts_query_hit_when_running_with_available_
                     "account_id": "a1",
                     "selected_steam_id": "steam-1",
                     "inventories": [
-                        {"steamId": "steam-1", "inventory_num": 910, "inventory_max": 1000},
+                        {"steamId": "steam-1", "nickname": "主仓", "inventory_num": 910, "inventory_max": 1000},
                     ],
                     "refreshed_at": "2026-03-16T20:00:00",
                     "last_error": None,
@@ -631,7 +637,7 @@ def test_purchase_runtime_service_queues_hit_without_waiting_for_purchase_comple
                     "account_id": "a1",
                     "selected_steam_id": "steam-1",
                     "inventories": [
-                        {"steamId": "steam-1", "inventory_num": 910, "inventory_max": 1000},
+                        {"steamId": "steam-1", "nickname": "主仓", "inventory_num": 910, "inventory_max": 1000},
                     ],
                     "refreshed_at": "2026-03-16T20:00:00",
                     "last_error": None,
@@ -726,7 +732,7 @@ def test_purchase_runtime_service_counts_unique_products_before_fast_dedupe():
                     "account_id": "a1",
                     "selected_steam_id": "steam-1",
                     "inventories": [
-                        {"steamId": "steam-1", "inventory_num": 910, "inventory_max": 1000},
+                        {"steamId": "steam-1", "nickname": "主仓", "inventory_num": 910, "inventory_max": 1000},
                     ],
                     "refreshed_at": "2026-03-16T20:00:00",
                     "last_error": None,
@@ -797,7 +803,7 @@ def test_purchase_runtime_service_partial_success_updates_piece_counts_only():
                     "account_id": "a1",
                     "selected_steam_id": "steam-1",
                     "inventories": [
-                        {"steamId": "steam-1", "inventory_num": 910, "inventory_max": 1000},
+                        {"steamId": "steam-1", "nickname": "主仓", "inventory_num": 910, "inventory_max": 1000},
                     ],
                     "refreshed_at": "2026-03-16T20:00:00",
                     "last_error": None,
@@ -857,7 +863,12 @@ def test_purchase_runtime_service_old_runtime_session_results_are_ignored_after_
                     "account_id": "a1",
                     "selected_steam_id": "steam-1",
                     "inventories": [
-                        {"steamId": "steam-1", "inventory_num": 910, "inventory_max": 1000},
+                        {
+                            "steamId": "steam-1",
+                            "nickname": "主仓",
+                            "inventory_num": 910,
+                            "inventory_max": 1000,
+                        },
                     ],
                     "refreshed_at": "2026-03-16T20:00:00",
                     "last_error": None,

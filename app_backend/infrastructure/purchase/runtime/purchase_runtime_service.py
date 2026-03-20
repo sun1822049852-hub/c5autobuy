@@ -396,6 +396,7 @@ class PurchaseRuntimeService:
                     "purchase_pool_state": raw_account.get("purchase_pool_state"),
                     "purchase_disabled": bool(raw_account.get("purchase_disabled", False)),
                     "selected_steam_id": raw_account.get("selected_steam_id"),
+                    "selected_inventory_name": raw_account.get("selected_inventory_name"),
                     "selected_inventory_remaining_capacity": (
                         int(raw_account["selected_inventory_remaining_capacity"])
                         if raw_account.get("selected_inventory_remaining_capacity") is not None
@@ -997,6 +998,9 @@ class _DefaultPurchaseRuntime:
                     "purchase_disabled": state.purchase_disabled,
                     "purchase_recovery_due_at": self._format_recovery_due_at(state.recovery_due_at),
                     "selected_steam_id": state.inventory_state.selected_steam_id,
+                    "selected_inventory_name": PurchaseRuntimeService._selected_inventory_display_text(
+                        state.inventory_state.selected_inventory
+                    ),
                     "selected_inventory_remaining_capacity": self._selected_inventory_remaining_capacity(state),
                     "selected_inventory_max": self._selected_inventory_max(state),
                     "last_error": state.last_error,

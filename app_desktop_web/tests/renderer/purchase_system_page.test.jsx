@@ -82,6 +82,7 @@ function buildPurchaseRuntimeStatus(overrides = {}) {
         purchase_pool_state: "active",
         purchase_disabled: false,
         selected_steam_id: "steam-1",
+        selected_inventory_name: "主仓",
         selected_inventory_remaining_capacity: 90,
         selected_inventory_max: 1000,
         last_error: null,
@@ -97,6 +98,7 @@ function buildPurchaseRuntimeStatus(overrides = {}) {
         purchase_pool_state: "paused_no_inventory",
         purchase_disabled: true,
         selected_steam_id: "steam-2",
+        selected_inventory_name: "备用仓",
         selected_inventory_remaining_capacity: 0,
         selected_inventory_max: 1000,
         last_error: "没有可用仓库",
@@ -206,7 +208,7 @@ describe("purchase system page", () => {
     expect(await screen.findByRole("heading", { name: "购买系统" })).toBeInTheDocument();
   });
 
-  it("renders bound config summary, item stats, account stats and runtime action", async () => {
+  it("renders runtime command deck with bound config, runtime state and runtime session id", async () => {
     const harness = createFetchHarness({
       initialStatus: buildPurchaseRuntimeStatus({
         running: true,
@@ -221,23 +223,15 @@ describe("purchase system page", () => {
     await user.click(await screen.findByRole("button", { name: "购买系统" }));
 
     expect(await screen.findByRole("heading", { name: "购买系统" })).toBeInTheDocument();
-    expect(screen.getByText("白天配置")).toBeInTheDocument();
-    expect(screen.getByText("matched 3")).toBeInTheDocument();
-    expect(screen.getByText("success 1")).toBeInTheDocument();
-    expect(screen.getByText("failed 2")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "停止扫货" })).toBeInTheDocument();
-
-    const itemPanel = screen.getByRole("region", { name: "商品 AK-47 | Redline" });
-    expect(within(itemPanel).getByText("查询 7 次")).toBeInTheDocument();
-    expect(within(itemPanel).getByText("命中 3")).toBeInTheDocument();
-    expect(within(itemPanel).getByText("成功 1")).toBeInTheDocument();
-    expect(within(itemPanel).getByText("失败 2")).toBeInTheDocument();
-
-    const accountTable = screen.getByRole("table", { name: "购买账号统计" });
-    expect(within(accountTable).getByText("购买账号-A")).toBeInTheDocument();
-    expect(within(accountTable).getByText("3")).toBeInTheDocument();
-    expect(within(accountTable).getByText("1")).toBeInTheDocument();
-    expect(within(accountTable).getByText("2")).toBeInTheDocument();
+    const commandDeck = screen.getByRole("region", { name: "购买运行控制台" });
+    expect(within(commandDeck).getByText("白天配置")).toBeInTheDocument();
+    expect(within(commandDeck).getByText("运行中")).toBeInTheDocument();
+    expect(within(commandDeck).getByText("run-1")).toBeInTheDocument();
+    expect(within(commandDeck).getByText("队列中")).toBeInTheDocument();
+    expect(within(commandDeck).getByText("2")).toBeInTheDocument();
+    expect(within(commandDeck).getByText("真实命中 3")).toBeInTheDocument();
+    expect(within(commandDeck).getByText("购买成功 1")).toBeInTheDocument();
+    expect(within(commandDeck).getByText("购买失败 2")).toBeInTheDocument();
   });
 
   it("keeps showing the bound config when purchase runtime is waiting", async () => {
@@ -260,12 +254,13 @@ describe("purchase system page", () => {
     await user.click(await screen.findByRole("button", { name: "购买系统" }));
 
     expect(await screen.findByRole("heading", { name: "购买系统" })).toBeInTheDocument();
-    expect(screen.getByText("白天配置")).toBeInTheDocument();
-    expect(screen.getByText("等待购买账号恢复")).toBeInTheDocument();
+    const commandDeck = screen.getByRole("region", { name: "购买运行控制台" });
+    expect(within(commandDeck).getByText("白天配置")).toBeInTheDocument();
+    expect(within(commandDeck).getByText("等待购买账号恢复")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "开始扫货" })).toBeInTheDocument();
   });
 
-  it("renders runtime overview, recent events and account purchase enablement", async () => {
+  it("renders item accordion, account monitor, recent events and removes runtime whitelist editor", async () => {
     const harness = createFetchHarness();
     installDesktopApp(harness.fetchImpl);
     const user = userEvent.setup();
@@ -274,24 +269,32 @@ describe("purchase system page", () => {
     await user.click(await screen.findByRole("button", { name: "购买系统" }));
 
     expect(await screen.findByRole("heading", { name: "购买系统" })).toBeInTheDocument();
-    const overviewRegion = screen.getByRole("region", { name: "运行总览" });
-    expect(overviewRegion).toHaveTextContent("队列中");
-    expect(overviewRegion).toHaveTextContent("2");
-    expect(overviewRegion).toHaveTextContent("活跃账号");
-    expect(overviewRegion).toHaveTextContent("1/2");
-    expect(overviewRegion).toHaveTextContent("累计购买");
-    expect(overviewRegion).toHaveTextContent("4");
+    const itemToggle = screen.getByRole("button", { name: "AK-47 | Redline" });
+    expect(itemToggle).toHaveAttribute("aria-expanded", "false");
+    await user.click(itemToggle);
+    expect(itemToggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("价格阈值 123.45")).toBeInTheDocument();
+    expect(screen.getByText("磨损 0.12 ~ 0.3")).toBeInTheDocument();
+    expect(screen.getByText("查询 7")).toBeInTheDocument();
+    expect(screen.getByText("命中 3")).toBeInTheDocument();
+    expect(screen.getByText("成功 1")).toBeInTheDocument();
+    expect(screen.getByText("失败 2")).toBeInTheDocument();
+
+    const accountTable = screen.getByRole("table", { name: "购买账号监控" });
+    expect(within(accountTable).getByText("购买账号-A")).toBeInTheDocument();
+    expect(within(accountTable).getByText("主仓")).toBeInTheDocument();
+    expect(within(accountTable).getByText("910/1000")).toBeInTheDocument();
+    expect(within(accountTable).getByText("备用仓")).toBeInTheDocument();
+    expect(within(accountTable).getByText("1000/1000")).toBeInTheDocument();
+
     expect(screen.getByRole("heading", { name: "最近事件" })).toBeInTheDocument();
     expect(screen.getByText("命中已进入购买池")).toBeInTheDocument();
     expect(screen.getByText("购买成功 1 件")).toBeInTheDocument();
 
-    const settingsRegion = screen.getByRole("region", { name: "购买账号启用设置" });
-    expect(within(settingsRegion).getByLabelText("购买账号-A")).toBeChecked();
-    expect(within(settingsRegion).getByLabelText("购买账号-B")).not.toBeChecked();
-    expect(within(settingsRegion).getByRole("button", { name: "保存账号购买配置" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "购买账号启用设置" })).not.toBeInTheDocument();
   });
 
-  it("updates account purchase config from the purchase page", async () => {
+  it("starts runtime from the floating action area", async () => {
     const harness = createFetchHarness();
     installDesktopApp(harness.fetchImpl);
     const user = userEvent.setup();
@@ -299,15 +302,14 @@ describe("purchase system page", () => {
     render(<App />);
     await user.click(await screen.findByRole("button", { name: "购买系统" }));
 
-    const settingsRegion = await screen.findByRole("region", { name: "购买账号启用设置" });
-    await user.click(within(settingsRegion).getByLabelText("购买账号-B"));
-    await user.click(within(settingsRegion).getByRole("button", { name: "保存账号购买配置" }));
+    const actionRegion = screen.getByRole("region", { name: "购买运行动作" });
+    await user.click(within(actionRegion).getByRole("button", { name: "开始扫货" }));
 
     await waitFor(() => {
       expect(
-        harness.calls.some((call) => call.pathname === "/accounts/a2/purchase-config" && call.method === "PATCH"),
+        harness.calls.some((call) => call.pathname === "/purchase-runtime/start" && call.method === "POST"),
       ).toBe(true);
     });
-    expect(within(settingsRegion).getByLabelText("购买账号-B")).toBeChecked();
+    expect(within(actionRegion).getByRole("button", { name: "停止扫货" })).toBeInTheDocument();
   });
 });

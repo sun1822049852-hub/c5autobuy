@@ -159,7 +159,7 @@ async def test_purchase_runtime_status_returns_selected_inventory_summary(client
     app.state.purchase_runtime_service._inventory_snapshot_repository.save(
         account_id="a1",
         selected_steam_id="steam-1",
-        inventories=[{"steamId": "steam-1", "inventory_num": 910, "inventory_max": 1000}],
+        inventories=[{"steamId": "steam-1", "nickname": "主仓", "inventory_num": 910, "inventory_max": 1000}],
         refreshed_at="2026-03-16T20:00:00",
         last_error=None,
     )
@@ -170,6 +170,7 @@ async def test_purchase_runtime_status_returns_selected_inventory_summary(client
     assert response.status_code == 200
     payload = response.json()
     assert payload["accounts"][0]["selected_steam_id"] == "steam-1"
+    assert payload["accounts"][0]["selected_inventory_name"] == "主仓"
     assert payload["accounts"][0]["selected_inventory_remaining_capacity"] == 90
     assert payload["accounts"][0]["selected_inventory_max"] == 1000
 
@@ -198,6 +199,7 @@ async def test_purchase_runtime_status_includes_stats_and_keeps_accounts_shape(c
                         "purchase_capability_state": "bound",
                         "purchase_pool_state": "active",
                         "selected_steam_id": "steam-1",
+                        "selected_inventory_name": "主仓",
                         "selected_inventory_remaining_capacity": 90,
                         "selected_inventory_max": 1000,
                         "last_error": None,

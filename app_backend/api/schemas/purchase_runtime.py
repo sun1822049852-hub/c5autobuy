@@ -25,6 +25,7 @@ class PurchaseRuntimeAccountResponse(BaseModel):
     purchase_pool_state: str | None = None
     purchase_disabled: bool = False
     selected_steam_id: str | None = None
+    selected_inventory_name: str | None = None
     selected_inventory_remaining_capacity: int | None = None
     selected_inventory_max: int | None = None
     last_error: str | None = None

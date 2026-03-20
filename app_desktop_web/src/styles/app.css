@@ -1100,8 +1100,9 @@ button {
 
 .purchase-system-page {
   display: grid;
-  gap: 16px;
+  gap: 18px;
   min-height: calc(100vh - 32px);
+  padding-bottom: 110px;
 }
 
 .purchase-system-page__hero,
@@ -1142,54 +1143,106 @@ button {
 }
 
 .purchase-runtime-header {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 18px;
-  align-items: start;
-  padding: 20px 22px;
-}
-
-.purchase-runtime-header__config {
   display: grid;
-  gap: 6px;
+  grid-template-columns: minmax(0, 1.15fr) minmax(360px, 0.95fr);
+  gap: 18px;
+  padding: 22px 24px;
 }
 
-.purchase-runtime-header__label {
+.purchase-runtime-header__primary {
+  display: grid;
+  gap: 12px;
+}
+
+.purchase-runtime-header__eyebrow {
   font-size: 12px;
   letter-spacing: 0.18em;
   text-transform: uppercase;
   color: var(--accent-strong);
 }
 
+.purchase-runtime-header__name-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
 .purchase-runtime-header__name {
-  font-size: 24px;
+  font-size: clamp(24px, 3vw, 30px);
   font-weight: 700;
 }
 
-.purchase-runtime-header__meta {
-  color: var(--text-soft);
+.purchase-runtime-header__status {
+  padding: 8px 12px;
+  border: 1px solid rgba(220, 164, 76, 0.28);
+  border-radius: 999px;
+  color: var(--accent-strong);
+  background: rgba(220, 164, 76, 0.1);
+}
+
+.purchase-runtime-header__meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.purchase-runtime-header__meta-block {
+  min-width: 144px;
+  padding: 14px 16px;
+  border: 1px solid var(--line-soft);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.purchase-runtime-header__meta-label {
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.purchase-runtime-header__meta-value {
+  margin-top: 8px;
+  font-size: 18px;
+  font-weight: 700;
 }
 
 .purchase-runtime-header__stats {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 10px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
 }
 
-.purchase-runtime-header__stat {
-  padding: 10px 14px;
-  border: 1px solid rgba(220, 164, 76, 0.24);
-  border-radius: 999px;
-  color: var(--text-main);
-  background: rgba(220, 164, 76, 0.08);
+.purchase-runtime-header__stat-card {
+  display: grid;
+  align-content: start;
+  min-height: 86px;
+  padding: 16px 18px;
+  border: 1px solid var(--line-soft);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.purchase-runtime-header__stat-card--accent {
+  background: linear-gradient(180deg, rgba(220, 164, 76, 0.16), rgba(220, 164, 76, 0.06));
+  border-color: rgba(220, 164, 76, 0.22);
+}
+
+.purchase-runtime-header__stat-value {
+  font-size: 28px;
+  font-weight: 700;
+}
+
+.purchase-runtime-header__stat-label {
+  margin-top: 6px;
+  color: var(--text-soft);
 }
 
 .purchase-system-page__layout {
   display: grid;
-  grid-template-columns: minmax(0, 1.3fr) minmax(320px, 0.9fr);
-  gap: 16px;
+  grid-template-columns: minmax(0, 1.35fr) minmax(340px, 0.95fr);
+  gap: 18px;
   min-height: 0;
 }
 
@@ -1336,8 +1389,27 @@ button {
 
 .purchase-item-panel {
   display: grid;
-  gap: 10px;
-  padding: 18px 20px;
+  gap: 12px;
+  padding: 14px;
+}
+
+.purchase-item-panel__toggle {
+  display: grid;
+  gap: 14px;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.purchase-item-panel__toggle-main {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
 }
 
 .purchase-item-panel__name {
@@ -1345,8 +1417,9 @@ button {
   font-weight: 700;
 }
 
-.purchase-item-panel__meta {
+.purchase-item-panel__hint {
   color: var(--text-soft);
+  font-size: 13px;
 }
 
 .purchase-item-panel__stats {
@@ -1355,13 +1428,27 @@ button {
   gap: 10px;
 }
 
-.purchase-item-panel__stats span {
+.purchase-item-panel__stat {
   padding: 8px 12px;
   border: 1px solid var(--line-soft);
   border-radius: 999px;
   font-size: 13px;
   color: var(--text-main);
   background: rgba(255, 255, 255, 0.04);
+}
+
+.purchase-item-panel__detail {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.purchase-item-panel__detail-card {
+  padding: 14px 16px;
+  border: 1px solid var(--line-soft);
+  border-radius: 16px;
+  color: var(--text-soft);
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .purchase-account-table {
@@ -1376,19 +1463,45 @@ button {
   font-weight: 700;
 }
 
+.purchase-account-table__subtitle,
+.purchase-account-table__account-error {
+  color: var(--text-soft);
+}
+
+.purchase-account-table__subtitle {
+  margin-top: -4px;
+}
+
+.purchase-account-table__account-name {
+  font-weight: 700;
+}
+
+.purchase-account-table__account-error {
+  margin-top: 4px;
+  font-size: 12px;
+}
+
 .purchase-system-page__empty {
   padding: 22px 24px;
   color: var(--text-soft);
 }
 
 .purchase-runtime-actions {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 10;
   display: flex;
   justify-content: flex-end;
-  padding: 18px 22px;
+  pointer-events: none;
 }
 
 .purchase-runtime-actions__button {
-  min-width: 144px;
+  min-width: 160px;
+  min-height: 56px;
+  border-radius: 999px;
+  pointer-events: auto;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.34);
 }
 
 @media (max-width: 1080px) {
@@ -1396,15 +1509,15 @@ button {
     grid-template-columns: 1fr;
   }
 
+  .purchase-runtime-header,
   .purchase-system-page__layout,
   .query-system-page__layout,
   .overview-grid,
   .status-strip {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: 1fr;
   }
 
   .purchase-runtime-overview__grid,
-  .purchase-system-page__layout,
   .query-system-page__layout {
     grid-template-columns: 1fr;
   }
@@ -1415,6 +1528,10 @@ button {
   .query-item-dialog__allocation-grid {
     grid-template-columns: 1fr;
   }
+
+  .purchase-item-panel__detail {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 720px) {
@@ -1423,7 +1540,6 @@ button {
   }
 
   .purchase-runtime-header,
-  .purchase-runtime-actions,
   .query-save-bar,
   .overview-grid,
   .status-strip {
@@ -1432,6 +1548,7 @@ button {
 
   .purchase-recent-events__item-top,
   .purchase-runtime-header,
+  .purchase-item-panel__toggle-main,
   .query-item-row__headline,
   .query-save-bar {
     flex-direction: column;
@@ -1471,5 +1588,19 @@ button {
   .account-table tbody td {
     padding: 8px 12px;
     border-bottom: none;
+  }
+
+  .purchase-item-panel__detail {
+    grid-template-columns: 1fr;
+  }
+
+  .purchase-runtime-actions {
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+  }
+
+  .purchase-runtime-actions__button {
+    width: 100%;
   }
 }
