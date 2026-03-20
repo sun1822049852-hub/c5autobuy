@@ -236,7 +236,7 @@ async def test_backend_client_prepares_query_runtime(backend_client):
                         "message": "商品详情已刷新",
                         "last_market_price": 123.45,
                         "min_wear": 0.1,
-                        "detail_max_wear": 0.7,
+                        "max_wear": 0.7,
                         "last_detail_sync_at": "2026-03-17T12:00:00",
                     }
                 ],
@@ -250,7 +250,7 @@ async def test_backend_client_prepares_query_runtime(backend_client):
     assert prepared["threshold_hours"] == 12
     assert prepared["updated_count"] == 1
     assert prepared["items"][0]["status"] == "updated"
-    assert prepared["items"][0]["detail_max_wear"] == 0.7
+    assert prepared["items"][0]["max_wear"] == 0.7
 
 
 async def test_backend_client_fetches_purchase_runtime_status(backend_client):
@@ -441,20 +441,23 @@ async def test_backend_client_adds_updates_and_deletes_query_items(backend_clien
         created["config_id"],
         {
             "product_url": "https://www.c5game.com/csgo/730/asset/1380979899390264321",
-            "max_wear": 0.22,
+            "detail_max_wear": 0.22,
             "max_price": 456.0,
         },
     )
     updated = await client.update_query_item(
         created["config_id"],
         added["query_item_id"],
-        {"max_wear": 0.18, "max_price": 400.0},
+        {"detail_max_wear": 0.18, "max_price": 400.0},
     )
     await client.delete_query_item(created["config_id"], added["query_item_id"])
     configs = await client.list_query_configs()
 
     assert added["item_name"] == "Desert Eagle | Printstream"
-    assert updated["max_wear"] == 0.18
+    assert added["max_wear"] == 0.8
+    assert added["detail_max_wear"] == 0.22
+    assert updated["max_wear"] == 0.8
+    assert updated["detail_max_wear"] == 0.18
     assert updated["max_price"] == 400.0
     assert configs[0]["items"] == []
 
@@ -506,7 +509,7 @@ async def test_backend_client_fetches_query_item_detail(backend_client):
         "item_name": "M4A1-S | Blue Phosphor",
         "market_hash_name": "M4A1-S | Blue Phosphor (Factory New)",
         "min_wear": 0.0,
-        "detail_max_wear": 0.08,
+        "max_wear": 0.08,
         "last_market_price": 2888.0,
     }
 
@@ -524,11 +527,14 @@ async def test_backend_client_refreshes_query_item_detail(backend_client):
                 "item_name": "M4A1-S | Blue Phosphor",
                 "market_hash_name": "M4A1-S | Blue Phosphor (Factory New)",
                 "min_wear": 0.0,
+                "detail_min_wear": 0.0,
                 "detail_max_wear": 0.08,
                 "max_wear": 0.18,
                 "max_price": 3000.0,
                 "last_market_price": 2888.0,
                 "last_detail_sync_at": "2026-03-17T12:30:00",
+                "manual_paused": False,
+                "mode_allocations": [],
                 "sort_order": 0,
                 "created_at": "2026-03-17T12:00:00",
                 "updated_at": "2026-03-17T12:30:00",

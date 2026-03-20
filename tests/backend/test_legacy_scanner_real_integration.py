@@ -44,6 +44,8 @@ def build_item() -> QueryItem:
         sort_order=0,
         created_at="2026-03-16T10:00:00",
         updated_at="2026-03-16T10:00:00",
+        detail_min_wear=0.0,
+        detail_max_wear=0.25,
     )
 
 
