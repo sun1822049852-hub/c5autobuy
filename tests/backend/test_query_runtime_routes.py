@@ -18,7 +18,6 @@ def _build_query_purchase_account(account_id: str) -> Account:
         last_error=None,
         created_at="2026-03-16T10:00:00",
         updated_at="2026-03-16T10:00:00",
-        disabled=False,
         new_api_enabled=False,
         fast_api_enabled=False,
         token_enabled=False,

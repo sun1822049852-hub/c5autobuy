@@ -74,7 +74,7 @@ def test_window_start_login_submits_proxy_payload_after_dialog_accepts(qtbot):
                 "last_error": None,
                 "created_at": "2026-03-16T12:00:00",
                 "updated_at": "2026-03-16T12:00:00",
-                "disabled": False,
+                "purchase_disabled": False,
                 "new_api_enabled": False,
                 "fast_api_enabled": False,
                 "token_enabled": False,
@@ -133,7 +133,7 @@ def test_window_start_login_does_not_submit_when_dialog_is_cancelled(qtbot):
                 "last_error": None,
                 "created_at": "2026-03-16T12:00:00",
                 "updated_at": "2026-03-16T12:00:00",
-                "disabled": False,
+                "purchase_disabled": False,
                 "new_api_enabled": False,
                 "fast_api_enabled": False,
                 "token_enabled": False,
@@ -194,7 +194,7 @@ def test_window_start_login_uses_top_level_workspace_as_dialog_parent(qtbot):
                 "last_error": None,
                 "created_at": "2026-03-16T12:00:00",
                 "updated_at": "2026-03-16T12:00:00",
-                "disabled": False,
+                "purchase_disabled": False,
                 "new_api_enabled": False,
                 "fast_api_enabled": False,
                 "token_enabled": False,
@@ -275,7 +275,7 @@ def test_window_clicking_c5_nickname_opens_remark_editor(qtbot):
                 "proxy_display": "直连",
                 "purchase_capability_state": "bound",
                 "purchase_pool_state": "not_connected",
-                "disabled": False,
+                "purchase_disabled": False,
                 "selected_steam_id": "steam-1",
                 "selected_warehouse_text": "steam-1",
                 "purchase_status_code": "selected_warehouse",
@@ -329,7 +329,7 @@ def test_window_clicking_api_key_opens_editor(qtbot):
                 "proxy_display": "直连",
                 "purchase_capability_state": "bound",
                 "purchase_pool_state": "not_connected",
-                "disabled": False,
+                "purchase_disabled": False,
                 "selected_steam_id": "steam-1",
                 "selected_warehouse_text": "steam-1",
                 "purchase_status_code": "selected_warehouse",
@@ -383,7 +383,7 @@ def test_window_clicking_proxy_opens_editor(qtbot):
                 "proxy_display": "直连",
                 "purchase_capability_state": "bound",
                 "purchase_pool_state": "not_connected",
-                "disabled": False,
+                "purchase_disabled": False,
                 "selected_steam_id": "steam-1",
                 "selected_warehouse_text": "steam-1",
                 "purchase_status_code": "selected_warehouse",
@@ -437,7 +437,7 @@ def test_window_clicking_purchase_status_for_unlogged_account_starts_login_flow(
                 "proxy_display": "直连",
                 "purchase_capability_state": "unbound",
                 "purchase_pool_state": "not_connected",
-                "disabled": False,
+                "purchase_disabled": False,
                 "selected_steam_id": None,
                 "selected_warehouse_text": None,
                 "purchase_status_code": "not_logged_in",
@@ -471,7 +471,7 @@ def test_window_clicking_purchase_status_loads_inventory_detail_then_opens_purch
             return int(QDialog.DialogCode.Accepted)
 
         def build_payload(self) -> dict:
-            return {"disabled": True, "selected_steam_id": "steam-2"}
+            return {"purchase_disabled": True, "selected_steam_id": "steam-2"}
 
     class SpyController:
         def load_purchase_inventory_detail(self, account_id: str, on_loaded) -> None:
@@ -523,7 +523,7 @@ def test_window_clicking_purchase_status_loads_inventory_detail_then_opens_purch
                 "proxy_display": "直连",
                 "purchase_capability_state": "bound",
                 "purchase_pool_state": "not_connected",
-                "disabled": False,
+                "purchase_disabled": False,
                 "selected_steam_id": "steam-1",
                 "selected_warehouse_text": "steam-1",
                 "purchase_status_code": "selected_warehouse",
@@ -572,7 +572,7 @@ def test_window_clicking_purchase_status_loads_inventory_detail_then_opens_purch
             ],
         }
     ]
-    assert submitted_payloads == [("a-1", {"disabled": True, "selected_steam_id": "steam-2"})]
+    assert submitted_payloads == [("a-1", {"purchase_disabled": True, "selected_steam_id": "steam-2"})]
 
 
 def test_window_delete_account_requires_confirmation(qtbot):
@@ -608,7 +608,7 @@ def test_window_delete_account_requires_confirmation(qtbot):
                 "proxy_display": "直连",
                 "purchase_capability_state": "bound",
                 "purchase_pool_state": "not_connected",
-                "disabled": False,
+                "purchase_disabled": False,
                 "selected_steam_id": "steam-1",
                 "selected_warehouse_text": "steam-1",
                 "purchase_status_code": "selected_warehouse",

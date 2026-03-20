@@ -39,7 +39,7 @@ class PurchaseConfigDialog(QDialog):
         self._available_inventory_ids: set[str] = set()
 
         self.disabled_checkbox = QCheckBox("禁用该账号购买")
-        self.disabled_checkbox.setChecked(bool(account.get("disabled", False)))
+        self.disabled_checkbox.setChecked(bool(account.get("purchase_disabled", False)))
         self.current_selected_input = _readonly_line_edit()
         self.refreshed_at_input = _readonly_line_edit()
         self.last_error_input = _readonly_line_edit()
@@ -77,7 +77,7 @@ class PurchaseConfigDialog(QDialog):
 
     def build_payload(self) -> dict[str, str | bool | None]:
         return {
-            "disabled": self.disabled_checkbox.isChecked(),
+            "purchase_disabled": self.disabled_checkbox.isChecked(),
             "selected_steam_id": self._selected_available_steam_id(),
         }
 

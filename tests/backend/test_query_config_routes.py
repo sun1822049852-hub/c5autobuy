@@ -1,4 +1,4 @@
-from app_backend.domain.models.account import Account
+from types import SimpleNamespace
 
 
 def _build_query_account(
@@ -11,10 +11,11 @@ def _build_query_account(
     fast_api_enabled: bool = True,
     token_enabled: bool = True,
     last_error: str | None = None,
-) -> Account:
-    return Account(
+) -> object:
+    return SimpleNamespace(
         account_id=account_id,
         default_name=f"账号-{account_id}",
+        display_name=f"账号-{account_id}",
         remark_name=None,
         proxy_mode="direct",
         proxy_url=None,
@@ -29,6 +30,8 @@ def _build_query_account(
         created_at="2026-03-19T10:00:00",
         updated_at="2026-03-19T10:00:00",
         disabled=disabled,
+        purchase_disabled=False,
+        purchase_recovery_due_at=None,
         new_api_enabled=new_api_enabled,
         fast_api_enabled=fast_api_enabled,
         token_enabled=token_enabled,
@@ -574,8 +577,8 @@ async def test_query_capacity_summary_returns_available_accounts_by_mode(client,
     assert response.status_code == 200
     assert response.json() == {
         "modes": {
-            "new_api": {"mode_type": "new_api", "available_account_count": 1},
-            "fast_api": {"mode_type": "fast_api", "available_account_count": 2},
+            "new_api": {"mode_type": "new_api", "available_account_count": 2},
+            "fast_api": {"mode_type": "fast_api", "available_account_count": 3},
             "token": {"mode_type": "token", "available_account_count": 1},
         }
     }

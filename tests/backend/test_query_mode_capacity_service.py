@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
-
-from app_backend.domain.models.account import Account
+from types import SimpleNamespace
 
 
 def build_account(
@@ -17,10 +16,11 @@ def build_account(
     fast_api_enabled: bool = True,
     token_enabled: bool = True,
     last_error: str | None = None,
-) -> Account:
-    return Account(
+) -> object:
+    return SimpleNamespace(
         account_id=account_id,
         default_name=f"账号-{account_id}",
+        display_name=f"账号-{account_id}",
         remark_name=None,
         proxy_mode="direct",
         proxy_url=None,
@@ -43,10 +43,10 @@ def build_account(
 
 
 class FakeAccountRepository:
-    def __init__(self, accounts: list[Account]) -> None:
+    def __init__(self, accounts: list[object]) -> None:
         self._accounts = list(accounts)
 
-    def list_accounts(self) -> list[Account]:
+    def list_accounts(self) -> list[object]:
         return list(self._accounts)
 
 
@@ -77,8 +77,8 @@ def test_query_mode_capacity_service_counts_available_accounts_by_mode():
 
     assert service.get_summary() == {
         "modes": {
-            "new_api": {"mode_type": "new_api", "available_account_count": 2},
-            "fast_api": {"mode_type": "fast_api", "available_account_count": 3},
-            "token": {"mode_type": "token", "available_account_count": 2},
+            "new_api": {"mode_type": "new_api", "available_account_count": 3},
+            "fast_api": {"mode_type": "fast_api", "available_account_count": 4},
+            "token": {"mode_type": "token", "available_account_count": 3},
         }
     }

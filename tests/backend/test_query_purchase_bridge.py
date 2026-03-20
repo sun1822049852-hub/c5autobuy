@@ -74,7 +74,6 @@ def build_account(account_id: str = "a1", *, api_key: str | None = "api-1") -> A
         last_error=None,
         created_at="2026-03-16T10:00:00",
         updated_at="2026-03-16T10:00:00",
-        disabled=False,
         new_api_enabled=True,
         fast_api_enabled=True,
         token_enabled=False,

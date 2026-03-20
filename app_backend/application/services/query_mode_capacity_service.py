@@ -14,8 +14,6 @@ class QueryModeCapacityService:
             QueryMode.TOKEN: 0,
         }
         for account in self._account_repository.list_accounts():
-            if bool(getattr(account, "disabled", False)):
-                continue
             if bool(getattr(account, "api_key", None)) and bool(getattr(account, "new_api_enabled", False)):
                 counts[QueryMode.NEW_API] += 1
             if bool(getattr(account, "api_key", None)) and bool(getattr(account, "fast_api_enabled", False)):

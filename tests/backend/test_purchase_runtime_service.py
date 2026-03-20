@@ -24,7 +24,6 @@ def build_account(account_id: str, *, bound: bool = True) -> Account:
         last_error=None,
         created_at="2026-03-16T20:00:00",
         updated_at="2026-03-16T20:00:00",
-        disabled=False,
         purchase_disabled=False,
         purchase_recovery_due_at=None,
     )
@@ -1333,11 +1332,10 @@ def test_purchase_runtime_service_purchase_disable_removes_account_from_pool_wit
     snapshot = service.get_status()
     stored = account_repository.get_account("a1")
 
-    assert updated["disabled"] is False
+    assert "disabled" not in updated
     assert updated["purchase_disabled"] is True
     assert snapshot["active_account_count"] == 0
     assert stored is not None
-    assert stored.disabled is False
     assert stored.purchase_disabled is True
 
 

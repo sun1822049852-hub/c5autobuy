@@ -29,7 +29,7 @@ def _account(
         "last_error": last_error,
         "created_at": "2026-03-16T12:00:00",
         "updated_at": "2026-03-16T12:00:00",
-        "disabled": False,
+        "purchase_disabled": False,
         "new_api_enabled": True,
         "fast_api_enabled": False,
         "token_enabled": True,

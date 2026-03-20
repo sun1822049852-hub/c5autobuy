@@ -11,7 +11,6 @@ def _build_account(
     api_key: str | None = None,
     purchase_capability_state: str = "bound",
     purchase_pool_state: str = "not_connected",
-    disabled: bool = False,
     purchase_disabled: bool = False,
     purchase_recovery_due_at: str | None = None,
     cookie_raw: str | None = "NC5_accessToken=token",
@@ -32,7 +31,6 @@ def _build_account(
         last_error=None,
         created_at="2026-03-16T20:00:00",
         updated_at="2026-03-16T20:00:00",
-        disabled=disabled,
         purchase_disabled=purchase_disabled,
         purchase_recovery_due_at=purchase_recovery_due_at,
     )
@@ -112,7 +110,6 @@ async def test_account_center_accounts_route_renders_purchase_status_priority(cl
             "proxy_display": "http://127.0.0.1:9009",
             "purchase_capability_state": "unbound",
             "purchase_pool_state": "not_connected",
-            "disabled": False,
             "purchase_disabled": False,
             "selected_steam_id": None,
             "selected_warehouse_text": None,
@@ -132,7 +129,6 @@ async def test_account_center_accounts_route_renders_purchase_status_priority(cl
             "proxy_display": "http://127.0.0.1:9008",
             "purchase_capability_state": "bound",
             "purchase_pool_state": "not_connected",
-            "disabled": False,
             "purchase_disabled": True,
             "selected_steam_id": "steam-disabled",
             "selected_warehouse_text": "禁用仓",
@@ -152,7 +148,6 @@ async def test_account_center_accounts_route_renders_purchase_status_priority(cl
             "proxy_display": "http://127.0.0.1:9004",
             "purchase_capability_state": "bound",
             "purchase_pool_state": "paused_no_inventory",
-            "disabled": False,
             "purchase_disabled": False,
             "selected_steam_id": None,
             "selected_warehouse_text": None,
@@ -172,7 +167,6 @@ async def test_account_center_accounts_route_renders_purchase_status_priority(cl
             "proxy_display": "http://127.0.0.1:9005",
             "purchase_capability_state": "bound",
             "purchase_pool_state": "not_connected",
-            "disabled": False,
             "purchase_disabled": False,
             "selected_steam_id": "steam-ready",
             "selected_warehouse_text": "可买主仓",
@@ -247,7 +241,7 @@ async def test_update_purchase_config_route_updates_purchase_disabled_and_select
     )
 
     assert response.status_code == 200
-    assert response.json()["disabled"] is False
+    assert "disabled" not in response.json()
     assert response.json()["purchase_disabled"] is True
     assert response.json()["selected_steam_id"] == "steam-2"
     assert response.json()["selected_warehouse_text"] == "steam-2"
@@ -256,12 +250,28 @@ async def test_update_purchase_config_route_updates_purchase_disabled_and_select
 
     stored = app.state.account_repository.get_account("config-target")
     assert stored is not None
-    assert stored.disabled is False
     assert stored.purchase_disabled is True
 
     snapshot = app.state.purchase_runtime_service._inventory_snapshot_repository.get("config-target")
     assert snapshot is not None
     assert snapshot.selected_steam_id == "steam-2"
+
+
+async def test_update_purchase_config_route_rejects_legacy_disabled_field(client, app):
+    app.state.account_repository.create_account(
+        _build_account(
+            "legacy-disabled",
+            remark_name="旧字段账号",
+            api_key="api-legacy",
+        )
+    )
+
+    response = await client.patch(
+        "/accounts/legacy-disabled/purchase-config",
+        json={"disabled": True, "selected_steam_id": None},
+    )
+
+    assert response.status_code == 422
 
 
 async def test_update_purchase_config_route_rejects_selected_inventory_for_unbound_account(client, app):

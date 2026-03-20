@@ -22,7 +22,6 @@ def build_account(account_id: str, *, cookie_raw: str) -> Account:
         last_error=None,
         created_at="2026-03-17T00:00:00",
         updated_at="2026-03-17T00:00:00",
-        disabled=False,
         new_api_enabled=True,
         fast_api_enabled=True,
         token_enabled=True,

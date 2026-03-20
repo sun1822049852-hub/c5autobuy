@@ -1,7 +1,7 @@
 import asyncio
 import time
+from types import SimpleNamespace
 
-from app_backend.domain.models.account import Account
 from app_backend.domain.models.query_config import QueryConfig, QueryItem, QueryModeSetting
 
 
@@ -101,10 +101,11 @@ def build_account(
     new_api_enabled: bool = True,
     fast_api_enabled: bool = True,
     token_enabled: bool = True,
-) -> Account:
-    return Account(
+) -> object:
+    return SimpleNamespace(
         account_id=account_id,
         default_name=f"账号-{account_id}",
+        display_name=f"账号-{account_id}",
         remark_name=None,
         proxy_mode="direct",
         proxy_url=None,
@@ -1184,9 +1185,9 @@ def test_runtime_service_counts_eligible_accounts_by_mode():
     service.start(config_id="cfg-1")
     snapshot = service.get_status()
 
-    assert snapshot["modes"]["new_api"]["eligible_account_count"] == 1
-    assert snapshot["modes"]["fast_api"]["eligible_account_count"] == 2
-    assert snapshot["modes"]["token"]["eligible_account_count"] == 2
+    assert snapshot["modes"]["new_api"]["eligible_account_count"] == 2
+    assert snapshot["modes"]["fast_api"]["eligible_account_count"] == 3
+    assert snapshot["modes"]["token"]["eligible_account_count"] == 3
     assert snapshot["modes"]["token"]["active_account_count"] == 0
     assert snapshot["modes"]["token"]["in_window"] is True
     assert snapshot["modes"]["token"]["query_count"] == 0
@@ -1200,6 +1201,9 @@ def test_runtime_service_counts_eligible_accounts_by_mode():
         ("a2", "fast_api"),
         ("a2", "token"),
         ("a3", "token"),
+        ("a4", "new_api"),
+        ("a4", "fast_api"),
+        ("a4", "token"),
     }
     assert snapshot["group_rows"][0]["account_display_name"].startswith("账号-")
     assert snapshot["group_rows"][0]["cooldown_until"] is None

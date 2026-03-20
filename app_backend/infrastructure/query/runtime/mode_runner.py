@@ -287,9 +287,6 @@ class ModeRunner:
         return float(self._random_provider(minimum_value, maximum_value))
 
     def _is_eligible_account(self, account: object) -> bool:
-        if bool(getattr(account, "disabled", False)):
-            return False
-
         mode_type = self._mode_setting.mode_type
         if mode_type == "new_api":
             return bool(getattr(account, "new_api_enabled", False)) and bool(getattr(account, "api_key", None))

@@ -17,9 +17,6 @@ class DetailAccountSelector:
 
     @staticmethod
     def _is_eligible(account: object) -> bool:
-        if bool(getattr(account, "disabled", False)):
-            return False
-
         cookie_raw = getattr(account, "cookie_raw", None) or ""
         for raw_part in cookie_raw.split(";"):
             key, _, value = raw_part.strip().partition("=")

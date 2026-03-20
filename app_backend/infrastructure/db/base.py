@@ -73,11 +73,115 @@ def _ensure_account_columns(engine: Engine) -> None:
     if "accounts" not in inspector.get_table_names():
         return
     existing_columns = {column["name"] for column in inspector.get_columns("accounts")}
+    if "disabled" in existing_columns:
+        _rebuild_accounts_table_without_disabled(engine, existing_columns=existing_columns)
+        inspector = inspect(engine)
+        existing_columns = {column["name"] for column in inspector.get_columns("accounts")}
     with engine.begin() as connection:
         if "purchase_disabled" not in existing_columns:
             connection.execute(text("ALTER TABLE accounts ADD COLUMN purchase_disabled INTEGER NOT NULL DEFAULT 0"))
         if "purchase_recovery_due_at" not in existing_columns:
             connection.execute(text("ALTER TABLE accounts ADD COLUMN purchase_recovery_due_at TEXT"))
+        if "new_api_enabled" not in existing_columns:
+            connection.execute(text("ALTER TABLE accounts ADD COLUMN new_api_enabled INTEGER NOT NULL DEFAULT 1"))
+        if "fast_api_enabled" not in existing_columns:
+            connection.execute(text("ALTER TABLE accounts ADD COLUMN fast_api_enabled INTEGER NOT NULL DEFAULT 1"))
+        if "token_enabled" not in existing_columns:
+            connection.execute(text("ALTER TABLE accounts ADD COLUMN token_enabled INTEGER NOT NULL DEFAULT 1"))
+
+
+def _rebuild_accounts_table_without_disabled(engine: Engine, *, existing_columns: set[str]) -> None:
+    column_expr = {
+        "purchase_disabled": "purchase_disabled" if "purchase_disabled" in existing_columns else "0",
+        "purchase_recovery_due_at": "purchase_recovery_due_at" if "purchase_recovery_due_at" in existing_columns else "NULL",
+        "new_api_enabled": "new_api_enabled" if "new_api_enabled" in existing_columns else "1",
+        "fast_api_enabled": "fast_api_enabled" if "fast_api_enabled" in existing_columns else "1",
+        "token_enabled": "token_enabled" if "token_enabled" in existing_columns else "1",
+    }
+
+    with engine.begin() as connection:
+        connection.execute(text("PRAGMA foreign_keys=OFF"))
+        connection.execute(
+            text(
+                """
+                CREATE TABLE accounts__new (
+                    account_id TEXT PRIMARY KEY,
+                    default_name TEXT NOT NULL,
+                    remark_name TEXT,
+                    proxy_mode TEXT NOT NULL,
+                    proxy_url TEXT,
+                    api_key TEXT,
+                    c5_user_id TEXT,
+                    c5_nick_name TEXT,
+                    cookie_raw TEXT,
+                    purchase_capability_state TEXT NOT NULL,
+                    purchase_pool_state TEXT NOT NULL,
+                    last_login_at TEXT,
+                    last_error TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    purchase_disabled INTEGER NOT NULL DEFAULT 0,
+                    purchase_recovery_due_at TEXT,
+                    new_api_enabled INTEGER NOT NULL DEFAULT 1,
+                    fast_api_enabled INTEGER NOT NULL DEFAULT 1,
+                    token_enabled INTEGER NOT NULL DEFAULT 1
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                f"""
+                INSERT INTO accounts__new (
+                    account_id,
+                    default_name,
+                    remark_name,
+                    proxy_mode,
+                    proxy_url,
+                    api_key,
+                    c5_user_id,
+                    c5_nick_name,
+                    cookie_raw,
+                    purchase_capability_state,
+                    purchase_pool_state,
+                    last_login_at,
+                    last_error,
+                    created_at,
+                    updated_at,
+                    purchase_disabled,
+                    purchase_recovery_due_at,
+                    new_api_enabled,
+                    fast_api_enabled,
+                    token_enabled
+                )
+                SELECT
+                    account_id,
+                    default_name,
+                    remark_name,
+                    proxy_mode,
+                    proxy_url,
+                    api_key,
+                    c5_user_id,
+                    c5_nick_name,
+                    cookie_raw,
+                    purchase_capability_state,
+                    purchase_pool_state,
+                    last_login_at,
+                    last_error,
+                    created_at,
+                    updated_at,
+                    {column_expr["purchase_disabled"]},
+                    {column_expr["purchase_recovery_due_at"]},
+                    {column_expr["new_api_enabled"]},
+                    {column_expr["fast_api_enabled"]},
+                    {column_expr["token_enabled"]}
+                FROM accounts
+                """
+            )
+        )
+        connection.execute(text("DROP TABLE accounts"))
+        connection.execute(text("ALTER TABLE accounts__new RENAME TO accounts"))
+        connection.execute(text("PRAGMA foreign_keys=ON"))
 
 
 def _backfill_query_products(engine: Engine, *, had_detail_min_wear: bool) -> None:

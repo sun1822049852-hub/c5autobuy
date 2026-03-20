@@ -39,7 +39,6 @@ class CreateAccountUseCase:
             last_error=None,
             created_at=now,
             updated_at=now,
-            disabled=False,
             purchase_disabled=False,
             purchase_recovery_due_at=None,
             new_api_enabled=True,

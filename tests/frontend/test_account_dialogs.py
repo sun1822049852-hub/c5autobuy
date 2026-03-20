@@ -21,7 +21,7 @@ def _account() -> dict:
         "last_error": None,
         "created_at": "2026-03-16T12:00:00",
         "updated_at": "2026-03-16T12:00:00",
-        "disabled": False,
+        "purchase_disabled": False,
         "new_api_enabled": True,
         "fast_api_enabled": False,
         "token_enabled": True,
@@ -169,7 +169,7 @@ def test_purchase_config_dialog_lists_warehouses_and_only_allows_available_selec
     from app_frontend.app.dialogs.purchase_config_dialog import PurchaseConfigDialog
 
     dialog = PurchaseConfigDialog(
-        account=_account() | {"disabled": False, "selected_steam_id": "steam-1"},
+        account=_account() | {"purchase_disabled": False, "selected_steam_id": "steam-1"},
         inventory_detail={
             "account_id": "a-1",
             "display_name": "旧备注",
@@ -206,7 +206,7 @@ def test_purchase_config_dialog_lists_warehouses_and_only_allows_available_selec
     dialog.inventory_table.selectRow(0)
 
     assert dialog.build_payload() == {
-        "disabled": False,
+        "purchase_disabled": False,
         "selected_steam_id": "steam-1",
     }
 
@@ -215,7 +215,7 @@ def test_purchase_config_dialog_keeps_full_current_warehouse_as_display_only(qtb
     from app_frontend.app.dialogs.purchase_config_dialog import PurchaseConfigDialog
 
     dialog = PurchaseConfigDialog(
-        account=_account() | {"disabled": False, "selected_steam_id": "steam-2"},
+        account=_account() | {"purchase_disabled": False, "selected_steam_id": "steam-2"},
         inventory_detail={
             "account_id": "a-1",
             "display_name": "旧备注",
@@ -239,6 +239,6 @@ def test_purchase_config_dialog_keeps_full_current_warehouse_as_display_only(qtb
     assert dialog.current_selected_input.text() == "steam-2"
     assert dialog.inventory_table.currentRow() == -1
     assert dialog.build_payload() == {
-        "disabled": False,
+        "purchase_disabled": False,
         "selected_steam_id": None,
     }

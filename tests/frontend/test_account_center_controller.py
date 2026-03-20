@@ -32,7 +32,7 @@ def _account(
         "last_error": None,
         "created_at": "2026-03-16T12:00:00",
         "updated_at": "2026-03-16T12:00:00",
-        "disabled": False,
+        "purchase_disabled": False,
         "new_api_enabled": True,
         "fast_api_enabled": True,
         "token_enabled": True,
@@ -61,7 +61,7 @@ def _account_center_row(
         "proxy_display": proxy_display,
         "purchase_capability_state": "bound",
         "purchase_pool_state": "not_connected",
-        "disabled": purchase_status_code == "disabled",
+        "purchase_disabled": purchase_status_code == "disabled",
         "selected_steam_id": purchase_status_text if purchase_status_code == "selected_warehouse" else None,
         "selected_warehouse_text": purchase_status_text if purchase_status_code == "selected_warehouse" else None,
         "purchase_status_code": purchase_status_code,
@@ -150,18 +150,22 @@ class FakeBackendClient:
         for account in self.accounts:
             if account["account_id"] != account_id:
                 continue
-            account["disabled"] = bool(payload.get("disabled", account.get("disabled", False)))
+            account["purchase_disabled"] = bool(
+                payload.get("purchase_disabled", account.get("purchase_disabled", False))
+            )
             if payload.get("selected_steam_id") is not None:
                 account["selected_steam_id"] = payload.get("selected_steam_id")
         for row in self.account_center_rows:
             if row["account_id"] != account_id:
                 continue
-            row["disabled"] = bool(payload.get("disabled", row.get("disabled")))
+            row["purchase_disabled"] = bool(
+                payload.get("purchase_disabled", row.get("purchase_disabled", False))
+            )
             if payload.get("selected_steam_id") is not None:
                 row["selected_steam_id"] = payload.get("selected_steam_id")
                 row["selected_warehouse_text"] = payload.get("selected_steam_id")
             if row["purchase_status_code"] != "not_logged_in":
-                if row["disabled"]:
+                if row["purchase_disabled"]:
                     row["purchase_status_code"] = "disabled"
                     row["purchase_status_text"] = "禁用"
                 else:
@@ -291,7 +295,7 @@ class FakeBackendClient:
         rows: list[dict] = []
         for account in self.accounts:
             purchase_status_code = "selected_warehouse" if account.get("cookie_raw") else "not_logged_in"
-            if account.get("disabled"):
+            if account.get("purchase_disabled"):
                 purchase_status_code = "disabled"
             selected_steam_id = str(account.get("selected_steam_id") or "steam-1")
             purchase_status_text = selected_steam_id if purchase_status_code == "selected_warehouse" else "未登录"
@@ -314,7 +318,7 @@ class FakeBackendClient:
                     "api_key": account.get("api_key"),
                     "selected_steam_id": None if purchase_status_code == "not_logged_in" else selected_steam_id,
                     "selected_warehouse_text": None if purchase_status_code == "not_logged_in" else selected_steam_id,
-                    "disabled": bool(account.get("disabled", False)),
+                    "purchase_disabled": bool(account.get("purchase_disabled", False)),
                 }
             )
         return rows
@@ -598,7 +602,7 @@ def test_controller_updates_purchase_config_and_refreshes_rows():
     controller.update_account_purchase_config(
         "a-1",
         {
-            "disabled": True,
+            "purchase_disabled": True,
             "selected_steam_id": "steam-2",
         },
     )

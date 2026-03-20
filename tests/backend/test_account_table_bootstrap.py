@@ -13,8 +13,87 @@ def test_create_schema_builds_accounts_table(tmp_path):
 
     assert "accounts" in inspector.get_table_names()
     account_columns = {column["name"] for column in inspector.get_columns("accounts")}
+    assert "disabled" not in account_columns
     assert "purchase_disabled" in account_columns
     assert "purchase_recovery_due_at" in account_columns
+
+
+def test_create_schema_rebuilds_legacy_accounts_table_without_disabled_column(tmp_path):
+    db_path = tmp_path / "app.db"
+    connection = sqlite3.connect(db_path)
+    connection.execute(
+        """
+        CREATE TABLE accounts (
+            account_id TEXT PRIMARY KEY,
+            default_name TEXT NOT NULL,
+            remark_name TEXT,
+            proxy_mode TEXT NOT NULL,
+            proxy_url TEXT,
+            api_key TEXT,
+            c5_user_id TEXT,
+            c5_nick_name TEXT,
+            cookie_raw TEXT,
+            purchase_capability_state TEXT NOT NULL,
+            purchase_pool_state TEXT NOT NULL,
+            last_login_at TEXT,
+            last_error TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            disabled INTEGER NOT NULL DEFAULT 0
+        )
+        """
+    )
+    connection.execute(
+        """
+        INSERT INTO accounts (
+            account_id,
+            default_name,
+            remark_name,
+            proxy_mode,
+            proxy_url,
+            api_key,
+            c5_user_id,
+            c5_nick_name,
+            cookie_raw,
+            purchase_capability_state,
+            purchase_pool_state,
+            last_login_at,
+            last_error,
+            created_at,
+            updated_at,
+            disabled
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "a1",
+            "账号-a1",
+            "备注-a1",
+            "direct",
+            None,
+            "api-a1",
+            "10001",
+            "旧账号",
+            "NC5_accessToken=token",
+            "bound",
+            "not_connected",
+            "2026-03-20T10:00:00",
+            None,
+            "2026-03-20T10:00:00",
+            "2026-03-20T10:00:00",
+            0,
+        ),
+    )
+    connection.commit()
+    connection.close()
+
+    engine = build_engine(db_path)
+    create_schema(engine)
+
+    inspector = inspect(engine)
+    account_columns = {column["name"] for column in inspector.get_columns("accounts")}
+
+    assert "disabled" not in account_columns
+    assert "purchase_disabled" in account_columns
 
 
 def test_create_schema_backfills_query_products_and_config_threshold_columns_from_existing_query_config_items_table(tmp_path):

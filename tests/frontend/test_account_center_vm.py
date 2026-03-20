@@ -25,7 +25,7 @@ def _account(
         "last_error": None,
         "created_at": "2026-03-16T12:00:00",
         "updated_at": "2026-03-16T12:00:00",
-        "disabled": False,
+        "purchase_disabled": False,
     }
 
 
@@ -51,7 +51,7 @@ def _account_center_row(
         "proxy_display": proxy_display,
         "purchase_capability_state": "bound",
         "purchase_pool_state": "not_connected",
-        "disabled": purchase_status_code == "disabled",
+        "purchase_disabled": purchase_status_code == "disabled",
         "selected_steam_id": purchase_status_text if purchase_status_code == "selected_warehouse" else None,
         "selected_warehouse_text": purchase_status_text if purchase_status_code == "selected_warehouse" else None,
         "purchase_status_code": purchase_status_code,

@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import pytest
-
-from app_backend.domain.models.account import Account
+from types import SimpleNamespace
 
 
 def build_account(
@@ -11,10 +10,11 @@ def build_account(
     cookie_raw: str | None = None,
     disabled: bool = False,
     purchase_disabled: bool = False,
-) -> Account:
-    return Account(
+) -> object:
+    return SimpleNamespace(
         account_id=account_id,
         default_name=f"账号-{account_id}",
+        display_name=f"账号-{account_id}",
         remark_name=None,
         proxy_mode="direct",
         proxy_url=None,
@@ -37,10 +37,10 @@ def build_account(
 
 
 class FakeAccountRepository:
-    def __init__(self, accounts: list[Account]) -> None:
+    def __init__(self, accounts: list[object]) -> None:
         self._accounts = list(accounts)
 
-    def list_accounts(self) -> list[Account]:
+    def list_accounts(self) -> list[object]:
         return list(self._accounts)
 
 
@@ -58,9 +58,9 @@ def test_detail_account_selector_builds_round_robin_attempt_order_for_eligible_a
         )
     )
 
-    assert [account.account_id for account in selector.build_attempt_order()] == ["a2", "a4"]
-    assert [account.account_id for account in selector.build_attempt_order()] == ["a4", "a2"]
-    assert [account.account_id for account in selector.build_attempt_order()] == ["a2", "a4"]
+    assert [account.account_id for account in selector.build_attempt_order()] == ["a2", "a3", "a4"]
+    assert [account.account_id for account in selector.build_attempt_order()] == ["a3", "a4", "a2"]
+    assert [account.account_id for account in selector.build_attempt_order()] == ["a4", "a2", "a3"]
 
 
 def test_detail_account_selector_raises_when_no_eligible_account_exists():
@@ -70,7 +70,7 @@ def test_detail_account_selector_raises_when_no_eligible_account_exists():
         FakeAccountRepository(
             [
                 build_account("a1", cookie_raw=None),
-                build_account("a2", cookie_raw="NC5_accessToken=token-2", disabled=True),
+                build_account("a2", cookie_raw=None, disabled=True),
             ]
         )
     )

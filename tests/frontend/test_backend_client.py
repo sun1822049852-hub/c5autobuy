@@ -41,7 +41,6 @@ def _prepare_active_purchase_account(app, account_id: str = "a1") -> None:
             last_error=None,
             created_at="2026-03-16T20:00:00",
             updated_at="2026-03-16T20:00:00",
-            disabled=False,
             new_api_enabled=False,
             fast_api_enabled=False,
             token_enabled=False,
@@ -282,7 +281,6 @@ async def test_backend_client_fetches_purchase_runtime_inventory_detail(backend_
             last_error=None,
             created_at="2026-03-16T20:00:00",
             updated_at="2026-03-16T20:00:00",
-            disabled=False,
         )
     )
     app.state.purchase_runtime_service._inventory_snapshot_repository.save(
@@ -336,7 +334,6 @@ async def test_backend_client_updates_account_purchase_config(backend_client):
             last_error=None,
             created_at="2026-03-16T20:00:00",
             updated_at="2026-03-16T20:00:00",
-            disabled=False,
             new_api_enabled=True,
             fast_api_enabled=False,
             token_enabled=False,
@@ -362,7 +359,7 @@ async def test_backend_client_updates_account_purchase_config(backend_client):
     )
 
     assert updated["account_id"] == "a-config"
-    assert updated["disabled"] is False
+    assert "disabled" not in updated
     assert updated["purchase_disabled"] is True
     assert updated["selected_steam_id"] == "steam-2"
     assert updated["purchase_status_code"] == "disabled"

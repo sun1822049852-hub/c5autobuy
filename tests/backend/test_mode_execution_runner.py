@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime
+from types import SimpleNamespace
 
-from app_backend.domain.models.account import Account
 from app_backend.domain.models.query_config import QueryItem, QueryModeSetting
 
 
@@ -65,10 +65,11 @@ def build_account(
     token_enabled: bool = True,
     disabled: bool = False,
     purchase_disabled: bool = False,
-) -> Account:
-    return Account(
+) -> object:
+    return SimpleNamespace(
         account_id=account_id,
         default_name=f"账号-{account_id}",
+        display_name=f"账号-{account_id}",
         remark_name=None,
         proxy_mode="direct",
         proxy_url=None,
@@ -131,7 +132,7 @@ def test_mode_runner_filters_accounts_by_preference_and_capability():
 
     snapshot = runner.snapshot()
 
-    assert snapshot["eligible_account_count"] == 1
+    assert snapshot["eligible_account_count"] == 2
     assert snapshot["active_account_count"] == 0
 
 
@@ -153,7 +154,7 @@ def test_mode_runner_excludes_token_account_marked_not_login():
     assert snapshot["active_account_count"] == 0
 
 
-def test_mode_runner_keeps_purchase_disabled_account_query_eligible():
+def test_mode_runner_ignores_removed_disabled_flag_and_keeps_purchase_disabled_account_query_eligible():
     from app_backend.infrastructure.query.runtime.mode_runner import ModeRunner
 
     runner = ModeRunner(
@@ -167,7 +168,7 @@ def test_mode_runner_keeps_purchase_disabled_account_query_eligible():
 
     snapshot = runner.snapshot()
 
-    assert snapshot["eligible_account_count"] == 1
+    assert snapshot["eligible_account_count"] == 2
     assert snapshot["active_account_count"] == 0
 
 

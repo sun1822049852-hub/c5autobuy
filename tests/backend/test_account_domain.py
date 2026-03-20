@@ -18,7 +18,10 @@ def test_display_name_prefers_remark_then_platform_then_default():
         last_error=None,
         created_at="2026-03-16T10:00:00",
         updated_at="2026-03-16T10:00:00",
-        disabled=False,
+        purchase_disabled=False,
+        new_api_enabled=True,
+        fast_api_enabled=True,
+        token_enabled=True,
     )
 
     assert account.display_name == "备注名"

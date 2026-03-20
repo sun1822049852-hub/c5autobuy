@@ -502,7 +502,6 @@ class PurchaseRuntimeService:
             "proxy_display": proxy_url or "直连",
             "purchase_capability_state": purchase_capability_state,
             "purchase_pool_state": purchase_pool_state,
-            "disabled": bool(getattr(account, "disabled", False)),
             "purchase_disabled": purchase_disabled,
             "selected_steam_id": selected_steam_id or None,
             "selected_warehouse_text": selected_warehouse_text,
@@ -1202,8 +1201,6 @@ class _DefaultPurchaseRuntime:
         return InventoryRefreshResult(status="error", inventories=[], error="invalid refresh result")
 
     def _is_eligible_account(self, account: object) -> bool:
-        if bool(getattr(account, "disabled", False)):
-            return False
         if str(getattr(account, "purchase_capability_state", "")) != PurchaseCapabilityState.BOUND:
             return False
         return True

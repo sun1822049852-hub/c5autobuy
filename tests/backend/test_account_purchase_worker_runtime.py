@@ -26,7 +26,6 @@ def build_account(account_id: str = "a1") -> Account:
         last_error=None,
         created_at="2026-03-16T20:00:00",
         updated_at="2026-03-16T20:00:00",
-        disabled=False,
     )
 
 

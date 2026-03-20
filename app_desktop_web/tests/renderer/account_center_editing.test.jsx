@@ -24,7 +24,6 @@ function buildRows() {
       proxy_display: "直连",
       purchase_status_code: "selected_warehouse",
       purchase_status_text: "steam-1",
-      disabled: false,
       purchase_disabled: false,
       selected_steam_id: "steam-1",
       selected_warehouse_text: "steam-1",
@@ -42,7 +41,6 @@ function buildRows() {
       proxy_display: "http://127.0.0.1:9000",
       purchase_status_code: "not_logged_in",
       purchase_status_text: "未登录",
-      disabled: false,
       purchase_disabled: false,
       selected_steam_id: null,
       selected_warehouse_text: null,
@@ -60,7 +58,6 @@ function buildRows() {
       proxy_display: "socks5://127.0.0.1:9900",
       purchase_status_code: "inventory_full",
       purchase_status_text: "库存已满",
-      disabled: false,
       purchase_disabled: false,
       selected_steam_id: null,
       selected_warehouse_text: null,
@@ -189,7 +186,6 @@ function createFetchHarness() {
         proxy_display: body.proxy_mode === "direct" ? "直连" : body.proxy_url,
         purchase_status_code: "not_logged_in",
         purchase_status_text: "未登录",
-        disabled: false,
         purchase_disabled: false,
         selected_steam_id: null,
         selected_warehouse_text: null,
@@ -342,7 +338,6 @@ function createFetchHarness() {
         const nextSelectedText = body.selected_steam_id ?? row.selected_warehouse_text;
         return {
           ...row,
-          disabled: body.disabled,
           purchase_disabled: body.purchase_disabled,
           selected_steam_id: body.selected_steam_id,
           selected_warehouse_text: nextSelectedText,
@@ -608,6 +603,8 @@ describe("account center editing flows", () => {
         ]),
       );
     });
+    const purchaseConfigCall = harness.calls.find((call) => call.pathname === "/accounts/a-1/purchase-config");
+    expect(purchaseConfigCall?.body).not.toHaveProperty("disabled");
     expect(screen.getByText("已更新购买配置：账号 A")).toBeInTheDocument();
   });
 

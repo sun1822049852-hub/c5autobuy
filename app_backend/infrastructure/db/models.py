@@ -24,7 +24,6 @@ class AccountRecord(Base):
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[str] = mapped_column(Text, nullable=False)
-    disabled: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     purchase_disabled: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     purchase_recovery_due_at: Mapped[str | None] = mapped_column(Text, nullable=True)
     new_api_enabled: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
