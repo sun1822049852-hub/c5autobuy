@@ -256,6 +256,33 @@ async def test_account_worker_reuses_runtime_account_adapter_across_runs():
     assert seen_accounts[0] is seen_accounts[1]
 
 
+async def test_account_worker_cleanup_keeps_shared_runtime_account_sessions_open(monkeypatch):
+    from app_backend.infrastructure.query.runtime.account_query_worker import AccountQueryWorker
+    from app_backend.infrastructure.query.runtime.runtime_account_adapter import RuntimeAccountAdapter
+
+    closed = {"global": 0, "api": 0}
+
+    async def fake_close_global_session(self):
+        closed["global"] += 1
+
+    async def fake_close_api_session(self):
+        closed["api"] += 1
+
+    monkeypatch.setattr(RuntimeAccountAdapter, "close_global_session", fake_close_global_session)
+    monkeypatch.setattr(RuntimeAccountAdapter, "close_api_session", fake_close_api_session)
+
+    shared_runtime_account = RuntimeAccountAdapter(build_account("a1", api_key="api-1"))
+    worker = AccountQueryWorker(
+        mode_type="new_api",
+        account=build_account("a1", api_key="api-1"),
+        runtime_account=shared_runtime_account,
+    )
+
+    await worker.cleanup()
+
+    assert closed == {"global": 0, "api": 0}
+
+
 async def test_account_worker_cleanup_closes_reused_sessions(monkeypatch):
     from app_backend.infrastructure.query.runtime.account_query_worker import AccountQueryWorker
     from app_backend.infrastructure.query.runtime.runtime_account_adapter import RuntimeAccountAdapter

@@ -17,12 +17,14 @@ class AccountQueryWorker:
         *,
         mode_type: str,
         account: object,
+        runtime_account: RuntimeAccountAdapter | None = None,
         scanner_adapter: QueryExecutorRouter | Any | None = None,
         now_provider=None,
     ) -> None:
         self._mode_type = mode_type
         self._account = account
-        self._runtime_account = RuntimeAccountAdapter(account)
+        self._runtime_account = runtime_account or RuntimeAccountAdapter(account)
+        self._owns_runtime_account = runtime_account is None
         self._scanner_adapter = scanner_adapter or QueryExecutorRouter()
         self._now_provider = now_provider or time.time
         self._query_count = 0
@@ -90,6 +92,8 @@ class AccountQueryWorker:
         }
 
     async def cleanup(self) -> None:
+        if not self._owns_runtime_account:
+            return
         await self._runtime_account.close_global_session()
         await self._runtime_account.close_api_session()
 

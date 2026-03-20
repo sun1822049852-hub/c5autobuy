@@ -22,12 +22,14 @@ class QueryTaskRuntime:
         runtime_session_id: str | None = None,
         mode_runner_factory=None,
         query_item_scheduler_factory=None,
+        runtime_account_provider=None,
         hit_sink=None,
         event_sink=None,
     ) -> None:
         self._config = config
         self._accounts = list(accounts)
         self._runtime_session_id = str(runtime_session_id or "") or None
+        self._runtime_account_provider = runtime_account_provider
         self._hit_sink = hit_sink
         self._event_sink = event_sink
         self._running = False
@@ -53,6 +55,7 @@ class QueryTaskRuntime:
                     query_item_scheduler=mode_scheduler,
                     query_config_id=str(self._config.config_id),
                     runtime_session_id=self._runtime_session_id,
+                    runtime_account_provider=self._runtime_account_provider,
                     hit_sink=self._hit_sink,
                     event_sink=self._event_sink,
                 )
@@ -169,6 +172,7 @@ class QueryTaskRuntime:
         query_item_scheduler=None,
         query_config_id: str | None = None,
         runtime_session_id: str | None = None,
+        runtime_account_provider=None,
         hit_sink=None,
         event_sink=None,
     ) -> ModeRunner:
@@ -179,6 +183,7 @@ class QueryTaskRuntime:
             query_item_scheduler=query_item_scheduler,
             query_config_id=query_config_id,
             runtime_session_id=runtime_session_id,
+            runtime_account_provider=runtime_account_provider,
             hit_sink=hit_sink,
             event_sink=event_sink,
         )
@@ -197,6 +202,7 @@ class QueryTaskRuntime:
         query_item_scheduler,
         query_config_id,
         runtime_session_id,
+        runtime_account_provider,
         hit_sink,
         event_sink,
     ):
@@ -215,6 +221,12 @@ class QueryTaskRuntime:
             allow_var_keyword=False,
         ):
             kwargs["runtime_session_id"] = runtime_session_id
+        if runtime_account_provider is not None and QueryTaskRuntime._factory_accepts_parameter(
+            factory,
+            "runtime_account_provider",
+            allow_var_keyword=False,
+        ):
+            kwargs["runtime_account_provider"] = runtime_account_provider
         if hit_sink is not None and QueryTaskRuntime._factory_accepts_parameter(factory, "hit_sink"):
             kwargs["hit_sink"] = hit_sink
         if event_sink is not None and QueryTaskRuntime._factory_accepts_parameter(factory, "event_sink"):

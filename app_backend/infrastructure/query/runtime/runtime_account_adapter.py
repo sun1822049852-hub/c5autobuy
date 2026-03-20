@@ -27,12 +27,20 @@ class RuntimeAccountAdapter:
 
     def __init__(self, account: object) -> None:
         self._account = account
+        self.current_user_id = ""
+        self.current_account_name = None
+        self.login_status = False
+        self.account_proxies: dict[str, str | None] = {}
+        self._global_session = None
+        self._api_session = None
+        self.bind_account(account)
+
+    def bind_account(self, account: object) -> None:
+        self._account = account
         self.current_user_id = str(getattr(account, "account_id"))
         self.current_account_name = getattr(account, "display_name", None) or getattr(account, "default_name", None)
         self.login_status = self.get_x_access_token() is not None
         self.account_proxies = {self.current_user_id: self._proxy_url_or_none}
-        self._global_session = None
-        self._api_session = None
 
     @property
     def _proxy_url_or_none(self) -> str | None:

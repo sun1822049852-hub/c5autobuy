@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import threading
 from collections.abc import Callable
 from datetime import datetime
@@ -8,6 +9,7 @@ from uuid import uuid4
 
 from app_backend.domain.enums.account_states import PurchaseCapabilityState, PurchasePoolState
 from app_backend.domain.models.query_config import QueryConfig, QueryModeSetting
+from app_backend.infrastructure.query.runtime.runtime_account_adapter import RuntimeAccountAdapter
 from app_backend.infrastructure.query.runtime.query_task_runtime import QueryTaskRuntime
 
 RuntimeFactory = Callable[..., object]
@@ -28,6 +30,7 @@ class QueryRuntimeService:
         self._purchase_runtime_service = purchase_runtime_service
         self._state_lock = threading.RLock()
         self._runtime = None
+        self._runtime_accounts: dict[str, RuntimeAccountAdapter] = {}
         self._pending_resume_config_id: str | None = None
         self._pending_resume_config_name: str | None = None
         self._pending_resume_runtime_session_id: str | None = None
@@ -109,6 +112,7 @@ class QueryRuntimeService:
             self._clear_pending_resume_state()
         if runtime is not None:
             runtime.stop()
+        self._close_runtime_accounts()
         self._stop_linked_purchase_runtime()
         return True, "查询任务已停止"
 
@@ -468,6 +472,7 @@ class QueryRuntimeService:
         accounts: list[object],
         *,
         runtime_session_id: str | None = None,
+        runtime_account_provider=None,
         hit_sink=None,
         event_sink=None,
     ) -> QueryTaskRuntime:
@@ -475,6 +480,7 @@ class QueryRuntimeService:
             config,
             accounts,
             runtime_session_id=runtime_session_id,
+            runtime_account_provider=runtime_account_provider,
             hit_sink=hit_sink,
             event_sink=event_sink,
         )
@@ -491,6 +497,12 @@ class QueryRuntimeService:
         event_sink = self._resolve_event_sink()
         if event_sink is not None and self._runtime_factory_accepts_parameter("event_sink"):
             kwargs["event_sink"] = event_sink
+        runtime_account_provider = self._resolve_runtime_account_provider()
+        if runtime_account_provider is not None and self._runtime_factory_accepts_parameter(
+            "runtime_account_provider",
+            allow_var_keyword=False,
+        ):
+            kwargs["runtime_account_provider"] = runtime_account_provider
         try:
             return self._runtime_factory(config, accounts, **kwargs)
         except TypeError as exc:
@@ -500,6 +512,8 @@ class QueryRuntimeService:
                 fallback_kwargs.pop("event_sink", None)
             if "unexpected keyword argument 'hit_sink'" in message:
                 fallback_kwargs.pop("hit_sink", None)
+            if "unexpected keyword argument 'runtime_account_provider'" in message:
+                fallback_kwargs.pop("runtime_account_provider", None)
             if fallback_kwargs == kwargs:
                 raise
             return self._runtime_factory(config, accounts, **fallback_kwargs)
@@ -528,6 +542,9 @@ class QueryRuntimeService:
 
     def _resolve_event_sink(self):
         return self._handle_runtime_event
+
+    def _resolve_runtime_account_provider(self):
+        return self._get_or_create_runtime_account
 
     def _ensure_purchase_runtime_started(self) -> tuple[bool, str]:
         if self._purchase_runtime_service is None:
@@ -695,3 +712,52 @@ class QueryRuntimeService:
             mark_account_auth_invalid(account_id=account_id, error=error)
         except Exception:
             return
+
+    def _get_or_create_runtime_account(self, account: object) -> RuntimeAccountAdapter:
+        account_id = str(getattr(account, "account_id", "") or "")
+        if not account_id:
+            return RuntimeAccountAdapter(account)
+        runtime_account = self._runtime_accounts.get(account_id)
+        if runtime_account is None:
+            runtime_account = RuntimeAccountAdapter(account)
+            self._runtime_accounts[account_id] = runtime_account
+            return runtime_account
+        runtime_account.bind_account(account)
+        return runtime_account
+
+    def _close_runtime_accounts(self) -> None:
+        runtime_accounts = list(self._runtime_accounts.values())
+        self._runtime_accounts = {}
+        for runtime_account in runtime_accounts:
+            try:
+                _run_coroutine_sync(runtime_account.close_global_session())
+            except Exception:
+                pass
+            try:
+                _run_coroutine_sync(runtime_account.close_api_session())
+            except Exception:
+                pass
+
+
+def _run_coroutine_sync(coroutine):
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coroutine)
+
+    result_holder: dict[str, object] = {}
+    error_holder: dict[str, BaseException] = {}
+
+    def runner() -> None:
+        try:
+            result_holder["value"] = asyncio.run(coroutine)
+        except BaseException as exc:  # pragma: no cover - defensive thread bridge
+            error_holder["error"] = exc
+
+    thread = threading.Thread(target=runner, daemon=True)
+    thread.start()
+    thread.join()
+
+    if "error" in error_holder:
+        raise error_holder["error"]
+    return result_holder.get("value")

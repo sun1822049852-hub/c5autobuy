@@ -874,6 +874,60 @@ def test_runtime_service_switches_running_config_when_starting_a_different_confi
     assert snapshot["config_name"] == "测试配置"
 
 
+def test_runtime_service_reuses_runtime_account_adapter_across_config_switch_and_closes_it_on_stop(monkeypatch):
+    from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
+    from app_backend.infrastructure.query.runtime.runtime_account_adapter import RuntimeAccountAdapter
+
+    repository = MultiQueryConfigRepository([build_config("cfg-1"), build_config("cfg-2")])
+    purchase_service = FakePurchaseRuntimeService()
+    account_repository = FakeAccountRepository([build_account("a1", api_key="api-1")])
+    created_runtimes: list[FakeRuntime] = []
+    closed: list[tuple[str, str]] = []
+
+    async def fake_close_global_session(self):
+        closed.append(("global", self.current_user_id))
+
+    async def fake_close_api_session(self):
+        closed.append(("api", self.current_user_id))
+
+    monkeypatch.setattr(RuntimeAccountAdapter, "close_global_session", fake_close_global_session)
+    monkeypatch.setattr(RuntimeAccountAdapter, "close_api_session", fake_close_api_session)
+
+    class FakeRuntimeWithSharedAccounts(FakeRuntime):
+        def __init__(self, config, accounts, *, runtime_account_provider=None) -> None:
+            super().__init__(config, accounts)
+            assert callable(runtime_account_provider)
+            self.runtime_accounts = [runtime_account_provider(account) for account in accounts]
+            created_runtimes.append(self)
+
+    service = QueryRuntimeService(
+        query_config_repository=repository,
+        account_repository=account_repository,
+        runtime_factory=lambda config, accounts, runtime_account_provider=None: FakeRuntimeWithSharedAccounts(
+            config,
+            accounts,
+            runtime_account_provider=runtime_account_provider,
+        ),
+        purchase_runtime_service=purchase_service,
+    )
+
+    started_first, message_first = service.start(config_id="cfg-1")
+    started_second, message_second = service.start(config_id="cfg-2")
+    stopped, stop_message = service.stop()
+
+    assert started_first is True
+    assert message_first == "查询任务已启动"
+    assert started_second is True
+    assert message_second == "查询任务已启动"
+    assert len(created_runtimes) == 2
+    assert created_runtimes[0].runtime_accounts[0] is created_runtimes[1].runtime_accounts[0]
+    assert closed.count(("global", "a1")) == 1
+    assert closed.count(("api", "a1")) == 1
+    assert len(closed) == 2
+    assert stopped is True
+    assert stop_message == "查询任务已停止"
+
+
 def test_runtime_service_enters_waiting_state_when_no_purchase_accounts_are_available():
     from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
 
@@ -938,6 +992,59 @@ def test_runtime_service_starts_in_waiting_state_and_auto_recovers_when_purchase
     assert snapshot["running"] is True
     assert snapshot["config_id"] == "cfg-1"
     assert snapshot["config_name"] == "测试配置"
+
+
+def test_runtime_service_reuses_runtime_account_adapter_after_purchase_pause_and_recovery(monkeypatch):
+    from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
+    from app_backend.infrastructure.query.runtime.runtime_account_adapter import RuntimeAccountAdapter
+
+    repository = FakeQueryConfigRepository(build_config("cfg-1"))
+    purchase_service = FakePurchaseRuntimeService()
+    account_repository = FakeAccountRepository([build_account("a1", api_key="api-1")])
+    created_runtimes: list[FakeRuntime] = []
+    closed: list[tuple[str, str]] = []
+
+    async def fake_close_global_session(self):
+        closed.append(("global", self.current_user_id))
+
+    async def fake_close_api_session(self):
+        closed.append(("api", self.current_user_id))
+
+    monkeypatch.setattr(RuntimeAccountAdapter, "close_global_session", fake_close_global_session)
+    monkeypatch.setattr(RuntimeAccountAdapter, "close_api_session", fake_close_api_session)
+
+    class FakeRuntimeWithSharedAccounts(FakeRuntime):
+        def __init__(self, config, accounts, *, runtime_account_provider=None) -> None:
+            super().__init__(config, accounts)
+            assert callable(runtime_account_provider)
+            self.runtime_accounts = [runtime_account_provider(account) for account in accounts]
+            created_runtimes.append(self)
+
+    service = QueryRuntimeService(
+        query_config_repository=repository,
+        account_repository=account_repository,
+        runtime_factory=lambda config, accounts, runtime_account_provider=None: FakeRuntimeWithSharedAccounts(
+            config,
+            accounts,
+            runtime_account_provider=runtime_account_provider,
+        ),
+        purchase_runtime_service=purchase_service,
+    )
+
+    started, message = service.start(config_id="cfg-1")
+    purchase_service.emit_all_accounts_unavailable()
+    purchase_service.emit_accounts_recovered()
+    stopped, stop_message = service.stop()
+
+    assert started is True
+    assert message == "查询任务已启动"
+    assert len(created_runtimes) == 2
+    assert created_runtimes[0].runtime_accounts[0] is created_runtimes[1].runtime_accounts[0]
+    assert closed.count(("global", "a1")) == 1
+    assert closed.count(("api", "a1")) == 1
+    assert len(closed) == 2
+    assert stopped is True
+    assert stop_message == "查询任务已停止"
 
 
 def test_runtime_service_pauses_query_when_purchase_accounts_become_unavailable():

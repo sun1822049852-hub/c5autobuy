@@ -28,6 +28,7 @@ class ModeRunner:
         query_config_id: str | None = None,
         runtime_session_id: str | None = None,
         worker_factory=None,
+        runtime_account_provider=None,
         now_provider=None,
         random_provider=None,
         hit_sink=None,
@@ -41,6 +42,7 @@ class ModeRunner:
         self._random_provider = random_provider or random.uniform
         self._query_config_id = str(query_config_id or "") or None
         self._runtime_session_id = str(runtime_session_id or "") or None
+        self._runtime_account_provider = runtime_account_provider
         self._hit_sink = hit_sink
         self._event_sink = event_sink
         self._query_item_scheduler = query_item_scheduler or QueryItemScheduler(self._query_items)
@@ -193,7 +195,14 @@ class ModeRunner:
         return active_workers
 
     def _build_default_worker(self, mode_type: str, account: object) -> AccountQueryWorker:
-        return AccountQueryWorker(mode_type=mode_type, account=account)
+        runtime_account = None
+        if callable(self._runtime_account_provider):
+            runtime_account = self._runtime_account_provider(account)
+        return AccountQueryWorker(
+            mode_type=mode_type,
+            account=account,
+            runtime_account=runtime_account,
+        )
 
     async def _reserve_next_item(self, worker: object, *, active_workers: list[object]):
         if not hasattr(self._query_item_scheduler, "reserve_item"):
