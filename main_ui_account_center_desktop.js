@@ -21,6 +21,58 @@ function resolveElectronInstallScript(rootDirectory = __dirname) {
 }
 
 
+function resolveNpmCliScript() {
+  try {
+    return require.resolve("npm/bin/npm-cli.js");
+  } catch {
+    return null;
+  }
+}
+
+
+function buildRendererBuildSpec({
+  comSpec = process.env.ComSpec || "cmd.exe",
+  platform = process.platform,
+  resolveNpmCliScript: resolveNpmCliScriptImpl = resolveNpmCliScript,
+} = {}) {
+  const npmCliScript = resolveNpmCliScriptImpl();
+  if (npmCliScript) {
+    return {
+      command: process.execPath,
+      args: [
+        npmCliScript,
+        "--prefix",
+        "app_desktop_web",
+        "run",
+        "build",
+      ],
+    };
+  }
+
+  if (platform === "win32") {
+    return {
+      command: comSpec,
+      args: [
+        "/d",
+        "/s",
+        "/c",
+        "npm.cmd --prefix app_desktop_web run build",
+      ],
+    };
+  }
+
+  return {
+    command: "npm",
+    args: [
+      "--prefix",
+      "app_desktop_web",
+      "run",
+      "build",
+    ],
+  };
+}
+
+
 function buildElectronLaunchSpec(
   rootDirectory = __dirname,
   {
@@ -194,8 +246,11 @@ function ensureRendererBuild(
   {
     existsSync = fs.existsSync,
     readdirSync = fs.readdirSync,
+    resolveNpmCliScript: resolveNpmCliScriptImpl = resolveNpmCliScript,
     spawnSync: spawnSyncImpl = spawnSync,
     statSync = fs.statSync,
+    platform = process.platform,
+    comSpec = process.env.ComSpec || "cmd.exe",
   } = {},
 ) {
   const distEntryPath = path.join(appDirectory, "dist", "index.html");
@@ -221,15 +276,23 @@ function ensureRendererBuild(
     return;
   }
 
-  const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
+  const buildSpec = buildRendererBuildSpec({
+    comSpec,
+    platform,
+    resolveNpmCliScript: resolveNpmCliScriptImpl,
+  });
   const buildResult = spawnSyncImpl(
-    npmCommand,
-    ["--prefix", "app_desktop_web", "run", "build"],
+    buildSpec.command,
+    buildSpec.args,
     {
       cwd: __dirname,
       stdio: "inherit",
     },
   );
+
+  if (buildResult.error) {
+    throw buildResult.error;
+  }
 
   if (buildResult.status !== 0) {
     process.exit(buildResult.status ?? 1);
@@ -272,6 +335,7 @@ if (require.main === module) {
 module.exports = {
   buildElectronLaunchEnv,
   buildElectronLaunchSpec,
+  buildRendererBuildSpec,
   buildElectronInstallEnv,
   ensureElectronRuntime,
   ensureRendererBuild,
@@ -280,4 +344,5 @@ module.exports = {
   main,
   resolveElectronCliScript,
   resolveElectronInstallScript,
+  resolveNpmCliScript,
 };

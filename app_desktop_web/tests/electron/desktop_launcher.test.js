@@ -109,7 +109,7 @@ describe("desktop launcher", () => {
     );
   });
 
-  it("rebuilds the renderer when source files are newer than the existing dist bundle", () => {
+  it("rebuilds the renderer through node plus npm cli to avoid windows npm.cmd spawn errors", () => {
     const appDirectory = "C:/demo/project/app_desktop_web";
     const distEntryPath = path.join(appDirectory, "dist", "index.html");
     const srcDirectory = path.join(appDirectory, "src");
@@ -118,6 +118,7 @@ describe("desktop launcher", () => {
     const queryPagePath = path.join(srcDirectory, "features", "query-system", "query_system_page.jsx");
     const rootIndexPath = path.join(appDirectory, "index.html");
     const viteConfigPath = path.join(appDirectory, "vite.config.js");
+    const npmCliPath = "C:/Program Files/nodejs/node_modules/npm/bin/npm-cli.js";
 
     const existingPaths = new Set([
       distEntryPath,
@@ -165,13 +166,15 @@ describe("desktop launcher", () => {
     launcher.ensureRendererBuild(appDirectory, {
       existsSync,
       readdirSync,
+      resolveNpmCliScript: () => npmCliPath,
       spawnSync,
       statSync,
+      platform: "win32",
     });
 
     expect(spawnSync).toHaveBeenCalledWith(
-      expect.stringMatching(/npm(?:\.cmd)?$/),
-      ["--prefix", "app_desktop_web", "run", "build"],
+      process.execPath,
+      [npmCliPath, "--prefix", "app_desktop_web", "run", "build"],
       expect.objectContaining({
         cwd: expect.any(String),
         stdio: "inherit",
