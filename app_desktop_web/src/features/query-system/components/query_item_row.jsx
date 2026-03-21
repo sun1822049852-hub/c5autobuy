@@ -9,46 +9,61 @@ function formatValue(value) {
 }
 
 
+function formatWearRange(item) {
+  return `${formatValue(item.detail_min_wear)} ~ ${formatValue(item.detail_max_wear)}`;
+}
+
+
 export function QueryItemRow({
+  isDeleteMode,
   item,
+  onDeleteItem,
   onEditItem,
 }) {
   const displayName = item.item_name || item.market_hash_name || item.query_item_id;
 
   return (
     <section className="query-item-row" role="region" aria-label={`商品 ${displayName}`}>
-      <div className="query-item-row__summary">
-        <div className="query-item-row__headline">
-          <h3 className="query-item-row__title">{displayName}</h3>
+      <div className="query-item-row__content">
+        <div className="query-item-row__name">{displayName}</div>
+        <button
+          className="query-item-row__value"
+          type="button"
+          aria-label={`修改价格 ${displayName}`}
+          onClick={() => onEditItem(item.query_item_id)}
+        >
+          {formatValue(item.max_price)}
+        </button>
+        <button
+          className="query-item-row__value"
+          type="button"
+          aria-label={`修改磨损 ${displayName}`}
+          onClick={() => onEditItem(item.query_item_id)}
+        >
+          {formatWearRange(item)}
+        </button>
+        {ALL_MODES.map((modeType) => (
           <button
-            className="ghost-button query-item-row__action"
+            key={modeType}
+            className="query-item-row__value query-item-row__value--status"
             type="button"
+            aria-label={`修改 ${modeType} ${displayName}`}
             onClick={() => onEditItem(item.query_item_id)}
           >
-            {`编辑 ${displayName}`}
+            {item.statusByMode[modeType]?.status_message || "无可用账号"}
           </button>
-        </div>
-
-        <div className="query-item-row__metrics">
-          <span className="query-item-row__metric">价格 {formatValue(item.max_price)}</span>
-          <span className="query-item-row__metric">
-            磨损 {formatValue(item.detail_min_wear)} ~ {formatValue(item.detail_max_wear)}
-          </span>
-          {ALL_MODES.map((modeType) => (
-            <span key={modeType} className="query-item-row__metric">
-              {modeType} {item.modeTargets[modeType] ?? 0}
-            </span>
-          ))}
-        </div>
-
-        <div className="query-item-row__statuses">
-          {ALL_MODES.map((modeType) => (
-            <span key={modeType} className="query-item-row__status-chip">
-              {modeType}：{item.statusByMode[modeType]?.status_message || "无可用账号"}
-            </span>
-          ))}
-        </div>
+        ))}
       </div>
+      {isDeleteMode ? (
+        <button
+          className="query-item-row__delete is-visible"
+          type="button"
+          aria-label={`删除商品 ${displayName}`}
+          onClick={() => onDeleteItem(item.query_item_id)}
+        >
+          -
+        </button>
+      ) : null}
     </section>
   );
 }

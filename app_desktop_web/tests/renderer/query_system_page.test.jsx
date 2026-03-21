@@ -179,13 +179,15 @@ describe("query system page", () => {
       expect(screen.getByText("C5 账号中心")).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole("button", { name: "查询系统" }));
+    await user.click(screen.getByRole("button", { name: "配置管理" }));
 
-    expect(await screen.findByRole("heading", { name: "查询工作台" })).toBeInTheDocument();
-    const nav = screen.getByRole("navigation", { name: "查询配置导航" });
+    expect(await screen.findByRole("heading", { name: "白天配置" })).toBeInTheDocument();
+    const nav = screen.getByRole("navigation", { name: "配置管理导航" });
     expect(nav).toBeInTheDocument();
     const currentConfigSection = screen.getByText("当前配置").closest("section");
+    expect(screen.queryByText("查询工作台")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "新建配置" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "切换配置删除模式" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "启动当前配置" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "停止当前配置" })).not.toBeInTheDocument();
     expect(within(nav).getByText("白天配置")).toBeInTheDocument();
@@ -193,9 +195,11 @@ describe("query system page", () => {
     expect(screen.getByText("当前配置")).toBeInTheDocument();
     expect(currentConfigSection).not.toBeNull();
     expect(within(currentConfigSection).getByText("已停止")).toBeInTheDocument();
+    expect(within(currentConfigSection).getByText("未运行")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "保存当前配置" })).toBeInTheDocument();
     expect(screen.getByText("new_api 2")).toBeInTheDocument();
     expect(screen.getByText("token 3")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "添加商品" })).toBeInTheDocument();
   });
 
   it("creates and deletes configs through centered dialogs", async () => {
@@ -204,8 +208,8 @@ describe("query system page", () => {
     const user = userEvent.setup();
 
     render(<App />);
-    await user.click(await screen.findByRole("button", { name: "查询系统" }));
-    await screen.findByRole("heading", { name: "查询工作台" });
+    await user.click(await screen.findByRole("button", { name: "配置管理" }));
+    await screen.findByRole("heading", { name: "白天配置" });
 
     await user.click(screen.getByRole("button", { name: "新建配置" }));
 
@@ -218,9 +222,10 @@ describe("query system page", () => {
       expect(screen.getByRole("heading", { name: "新建夜巡配置" })).toBeInTheDocument();
     });
 
-    const nav = screen.getByRole("navigation", { name: "查询配置导航" });
+    const nav = screen.getByRole("navigation", { name: "配置管理导航" });
     expect(within(nav).getByText("新建夜巡配置")).toBeInTheDocument();
 
+    await user.click(screen.getByRole("button", { name: "切换配置删除模式" }));
     await user.click(within(nav).getByRole("button", { name: "删除配置 夜刀配置" }));
     const deleteDialog = await screen.findByRole("dialog", { name: "删除配置" });
     expect(within(deleteDialog).getByText("夜刀配置")).toBeInTheDocument();
@@ -252,16 +257,24 @@ describe("query system page", () => {
     const user = userEvent.setup();
 
     render(<App />);
-    await user.click(await screen.findByRole("button", { name: "查询系统" }));
-    await screen.findByRole("heading", { name: "查询工作台" });
+    await user.click(await screen.findByRole("button", { name: "配置管理" }));
+    await screen.findByRole("heading", { name: "白天配置" });
 
-    const nav = screen.getByRole("navigation", { name: "查询配置导航" });
+    const nav = screen.getByRole("navigation", { name: "配置管理导航" });
     await user.click(within(nav).getByRole("button", { name: /^夜刀配置/ }));
 
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "夜刀配置" })).toBeInTheDocument();
     });
-    expect(screen.getByText("夜间专用")).toBeInTheDocument();
+    expect(harness.calls).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          body: null,
+          method: "GET",
+          pathname: "/query-configs/cfg-2",
+        }),
+      ]),
+    );
   });
 
   it("shows waiting status when backend reports a config is waiting for accounts", async () => {
@@ -277,13 +290,13 @@ describe("query system page", () => {
     const user = userEvent.setup();
 
     render(<App />);
-    await user.click(await screen.findByRole("button", { name: "查询系统" }));
+    await user.click(await screen.findByRole("button", { name: "配置管理" }));
 
     await waitFor(() => {
       expect(screen.getByRole("heading", { name: "夜刀配置" })).toBeInTheDocument();
     });
 
-    const nav = screen.getByRole("navigation", { name: "查询配置导航" });
+    const nav = screen.getByRole("navigation", { name: "配置管理导航" });
     expect(within(nav).getByRole("button", { name: /^夜刀配置/ })).toHaveTextContent("等待账号");
     const currentConfigSection = screen.getByText("当前配置").closest("section");
     expect(currentConfigSection).not.toBeNull();
@@ -306,10 +319,10 @@ describe("query system page", () => {
     const user = userEvent.setup();
 
     render(<App />);
-    await user.click(await screen.findByRole("button", { name: "查询系统" }));
+    await user.click(await screen.findByRole("button", { name: "配置管理" }));
     await screen.findByRole("heading", { name: "白天配置" });
 
-    const nav = screen.getByRole("navigation", { name: "查询配置导航" });
+    const nav = screen.getByRole("navigation", { name: "配置管理导航" });
     expect(within(nav).getByRole("button", { name: /^白天配置/ })).toHaveTextContent("运行中");
     expect(within(nav).getByRole("button", { name: /^夜刀配置/ })).toHaveTextContent("已停止");
     expect(screen.queryByRole("button", { name: "启动当前配置" })).not.toBeInTheDocument();

@@ -6,7 +6,7 @@ const NAV_ITEMS = [
   },
   {
     id: "query-system",
-    label: "查询系统",
+    label: "配置管理",
     tag: "Live",
   },
   {

@@ -370,11 +370,13 @@ export function useQuerySystemPage({ client }) {
   const [isCreateConfigDialogOpen, setIsCreateConfigDialogOpen] = useState(false);
   const [createConfigForm, setCreateConfigForm] = useState(EMPTY_CONFIG_FORM);
   const [deleteConfigTarget, setDeleteConfigTarget] = useState(null);
+  const [isConfigDeleteMode, setIsConfigDeleteMode] = useState(false);
 
   const [isCreateItemDialogOpen, setIsCreateItemDialogOpen] = useState(false);
   const [createItemDraft, setCreateItemDraft] = useState(createBlankItemDraft);
   const [editingItemId, setEditingItemId] = useState(null);
   const [editItemDraft, setEditItemDraft] = useState(null);
+  const [isItemDeleteMode, setIsItemDeleteMode] = useState(false);
 
   const [isCreatingConfig, setIsCreatingConfig] = useState(false);
   const [isDeletingConfig, setIsDeletingConfig] = useState(false);
@@ -399,6 +401,8 @@ export function useQuerySystemPage({ client }) {
     setEditItemDraft(null);
     setIsCreateItemDialogOpen(false);
     setCreateItemDraft(createBlankItemDraft());
+    setIsConfigDeleteMode(false);
+    setIsItemDeleteMode(false);
 
     return normalized;
   }
@@ -582,6 +586,10 @@ export function useQuerySystemPage({ client }) {
     setDeleteConfigTarget(config);
   }
 
+  function toggleConfigDeleteMode() {
+    setIsConfigDeleteMode((current) => !current);
+  }
+
   function closeDeleteConfigDialog() {
     setDeleteConfigTarget(null);
   }
@@ -613,6 +621,7 @@ export function useQuerySystemPage({ client }) {
       }
 
       closeDeleteConfigDialog();
+      setIsConfigDeleteMode(false);
     } catch (error) {
       setLoadError(toErrorMessage(error));
     } finally {
@@ -623,6 +632,10 @@ export function useQuerySystemPage({ client }) {
   function openCreateItemDialog() {
     setCreateItemDraft(createBlankItemDraft());
     setIsCreateItemDialogOpen(true);
+  }
+
+  function toggleItemDeleteMode() {
+    setIsItemDeleteMode((current) => !current);
   }
 
   function closeCreateItemDialog() {
@@ -757,6 +770,17 @@ export function useQuerySystemPage({ client }) {
     setEditItemDraft(createItemDraftFromItem(item));
   }
 
+  function deleteDraftItem(queryItemId) {
+    updateDraftConfig((current) => ({
+      ...current,
+      items: current.items.filter((item) => item.query_item_id !== queryItemId),
+    }));
+
+    if (editingItemId === queryItemId) {
+      closeEditItemDialog();
+    }
+  }
+
   function closeEditItemDialog() {
     setEditingItemId(null);
     setEditItemDraft(null);
@@ -819,6 +843,13 @@ export function useQuerySystemPage({ client }) {
     setSaveError("");
 
     try {
+      const draftItemIds = new Set((draftConfig.items || []).map((item) => item.query_item_id));
+      for (const item of sourceConfig?.items || []) {
+        if (!draftItemIds.has(item.query_item_id)) {
+          await client.deleteQueryItem(draftConfig.config_id, item.query_item_id);
+        }
+      }
+
       for (const item of draftConfig.items || []) {
         if (item.isNew) {
           await client.addQueryItem(
@@ -854,15 +885,18 @@ export function useQuerySystemPage({ client }) {
     currentConfig,
     currentStatusText,
     deleteConfigTarget,
+    deleteDraftItem,
     editDialogRemainingByMode,
     editItemDraft,
     hasUnsavedChanges,
+    isConfigDeleteMode,
     isCreateConfigDialogOpen,
     isCreateItemDialogOpen,
     isCreatingConfig,
     isCurrentConfigRuntimeActive,
     isDeletingConfig,
     isLoading,
+    isItemDeleteMode,
     isSaving,
     itemViewModels,
     loadError,
@@ -873,6 +907,7 @@ export function useQuerySystemPage({ client }) {
     openDeleteConfigDialog,
     closeDeleteConfigDialog,
     confirmDeleteConfig,
+    toggleConfigDeleteMode,
     openCreateItemDialog,
     closeCreateItemDialog,
     lookupCreateItemDetail,
@@ -885,6 +920,7 @@ export function useQuerySystemPage({ client }) {
     updateEditItemField,
     updateEditItemAllocation,
     applyEditItem,
+    toggleItemDeleteMode,
     runtimeMessage: runtimeStatus.message || "未运行",
     saveBarDisabled: !currentConfig || isSaving || !hasUnsavedChanges,
     saveBarMessage: (

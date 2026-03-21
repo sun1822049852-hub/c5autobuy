@@ -53,7 +53,7 @@ export function PurchaseConfigSelectorDialog({
             ))}
           </div>
         ) : (
-          <div className="purchase-config-dialog__empty">当前还没有可选配置，请先去查询系统创建并保存配置。</div>
+          <div className="purchase-config-dialog__empty">当前还没有可选配置，请先去配置管理创建并保存配置。</div>
         )}
 
         <div className="surface-actions">

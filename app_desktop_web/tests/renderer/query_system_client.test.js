@@ -52,6 +52,9 @@ describe("query system client", () => {
           max_price: body.max_price,
         });
       }
+      if (url.pathname === "/query-configs/cfg-1/items/item-1" && method === "DELETE") {
+        return jsonResponse({}, 204);
+      }
       if (url.pathname === "/query-items/parse-url" && method === "POST") {
         return jsonResponse({
           product_url: body.product_url,
@@ -105,6 +108,7 @@ describe("query system client", () => {
       detail_max_wear: 0.15,
       max_price: 123.45,
     });
+    await client.deleteQueryItem("cfg-1", "item-1");
     const parsedItem = await client.parseQueryItemUrl("https://www.c5game.com/item/1380979899390267000");
     const fetchedDetail = await client.fetchQueryItemDetail({
       product_url: parsedItem.product_url,
@@ -153,6 +157,7 @@ describe("query system client", () => {
         method: "PATCH",
         pathname: "/query-configs/cfg-1/items/item-1",
       },
+      { body: null, method: "DELETE", pathname: "/query-configs/cfg-1/items/item-1" },
       { body: { product_url: "https://www.c5game.com/item/1380979899390267000" }, method: "POST", pathname: "/query-items/parse-url" },
       {
         body: {

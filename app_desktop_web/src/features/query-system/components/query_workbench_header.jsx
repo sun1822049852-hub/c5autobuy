@@ -1,40 +1,58 @@
+function getSaveToneClass(saveMessage) {
+  if (String(saveMessage || "").includes("失败")) {
+    return "is-danger";
+  }
+  if (String(saveMessage || "").includes("未保存")) {
+    return "is-warn";
+  }
+  return "is-success";
+}
+
+
 export function QueryWorkbenchHeader({
   capacityModes,
   currentConfig,
   currentStatusText,
   isLoading,
-  onOpenCreateItemDialog,
+  isSaving,
+  onSave,
   runtimeMessage,
+  saveDisabled,
+  saveMessage,
 }) {
   return (
     <section className="query-workbench-header">
-      <div className="query-workbench-header__copy">
-        <div className="query-workbench-header__eyebrow">当前配置</div>
-        <h2 className="query-workbench-header__title">
-          {isLoading ? "正在载入配置..." : (currentConfig?.name || "未选择配置")}
-        </h2>
-        <p className="query-workbench-header__subtitle">
-          {currentConfig?.description || "左侧选择配置后，这里会承载商品、分配与运行态工作台。"}
-        </p>
-      </div>
-      <div className="query-workbench-header__meta">
-        <div className="query-workbench-header__status">{currentStatusText}</div>
-        <div className="query-workbench-header__runtime">{runtimeMessage}</div>
-        <button
-          className="accent-button query-workbench-header__action"
-          type="button"
-          disabled={!currentConfig}
-          onClick={onOpenCreateItemDialog}
-        >
-          添加商品
-        </button>
-        <div className="query-workbench-header__capacity">
-          {capacityModes.map((mode) => (
-            <div key={mode.mode_type} className="query-workbench-header__capacity-chip">
-              {mode.mode_type} {mode.available_account_count}
-            </div>
-          ))}
+      <div className="query-workbench-header__topline">
+        <div className="query-workbench-header__identity">
+          <h2 className="query-workbench-header__title">
+            {isLoading ? "正在载入配置..." : (currentConfig?.name || "未选择配置")}
+          </h2>
+          <span className="query-workbench-header__label">当前配置</span>
+          <div className="query-workbench-header__capacity">
+            {capacityModes.map((mode) => (
+              <span key={mode.mode_type} className="query-workbench-header__capacity-chip">
+                {mode.mode_type} {mode.available_account_count}
+              </span>
+            ))}
+          </div>
+          <div className="query-workbench-header__runtime">
+            <span className="query-workbench-header__status">{currentStatusText}</span>
+            <span className="query-workbench-header__runtime-text">{runtimeMessage}</span>
+          </div>
         </div>
+
+        <button
+          className="ghost-button query-workbench-header__save-button"
+          type="button"
+          disabled={saveDisabled}
+          onClick={onSave}
+        >
+          {isSaving ? "保存中..." : "保存当前配置"}
+        </button>
+      </div>
+
+      <div className="query-workbench-header__footer">
+        <div className={`query-workbench-header__save-message ${getSaveToneClass(saveMessage)}`.trim()}>{saveMessage}</div>
       </div>
     </section>
   );

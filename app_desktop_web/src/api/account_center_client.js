@@ -165,6 +165,9 @@ export function createAccountCenterClient({
     async updateQueryItem(configId, queryItemId, payload) {
       return http.patchJson(`/query-configs/${configId}/items/${queryItemId}`, payload);
     },
+    async deleteQueryItem(configId, queryItemId) {
+      await http.delete(`/query-configs/${configId}/items/${queryItemId}`);
+    },
     async applyQueryItemRuntime(configId, queryItemId) {
       return http.postJson(`/query-configs/${configId}/items/${queryItemId}/apply-runtime`, {});
     },

@@ -324,6 +324,14 @@ function createFetchHarness({
       };
       return jsonResponse(detail.items.find((item) => item.query_item_id === queryItemId));
     }
+    if (updateMatch && method === "DELETE") {
+      const queryItemId = updateMatch[1];
+      detail = {
+        ...detail,
+        items: detail.items.filter((item) => item.query_item_id !== queryItemId),
+      };
+      return jsonResponse({}, 204);
+    }
 
     if (url.pathname === "/query-configs/cfg-1/items" && method === "POST") {
       const createdItem = {
@@ -366,8 +374,8 @@ function createFetchHarness({
 
 async function openQuerySystem(user) {
   render(<App />);
-  await user.click(await screen.findByRole("button", { name: "查询系统" }));
-  await screen.findByRole("heading", { name: "查询工作台" });
+  await user.click(await screen.findByRole("button", { name: "配置管理" }));
+  await screen.findByRole("heading", { name: "白天配置" });
 }
 
 
@@ -382,16 +390,15 @@ describe("query system editing", () => {
     const itemOne = await screen.findByRole("region", { name: "商品 AK-47 | Redline" });
     const itemTwo = screen.getByRole("region", { name: "商品 AWP | Asiimov" });
 
-    expect(within(itemOne).getByText("价格 199")).toBeInTheDocument();
-    expect(within(itemOne).getByText("磨损 0.1 ~ 0.25")).toBeInTheDocument();
-    expect(within(itemOne).getByText("new_api 1")).toBeInTheDocument();
-    expect(within(itemOne).getByText("new_api：专属中 1/1")).toBeInTheDocument();
-    expect(within(itemTwo).getByText("fast_api：无可用账号 0/1")).toBeInTheDocument();
+    expect(within(itemOne).getByRole("button", { name: "修改价格 AK-47 | Redline" })).toHaveTextContent("199");
+    expect(within(itemOne).getByRole("button", { name: "修改磨损 AK-47 | Redline" })).toHaveTextContent("0.1 ~ 0.25");
+    expect(within(itemOne).getByRole("button", { name: "修改 new_api AK-47 | Redline" })).toHaveTextContent("专属中 1/1");
+    expect(within(itemTwo).getByRole("button", { name: "修改 fast_api AWP | Asiimov" })).toHaveTextContent("无可用账号 0/1");
     const itemThree = screen.getByRole("region", { name: "商品 M4A1-S | Blue Phosphor" });
-    expect(within(itemThree).getByText("new_api：手动暂停")).toBeInTheDocument();
-    expect(within(itemThree).getByText("token：手动暂停")).toBeInTheDocument();
+    expect(within(itemThree).getByRole("button", { name: "修改 new_api M4A1-S | Blue Phosphor" })).toHaveTextContent("手动暂停");
+    expect(within(itemThree).getByRole("button", { name: "修改 token M4A1-S | Blue Phosphor" })).toHaveTextContent("手动暂停");
 
-    await user.click(within(itemOne).getByRole("button", { name: "编辑 AK-47 | Redline" }));
+    await user.click(within(itemOne).getByRole("button", { name: "修改价格 AK-47 | Redline" }));
     const editorOne = await screen.findByRole("dialog", { name: "编辑商品" });
 
     expect(within(editorOne).getByText("天然磨损范围 0.1 ~ 0.7")).toBeInTheDocument();
@@ -402,14 +409,14 @@ describe("query system editing", () => {
     expect(within(editorOne).getByText("new_api 还可分配 2")).toBeInTheDocument();
     await user.click(within(editorOne).getByRole("button", { name: "取消" }));
 
-    await user.click(within(itemTwo).getByRole("button", { name: "编辑 AWP | Asiimov" }));
+    await user.click(within(itemTwo).getByRole("button", { name: "修改价格 AWP | Asiimov" }));
     const editorTwo = await screen.findByRole("dialog", { name: "编辑商品" });
     const itemTwoNewApi = within(editorTwo).getByLabelText("new_api 专属目标");
     await user.clear(itemTwoNewApi);
     await user.type(itemTwoNewApi, "1");
     await user.click(within(editorTwo).getByRole("button", { name: "应用修改" }));
 
-    await user.click(within(itemOne).getByRole("button", { name: "编辑 AK-47 | Redline" }));
+    await user.click(within(itemOne).getByRole("button", { name: "修改价格 AK-47 | Redline" }));
     const editorOneAgain = await screen.findByRole("dialog", { name: "编辑商品" });
     expect(within(editorOneAgain).getByText("new_api 还可分配 1")).toBeInTheDocument();
   });
@@ -422,7 +429,7 @@ describe("query system editing", () => {
     await openQuerySystem(user);
 
     const itemOne = await screen.findByRole("region", { name: "商品 AK-47 | Redline" });
-    await user.click(within(itemOne).getByRole("button", { name: "编辑 AK-47 | Redline" }));
+    await user.click(within(itemOne).getByRole("button", { name: "修改价格 AK-47 | Redline" }));
     const editorOne = await screen.findByRole("dialog", { name: "编辑商品" });
 
     const minWearInput = within(editorOne).getByLabelText("配置最小磨损");
@@ -483,13 +490,13 @@ describe("query system editing", () => {
     expect(await screen.findByRole("region", { name: "商品 M4A1-S | Printstream" })).toBeInTheDocument();
 
     const saveButton = screen.getByRole("button", { name: "保存当前配置" });
-    const saveBar = saveButton.closest("section");
-    expect(saveBar).not.toBeNull();
+    const saveHeader = saveButton.closest("section");
+    expect(saveHeader).not.toBeNull();
 
     await user.click(saveButton);
 
     await waitFor(() => {
-      expect(within(saveBar).getByText("已保存")).toBeInTheDocument();
+      expect(within(saveHeader).getByText("已保存")).toBeInTheDocument();
     });
 
     expect(harness.calls).toEqual(
@@ -558,7 +565,7 @@ describe("query system editing", () => {
     await openQuerySystem(user);
 
     const itemTwo = await screen.findByRole("region", { name: "商品 AWP | Asiimov" });
-    await user.click(within(itemTwo).getByRole("button", { name: "编辑 AWP | Asiimov" }));
+    await user.click(within(itemTwo).getByRole("button", { name: "修改价格 AWP | Asiimov" }));
     const editorTwo = await screen.findByRole("dialog", { name: "编辑商品" });
     const itemTwoNewApi = within(editorTwo).getByLabelText("new_api 专属目标");
     await user.clear(itemTwoNewApi);
@@ -566,12 +573,12 @@ describe("query system editing", () => {
     await user.click(within(editorTwo).getByRole("button", { name: "应用修改" }));
 
     const saveButton = screen.getByRole("button", { name: "保存当前配置" });
-    const saveBar = saveButton.closest("section");
-    expect(saveBar).not.toBeNull();
+    const saveHeader = saveButton.closest("section");
+    expect(saveHeader).not.toBeNull();
 
     await user.click(saveButton);
 
-    expect(within(saveBar).getByText("校验失败，无法保存")).toBeInTheDocument();
+    expect(within(saveHeader).getByText("校验失败，无法保存")).toBeInTheDocument();
     expect(
       harness.calls.some(
         (call) => call.method === "PATCH" && call.pathname.startsWith("/query-configs/cfg-1/items/"),
@@ -582,5 +589,31 @@ describe("query system editing", () => {
         (call) => call.method === "POST" && call.pathname === "/query-configs/cfg-1/items",
       ),
     ).toBe(false);
+  });
+
+  it("removes an item from the draft list and persists the deletion on save", async () => {
+    const harness = createFetchHarness();
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    await openQuerySystem(user);
+
+    expect(await screen.findByRole("region", { name: "商品 AK-47 | Redline" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "切换商品删除模式" }));
+    await user.click(screen.getByRole("button", { name: "删除商品 AK-47 | Redline" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("region", { name: "商品 AK-47 | Redline" })).not.toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "保存当前配置" }));
+
+    await waitFor(() => {
+      expect(
+        harness.calls.some(
+          (call) => call.method === "DELETE" && call.pathname === "/query-configs/cfg-1/items/item-1",
+        ),
+      ).toBe(true);
+    });
   });
 });
