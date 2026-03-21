@@ -140,3 +140,113 @@ class AccountInventorySnapshotRecord(Base):
     inventories_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     refreshed_at: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class PurchaseUiPreferenceRecord(Base):
+    __tablename__ = "purchase_ui_preferences"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    selected_config_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class QueryItemStatsTotalRecord(Base):
+    __tablename__ = "query_item_stats_total"
+
+    external_item_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    item_name_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
+    product_url_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
+    query_execution_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    matched_product_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    purchase_success_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    purchase_failed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    new_api_hit_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    fast_api_hit_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    browser_hit_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_hit_at: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_success_at: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_failure_at: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class QueryItemStatsDailyRecord(Base):
+    __tablename__ = "query_item_stats_daily"
+
+    external_item_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    stat_date: Mapped[str] = mapped_column(Text, primary_key=True)
+    item_name_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
+    product_url_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
+    query_execution_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    matched_product_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    purchase_success_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    purchase_failed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    new_api_hit_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    fast_api_hit_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    browser_hit_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class QueryItemRuleStatsTotalRecord(Base):
+    __tablename__ = "query_item_rule_stats_total"
+
+    external_item_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    rule_fingerprint: Mapped[str] = mapped_column(Text, primary_key=True)
+    detail_min_wear: Mapped[float | None] = mapped_column(Float, nullable=True)
+    detail_max_wear: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    query_execution_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    matched_product_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    purchase_success_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    purchase_failed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class QueryItemRuleStatsDailyRecord(Base):
+    __tablename__ = "query_item_rule_stats_daily"
+
+    external_item_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    rule_fingerprint: Mapped[str] = mapped_column(Text, primary_key=True)
+    stat_date: Mapped[str] = mapped_column(Text, primary_key=True)
+    detail_min_wear: Mapped[float | None] = mapped_column(Float, nullable=True)
+    detail_max_wear: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    query_execution_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    matched_product_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    purchase_success_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    purchase_failed_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class AccountCapabilityStatsTotalRecord(Base):
+    __tablename__ = "account_capability_stats_total"
+
+    account_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    mode_type: Mapped[str] = mapped_column(Text, primary_key=True)
+    phase: Mapped[str] = mapped_column(Text, primary_key=True)
+    account_display_name_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sample_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    success_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_latency_ms: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    max_latency_ms: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    last_latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class AccountCapabilityStatsDailyRecord(Base):
+    __tablename__ = "account_capability_stats_daily"
+
+    account_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    mode_type: Mapped[str] = mapped_column(Text, primary_key=True)
+    phase: Mapped[str] = mapped_column(Text, primary_key=True)
+    stat_date: Mapped[str] = mapped_column(Text, primary_key=True)
+    account_display_name_snapshot: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sample_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    success_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_latency_ms: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    max_latency_ms: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    last_latency_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False)

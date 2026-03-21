@@ -22,11 +22,18 @@ def build_session_factory(engine: Engine) -> sessionmaker:
 def create_schema(engine: Engine) -> None:
     from app_backend.infrastructure.db.models import (
         AccountRecord,
+        AccountCapabilityStatsDailyRecord,
+        AccountCapabilityStatsTotalRecord,
         AccountInventorySnapshotRecord,
+        PurchaseUiPreferenceRecord,
         QueryConfigItemRecord,
         QueryItemModeAllocationRecord,
+        QueryItemRuleStatsDailyRecord,
+        QueryItemRuleStatsTotalRecord,
         QueryProductRecord,
         QueryConfigRecord,
+        QueryItemStatsDailyRecord,
+        QueryItemStatsTotalRecord,
         QueryModeSettingRecord,
     )
 
@@ -40,6 +47,13 @@ def create_schema(engine: Engine) -> None:
             QueryConfigItemRecord.__table__,
             QueryItemModeAllocationRecord.__table__,
             QueryModeSettingRecord.__table__,
+            PurchaseUiPreferenceRecord.__table__,
+            QueryItemStatsTotalRecord.__table__,
+            QueryItemStatsDailyRecord.__table__,
+            QueryItemRuleStatsTotalRecord.__table__,
+            QueryItemRuleStatsDailyRecord.__table__,
+            AccountCapabilityStatsTotalRecord.__table__,
+            AccountCapabilityStatsDailyRecord.__table__,
         ],
     )
     inspector = inspect(engine)

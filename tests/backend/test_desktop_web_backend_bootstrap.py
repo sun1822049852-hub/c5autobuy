@@ -3,8 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import inspect
 
 from app_backend.main import create_app
+from app_backend.infrastructure.db.base import build_engine
 
 
 async def test_health_endpoint_allows_localhost_vite_origin(tmp_path: Path):
@@ -61,3 +63,20 @@ def test_create_app_keeps_account_center_services_wired(tmp_path: Path):
     assert app.state.account_repository is not None
     assert app.state.purchase_runtime_service is not None
     assert app.state.query_runtime_service is not None
+
+
+def test_create_app_creates_stats_and_ui_preference_tables(tmp_path: Path):
+    db_path = tmp_path / "desktop-web.db"
+    create_app(db_path=db_path)
+    engine = build_engine(db_path)
+    inspector = inspect(engine)
+
+    table_names = set(inspector.get_table_names())
+
+    assert "purchase_ui_preferences" in table_names
+    assert "query_item_stats_total" in table_names
+    assert "query_item_stats_daily" in table_names
+    assert "query_item_rule_stats_total" in table_names
+    assert "query_item_rule_stats_daily" in table_names
+    assert "account_capability_stats_total" in table_names
+    assert "account_capability_stats_daily" in table_names
