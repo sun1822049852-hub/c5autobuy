@@ -71,6 +71,16 @@ class QueryModeAllocator:
             ]
         return {"item_rows": item_rows}
 
+    def apply_query_item_runtime(self, query_item: QueryItem) -> bool:
+        item_id = str(query_item.query_item_id)
+        with self._lock:
+            for index, current_item in enumerate(self._query_items):
+                if str(current_item.query_item_id) != item_id:
+                    continue
+                self._query_items[index] = query_item
+                return True
+        return False
+
     def _reconcile_locked(self, active_workers: list[object]) -> dict[str, object]:
         items_by_id = {
             str(query_item.query_item_id): query_item

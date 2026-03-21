@@ -95,4 +95,35 @@ describe("purchase system client", () => {
     expect(updated.purchase_disabled).toBe(false);
     expect(updated.selected_steam_id).toBe("steam-1");
   });
+
+  it("applies the saved query item configuration to the current runtime", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        status: "applied",
+        message: "已保存，并已应用到当前运行配置",
+        config_id: "cfg-2",
+        query_item_id: "item-1",
+      }),
+    });
+    const client = createAccountCenterClient({
+      apiBaseUrl: "http://127.0.0.1:8123",
+      fetchImpl,
+    });
+
+    const response = await client.applyQueryItemRuntime("cfg-2", "item-1");
+
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "http://127.0.0.1:8123/query-configs/cfg-2/items/item-1/apply-runtime",
+      expect.objectContaining({
+        method: "POST",
+      }),
+    );
+    expect(response).toEqual({
+      status: "applied",
+      message: "已保存，并已应用到当前运行配置",
+      config_id: "cfg-2",
+      query_item_id: "item-1",
+    });
+  });
 });

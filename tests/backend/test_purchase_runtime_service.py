@@ -849,6 +849,122 @@ def test_purchase_runtime_service_partial_success_updates_piece_counts_only():
     assert snapshot["accounts"][0]["purchase_failed_count"] == 2
 
 
+def test_purchase_runtime_service_exposes_item_hit_source_summary():
+    from app_backend.infrastructure.purchase.runtime.purchase_runtime_service import PurchaseRuntimeService
+
+    account_repository = FakeAccountRepository([build_account("a1")])
+    snapshot_repository = FakeInventorySnapshotRepository(
+        {
+            "a1": type(
+                "Snapshot",
+                (),
+                {
+                    "account_id": "a1",
+                    "selected_steam_id": "steam-1",
+                    "inventories": [
+                        {"steamId": "steam-1", "nickname": "主仓", "inventory_num": 910, "inventory_max": 1000},
+                    ],
+                    "refreshed_at": "2026-03-16T20:00:00",
+                    "last_error": None,
+                },
+            )()
+        }
+    )
+    gateway = StubExecutionGateway(PurchaseExecutionResult.success(purchased_count=2))
+    service = PurchaseRuntimeService(
+        account_repository=account_repository,
+        settings_repository=FakeSettingsRepository(),
+        inventory_snapshot_repository=snapshot_repository,
+        execution_gateway_factory=lambda: gateway,
+    )
+    service.start()
+
+    first = service.accept_query_hit(
+        {
+            "query_config_id": "cfg-1",
+            "query_item_id": "item-1",
+            "runtime_session_id": "run-1",
+            "timestamp": "2026-03-20T12:00:00",
+            "account_id": "query-a",
+            "account_display_name": "查询账号A",
+            "external_item_id": "1380979899390261111",
+            "query_item_name": "AK",
+            "product_url": "https://www.c5game.com/csgo/730/asset/1380979899390261111",
+            "product_list": [
+                {"productId": "p-1", "price": 88.0, "actRebateAmount": 0},
+                {"productId": "p-2", "price": 89.0, "actRebateAmount": 0},
+            ],
+            "total_price": 177.0,
+            "total_wear_sum": 0.1234,
+            "mode_type": "new_api",
+        }
+    )
+    second = service.accept_query_hit(
+        {
+            "query_config_id": "cfg-1",
+            "query_item_id": "item-1",
+            "runtime_session_id": "run-1",
+            "timestamp": "2026-03-20T12:00:03",
+            "account_id": "query-b",
+            "account_display_name": "查询账号B",
+            "external_item_id": "1380979899390261112",
+            "query_item_name": "AK",
+            "product_url": "https://www.c5game.com/csgo/730/asset/1380979899390261112",
+            "product_list": [
+                {"productId": "p-3", "price": 90.0, "actRebateAmount": 0},
+            ],
+            "total_price": 90.0,
+            "total_wear_sum": 0.5678,
+            "mode_type": "fast_api",
+        }
+    )
+
+    assert first == {"accepted": True, "status": "queued"}
+    assert second == {"accepted": True, "status": "queued"}
+    assert wait_until(lambda: service.get_status()["purchase_success_count"] == 3)
+    snapshot = service.get_status()
+    assert snapshot["item_rows"] == [
+        {
+            "query_item_id": "item-1",
+            "matched_product_count": 3,
+            "purchase_success_count": 3,
+            "purchase_failed_count": 0,
+            "source_mode_stats": [
+                {
+                    "mode_type": "new_api",
+                    "hit_count": 2,
+                    "last_hit_at": "2026-03-20T12:00:00",
+                    "account_id": "query-a",
+                    "account_display_name": "查询账号A",
+                },
+                {
+                    "mode_type": "fast_api",
+                    "hit_count": 1,
+                    "last_hit_at": "2026-03-20T12:00:03",
+                    "account_id": "query-b",
+                    "account_display_name": "查询账号B",
+                },
+            ],
+            "recent_hit_sources": [
+                {
+                    "mode_type": "fast_api",
+                    "hit_count": 1,
+                    "last_hit_at": "2026-03-20T12:00:03",
+                    "account_id": "query-b",
+                    "account_display_name": "查询账号B",
+                },
+                {
+                    "mode_type": "new_api",
+                    "hit_count": 2,
+                    "last_hit_at": "2026-03-20T12:00:00",
+                    "account_id": "query-a",
+                    "account_display_name": "查询账号A",
+                },
+            ],
+        }
+    ]
+
+
 def test_purchase_runtime_service_old_runtime_session_results_are_ignored_after_reset():
     from app_backend.infrastructure.purchase.runtime.purchase_runtime_service import PurchaseRuntimeService
 

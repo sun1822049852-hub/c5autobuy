@@ -146,6 +146,9 @@ class MultiQueryConfigRepository:
     def get_config(self, config_id: str) -> QueryConfig | None:
         return self._configs.get(config_id)
 
+    def replace_config(self, config: QueryConfig) -> None:
+        self._configs[config.config_id] = config
+
 
 class FakeAccountRepository:
     def __init__(self, accounts=None) -> None:
@@ -993,6 +996,213 @@ def test_runtime_service_starts_in_waiting_state_and_auto_recovers_when_purchase
     assert snapshot["running"] is True
     assert snapshot["config_id"] == "cfg-1"
     assert snapshot["config_name"] == "测试配置"
+
+
+def test_runtime_service_apply_query_item_runtime_updates_live_runtime_without_stop():
+    from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
+
+    before_config = build_config("cfg-1")
+    after_config = build_config("cfg-1")
+    after_config.items[0].detail_max_wear = 0.13
+    after_config.items[0].manual_paused = True
+    for allocation in after_config.items[0].mode_allocations:
+        if allocation.mode_type == "new_api":
+            allocation.target_dedicated_count = 2
+
+    repository = MultiQueryConfigRepository([before_config])
+    purchase_service = FakePurchaseRuntimeService()
+    created_runtimes: list[FakeRuntime] = []
+
+    class FakeRuntimeWithApply(FakeRuntime):
+        def __init__(self, config, accounts) -> None:
+            super().__init__(config, accounts)
+            self.runtime_session_id = "run-apply-1"
+            self.apply_calls: list[dict[str, object]] = []
+            created_runtimes.append(self)
+
+        def snapshot(self) -> dict:
+            mode_target = 0
+            for allocation in self.config.items[0].mode_allocations:
+                if allocation.mode_type == "new_api":
+                    mode_target = allocation.target_dedicated_count
+            return {
+                "running": self.started and not self.stopped,
+                "config_id": self.config.config_id,
+                "config_name": self.config.name,
+                "runtime_session_id": self.runtime_session_id,
+                "message": "运行中" if self.started and not self.stopped else "未运行",
+                "account_count": 0,
+                "started_at": "2026-03-16T10:00:00" if self.started and not self.stopped else None,
+                "stopped_at": None,
+                "total_query_count": 0,
+                "total_found_count": 0,
+                "modes": {},
+                "group_rows": [],
+                "recent_events": [],
+                "item_rows": [
+                    {
+                        "query_item_id": "item-1",
+                        "item_name": self.config.items[0].item_name,
+                        "max_price": self.config.items[0].max_price,
+                        "min_wear": self.config.items[0].min_wear,
+                        "max_wear": self.config.items[0].max_wear,
+                        "detail_min_wear": self.config.items[0].detail_min_wear,
+                        "detail_max_wear": self.config.items[0].detail_max_wear,
+                        "manual_paused": self.config.items[0].manual_paused,
+                        "query_count": 0,
+                        "modes": {
+                            "new_api": {
+                                "mode_type": "new_api",
+                                "target_dedicated_count": mode_target,
+                                "actual_dedicated_count": 0,
+                                "status": "manual_paused" if self.config.items[0].manual_paused else "shared",
+                                "status_message": "手动暂停" if self.config.items[0].manual_paused else "共享中",
+                            }
+                        },
+                    }
+                ],
+            }
+
+        def apply_query_item_runtime(self, *, config, query_item_id: str) -> None:
+            self.apply_calls.append(
+                {
+                    "config_id": config.config_id,
+                    "query_item_id": query_item_id,
+                    "detail_max_wear": config.items[0].detail_max_wear,
+                    "manual_paused": config.items[0].manual_paused,
+                }
+            )
+            self.config = config
+
+    service = QueryRuntimeService(
+        query_config_repository=repository,
+        account_repository=FakeAccountRepository([build_account("a1", api_key="api-1")]),
+        runtime_factory=lambda config, accounts: FakeRuntimeWithApply(config, accounts),
+        purchase_runtime_service=purchase_service,
+    )
+
+    started, message = service.start(config_id="cfg-1")
+    repository.replace_config(after_config)
+    result = service.apply_query_item_runtime(config_id="cfg-1", query_item_id="item-1")
+    snapshot = service.get_status()
+
+    assert started is True
+    assert message == "查询任务已启动"
+    assert result == {
+        "status": "applied",
+        "message": "当前运行配置已热应用",
+        "config_id": "cfg-1",
+        "query_item_id": "item-1",
+    }
+    assert len(created_runtimes) == 1
+    assert created_runtimes[0].stopped is False
+    assert created_runtimes[0].runtime_session_id == "run-apply-1"
+    assert created_runtimes[0].apply_calls == [
+        {
+            "config_id": "cfg-1",
+            "query_item_id": "item-1",
+            "detail_max_wear": 0.13,
+            "manual_paused": True,
+        }
+    ]
+    assert snapshot["item_rows"][0]["detail_max_wear"] == 0.13
+    assert snapshot["item_rows"][0]["manual_paused"] is True
+    assert snapshot["item_rows"][0]["modes"]["new_api"]["target_dedicated_count"] == 2
+
+
+def test_runtime_service_apply_query_item_runtime_returns_waiting_resume_when_query_is_paused():
+    from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
+
+    before_config = build_config("cfg-1")
+    after_config = build_config("cfg-1")
+    after_config.items[0].detail_max_wear = 0.11
+    after_config.items[0].manual_paused = True
+    repository = MultiQueryConfigRepository([before_config])
+    purchase_service = FakePurchaseRuntimeService(active_account_count=0)
+    created_runtimes: list[FakeRuntime] = []
+
+    service = QueryRuntimeService(
+        query_config_repository=repository,
+        account_repository=FakeAccountRepository([build_account("a1", api_key="api-1")]),
+        runtime_factory=lambda config, accounts: created_runtimes.append(FakeRuntime(config, accounts)) or created_runtimes[-1],
+        purchase_runtime_service=purchase_service,
+    )
+
+    started, message = service.start(config_id="cfg-1")
+    repository.replace_config(after_config)
+    result = service.apply_query_item_runtime(config_id="cfg-1", query_item_id="item-1")
+    snapshot = service.get_status()
+
+    assert started is True
+    assert message == "查询任务已启动，等待购买账号恢复"
+    assert created_runtimes == []
+    assert result == {
+        "status": "applied_waiting_resume",
+        "message": "当前配置等待恢复运行，已记录热应用",
+        "config_id": "cfg-1",
+        "query_item_id": "item-1",
+    }
+    assert snapshot["message"] == "等待购买账号恢复"
+    assert snapshot["item_rows"][0]["detail_max_wear"] == 0.11
+    assert snapshot["item_rows"][0]["manual_paused"] is True
+
+
+def test_runtime_service_apply_query_item_runtime_skips_when_config_is_inactive():
+    from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
+
+    repository = MultiQueryConfigRepository([build_config("cfg-1"), build_config("cfg-2")])
+    purchase_service = FakePurchaseRuntimeService()
+    service = QueryRuntimeService(
+        query_config_repository=repository,
+        account_repository=FakeAccountRepository([build_account("a1", api_key="api-1")]),
+        runtime_factory=lambda config, accounts: FakeRuntime(config, accounts),
+        purchase_runtime_service=purchase_service,
+    )
+
+    service.start(config_id="cfg-1")
+    result = service.apply_query_item_runtime(config_id="cfg-2", query_item_id="item-1")
+
+    assert result == {
+        "status": "skipped_inactive",
+        "message": "当前配置未在运行，已跳过热应用",
+        "config_id": "cfg-2",
+        "query_item_id": "item-1",
+    }
+
+
+def test_runtime_service_apply_query_item_runtime_reports_failed_after_save_when_refresh_crashes():
+    from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
+
+    repository = MultiQueryConfigRepository([build_config("cfg-1")])
+    purchase_service = FakePurchaseRuntimeService()
+    created_runtimes: list[FakeRuntime] = []
+
+    class FakeRuntimeApplyCrash(FakeRuntime):
+        def __init__(self, config, accounts) -> None:
+            super().__init__(config, accounts)
+            created_runtimes.append(self)
+
+        def apply_query_item_runtime(self, *, config, query_item_id: str) -> None:
+            raise RuntimeError("allocator refresh failed")
+
+    service = QueryRuntimeService(
+        query_config_repository=repository,
+        account_repository=FakeAccountRepository([build_account("a1", api_key="api-1")]),
+        runtime_factory=lambda config, accounts: FakeRuntimeApplyCrash(config, accounts),
+        purchase_runtime_service=purchase_service,
+    )
+
+    service.start(config_id="cfg-1")
+    result = service.apply_query_item_runtime(config_id="cfg-1", query_item_id="item-1")
+
+    assert result == {
+        "status": "failed_after_save",
+        "message": "配置已保存，但热应用失败：allocator refresh failed",
+        "config_id": "cfg-1",
+        "query_item_id": "item-1",
+    }
+    assert len(created_runtimes) == 1
+    assert created_runtimes[0].stopped is False
 
 
 def test_runtime_service_reuses_runtime_account_adapter_after_purchase_pause_and_recovery(monkeypatch):

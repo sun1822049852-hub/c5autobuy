@@ -7,6 +7,7 @@ from typing import Any
 
 class PurchaseStatsAggregator:
     _STOP = object()
+    _RECENT_HIT_SOURCE_LIMIT = 10
     _IGNORED_FAILURE_STATUSES = {
         "ignored_no_available_accounts",
         "duplicate_filtered",
@@ -78,6 +79,10 @@ class PurchaseStatsAggregator:
                 {
                     "runtime_session_id": self._normalize_optional_str(hit.get("runtime_session_id")),
                     "query_item_id": self._normalize_optional_str(hit.get("query_item_id")),
+                    "timestamp": self._normalize_optional_str(hit.get("timestamp")),
+                    "mode_type": self._normalize_optional_str(hit.get("mode_type")),
+                    "account_id": self._normalize_optional_str(hit.get("account_id")),
+                    "account_display_name": self._normalize_optional_str(hit.get("account_display_name")),
                     "product_list": self._normalize_product_list(hit.get("product_list")),
                 },
             )
@@ -130,6 +135,8 @@ class PurchaseStatsAggregator:
                         "matched_product_count": stats["matched_product_count"],
                         "purchase_success_count": stats["purchase_success_count"],
                         "purchase_failed_count": stats["purchase_failed_count"],
+                        "source_mode_stats": self._serialize_source_mode_stats(stats),
+                        "recent_hit_sources": list(stats["recent_hit_sources"]),
                     }
                     for query_item_id, stats in sorted(self._item_stats.items())
                 ],
@@ -158,9 +165,14 @@ class PurchaseStatsAggregator:
         session_key = runtime_session_id or self._runtime_session_id or "__default__"
         query_item_id = self._normalize_optional_str(payload.get("query_item_id")) or ""
         product_list = self._normalize_product_list(payload.get("product_list"))
+        hit_timestamp = self._normalize_optional_str(payload.get("timestamp"))
+        mode_type = self._normalize_optional_str(payload.get("mode_type")) or ""
+        account_id = self._normalize_optional_str(payload.get("account_id"))
+        account_display_name = self._normalize_optional_str(payload.get("account_display_name"))
 
         with self._lock:
             item_stats = self._ensure_item_stats(query_item_id)
+            matched_in_hit = 0
             for product in product_list:
                 product_id = self._normalize_optional_str(product.get("productId"))
                 if not product_id:
@@ -171,6 +183,16 @@ class PurchaseStatsAggregator:
                 self._matched_product_keys.add(key)
                 self._matched_product_count += 1
                 item_stats["matched_product_count"] += 1
+                matched_in_hit += 1
+            if matched_in_hit > 0:
+                self._record_hit_source(
+                    item_stats,
+                    mode_type=mode_type,
+                    account_id=account_id,
+                    account_display_name=account_display_name,
+                    last_hit_at=hit_timestamp,
+                    hit_count=matched_in_hit,
+                )
 
     def _consume_outcome(self, payload: dict[str, object]) -> None:
         runtime_session_id = self._normalize_optional_str(payload.get("runtime_session_id"))
@@ -226,15 +248,101 @@ class PurchaseStatsAggregator:
             },
         )
 
-    def _ensure_item_stats(self, query_item_id: str) -> dict[str, int]:
+    def _ensure_item_stats(self, query_item_id: str) -> dict[str, object]:
         return self._item_stats.setdefault(
             query_item_id,
             {
                 "matched_product_count": 0,
                 "purchase_success_count": 0,
                 "purchase_failed_count": 0,
+                "source_mode_stats": {},
+                "recent_hit_sources": [],
             },
         )
+
+    def _record_hit_source(
+        self,
+        item_stats: dict[str, object],
+        *,
+        mode_type: str,
+        account_id: str | None,
+        account_display_name: str | None,
+        last_hit_at: str | None,
+        hit_count: int,
+    ) -> None:
+        source_rows = item_stats.setdefault("source_mode_stats", {})
+        if not isinstance(source_rows, dict):
+            source_rows = {}
+            item_stats["source_mode_stats"] = source_rows
+
+        source_key = (mode_type, account_id or "")
+        row = source_rows.setdefault(
+            source_key,
+            {
+                "mode_type": mode_type,
+                "hit_count": 0,
+                "last_hit_at": None,
+                "account_id": account_id,
+                "account_display_name": account_display_name,
+            },
+        )
+        row["hit_count"] = int(row.get("hit_count", 0)) + int(hit_count)
+        row["account_id"] = account_id
+        row["account_display_name"] = account_display_name
+        row["last_hit_at"] = self._pick_latest_timestamp(row.get("last_hit_at"), last_hit_at)
+
+        recent_rows = item_stats.setdefault("recent_hit_sources", [])
+        if not isinstance(recent_rows, list):
+            recent_rows = []
+            item_stats["recent_hit_sources"] = recent_rows
+        recent_rows.insert(
+            0,
+            {
+                "mode_type": mode_type,
+                "hit_count": int(hit_count),
+                "last_hit_at": last_hit_at,
+                "account_id": account_id,
+                "account_display_name": account_display_name,
+            },
+        )
+        del recent_rows[self._RECENT_HIT_SOURCE_LIMIT :]
+
+    @staticmethod
+    def _serialize_source_mode_stats(item_stats: dict[str, object]) -> list[dict[str, object]]:
+        raw_rows = item_stats.get("source_mode_stats")
+        if not isinstance(raw_rows, dict):
+            return []
+
+        serialized = [
+            {
+                "mode_type": str(row.get("mode_type") or ""),
+                "hit_count": int(row.get("hit_count", 0)),
+                "last_hit_at": row.get("last_hit_at"),
+                "account_id": row.get("account_id"),
+                "account_display_name": row.get("account_display_name"),
+            }
+            for row in raw_rows.values()
+            if isinstance(row, dict)
+        ]
+        serialized.sort(
+            key=lambda row: (
+                -int(row.get("hit_count", 0)),
+                str(row.get("last_hit_at") or ""),
+                str(row.get("account_id") or ""),
+                str(row.get("mode_type") or ""),
+            ),
+        )
+        return serialized
+
+    @staticmethod
+    def _pick_latest_timestamp(current: object, incoming: object) -> str | None:
+        current_text = str(current or "").strip() or None
+        incoming_text = str(incoming or "").strip() or None
+        if current_text is None:
+            return incoming_text
+        if incoming_text is None:
+            return current_text
+        return incoming_text if incoming_text >= current_text else current_text
 
     @staticmethod
     def _normalize_optional_str(value: object) -> str | None:

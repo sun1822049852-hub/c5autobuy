@@ -92,6 +92,21 @@ class ModeRunner:
         self._has_run_cycle = False
         self._workers = []
 
+    def apply_query_item_runtime(self, query_item: QueryItem) -> bool:
+        item_id = str(query_item.query_item_id)
+        applied = False
+        for index, current_item in enumerate(self._query_items):
+            if str(current_item.query_item_id) != item_id:
+                continue
+            self._query_items[index] = query_item
+            applied = True
+            break
+
+        apply_runtime = getattr(self._query_mode_allocator, "apply_query_item_runtime", None)
+        if callable(apply_runtime):
+            applied = bool(apply_runtime(query_item)) or applied
+        return applied
+
     async def cleanup(self) -> None:
         for worker in self._workers:
             cleanup = getattr(worker, "cleanup", None)

@@ -99,6 +99,26 @@ class QueryTaskRuntime:
         self._stopped_at = datetime.now().isoformat(timespec="seconds")
         self._background_thread = None
 
+    def apply_query_item_runtime(self, *, config: QueryConfig, query_item_id: str) -> None:
+        normalized_item_id = str(query_item_id or "")
+        target_item = next(
+            (item for item in config.items if str(item.query_item_id) == normalized_item_id),
+            None,
+        )
+        if target_item is None:
+            raise KeyError(query_item_id)
+
+        self._config = config
+        applied = False
+        for runner in self._mode_runners:
+            apply_runtime = getattr(runner, "apply_query_item_runtime", None)
+            if not callable(apply_runtime):
+                continue
+            applied = bool(apply_runtime(target_item)) or applied
+
+        if self._mode_runners and not applied:
+            raise RuntimeError("query item runtime not refreshed")
+
     def _run_background_loop(self) -> None:
         loop = asyncio.new_event_loop()
         self._background_loop = loop

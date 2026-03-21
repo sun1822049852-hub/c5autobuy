@@ -125,6 +125,66 @@ class QueryRuntimeService:
                 return self._build_idle_snapshot()
             return self._normalize_snapshot(self._runtime.snapshot(), getattr(self._runtime, "config", None))
 
+    def apply_query_item_runtime(self, *, config_id: str, query_item_id: str) -> dict[str, str]:
+        config = self._query_config_repository.get_config(config_id)
+        if config is None:
+            raise KeyError(config_id)
+
+        if all(str(item.query_item_id) != str(query_item_id) for item in config.items):
+            raise KeyError(query_item_id)
+
+        with self._state_lock:
+            active_config_id = self._get_active_config_id_locked()
+            runtime_is_running = self._has_running_runtime_locked()
+            runtime = self._runtime if runtime_is_running else None
+            pending_resume = self._has_pending_resume_state()
+            if active_config_id != config_id:
+                return self._build_apply_query_item_result(
+                    status="skipped_inactive",
+                    message="当前配置未在运行，已跳过热应用",
+                    config_id=config_id,
+                    query_item_id=query_item_id,
+                )
+            if not runtime_is_running:
+                if pending_resume:
+                    self._pending_resume_config_name = getattr(config, "name", None)
+                    return self._build_apply_query_item_result(
+                        status="applied_waiting_resume",
+                        message="当前配置等待恢复运行，已记录热应用",
+                        config_id=config_id,
+                        query_item_id=query_item_id,
+                    )
+                return self._build_apply_query_item_result(
+                    status="skipped_inactive",
+                    message="当前配置未在运行，已跳过热应用",
+                    config_id=config_id,
+                    query_item_id=query_item_id,
+                )
+
+        apply_runtime = getattr(runtime, "apply_query_item_runtime", None)
+        if not callable(apply_runtime):
+            return self._build_apply_query_item_result(
+                status="failed_after_save",
+                message="配置已保存，但热应用失败：runtime apply hook unavailable",
+                config_id=config_id,
+                query_item_id=query_item_id,
+            )
+        try:
+            apply_runtime(config=config, query_item_id=query_item_id)
+        except Exception as exc:
+            return self._build_apply_query_item_result(
+                status="failed_after_save",
+                message=f"配置已保存，但热应用失败：{exc}",
+                config_id=config_id,
+                query_item_id=query_item_id,
+            )
+        return self._build_apply_query_item_result(
+            status="applied",
+            message="当前运行配置已热应用",
+            config_id=config_id,
+            query_item_id=query_item_id,
+        )
+
     def _has_running_runtime(self) -> bool:
         with self._state_lock:
             return self._has_running_runtime_locked()
@@ -156,6 +216,21 @@ class QueryRuntimeService:
         self._pending_resume_config_name = None
         self._pending_resume_runtime_session_id = None
         self._paused_at = None
+
+    @staticmethod
+    def _build_apply_query_item_result(
+        *,
+        status: str,
+        message: str,
+        config_id: str,
+        query_item_id: str,
+    ) -> dict[str, str]:
+        return {
+            "status": str(status),
+            "message": str(message),
+            "config_id": str(config_id),
+            "query_item_id": str(query_item_id),
+        }
 
     def _build_idle_snapshot(self) -> dict[str, object]:
         return {

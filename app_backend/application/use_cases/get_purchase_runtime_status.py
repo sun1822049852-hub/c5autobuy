@@ -73,10 +73,18 @@ class GetPurchaseRuntimeStatusUseCase:
                         "max_wear": query_row.get("max_wear"),
                         "detail_min_wear": query_row.get("detail_min_wear"),
                         "detail_max_wear": query_row.get("detail_max_wear"),
+                        "manual_paused": bool(query_row.get("manual_paused", False)),
                         "query_execution_count": int(query_row.get("query_count", 0)),
                         "matched_product_count": int(purchase_row.get("matched_product_count", 0)),
                         "purchase_success_count": int(purchase_row.get("purchase_success_count", 0)),
                         "purchase_failed_count": int(purchase_row.get("purchase_failed_count", 0)),
+                        "modes": GetPurchaseRuntimeStatusUseCase._normalize_modes(query_row.get("modes")),
+                        "source_mode_stats": GetPurchaseRuntimeStatusUseCase._normalize_hit_sources(
+                            purchase_row.get("source_mode_stats")
+                        ),
+                        "recent_hit_sources": GetPurchaseRuntimeStatusUseCase._normalize_hit_sources(
+                            purchase_row.get("recent_hit_sources")
+                        ),
                     }
                 )
                 seen_item_ids.add(item_id)
@@ -93,10 +101,56 @@ class GetPurchaseRuntimeStatusUseCase:
                     "max_wear": None,
                     "detail_min_wear": None,
                     "detail_max_wear": None,
+                    "manual_paused": False,
                     "query_execution_count": 0,
                     "matched_product_count": int(purchase_row.get("matched_product_count", 0)),
                     "purchase_success_count": int(purchase_row.get("purchase_success_count", 0)),
                     "purchase_failed_count": int(purchase_row.get("purchase_failed_count", 0)),
+                    "modes": {},
+                    "source_mode_stats": GetPurchaseRuntimeStatusUseCase._normalize_hit_sources(
+                        purchase_row.get("source_mode_stats")
+                    ),
+                    "recent_hit_sources": GetPurchaseRuntimeStatusUseCase._normalize_hit_sources(
+                        purchase_row.get("recent_hit_sources")
+                    ),
                 }
             )
         return item_rows
+
+    @staticmethod
+    def _normalize_hit_sources(raw_rows: object) -> list[dict[str, object]]:
+        if not isinstance(raw_rows, list):
+            return []
+
+        normalized: list[dict[str, object]] = []
+        for raw_row in raw_rows:
+            if not isinstance(raw_row, dict):
+                continue
+            normalized.append(
+                {
+                    "mode_type": str(raw_row.get("mode_type") or ""),
+                    "hit_count": int(raw_row.get("hit_count", 0)),
+                    "last_hit_at": raw_row.get("last_hit_at"),
+                    "account_id": raw_row.get("account_id"),
+                    "account_display_name": raw_row.get("account_display_name"),
+                }
+            )
+        return normalized
+
+    @staticmethod
+    def _normalize_modes(raw_modes: object) -> dict[str, dict[str, object]]:
+        if not isinstance(raw_modes, dict):
+            return {}
+
+        normalized: dict[str, dict[str, object]] = {}
+        for mode_type, raw_mode in raw_modes.items():
+            if not isinstance(raw_mode, dict):
+                continue
+            normalized[str(mode_type)] = {
+                "mode_type": str(raw_mode.get("mode_type") or mode_type or ""),
+                "target_dedicated_count": int(raw_mode.get("target_dedicated_count", 0)),
+                "actual_dedicated_count": int(raw_mode.get("actual_dedicated_count", 0)),
+                "status": str(raw_mode.get("status") or ""),
+                "status_message": str(raw_mode.get("status_message") or ""),
+            }
+        return normalized

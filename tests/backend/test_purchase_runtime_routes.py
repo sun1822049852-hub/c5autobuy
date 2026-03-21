@@ -250,6 +250,38 @@ async def test_purchase_runtime_status_includes_stats_and_keeps_accounts_shape(c
                         "matched_product_count": 3,
                         "purchase_success_count": 1,
                         "purchase_failed_count": 2,
+                        "source_mode_stats": [
+                            {
+                                "mode_type": "new_api",
+                                "hit_count": 2,
+                                "last_hit_at": "2026-03-20T12:00:00",
+                                "account_id": "query-a",
+                                "account_display_name": "查询账号A",
+                            },
+                            {
+                                "mode_type": "fast_api",
+                                "hit_count": 1,
+                                "last_hit_at": "2026-03-20T12:00:03",
+                                "account_id": "query-b",
+                                "account_display_name": "查询账号B",
+                            },
+                        ],
+                        "recent_hit_sources": [
+                            {
+                                "mode_type": "fast_api",
+                                "hit_count": 1,
+                                "last_hit_at": "2026-03-20T12:00:03",
+                                "account_id": "query-b",
+                                "account_display_name": "查询账号B",
+                            },
+                            {
+                                "mode_type": "new_api",
+                                "hit_count": 2,
+                                "last_hit_at": "2026-03-20T12:00:00",
+                                "account_id": "query-a",
+                                "account_display_name": "查询账号A",
+                            },
+                        ],
                     }
                 ],
             }
@@ -280,7 +312,15 @@ async def test_purchase_runtime_status_includes_stats_and_keeps_accounts_shape(c
                         "detail_max_wear": 0.3,
                         "manual_paused": False,
                         "query_count": 7,
-                        "modes": {},
+                        "modes": {
+                            "new_api": {
+                                "mode_type": "new_api",
+                                "target_dedicated_count": 1,
+                                "actual_dedicated_count": 1,
+                                "status": "dedicated",
+                                "status_message": "专属中 1/1",
+                            }
+                        },
                     }
                 ],
             }
@@ -313,10 +353,52 @@ async def test_purchase_runtime_status_includes_stats_and_keeps_accounts_shape(c
             "max_wear": 0.7,
             "detail_min_wear": 0.12,
             "detail_max_wear": 0.3,
+            "manual_paused": False,
             "query_execution_count": 7,
             "matched_product_count": 3,
             "purchase_success_count": 1,
             "purchase_failed_count": 2,
+            "modes": {
+                "new_api": {
+                    "mode_type": "new_api",
+                    "target_dedicated_count": 1,
+                    "actual_dedicated_count": 1,
+                    "status": "dedicated",
+                    "status_message": "专属中 1/1",
+                }
+            },
+            "source_mode_stats": [
+                {
+                    "mode_type": "new_api",
+                    "hit_count": 2,
+                    "last_hit_at": "2026-03-20T12:00:00",
+                    "account_id": "query-a",
+                    "account_display_name": "查询账号A",
+                },
+                {
+                    "mode_type": "fast_api",
+                    "hit_count": 1,
+                    "last_hit_at": "2026-03-20T12:00:03",
+                    "account_id": "query-b",
+                    "account_display_name": "查询账号B",
+                },
+            ],
+            "recent_hit_sources": [
+                {
+                    "mode_type": "fast_api",
+                    "hit_count": 1,
+                    "last_hit_at": "2026-03-20T12:00:03",
+                    "account_id": "query-b",
+                    "account_display_name": "查询账号B",
+                },
+                {
+                    "mode_type": "new_api",
+                    "hit_count": 2,
+                    "last_hit_at": "2026-03-20T12:00:00",
+                    "account_id": "query-a",
+                    "account_display_name": "查询账号A",
+                },
+            ],
         }
     ]
 

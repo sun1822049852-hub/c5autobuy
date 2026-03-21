@@ -81,6 +81,13 @@ class QueryItemUpdateRequest(BaseModel):
     mode_allocations: dict[str, int] | None = None
 
 
+class QueryItemRuntimeApplyResponse(BaseModel):
+    status: str
+    message: str
+    config_id: str
+    query_item_id: str
+
+
 class QueryModeCapacityResponse(BaseModel):
     mode_type: str
     available_account_count: int

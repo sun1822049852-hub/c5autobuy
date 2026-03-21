@@ -8,6 +8,7 @@ from app_backend.api.schemas.query_configs import (
     QueryConfigResponse,
     QueryConfigUpdateRequest,
     QueryItemCreateRequest,
+    QueryItemRuntimeApplyResponse,
     QueryItemResponse,
     QueryItemUpdateRequest,
     QueryModeSettingResponse,
@@ -21,6 +22,7 @@ from app_backend.application.use_cases.delete_query_item import DeleteQueryItemU
 from app_backend.application.use_cases.get_query_config import GetQueryConfigUseCase
 from app_backend.application.use_cases.get_query_capacity_summary import GetQueryCapacitySummaryUseCase
 from app_backend.application.use_cases.list_query_configs import ListQueryConfigsUseCase
+from app_backend.application.use_cases.apply_query_item_runtime import ApplyQueryItemRuntimeUseCase
 from app_backend.application.use_cases.refresh_query_item_detail import RefreshQueryItemDetailUseCase
 from app_backend.application.use_cases.update_query_config import UpdateQueryConfigUseCase
 from app_backend.application.use_cases.update_query_item import UpdateQueryItemUseCase
@@ -43,6 +45,10 @@ def _detail_refresh_service(request: Request):
 
 def _account_repository(request: Request):
     return request.app.state.account_repository
+
+
+def _query_runtime_service(request: Request):
+    return request.app.state.query_runtime_service
 
 
 @router.get("", response_model=list[QueryConfigResponse])
@@ -154,6 +160,26 @@ async def update_query_item(
     if item.config_id != config_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Query item not found")
     return QueryItemResponse.model_validate(item)
+
+
+@router.post(
+    "/{config_id}/items/{query_item_id}/apply-runtime",
+    response_model=QueryItemRuntimeApplyResponse,
+)
+async def apply_query_item_runtime(
+    config_id: str,
+    query_item_id: str,
+    request: Request,
+) -> QueryItemRuntimeApplyResponse:
+    use_case = ApplyQueryItemRuntimeUseCase(
+        _repository(request),
+        _query_runtime_service(request),
+    )
+    try:
+        result = use_case.execute(config_id=config_id, query_item_id=query_item_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Query item not found") from exc
+    return QueryItemRuntimeApplyResponse.model_validate(result)
 
 
 @router.delete("/{config_id}/items/{query_item_id}", status_code=status.HTTP_204_NO_CONTENT)

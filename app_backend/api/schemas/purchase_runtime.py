@@ -46,6 +46,22 @@ class PurchaseRuntimeActiveQueryConfigResponse(BaseModel):
     message: str
 
 
+class PurchaseRuntimeHitSourceResponse(BaseModel):
+    mode_type: str
+    hit_count: int = 0
+    last_hit_at: str | None = None
+    account_id: str | None = None
+    account_display_name: str | None = None
+
+
+class PurchaseRuntimeItemModeResponse(BaseModel):
+    mode_type: str
+    target_dedicated_count: int
+    actual_dedicated_count: int
+    status: str
+    status_message: str
+
+
 class PurchaseRuntimeItemRowResponse(BaseModel):
     query_item_id: str
     item_name: str | None = None
@@ -54,10 +70,14 @@ class PurchaseRuntimeItemRowResponse(BaseModel):
     max_wear: float | None = None
     detail_min_wear: float | None = None
     detail_max_wear: float | None = None
+    manual_paused: bool = False
     query_execution_count: int = 0
     matched_product_count: int = 0
     purchase_success_count: int = 0
     purchase_failed_count: int = 0
+    modes: dict[str, PurchaseRuntimeItemModeResponse] = {}
+    source_mode_stats: list[PurchaseRuntimeHitSourceResponse] = []
+    recent_hit_sources: list[PurchaseRuntimeHitSourceResponse] = []
 
 
 class PurchaseRuntimeInventoryDetailResponse(BaseModel):

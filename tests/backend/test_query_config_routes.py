@@ -524,6 +524,56 @@ async def test_patch_query_item_updates_detail_wear_thresholds(client, app):
     assert payload["detail_max_wear"] == 0.25
 
 
+async def test_apply_query_item_runtime_route_returns_status_payload(client, app):
+    repository = app.state.query_config_repository
+    config = repository.create_config(name="热应用配置", description="测试 apply-runtime")
+    item = repository.add_item(
+        config_id=config.config_id,
+        product_url="https://www.c5game.com/csgo/730/asset/1380979899390267777",
+        external_item_id="1380979899390267777",
+        item_name="AK-47 | Redline",
+        market_hash_name="AK-47 | Redline (Field-Tested)",
+        min_wear=0.02,
+        max_wear=0.8,
+        detail_min_wear=0.02,
+        detail_max_wear=0.2,
+        max_price=199.0,
+        last_market_price=155.0,
+    )
+
+    class FakeQueryRuntimeService:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, str]] = []
+
+        def apply_query_item_runtime(self, *, config_id: str, query_item_id: str) -> dict[str, str]:
+            self.calls.append({"config_id": config_id, "query_item_id": query_item_id})
+            return {
+                "status": "applied",
+                "message": "当前运行配置已热应用",
+                "config_id": config_id,
+                "query_item_id": query_item_id,
+            }
+
+    fake_runtime_service = FakeQueryRuntimeService()
+    app.state.query_runtime_service = fake_runtime_service
+
+    response = await client.post(
+        f"/query-configs/{config.config_id}/items/{item.query_item_id}/apply-runtime",
+        json={},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "applied",
+        "message": "当前运行配置已热应用",
+        "config_id": config.config_id,
+        "query_item_id": item.query_item_id,
+    }
+    assert fake_runtime_service.calls == [
+        {"config_id": config.config_id, "query_item_id": item.query_item_id}
+    ]
+
+
 async def test_patch_query_item_backfills_missing_final_detail_wear_from_saved_range(client, app):
     repository = app.state.query_config_repository
     config = repository.create_config(name="脏配置修复", description="测试补齐 detail wear")

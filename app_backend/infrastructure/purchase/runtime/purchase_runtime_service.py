@@ -435,6 +435,32 @@ class PurchaseRuntimeService:
                     "matched_product_count": int(raw_row.get("matched_product_count", 0)),
                     "purchase_success_count": int(raw_row.get("purchase_success_count", 0)),
                     "purchase_failed_count": int(raw_row.get("purchase_failed_count", 0)),
+                    "source_mode_stats": PurchaseRuntimeService._normalize_item_hit_sources(
+                        raw_row.get("source_mode_stats")
+                    ),
+                    "recent_hit_sources": PurchaseRuntimeService._normalize_item_hit_sources(
+                        raw_row.get("recent_hit_sources")
+                    ),
+                }
+            )
+        return normalized
+
+    @staticmethod
+    def _normalize_item_hit_sources(raw_rows: object) -> list[dict[str, object]]:
+        if not isinstance(raw_rows, list):
+            return []
+
+        normalized: list[dict[str, object]] = []
+        for raw_row in raw_rows:
+            if not isinstance(raw_row, dict):
+                continue
+            normalized.append(
+                {
+                    "mode_type": str(raw_row.get("mode_type") or ""),
+                    "hit_count": int(raw_row.get("hit_count", 0)),
+                    "last_hit_at": raw_row.get("last_hit_at"),
+                    "account_id": raw_row.get("account_id"),
+                    "account_display_name": raw_row.get("account_display_name"),
                 }
             )
         return normalized

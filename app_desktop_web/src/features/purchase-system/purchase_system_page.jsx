@@ -1,107 +1,123 @@
-import { PurchaseAccountTable } from "./components/purchase_account_table.jsx";
+import { PurchaseAccountMonitorModal } from "./components/purchase_account_monitor_modal.jsx";
 import { PurchaseConfigSelectorDialog } from "./components/purchase_config_selector_dialog.jsx";
-import { PurchaseRecentEvents } from "./components/purchase_recent_events.jsx";
 import { PurchaseItemPanel } from "./components/purchase_item_panel.jsx";
+import { PurchaseRecentEventsModal } from "./components/purchase_recent_events_modal.jsx";
 import { PurchaseRuntimeActions } from "./components/purchase_runtime_actions.jsx";
 import { PurchaseRuntimeHeader } from "./components/purchase_runtime_header.jsx";
 import { usePurchaseSystemPage } from "./hooks/use_purchase_system_page.js";
 
+const PREVIEW_ITEM_ROWS = [
+  {
+    query_item_id: "preview-item-1",
+    is_preview: true,
+    item_name: "AK-47 | Redline",
+    max_price: 123.45,
+    min_wear: 0.1,
+    max_wear: 0.7,
+    detail_min_wear: 0.12,
+    detail_max_wear: 0.3,
+    query_execution_count: 7,
+    matched_product_count: 3,
+    purchase_success_count: 1,
+    purchase_failed_count: 2,
+    source_mode_stats: [
+      {
+        mode_type: "new_api",
+        hit_count: 2,
+        last_hit_at: "2026-03-20T10:00:00",
+        account_id: "preview-query-a",
+        account_display_name: "查询账号A",
+      },
+      {
+        mode_type: "fast_api",
+        hit_count: 1,
+        last_hit_at: "2026-03-20T10:00:03",
+        account_id: "preview-query-b",
+        account_display_name: "查询账号B",
+      },
+    ],
+  },
+];
+
 
 export function PurchaseSystemPage({ bootstrapConfig, client }) {
   const {
-    accountRows,
     activeQueryConfig,
     actionLabel,
+    accountMonitorModal,
+    accountRows,
     configActionLabel,
     configDisplayName,
     configList,
     dialogActionLabel,
     isActionDisabled,
     isActionPending,
+    isAccountMonitorOpen,
     isConfigDialogOpen,
     isLoading,
+    isRecentEventsOpen,
     itemRows,
     loadError,
+    onCloseAccountMonitor,
     onCloseConfigDialog,
+    onCloseRecentEvents,
     onConfigDialogSelect,
     onConfirmConfigDialog,
+    onItemAllocationChange,
+    onItemManualPausedChange,
+    onOpenAccountDetails,
     onOpenConfigDialog,
+    onOpenRecentEvents,
     onRuntimeAction,
-    queueSize,
+    onSaveItemAllocation,
     recentEvents,
+    recentEventsModal,
     runtimeMessage,
     selectedDialogConfigId,
-    status,
-    totalAccountCount,
     totalPurchasedCount,
-    activeAccountCount,
-    runtimeSessionId,
   } = usePurchaseSystemPage({ client });
+  const hasRealItems = (itemRows || []).length > 0;
+  const displayRows = hasRealItems ? itemRows : PREVIEW_ITEM_ROWS;
 
   return (
     <section className="purchase-system-page">
-      <header className="purchase-system-page__hero">
-        <div className="purchase-system-page__hero-copy">
-          <div className="query-system-page__eyebrow">Purchase System</div>
-          <h1 className="purchase-system-page__title">购买系统</h1>
-          <p className="purchase-system-page__subtitle">
-            直接查看当前绑定的查询配置、命中统计和账号购买件数，先把购买运行态闭环落到新桌面 Web。
-          </p>
-        </div>
-        <div className="query-system-page__hero-meta">
-          <div className="account-page__backend-pill">后端状态：{bootstrapConfig.backendStatus}</div>
-        </div>
-      </header>
-
       {loadError ? (
         <section className="query-system-page__error">{loadError}</section>
       ) : null}
 
-      <PurchaseRuntimeHeader
-        activeQueryConfig={activeQueryConfig}
-        activeAccountCount={activeAccountCount}
-        displayConfigName={configDisplayName}
-        isLoading={isLoading}
-        matchedProductCount={status.matched_product_count}
-        queueSize={queueSize}
-        purchaseFailedCount={status.purchase_failed_count}
-        purchaseSuccessCount={status.purchase_success_count}
-        runtimeSessionId={runtimeSessionId}
-        runtimeMessage={runtimeMessage}
-        totalAccountCount={totalAccountCount}
-        totalPurchasedCount={totalPurchasedCount}
-      />
-
       <div className="purchase-system-page__layout">
-        <div className="purchase-system-page__main-stack">
-          <section className="purchase-system-page__items" aria-label="配置商品列表">
-            {(itemRows || []).length ? (
-              itemRows.map((row) => (
-                <PurchaseItemPanel key={row.query_item_id} row={row} />
-              ))
-            ) : (
-              <div className="purchase-system-page__empty">
-                当前没有可展示的商品统计。
-              </div>
-            )}
-          </section>
+        <section className="purchase-system-page__items-panel" aria-label="配置商品列表">
+          <PurchaseRuntimeHeader
+            activeQueryConfig={activeQueryConfig}
+            configActionLabel={configActionLabel}
+            displayConfigName={configDisplayName}
+            isLoading={isLoading}
+            onOpenConfigDialog={onOpenConfigDialog}
+            runtimeMessage={runtimeMessage}
+            totalPurchasedCount={totalPurchasedCount}
+          />
 
-          <PurchaseRecentEvents events={recentEvents} />
-        </div>
-
-        <div className="purchase-system-page__side-stack">
-          <PurchaseAccountTable rows={accountRows} />
-        </div>
+          <div className="purchase-system-page__items">
+            {displayRows.map((row) => (
+              <PurchaseItemPanel
+                key={row.query_item_id}
+                row={row}
+                onAllocationChange={onItemAllocationChange}
+                onManualPausedChange={onItemManualPausedChange}
+                onSave={onSaveItemAllocation}
+              />
+            ))}
+          </div>
+        </section>
       </div>
 
       <PurchaseRuntimeActions
         actionLabel={actionLabel}
-        configActionLabel={configActionLabel}
-        configDisplayName={configDisplayName}
         isActionDisabled={isActionDisabled}
         isPending={isActionPending}
         onAction={onRuntimeAction}
-        onOpenConfigDialog={onOpenConfigDialog}
+        onOpenAccountDetails={onOpenAccountDetails}
+        onOpenRecentEvents={onOpenRecentEvents}
       />
 
       <PurchaseConfigSelectorDialog
@@ -113,6 +129,26 @@ export function PurchaseSystemPage({ bootstrapConfig, client }) {
         onConfirm={onConfirmConfigDialog}
         onSelect={onConfigDialogSelect}
         selectedConfigId={selectedDialogConfigId}
+      />
+
+      <PurchaseRecentEventsModal
+        events={recentEvents}
+        isOpen={isRecentEventsOpen}
+        onClose={onCloseRecentEvents}
+        onPositionChange={recentEventsModal.onPositionChange}
+        onSizeChange={recentEventsModal.onSizeChange}
+        position={recentEventsModal.position}
+        size={recentEventsModal.size}
+      />
+
+      <PurchaseAccountMonitorModal
+        isOpen={isAccountMonitorOpen}
+        onClose={onCloseAccountMonitor}
+        onPositionChange={accountMonitorModal.onPositionChange}
+        onSizeChange={accountMonitorModal.onSizeChange}
+        position={accountMonitorModal.position}
+        rows={accountRows}
+        size={accountMonitorModal.size}
       />
     </section>
   );
