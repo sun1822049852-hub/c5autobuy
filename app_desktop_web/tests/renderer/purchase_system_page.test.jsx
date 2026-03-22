@@ -228,16 +228,28 @@ function buildPurchaseRuntimeStatus(overrides = {}) {
         total_price: 123.45,
         total_wear_sum: 0.42,
         source_mode_type: "new_api",
+        http_status: 202,
+        request_method: "POST",
+        request_path: "/purchase-runtime/dispatch",
+        raw_status: "queued",
       },
       {
         occurred_at: "2026-03-20T10:00:03",
-        status: "purchased",
-        message: "购买成功 1 件",
+        status: "not login",
+        message: "购买失败 1 件",
         query_item_name: "AK-47 | Redline",
         product_list: [{ productId: "p-2", price: 122.0, actRebateAmount: 0 }],
         total_price: 122.0,
         total_wear_sum: 0.38,
         source_mode_type: "token",
+        error: "not login",
+        http_status: 401,
+        request_method: "POST",
+        request_path: "/orders/submit",
+        response_text: "not login",
+        payload: {
+          product_ids: ["p-2"],
+        },
       },
     ],
     accounts: [
@@ -655,6 +667,14 @@ describe("purchase system page", () => {
     await user.click(within(actionRegion).getByRole("button", { name: "最近事件" }));
     const recentEventsDialog = await screen.findByRole("dialog", { name: "最近事件" });
     expect(within(recentEventsDialog).getByText("命中已进入购买池")).toBeInTheDocument();
+    expect(within(recentEventsDialog).getByText("HTTP 202")).toBeInTheDocument();
+    expect(within(recentEventsDialog).getByText("POST /purchase-runtime/dispatch")).toBeInTheDocument();
+    expect(within(recentEventsDialog).getByText("原始状态：queued")).toBeInTheDocument();
+    expect(within(recentEventsDialog).getByText("购买失败 1 件")).toBeInTheDocument();
+    expect(within(recentEventsDialog).getByText("HTTP 401")).toBeInTheDocument();
+    expect(within(recentEventsDialog).getByText("POST /orders/submit")).toBeInTheDocument();
+    expect(within(recentEventsDialog).getByText("错误：not login")).toBeInTheDocument();
+    expect(within(recentEventsDialog).getByText("原始返回：not login")).toBeInTheDocument();
 
     await user.click(within(actionRegion).getByRole("button", { name: "查看账号详情" }));
     const accountDialog = await screen.findByRole("dialog", { name: "查看账号详情" });

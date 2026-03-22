@@ -159,11 +159,19 @@ describe("query stats page", () => {
     render(<App />);
     await user.click(await screen.findByRole("button", { name: "查询统计" }));
 
-    await user.click(await screen.findByRole("button", { name: "按天" }));
-    await user.click(screen.getByRole("button", { name: "打开统计日期选择" }));
+    expect(screen.queryByRole("button", { name: "按天" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "时间段" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "打开统计时间选择" }));
     const dayDialog = await screen.findByRole("dialog", { name: "选择统计日期" });
     expect(within(dayDialog).getByText("2026年3月")).toBeInTheDocument();
-    await user.click(within(dayDialog).getByRole("button", { name: "选择日期 2026-03-22" }));
+    expect(within(dayDialog).getByText("2026年4月")).toBeInTheDocument();
+    expect(within(dayDialog).getByRole("button", { name: "总计" })).toBeInTheDocument();
+    expect(within(dayDialog).getByRole("button", { name: "今天" })).toBeInTheDocument();
+    expect(within(dayDialog).getByRole("button", { name: "近7天" })).toBeInTheDocument();
+    expect(within(dayDialog).getByRole("button", { name: "本月" })).toBeInTheDocument();
+    expect(within(dayDialog).getByRole("button", { name: "选择日期 2026-03-28" })).toBeDisabled();
+    await user.click(within(dayDialog).getByRole("button", { name: "选择日期 2026-03-21" }));
     await user.click(screen.getByRole("button", { name: "刷新统计" }));
 
     await waitFor(() => {
@@ -172,7 +180,7 @@ describe("query stats page", () => {
           expect.objectContaining({
             method: "GET",
             pathname: "/stats/query-items",
-            search: "?range_mode=day&date=2026-03-22",
+            search: "?range_mode=day&date=2026-03-21",
           }),
         ]),
       );
@@ -183,10 +191,11 @@ describe("query stats page", () => {
     expect(within(table).getByText("2")).toBeInTheDocument();
     expect(within(table).getAllByText("1")).toHaveLength(2);
     expect(within(table).getByText("api查询器 2")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "打开统计日期选择" })).toHaveTextContent("2026-03-22 00:00:00");
+    expect(screen.getByRole("button", { name: "打开统计时间选择" })).toHaveTextContent("2026-03-21 00:00:00");
 
-    await user.click(screen.getByRole("button", { name: "时间段" }));
-    await user.click(screen.getByRole("button", { name: "打开统计时间段选择" }));
+    await user.click(screen.getByRole("button", { name: "打开统计时间选择" }));
+    const reopenedDayDialog = await screen.findByRole("dialog", { name: "选择统计日期" });
+    await user.click(within(reopenedDayDialog).getByRole("button", { name: "近7天" }));
     const rangeDialog = await screen.findByRole("dialog", { name: "选择统计时间段" });
     expect(within(rangeDialog).getByText("2026年3月")).toBeInTheDocument();
     expect(within(rangeDialog).getByText("2026年4月")).toBeInTheDocument();
@@ -195,7 +204,7 @@ describe("query stats page", () => {
     expect(within(rangeDialog).getByRole("button", { name: "近7天" })).toBeInTheDocument();
     expect(within(rangeDialog).getByRole("button", { name: "本月" })).toBeInTheDocument();
     expect(within(rangeDialog).getByRole("button", { name: "选择日期 2026-03-28" })).toBeDisabled();
-    await user.click(within(rangeDialog).getByRole("button", { name: "开始日期 2026-03-22 00:00:00" }));
+    await user.click(within(rangeDialog).getByRole("button", { name: "开始日期 2026-03-16 00:00:00" }));
     await user.click(within(rangeDialog).getByRole("button", { name: "选择日期 2026-03-21" }));
     await user.click(screen.getByRole("button", { name: "刷新统计" }));
 
@@ -211,10 +220,59 @@ describe("query stats page", () => {
       );
     });
 
-    expect(screen.getByRole("button", { name: "打开统计时间段选择" })).toHaveTextContent(
+    expect(screen.getByRole("button", { name: "打开统计时间选择" })).toHaveTextContent(
       "2026-03-21 00:00:00 ~ 2026-03-22 23:59:59",
     );
     expect(within(table).getByText("8")).toBeInTheDocument();
     expect(within(table).getByText("api高速查询器 3")).toBeInTheDocument();
+  });
+
+  it("closes the stats picker when clicking outside the picker", async () => {
+    const harness = createFetchHarness();
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "查询统计" }));
+
+    await user.click(screen.getByRole("button", { name: "打开统计时间选择" }));
+    expect(await screen.findByRole("dialog", { name: "选择统计日期" })).toBeInTheDocument();
+
+    await user.click(screen.getByText("按商品聚合命中、成功、失败与来源统计。"));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "选择统计日期" })).not.toBeInTheDocument();
+    });
+  });
+
+  it("shows raw http details when query stats loading fails with an unhandled backend string", async () => {
+    installDesktopApp(vi.fn(async (input, options = {}) => {
+      const url = new URL(input);
+      const method = String(options.method ?? "GET").toUpperCase();
+
+      if (url.pathname === "/account-center/accounts" && method === "GET") {
+        return jsonResponse([]);
+      }
+
+      if (url.pathname === "/stats/query-items" && method === "GET") {
+        return {
+          ok: false,
+          status: 401,
+          text: async () => "not login",
+        };
+      }
+
+      throw new Error(`Unhandled request: ${method} ${url.pathname}${url.search}`);
+    }));
+
+    const user = userEvent.setup();
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "查询统计" }));
+
+    const errorPanel = await screen.findByRole("alert");
+    expect(within(errorPanel).getByText("not login")).toBeInTheDocument();
+    expect(within(errorPanel).getByText("HTTP 401")).toBeInTheDocument();
+    expect(within(errorPanel).getByText("GET /stats/query-items?range_mode=total")).toBeInTheDocument();
+    expect(within(errorPanel).getByText("原始返回：not login")).toBeInTheDocument();
   });
 });

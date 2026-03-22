@@ -10,13 +10,6 @@ import {
 } from "./stats_shared.js";
 
 
-const RANGE_OPTIONS = [
-  { value: "total", label: "总计" },
-  { value: "day", label: "按天" },
-  { value: "range", label: "时间段" },
-];
-
-
 function createTodayDateString() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -53,6 +46,28 @@ function getMonthStartDateString(dateString) {
 }
 
 
+function getDisplayLabel(rangeMode) {
+  if (rangeMode === "range") {
+    return "统计时间段";
+  }
+  if (rangeMode === "day") {
+    return "统计日期";
+  }
+  return "统计范围";
+}
+
+
+function getDisplayValue(filters) {
+  if (filters.rangeMode === "range") {
+    return formatStatsRangeDisplay(filters.startDate, filters.endDate);
+  }
+  if (filters.rangeMode === "day") {
+    return formatStatsDayDisplay(filters.date);
+  }
+  return "累计全量统计";
+}
+
+
 export function StatsRangeControls({
   filters,
   onDateChange,
@@ -61,16 +76,12 @@ export function StatsRangeControls({
   onRefresh,
   onStartDateChange,
 }) {
+  const containerRef = useRef(null);
   const [isPickerOpen, setIsPickerOpen] = useState(false);
   const keepPickerOpenOnModeChangeRef = useRef(false);
+  const pickerMode = filters.rangeMode === "range" ? "range" : "day";
 
   useEffect(() => {
-    if (filters.rangeMode === "total") {
-      keepPickerOpenOnModeChangeRef.current = false;
-      setIsPickerOpen(false);
-      return;
-    }
-
     if (keepPickerOpenOnModeChangeRef.current) {
       keepPickerOpenOnModeChangeRef.current = false;
       setIsPickerOpen(true);
@@ -79,6 +90,31 @@ export function StatsRangeControls({
 
     setIsPickerOpen(false);
   }, [filters.rangeMode]);
+
+  useEffect(() => {
+    if (!isPickerOpen) {
+      return undefined;
+    }
+
+    function handleDocumentMouseDown(event) {
+      const target = event.target;
+      if (!(target instanceof Node)) {
+        return;
+      }
+
+      if (containerRef.current?.contains(target)) {
+        return;
+      }
+
+      keepPickerOpenOnModeChangeRef.current = false;
+      setIsPickerOpen(false);
+    }
+
+    document.addEventListener("mousedown", handleDocumentMouseDown);
+    return () => {
+      document.removeEventListener("mousedown", handleDocumentMouseDown);
+    };
+  }, [isPickerOpen]);
 
   function handleQuickTotal() {
     keepPickerOpenOnModeChangeRef.current = false;
@@ -109,72 +145,23 @@ export function StatsRangeControls({
     onRangeModeChange("range");
   }
 
-  function handleRangeModeButtonClick(nextRangeMode) {
-    keepPickerOpenOnModeChangeRef.current = false;
-    onRangeModeChange(nextRangeMode);
-  }
-
   return (
     <>
-      <div aria-label="统计范围" className="stats-range-controls" role="group">
-        {RANGE_OPTIONS.map((option) => (
-          <button
-            key={option.value}
-            aria-pressed={filters.rangeMode === option.value}
-            className={`stats-range-controls__option${filters.rangeMode === option.value ? " is-active" : ""}`}
-            type="button"
-            onClick={() => handleRangeModeButtonClick(option.value)}
-          >
-            {option.label}
-          </button>
-        ))}
-      </div>
+      <div ref={containerRef} className="stats-range-display">
+        <button
+          aria-expanded={isPickerOpen}
+          aria-label="打开统计时间选择"
+          className={`stats-range-display__button${isPickerOpen ? " is-open" : ""}`}
+          type="button"
+          onClick={() => setIsPickerOpen((current) => !current)}
+        >
+          <span className="stats-range-display__label">{getDisplayLabel(filters.rangeMode)}</span>
+          <span className="stats-range-display__value">{getDisplayValue(filters)}</span>
+        </button>
 
-      {filters.rangeMode === "day" ? (
-        <div className="stats-range-display">
-          <button
-            aria-expanded={isPickerOpen}
-            aria-label="打开统计日期选择"
-            className={`stats-range-display__button${isPickerOpen ? " is-open" : ""}`}
-            type="button"
-            onClick={() => setIsPickerOpen((current) => !current)}
-          >
-            <span className="stats-range-display__label">统计日期</span>
-            <span className="stats-range-display__value">{formatStatsDayDisplay(filters.date)}</span>
-          </button>
-
-          {isPickerOpen ? (
-            <div className="stats-range-display__popover">
-              <StatsDayPickerPanel
-                date={filters.date}
-                onDateChange={onDateChange}
-                onQuickCurrentMonth={handleQuickCurrentMonth}
-                onQuickRecentSevenDays={handleQuickRecentSevenDays}
-                onQuickSelectToday={handleQuickToday}
-                onQuickSelectTotal={handleQuickTotal}
-              />
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-
-      {filters.rangeMode === "range" ? (
-        <div className="stats-range-display">
-          <button
-            aria-expanded={isPickerOpen}
-            aria-label="打开统计时间段选择"
-            className={`stats-range-display__button${isPickerOpen ? " is-open" : ""}`}
-            type="button"
-            onClick={() => setIsPickerOpen((current) => !current)}
-          >
-            <span className="stats-range-display__label">统计时间段</span>
-            <span className="stats-range-display__value">
-              {formatStatsRangeDisplay(filters.startDate, filters.endDate)}
-            </span>
-          </button>
-
-          {isPickerOpen ? (
-            <div className="stats-range-display__popover">
+        {isPickerOpen ? (
+          <div className="stats-range-display__popover">
+            {pickerMode === "range" ? (
               <StatsRangePickerPanel
                 endDate={filters.endDate}
                 onEndDateChange={onEndDateChange}
@@ -185,17 +172,24 @@ export function StatsRangeControls({
                 onStartDateChange={onStartDateChange}
                 startDate={filters.startDate}
               />
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-
-      {filters.rangeMode === "total" ? (
-        <div className="stats-range-display stats-range-display--summary">
-          <div className="stats-range-display__summary-label">统计范围</div>
-          <div className="stats-range-display__summary-value">累计全量统计</div>
-        </div>
-      ) : null}
+            ) : (
+              <StatsDayPickerPanel
+                date={filters.date}
+                onDateChange={(nextValue) => {
+                  onDateChange(nextValue);
+                  if (filters.rangeMode !== "day") {
+                    onRangeModeChange("day");
+                  }
+                }}
+                onQuickCurrentMonth={handleQuickCurrentMonth}
+                onQuickRecentSevenDays={handleQuickRecentSevenDays}
+                onQuickSelectToday={handleQuickToday}
+                onQuickSelectTotal={handleQuickTotal}
+              />
+            )}
+          </div>
+        ) : null}
+      </div>
 
       <button className="ghost-button stats-toolbar__refresh" type="button" onClick={onRefresh}>
         刷新统计

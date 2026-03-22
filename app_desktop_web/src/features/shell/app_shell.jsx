@@ -1,3 +1,5 @@
+import { NO_SELECT_STYLE } from "../../shared/no_select_style.js";
+
 const NAV_ITEMS = [
   {
     id: "account-center",
@@ -31,7 +33,7 @@ export function AppShell({ activeItem, children, onSelect }) {
   return (
     <div className="app-shell">
       <aside className="app-shell__sidebar" aria-label="主导航">
-        <div className="app-shell__brand">
+        <div className="app-shell__brand" style={NO_SELECT_STYLE}>
           <div className="app-shell__brand-mark">Desktop Web</div>
           <div className="app-shell__brand-title">C5 控制台</div>
           <div className="app-shell__brand-copy">
@@ -45,6 +47,7 @@ export function AppShell({ activeItem, children, onSelect }) {
               aria-label={item.label}
               className={`app-shell__nav-button${item.id === activeItem ? " is-active" : ""}${item.disabled ? " is-disabled" : ""}`}
               disabled={item.disabled}
+              style={NO_SELECT_STYLE}
               type="button"
               onClick={() => {
                 if (!item.disabled) {

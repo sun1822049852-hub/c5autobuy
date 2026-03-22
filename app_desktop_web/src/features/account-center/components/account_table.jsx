@@ -1,3 +1,5 @@
+import { NO_SELECT_STYLE } from "../../../shared/no_select_style.js";
+
 function getDisplayName(row) {
   return row.display_name || row.remark_name || row.c5_nick_name || row.default_name || row.account_id;
 }
@@ -42,7 +44,7 @@ function renderBody({
   if (isLoading) {
     return (
       <tr>
-        <td className="account-table__empty" colSpan={4}>正在加载账号列表...</td>
+        <td className="account-table__empty" colSpan={4} style={NO_SELECT_STYLE}>正在加载账号列表...</td>
       </tr>
     );
   }
@@ -50,7 +52,7 @@ function renderBody({
   if (loadError) {
     return (
       <tr>
-        <td className="account-table__empty" colSpan={4}>加载失败：{loadError}</td>
+        <td className="account-table__empty" colSpan={4} style={NO_SELECT_STYLE}>加载失败：{loadError}</td>
       </tr>
     );
   }
@@ -58,7 +60,7 @@ function renderBody({
   if (!rows.length) {
     return (
       <tr>
-        <td className="account-table__empty" colSpan={4}>没有符合条件的账号</td>
+        <td className="account-table__empty" colSpan={4} style={NO_SELECT_STYLE}>没有符合条件的账号</td>
       </tr>
     );
   }
@@ -144,10 +146,10 @@ export function AccountTable({
     <table aria-label="账号列表" className="account-table">
       <thead>
         <tr>
-          <th scope="col">C5昵称</th>
-          <th scope="col">API Key</th>
-          <th scope="col">购买状态</th>
-          <th scope="col">代理</th>
+          <th scope="col" style={NO_SELECT_STYLE}>C5昵称</th>
+          <th scope="col" style={NO_SELECT_STYLE}>API Key</th>
+          <th scope="col" style={NO_SELECT_STYLE}>购买状态</th>
+          <th scope="col" style={NO_SELECT_STYLE}>代理</th>
         </tr>
       </thead>
       <tbody>

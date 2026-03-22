@@ -1,3 +1,6 @@
+import { getEventDetailLines } from "../../../shared/feedback_details.js";
+
+
 function formatEventMeta(event) {
   const parts = [];
 
@@ -34,6 +37,18 @@ export function PurchaseRecentEvents({ events }) {
                 <div className="purchase-recent-events__item-status">{event.status || "unknown"}</div>
               </div>
               <div className="purchase-recent-events__item-meta">{formatEventMeta(event)}</div>
+              {getEventDetailLines(event).length ? (
+                <div className="purchase-recent-events__item-detail-list">
+                  {getEventDetailLines(event).map((line, detailIndex) => (
+                    <div
+                      key={`${line}-${detailIndex}`}
+                      className="purchase-recent-events__item-detail"
+                    >
+                      {line}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
             </article>
           ))}
         </div>

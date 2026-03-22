@@ -62,10 +62,8 @@ function accountRows() {
     },
   ];
 }
-
-
 describe("account center page", () => {
-  it("renders shell navigation, overview cards, account table and status strip", async () => {
+  it("renders shell navigation, overview cards, account table and log entry point", async () => {
     installDesktopApp(
       vi.fn().mockResolvedValue({
         ok: true,
@@ -91,15 +89,17 @@ describe("account center page", () => {
     expect(screen.getByText("未登录")).toBeInTheDocument();
     expect(screen.getByText("无 API Key")).toBeInTheDocument();
     expect(screen.getByText("可购买")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "日志 3" })).toBeInTheDocument();
 
     expect(screen.getByRole("columnheader", { name: "C5昵称" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "API Key" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "购买状态" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "代理" })).toBeInTheDocument();
 
-    expect(screen.getByText("最近登录任务")).toBeInTheDocument();
-    expect(screen.getByText("最近错误")).toBeInTheDocument();
-    expect(screen.getByText("最近修改")).toBeInTheDocument();
+    expect(screen.queryByLabelText("状态带")).not.toBeInTheDocument();
+    expect(screen.queryByText("最近登录任务")).not.toBeInTheDocument();
+    expect(screen.queryByText("最近错误")).not.toBeInTheDocument();
+    expect(screen.queryByText("最近修改")).not.toBeInTheDocument();
 
     expect(screen.getByText("账号 A")).toBeInTheDocument();
     expect(screen.getByText("账号 B")).toBeInTheDocument();
@@ -114,6 +114,12 @@ describe("account center page", () => {
     const overviewGrid = screen.getByLabelText("概览卡片");
     expect(overviewGrid.closest(".account-page__hero-side")).not.toBeNull();
     expect(overviewGrid).toHaveClass("overview-grid--compact-row");
+
+    await userEvent.setup().click(screen.getByRole("button", { name: "日志 3" }));
+    const logDialog = await screen.findByRole("dialog", { name: "日志" });
+    expect(within(logDialog).getByText("等待接入真实任务流")).toBeInTheDocument();
+    expect(within(logDialog).getByText("当前无错误记录")).toBeInTheDocument();
+    expect(within(logDialog).getByText("尚未发生配置改动")).toBeInTheDocument();
   });
 
   it("filters the main list when clicking overview cards", async () => {
@@ -137,5 +143,30 @@ describe("account center page", () => {
     expect(within(table).getByText("账号 B")).toBeInTheDocument();
     expect(within(table).queryByText("账号 A")).not.toBeInTheDocument();
     expect(within(table).queryByText("账号 C")).not.toBeInTheDocument();
+  });
+
+  it("keeps chrome copy non-selectable while preserving input selection", async () => {
+    installDesktopApp(
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => accountRows(),
+      }),
+    );
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText("C5 账号中心")).toBeInTheDocument();
+    });
+
+    const navButton = screen.getByRole("button", { name: "账号中心" });
+    const pageTitle = screen.getByText("C5 账号中心");
+    const tableHeader = screen.getByRole("columnheader", { name: "C5昵称" });
+    const searchbox = screen.getByRole("searchbox", { name: "搜索账号" });
+
+    expect(navButton.style.userSelect).toBe("none");
+    expect(pageTitle.closest(".account-page__hero-copy")?.style.userSelect).toBe("none");
+    expect(tableHeader.style.userSelect).toBe("none");
+    expect(searchbox.style.userSelect).not.toBe("none");
   });
 });

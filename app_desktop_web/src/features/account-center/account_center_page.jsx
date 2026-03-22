@@ -1,7 +1,8 @@
+import { NO_SELECT_STYLE } from "../../shared/no_select_style.js";
 import { AccountContextMenu } from "./components/account_context_menu.jsx";
+import { AccountLogsModal } from "./components/account_logs_modal.jsx";
 import { AccountTable } from "./components/account_table.jsx";
 import { OverviewCards } from "./components/overview_cards.jsx";
-import { StatusStrip } from "./components/status_strip.jsx";
 import { AccountApiKeyDialog } from "./dialogs/account_api_key_dialog.jsx";
 import { AccountCreateDialog } from "./dialogs/account_create_dialog.jsx";
 import { AccountProxyDialog } from "./dialogs/account_proxy_dialog.jsx";
@@ -11,14 +12,16 @@ import { PurchaseConfigDrawer } from "./drawers/purchase_config_drawer.jsx";
 import { useAccountCenterPage } from "./hooks/use_account_center_page.js";
 
 
-export function AccountCenterPage({ bootstrapConfig, client }) {
+export function AccountCenterPage({ client }) {
   const {
     activeFilter,
+    accountLogs,
     apiKeyDialogAccount,
     closeApiKeyDialog,
     closeContextMenu,
     closeCreateDialog,
     closeLoginDrawer,
+    logsModalState,
     closeProxyDialog,
     closePurchaseDrawer,
     closeRemarkDialog,
@@ -32,15 +35,13 @@ export function AccountCenterPage({ bootstrapConfig, client }) {
     openApiKeyDialog,
     openContextMenu,
     openCreateDialog,
+    openLogsModal,
     openNicknameDialog,
     openProxyDialog,
     openPurchaseStatus,
     overviewCards,
     proxyDialogAccount,
     purchaseDrawerState,
-    recentError,
-    recentLoginTask,
-    recentModification,
     refreshPurchaseConfigInventory,
     refreshAccounts,
     remarkDialogAccount,
@@ -57,12 +58,23 @@ export function AccountCenterPage({ bootstrapConfig, client }) {
     isLoginTaskStarting,
   } = useAccountCenterPage({ client });
   const activeCardLabel = overviewCards.find((card) => card.id === activeFilter)?.label ?? "全部账号";
+  const heroCards = [
+    ...overviewCards,
+    {
+      id: "logs",
+      isActive: logsModalState.isOpen,
+      label: "日志",
+      value: accountLogs.length,
+      hint: "查看最近日志",
+      onClick: openLogsModal,
+    },
+  ];
 
   return (
     <section className="account-page">
       <header className="account-page__hero">
         <div className="account-page__hero-main">
-          <div className="account-page__hero-copy">
+          <div className="account-page__hero-copy" style={NO_SELECT_STYLE}>
             <div className="account-page__eyebrow">ACCOUNT CENTER</div>
             <h1 className="account-page__title">
               {isLoading ? "账号中心加载中" : "C5 账号中心"}
@@ -74,7 +86,7 @@ export function AccountCenterPage({ bootstrapConfig, client }) {
           <div className="account-page__hero-overview">
             <OverviewCards
               activeFilter={activeFilter}
-              cards={overviewCards}
+              cards={heroCards}
               className="overview-grid--compact-row"
               onSelect={setActiveFilter}
             />
@@ -83,7 +95,7 @@ export function AccountCenterPage({ bootstrapConfig, client }) {
       </header>
 
       <section className="account-page__toolbar account-page__toolbar--compact">
-        <div className="account-page__toolbar-copy">
+        <div className="account-page__toolbar-copy" style={NO_SELECT_STYLE}>
           <div className="account-page__toolbar-title">账号列表</div>
           <div className="account-page__toolbar-subtitle">
             当前聚焦 {activeCardLabel}
@@ -124,13 +136,6 @@ export function AccountCenterPage({ bootstrapConfig, client }) {
         />
       </section>
 
-      <StatusStrip
-        backendStatus={bootstrapConfig.backendStatus}
-        recentError={recentError}
-        recentLoginTask={recentLoginTask}
-        recentModification={recentModification}
-      />
-
       <AccountCreateDialog open={createDialogOpen} onClose={closeCreateDialog} onSubmit={submitCreate} />
       <AccountRemarkDialog account={remarkDialogAccount} open={Boolean(remarkDialogAccount)} onClose={closeRemarkDialog} onSubmit={submitRemark} />
       <AccountApiKeyDialog account={apiKeyDialogAccount} open={Boolean(apiKeyDialogAccount)} onClose={closeApiKeyDialog} onSubmit={submitApiKey} />
@@ -152,6 +157,15 @@ export function AccountCenterPage({ bootstrapConfig, client }) {
         onStartLogin={startLoginFromDrawer}
         open={Boolean(loginDrawerAccount)}
         task={loginTaskSnapshot}
+      />
+      <AccountLogsModal
+        entries={accountLogs}
+        isOpen={logsModalState.isOpen}
+        onClose={logsModalState.onClose}
+        onPositionChange={logsModalState.onPositionChange}
+        onSizeChange={logsModalState.onSizeChange}
+        position={logsModalState.position}
+        size={logsModalState.size}
       />
       <AccountContextMenu menu={contextMenu} onClose={closeContextMenu} onDelete={deleteAccount} />
     </section>

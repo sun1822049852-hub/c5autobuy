@@ -1,3 +1,4 @@
+import { NO_SELECT_STYLE } from "../../shared/no_select_style.js";
 import { StatsRangeControls } from "../stats/stats_range_controls.jsx";
 import { useAccountCapabilityStatsPage } from "./hooks/use_account_capability_stats_page.js";
 
@@ -18,7 +19,7 @@ export function AccountCapabilityStatsPage({ client }) {
   return (
     <section className="stats-page stats-page--compact" aria-label="账号能力统计">
       <section className="stats-toolbar">
-        <div className="stats-toolbar__copy">
+        <div className="stats-toolbar__copy" style={NO_SELECT_STYLE}>
           <div className="stats-toolbar__eyebrow">Stats</div>
           <div className="stats-toolbar__title">账号能力统计</div>
           <div className="stats-toolbar__subtitle">聚合三类查询器与购买链路的延迟表现。</div>
@@ -44,12 +45,12 @@ export function AccountCapabilityStatsPage({ client }) {
         <table aria-label="账号能力统计表" className="stats-table stats-table--compact-head">
           <thead>
             <tr>
-              <th scope="col">账号</th>
-              <th scope="col">api查询器</th>
-              <th scope="col">api高速查询器</th>
-              <th scope="col">浏览器查询器</th>
-              <th scope="col">发单速度</th>
-              <th scope="col">购买速度</th>
+              <th scope="col" style={NO_SELECT_STYLE}>账号</th>
+              <th scope="col" style={NO_SELECT_STYLE}>api查询器</th>
+              <th scope="col" style={NO_SELECT_STYLE}>api高速查询器</th>
+              <th scope="col" style={NO_SELECT_STYLE}>浏览器查询器</th>
+              <th scope="col" style={NO_SELECT_STYLE}>发单速度</th>
+              <th scope="col" style={NO_SELECT_STYLE}>购买速度</th>
             </tr>
           </thead>
           <tbody>
@@ -64,7 +65,7 @@ export function AccountCapabilityStatsPage({ client }) {
               </tr>
             )) : (
               <tr>
-                <td className="stats-table__empty" colSpan={6}>
+                <td className="stats-table__empty" colSpan={6} style={NO_SELECT_STYLE}>
                   {isLoading ? "统计加载中..." : "暂无统计数据"}
                 </td>
               </tr>

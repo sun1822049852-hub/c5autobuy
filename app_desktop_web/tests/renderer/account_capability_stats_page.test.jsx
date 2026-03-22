@@ -129,16 +129,19 @@ describe("account capability stats page", () => {
     render(<App />);
     await user.click(await screen.findByRole("button", { name: "账号能力统计" }));
 
-    await user.click(await screen.findByRole("button", { name: "按天" }));
-    await user.click(screen.getByRole("button", { name: "打开统计日期选择" }));
+    expect(screen.queryByRole("button", { name: "按天" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "时间段" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "打开统计时间选择" }));
     const dayDialog = await screen.findByRole("dialog", { name: "选择统计日期" });
     expect(within(dayDialog).getByText("2026年3月")).toBeInTheDocument();
     expect(within(dayDialog).getByText("2026年4月")).toBeInTheDocument();
+    expect(within(dayDialog).getByRole("button", { name: "总计" })).toBeInTheDocument();
     expect(within(dayDialog).getByRole("button", { name: "今天" })).toBeInTheDocument();
     expect(within(dayDialog).getByRole("button", { name: "近7天" })).toBeInTheDocument();
     expect(within(dayDialog).getByRole("button", { name: "本月" })).toBeInTheDocument();
     expect(within(dayDialog).getByRole("button", { name: "选择日期 2026-04-01" })).toBeDisabled();
-    await user.click(within(dayDialog).getByRole("button", { name: "选择日期 2026-03-22" }));
+    await user.click(within(dayDialog).getByRole("button", { name: "选择日期 2026-03-21" }));
     await user.click(screen.getByRole("button", { name: "刷新统计" }));
 
     await waitFor(() => {
@@ -147,7 +150,7 @@ describe("account capability stats page", () => {
           expect.objectContaining({
             method: "GET",
             pathname: "/stats/account-capability",
-            search: "?range_mode=day&date=2026-03-22",
+            search: "?range_mode=day&date=2026-03-21",
           }),
         ]),
       );
@@ -157,6 +160,6 @@ describe("account capability stats page", () => {
     expect(within(table).getByText("182ms · 12次")).toBeInTheDocument();
     expect(within(table).getByText("--")).toBeInTheDocument();
     expect(within(table).getByText("520ms · 3次")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "打开统计日期选择" })).toHaveTextContent("2026-03-22 00:00:00");
+    expect(screen.getByRole("button", { name: "打开统计时间选择" })).toHaveTextContent("2026-03-21 00:00:00");
   });
 });

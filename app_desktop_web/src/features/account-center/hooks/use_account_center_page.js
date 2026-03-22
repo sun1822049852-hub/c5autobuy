@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { useFloatingRuntimeModalState } from "../../purchase-system/hooks/use_floating_runtime_modal_state.js";
 import { useLoginTaskStream } from "./use_login_task_stream.js";
 import { createUiStateStore } from "../state/ui_state_store.js";
 
@@ -9,6 +10,26 @@ const DEFAULT_UI_STATE = {
   activeFilter: "all",
   searchTerm: "",
 };
+const INITIAL_LOG_ENTRIES = [
+  {
+    id: "log-login-default",
+    title: "最近登录任务",
+    message: "等待接入真实任务流",
+    meta: "登录抽屉与任务轮询会持续沉淀到这里。",
+  },
+  {
+    id: "log-error-default",
+    title: "最近错误",
+    message: "当前无错误记录",
+    meta: "请求失败、保存失败和冲突提示会沉到这里。",
+  },
+  {
+    id: "log-modification-default",
+    title: "最近修改",
+    message: "尚未发生配置改动",
+    meta: "备注、API Key、代理和购买配置改动都会留痕。",
+  },
+];
 
 
 function getDisplayName(row) {
@@ -113,6 +134,16 @@ function buildOverviewCards(rows) {
 }
 
 
+function createLogEntry({ title, message, meta = "" }) {
+  return {
+    id: `log-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    message,
+    meta,
+    title,
+  };
+}
+
+
 function buildAccountUpdatePayload(account, partialPayload) {
   const hasApiKey = Object.prototype.hasOwnProperty.call(partialPayload, "api_key");
   const hasProxyUrl = Object.prototype.hasOwnProperty.call(partialPayload, "proxy_url");
@@ -140,7 +171,7 @@ function buildLoginDrawerAccount(account) {
 function buildLoginTaskStatusText(account, taskSnapshot) {
   const displayName = getDisplayName(account);
 
-  if (taskSnapshot.state === "succeeded") {
+  if (taskSnapshot.state === "succeeded" || taskSnapshot.state === "success") {
     return `登录任务已完成：${displayName}`;
   }
 
@@ -160,12 +191,95 @@ function buildLoginTaskStatusText(account, taskSnapshot) {
     return `登录任务进行中：${displayName}`;
   }
 
+  if (taskSnapshot.state === "pending") {
+    return `登录任务已创建：${displayName}`;
+  }
+
+  if (taskSnapshot.state) {
+    return `登录任务状态更新：${displayName}`;
+  }
+
   return `登录任务已创建：${displayName}`;
 }
 
 
 function getLatestTaskMessage(taskSnapshot) {
   return taskSnapshot.events?.[taskSnapshot.events.length - 1]?.message || taskSnapshot.error || "";
+}
+
+
+function stringifyLogValue(value) {
+  if (value == null) {
+    return "";
+  }
+
+  if (typeof value === "string") {
+    return value;
+  }
+
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+
+function getLoginTaskMeta(taskSnapshot) {
+  const lines = [];
+  const selectedSteamId = taskSnapshot.result?.selected_steam_id
+    || taskSnapshot.events?.[taskSnapshot.events.length - 1]?.payload?.selected_steam_id;
+
+  if (selectedSteamId) {
+    lines.push(selectedSteamId);
+  }
+
+  if (taskSnapshot.state) {
+    lines.push(`状态：${taskSnapshot.state}`);
+  }
+
+  const latestMessage = getLatestTaskMessage(taskSnapshot);
+  if (latestMessage) {
+    lines.push(`回执：${latestMessage}`);
+  }
+
+  if (taskSnapshot.error) {
+    lines.push(`错误：${taskSnapshot.error}`);
+  }
+
+  const latestPayload = taskSnapshot.events?.[taskSnapshot.events.length - 1]?.payload;
+  if (latestPayload) {
+    lines.push(`payload：${stringifyLogValue(latestPayload)}`);
+  }
+
+  if (taskSnapshot.result) {
+    lines.push(`result：${stringifyLogValue(taskSnapshot.result)}`);
+  }
+
+  return lines;
+}
+
+
+function getErrorMeta(error) {
+  if (!(error instanceof Error)) {
+    return [];
+  }
+
+  const lines = [];
+
+  if (error.status) {
+    lines.push(`HTTP ${error.status}`);
+  }
+
+  if (error.method && error.path) {
+    lines.push(`${error.method} ${error.path}`);
+  }
+
+  if (error.responseText) {
+    lines.push(`原始返回：${error.responseText}`);
+  }
+
+  return lines;
 }
 
 
@@ -190,11 +304,42 @@ export function useAccountCenterPage({ client }) {
   });
   const [loginDrawerAccount, setLoginDrawerAccount] = useState(null);
   const loginDrawerAccountRef = useRef(null);
+  const loginTaskLogKeysRef = useRef(new Set());
   const [contextMenu, setContextMenu] = useState(null);
-  const [recentLoginTask, setRecentLoginTask] = useState("等待接入真实任务流");
-  const [recentError, setRecentError] = useState("当前无错误记录");
-  const [recentModification, setRecentModification] = useState("尚未发生配置改动");
+  const [accountLogs, setAccountLogs] = useState(INITIAL_LOG_ENTRIES);
   const loginTaskStream = useLoginTaskStream({ client });
+  const logsModalState = useFloatingRuntimeModalState({
+    initialPosition: { x: 168, y: 104 },
+    initialSize: { width: 760, height: 520 },
+  });
+
+  function appendLogEntry(entry) {
+    setAccountLogs((current) => [createLogEntry(entry), ...current]);
+  }
+
+  function appendErrorLog(message, meta = []) {
+    appendLogEntry({
+      title: "最近错误",
+      message,
+      meta,
+    });
+  }
+
+  function appendLoginLog(message, meta = []) {
+    appendLogEntry({
+      title: "最近登录任务",
+      message,
+      meta,
+    });
+  }
+
+  function appendModificationLog(message, meta = []) {
+    appendLogEntry({
+      title: "最近修改",
+      message,
+      meta,
+    });
+  }
 
   useEffect(() => {
     let isMounted = true;
@@ -217,7 +362,7 @@ export function useAccountCenterPage({ client }) {
 
         const message = toErrorMessage(error);
         setLoadError(message);
-        setRecentError(`加载账号失败：${message}`);
+        appendErrorLog(`加载账号失败：${message}`, getErrorMeta(error));
       } finally {
         if (isMounted) {
           setIsLoading(false);
@@ -256,7 +401,7 @@ export function useAccountCenterPage({ client }) {
     } catch (error) {
       const message = toErrorMessage(error);
       setLoadError(message);
-      setRecentError(`加载账号失败：${message}`);
+      appendErrorLog(`加载账号失败：${message}`, getErrorMeta(error));
       throw error;
     } finally {
       setIsLoading(false);
@@ -266,16 +411,15 @@ export function useAccountCenterPage({ client }) {
   async function handleAction(action, successMessageBuilder) {
     try {
       const result = await action();
-      setRecentError("当前无错误记录");
       const nextMessage = typeof successMessageBuilder === "function"
         ? successMessageBuilder(result)
         : successMessageBuilder;
       if (nextMessage) {
-        setRecentModification(nextMessage);
+        appendModificationLog(nextMessage);
       }
       return result;
     } catch (error) {
-      setRecentError(toErrorMessage(error));
+      appendErrorLog(toErrorMessage(error), getErrorMeta(error));
       return null;
     }
   }
@@ -287,14 +431,18 @@ export function useAccountCenterPage({ client }) {
     try {
       return await loginTaskStream.start(loginAccount.account_id, {
         async onSnapshot(snapshot) {
-          setRecentLoginTask(buildLoginTaskStatusText(loginAccount, snapshot));
+          const logKey = `${snapshot.task_id}:${snapshot.state}`;
+          if (!loginTaskLogKeysRef.current.has(logKey)) {
+            loginTaskLogKeysRef.current.add(logKey);
+            appendLoginLog(buildLoginTaskStatusText(loginAccount, snapshot), getLoginTaskMeta(snapshot));
+          }
 
           if (snapshot.state === "failed") {
-            setRecentError(`登录失败：${getLatestTaskMessage(snapshot) || "未知错误"}`);
+            appendErrorLog(`登录失败：${getLatestTaskMessage(snapshot) || "未知错误"}`, getLoginTaskMeta(snapshot));
           }
         },
         async onTerminal(snapshot) {
-          if (snapshot.state === "succeeded") {
+          if (snapshot.state === "succeeded" || snapshot.state === "success") {
             const nextRows = await refreshAccounts();
             const nextAccount = nextRows.find((row) => row.account_id === loginAccount.account_id);
             if (nextAccount && loginDrawerAccountRef.current?.account_id === loginAccount.account_id) {
@@ -304,13 +452,14 @@ export function useAccountCenterPage({ client }) {
         },
       });
     } catch (error) {
-      setRecentError(`发起登录失败：${toErrorMessage(error)}`);
+      appendErrorLog(`发起登录失败：${toErrorMessage(error)}`, getErrorMeta(error));
       return null;
     }
   }
 
   return {
     activeFilter: uiState.activeFilter,
+    accountLogs,
     apiKeyDialogAccount,
     closeApiKeyDialog() {
       setApiKeyDialogAccount(null);
@@ -323,8 +472,10 @@ export function useAccountCenterPage({ client }) {
     },
     closeLoginDrawer() {
       setLoginDrawerAccount(null);
+      loginTaskLogKeysRef.current.clear();
       loginTaskStream.reset();
     },
+    logsModalState,
     closeProxyDialog() {
       setProxyDialogAccount(null);
     },
@@ -364,6 +515,7 @@ export function useAccountCenterPage({ client }) {
     loginDrawerAccount,
     loginTaskSnapshot: loginTaskStream.taskSnapshot,
     isLoginTaskStarting: loginTaskStream.isStarting,
+    openLogsModal: logsModalState.onOpen,
     openApiKeyDialog(account) {
       setApiKeyDialogAccount(account);
       setContextMenu(null);
@@ -391,7 +543,6 @@ export function useAccountCenterPage({ client }) {
 
       if (isNotLoggedIn(account)) {
         setLoginDrawerAccount(buildLoginDrawerAccount(account));
-        setRecentLoginTask(`待为${getDisplayName(account)}发起登录`);
         return;
       }
 
@@ -420,15 +571,12 @@ export function useAccountCenterPage({ client }) {
           isRefreshing: false,
           open: false,
         });
-        setRecentError(`加载购买配置失败：${toErrorMessage(error)}`);
+        appendErrorLog(`加载购买配置失败：${toErrorMessage(error)}`, getErrorMeta(error));
       }
     },
     overviewCards,
     proxyDialogAccount,
     purchaseDrawerState,
-    recentError,
-    recentLoginTask,
-    recentModification,
     refreshAccounts,
     remarkDialogAccount,
     searchTerm: uiState.searchTerm,
@@ -502,7 +650,7 @@ export function useAccountCenterPage({ client }) {
             ...payload,
             proxy_display: buildProxyDisplay(payload.proxy_mode, payload.proxy_url),
           }));
-          setRecentLoginTask(`待为${getDisplayName(nextAccount ?? account)}重新登录`);
+          appendLoginLog(`待为${getDisplayName(nextAccount ?? account)}重新登录`);
         }
       }, `已更新代理：${getDisplayName(account)}`);
     },
@@ -545,15 +693,14 @@ export function useAccountCenterPage({ client }) {
           isRefreshing: false,
           open: true,
         }));
-        setRecentError("当前无错误记录");
-        setRecentModification(`已刷新仓库：${getDisplayName(account)}`);
+        appendModificationLog(`已刷新仓库：${getDisplayName(account)}`);
         return detail;
       } catch (error) {
         setPurchaseDrawerState((current) => ({
           ...current,
           isRefreshing: false,
         }));
-        setRecentError(`刷新仓库失败：${toErrorMessage(error)}`);
+        appendErrorLog(`刷新仓库失败：${toErrorMessage(error)}`, getErrorMeta(error));
         return null;
       }
     },

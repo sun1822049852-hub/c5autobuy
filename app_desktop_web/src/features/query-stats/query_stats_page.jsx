@@ -1,3 +1,5 @@
+import { NO_SELECT_STYLE } from "../../shared/no_select_style.js";
+import { ErrorNotice } from "../../shared/error_notice.jsx";
 import {
   formatQuerySourceModeSummary,
 } from "../stats/stats_shared.js";
@@ -21,7 +23,7 @@ export function QueryStatsPage({ client }) {
   return (
     <section className="stats-page stats-page--compact" aria-label="查询统计">
       <section className="stats-toolbar">
-        <div className="stats-toolbar__copy">
+        <div className="stats-toolbar__copy" style={NO_SELECT_STYLE}>
           <div className="stats-toolbar__eyebrow">Stats</div>
           <div className="stats-toolbar__title">查询统计</div>
           <div className="stats-toolbar__subtitle">按商品聚合命中、成功、失败与来源统计。</div>
@@ -39,20 +41,18 @@ export function QueryStatsPage({ client }) {
         </div>
       </section>
 
-      {loadError ? (
-        <section className="query-system-page__error">{loadError}</section>
-      ) : null}
+      <ErrorNotice details={loadError?.details || []} message={loadError?.message || ""} />
 
       <section className="stats-table-panel">
         <table aria-label="查询统计表" className="stats-table">
           <thead>
             <tr>
-              <th scope="col">商品</th>
-              <th scope="col">查询次数</th>
-              <th scope="col">命中</th>
-              <th scope="col">成功</th>
-              <th scope="col">失败</th>
-              <th scope="col">来源</th>
+              <th scope="col" style={NO_SELECT_STYLE}>商品</th>
+              <th scope="col" style={NO_SELECT_STYLE}>查询次数</th>
+              <th scope="col" style={NO_SELECT_STYLE}>命中</th>
+              <th scope="col" style={NO_SELECT_STYLE}>成功</th>
+              <th scope="col" style={NO_SELECT_STYLE}>失败</th>
+              <th scope="col" style={NO_SELECT_STYLE}>来源</th>
             </tr>
           </thead>
           <tbody>
@@ -67,7 +67,7 @@ export function QueryStatsPage({ client }) {
               </tr>
             )) : (
               <tr>
-                <td className="stats-table__empty" colSpan={6}>
+                <td className="stats-table__empty" colSpan={6} style={NO_SELECT_STYLE}>
                   {isLoading ? "统计加载中..." : "暂无统计数据"}
                 </td>
               </tr>

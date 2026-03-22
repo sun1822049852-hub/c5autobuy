@@ -1,16 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 
+import { buildErrorDisplay } from "../../../shared/feedback_details.js";
 import {
   applyRangeModeDefaults,
   buildStatsRequestParams,
   createInitialStatsFilters,
   validateStatsFilters,
 } from "../../stats/stats_shared.js";
-
-
-function toErrorMessage(error) {
-  return error instanceof Error ? error.message : String(error);
-}
 
 
 function normalizeQueryStatsResponse(response) {
@@ -39,7 +35,7 @@ export function useQueryStatsPage({ client }) {
   });
   const [rows, setRows] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [loadError, setLoadError] = useState("");
+  const [loadError, setLoadError] = useState(null);
 
   function updateFilters(nextValue) {
     const nextFilters = typeof nextValue === "function"
@@ -53,7 +49,10 @@ export function useQueryStatsPage({ client }) {
   async function loadStats(nextFilters = filters) {
     const validationError = validateStatsFilters(nextFilters);
     if (validationError) {
-      setLoadError(validationError);
+      setLoadError({
+        details: [],
+        message: validationError,
+      });
       return;
     }
 
@@ -61,9 +60,9 @@ export function useQueryStatsPage({ client }) {
     try {
       const response = await client.getQueryItemStats(buildStatsRequestParams(nextFilters));
       setRows(normalizeQueryStatsResponse(response).items);
-      setLoadError("");
+      setLoadError(null);
     } catch (error) {
-      setLoadError(toErrorMessage(error));
+      setLoadError(buildErrorDisplay(error));
     } finally {
       setIsLoading(false);
     }

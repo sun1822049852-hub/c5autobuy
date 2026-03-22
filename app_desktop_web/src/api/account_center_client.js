@@ -2,7 +2,7 @@ import { getDesktopBootstrapConfig } from "../desktop/bridge.js";
 import { createHttpClient } from "./http.js";
 
 
-const TERMINAL_TASK_STATES = new Set(["succeeded", "failed", "cancelled", "conflict"]);
+const TERMINAL_TASK_STATES = new Set(["succeeded", "success", "failed", "cancelled", "conflict"]);
 
 
 function buildWebSocketUrl(apiBaseUrl, taskId) {
