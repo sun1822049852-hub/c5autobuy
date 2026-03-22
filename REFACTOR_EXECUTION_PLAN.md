@@ -5,17 +5,16 @@
 ## 1. 当前状态
 - `autobuy.py` 已退出默认运行链路，但源码当前仍保留在仓库中作为参考。
 - `c5_layered` 兼容 UI 层已从仓库删除。
-- 当前运行入口为 `run_app.py -> app_frontend.main.main() -> LocalBackendServer -> app_backend.main.create_app()`。
+- 旧 `PySide6` 的 `app_frontend/` 已从仓库删除。
+- 当前运行入口为 `run_app.py -> main_ui_account_center_desktop.js -> app_desktop_web/electron-main.cjs -> app_backend.main.create_app()`。
 - 查询、购买、库存刷新、登录运行时都已收口到 `app_backend`。
 
 ## 2. 当前代码边界
 
 ### 前端
-- `app_frontend/main.py`
-- `app_frontend/app/windows/workspace_window.py`
-- `app_frontend/app/windows/account_center_window.py`
-- `app_frontend/app/windows/query_system_window.py`
-- `app_frontend/app/windows/purchase_runtime_window.py`
+- `main_ui_account_center_desktop.js`
+- `app_desktop_web/electron-main.cjs`
+- `app_desktop_web/src/`
 
 ### 后端
 - `app_backend/main.py`
@@ -34,9 +33,9 @@
 
 ## 4. 当前约束
 - 新增默认行为不要重新依赖 `autobuy.py`、`c5_layered` 或任何 `legacy_*` 兼容壳
-- UI 只通过 `app_frontend` 调后端接口，不直接持有后端运行时对象
+- UI 只通过 `app_desktop_web` 调后端接口，不直接持有后端运行时对象
 - 新增行为必须继续对照旧语义，但实现只能落在当前前后端分层内
-- `autobuy.py` 当前保留为历史单文件参考；`c5_layered` 已删除，不代表默认运行链路仍依赖旧 UI 层
+- `autobuy.py` 当前保留为历史单文件参考；`c5_layered` 和 `app_frontend` 已删除，不代表默认运行链路仍依赖旧 UI 层
 
 ## 5. 建议验证命令
 
