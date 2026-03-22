@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request, status
 
 from app_backend.api.schemas.query_runtime import (
+    QueryRuntimeManualAllocationRequest,
     QueryRuntimePrepareRequest,
     QueryRuntimePrepareResponse,
     QueryRuntimeStartRequest,
@@ -67,3 +68,23 @@ async def stop_query_runtime(request: Request) -> QueryRuntimeStatusResponse:
     if not stopped:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=message)
     return QueryRuntimeStatusResponse.model_validate(runtime_service.get_status())
+
+
+@router.put("/configs/{config_id}/manual-assignments", response_model=QueryRuntimeStatusResponse)
+async def update_query_runtime_manual_allocations(
+    config_id: str,
+    payload: QueryRuntimeManualAllocationRequest,
+    request: Request,
+) -> QueryRuntimeStatusResponse:
+    runtime_service = _runtime_service(request)
+    try:
+        snapshot = runtime_service.apply_manual_allocations(
+            config_id=config_id,
+            items=[item.model_dump() for item in payload.items],
+        )
+    except KeyError as exc:
+        detail = exc.args[0] if exc.args else "查询配置不存在"
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=detail) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    return QueryRuntimeStatusResponse.model_validate(snapshot)

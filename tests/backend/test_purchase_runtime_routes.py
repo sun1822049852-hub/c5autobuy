@@ -137,6 +137,61 @@ async def test_purchase_runtime_settings_routes_are_removed(client):
     assert put_response.status_code == 404
 
 
+async def test_purchase_runtime_ui_preferences_defaults_to_empty_selection(client):
+    response = await client.get("/purchase-runtime/ui-preferences")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "selected_config_id": None,
+        "updated_at": None,
+    }
+
+
+async def test_purchase_runtime_ui_preferences_can_persist_selected_config(client):
+    config_id = await _create_query_config(client)
+
+    put_response = await client.put(
+        "/purchase-runtime/ui-preferences",
+        json={"selected_config_id": config_id},
+    )
+    get_response = await client.get("/purchase-runtime/ui-preferences")
+
+    assert put_response.status_code == 200
+    assert put_response.json()["selected_config_id"] == config_id
+    assert put_response.json()["updated_at"] is not None
+    assert get_response.status_code == 200
+    assert get_response.json()["selected_config_id"] == config_id
+    assert get_response.json()["updated_at"] is not None
+
+
+async def test_purchase_runtime_ui_preferences_rejects_missing_config(client):
+    response = await client.put(
+        "/purchase-runtime/ui-preferences",
+        json={"selected_config_id": "missing-config"},
+    )
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "查询配置不存在"
+
+
+async def test_purchase_runtime_ui_preferences_clears_deleted_config(client):
+    config_id = await _create_query_config(client)
+    await client.put(
+        "/purchase-runtime/ui-preferences",
+        json={"selected_config_id": config_id},
+    )
+
+    delete_response = await client.delete(f"/query-configs/{config_id}")
+    get_response = await client.get("/purchase-runtime/ui-preferences")
+
+    assert delete_response.status_code == 204
+    assert get_response.status_code == 200
+    assert get_response.json() == {
+        "selected_config_id": None,
+        "updated_at": None,
+    }
+
+
 async def _wait_until_status(client, predicate, *, timeout: float = 1.0, interval: float = 0.01):
     deadline = asyncio.get_running_loop().time() + timeout
     while True:
@@ -319,6 +374,7 @@ async def test_purchase_runtime_status_includes_stats_and_keeps_accounts_shape(c
                                 "actual_dedicated_count": 1,
                                 "status": "dedicated",
                                 "status_message": "专属中 1/1",
+                                "shared_available_count": 2,
                             }
                         },
                     }
@@ -365,6 +421,7 @@ async def test_purchase_runtime_status_includes_stats_and_keeps_accounts_shape(c
                     "actual_dedicated_count": 1,
                     "status": "dedicated",
                     "status_message": "专属中 1/1",
+                    "shared_available_count": 2,
                 }
             },
             "source_mode_stats": [

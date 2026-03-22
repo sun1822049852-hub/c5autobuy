@@ -383,6 +383,54 @@ async def test_mode_runner_keeps_dedicated_item_exclusive_when_no_shared_worker_
     ]
 
 
+def test_mode_runner_preserves_dedicated_bindings_on_restart_when_requested():
+    from app_backend.domain.enums.query_modes import QueryMode
+    from app_backend.domain.models.query_config import QueryItemModeAllocation
+    from app_backend.infrastructure.query.runtime.mode_runner import ModeRunner
+
+    class FakeWorker:
+        def __init__(self, account: Account) -> None:
+            self.account = account
+
+        def snapshot(self) -> dict[str, object]:
+            return {
+                "account_id": self.account.account_id,
+                "active": True,
+                "eligible": True,
+                "disabled_reason": None,
+                "last_query_at": None,
+                "last_success_at": None,
+                "last_error": None,
+            }
+
+    dedicated_item = build_item("1380979899390261111")
+    dedicated_item.mode_allocations = [
+        QueryItemModeAllocation(
+            mode_type=mode_type,
+            target_dedicated_count=(1 if mode_type == QueryMode.NEW_API else 0),
+        )
+        for mode_type in QueryMode.ALL
+    ]
+    shared_item = build_item("1380979899390262222")
+
+    runner = ModeRunner(
+        build_mode("new_api"),
+        [build_account("a1", api_key="api-1")],
+        query_items=[dedicated_item, shared_item],
+        worker_factory=lambda mode_type, account: FakeWorker(account),
+    )
+
+    runner.start()
+    first_snapshot = runner.snapshot()
+    runner.stop()
+    runner.start(preserve_allocation_state=True)
+    second_snapshot = runner.snapshot()
+
+    assert first_snapshot["item_rows"][0]["actual_dedicated_count"] == 1
+    assert second_snapshot["item_rows"][0]["actual_dedicated_count"] == 1
+    assert second_snapshot["item_rows"][1]["actual_dedicated_count"] == 0
+
+
 async def test_mode_runner_run_loop_executes_cycle_and_stops_on_signal():
     import asyncio
 
@@ -766,10 +814,13 @@ async def test_mode_runner_forwards_not_login_event_to_event_sink():
             "query_item_name": "商品-1380979899390261111",
             "message": "Not login",
             "match_count": 0,
-            "product_list": [],
-            "total_price": None,
-            "total_wear_sum": None,
-            "latency_ms": 9.0,
-            "error": "Not login",
-        }
-    ]
+                "product_list": [],
+                "total_price": None,
+                "total_wear_sum": None,
+                "detail_min_wear": None,
+                "detail_max_wear": None,
+                "max_price": None,
+                "latency_ms": 9.0,
+                "error": "Not login",
+            }
+        ]

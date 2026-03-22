@@ -71,6 +71,9 @@ class AccountQueryWorker:
             product_list=list(result.product_list),
             total_price=float(result.total_price) if result.success and result.match_count > 0 else None,
             total_wear_sum=float(result.total_wear_sum) if result.success and result.match_count > 0 else None,
+            detail_min_wear=query_item.detail_min_wear,
+            detail_max_wear=query_item.detail_max_wear,
+            max_price=query_item.max_price,
             latency_ms=result.latency_ms,
             error=result.error,
         )

@@ -63,6 +63,13 @@ def test_create_app_keeps_account_center_services_wired(tmp_path: Path):
     assert app.state.account_repository is not None
     assert app.state.purchase_runtime_service is not None
     assert app.state.query_runtime_service is not None
+    assert app.state.purchase_ui_preferences_repository is not None
+    assert app.state.stats_repository is not None
+    assert app.state.stats_pipeline is not None
+    assert getattr(app.state.purchase_runtime_service._stats_sink, "__self__", None) is app.state.stats_pipeline
+    assert getattr(app.state.purchase_runtime_service._stats_sink, "__name__", "") == "enqueue"
+    assert getattr(app.state.query_runtime_service._stats_sink, "__self__", None) is app.state.stats_pipeline
+    assert getattr(app.state.query_runtime_service._stats_sink, "__name__", "") == "enqueue"
 
 
 def test_create_app_creates_stats_and_ui_preference_tables(tmp_path: Path):

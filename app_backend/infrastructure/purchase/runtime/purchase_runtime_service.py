@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import random
 import threading
 from collections.abc import Callable
@@ -16,6 +17,10 @@ from app_backend.infrastructure.purchase.runtime.purchase_scheduler import Purch
 from app_backend.infrastructure.purchase.runtime.purchase_execution_gateway import PurchaseExecutionGateway
 from app_backend.infrastructure.purchase.runtime.purchase_stats_aggregator import PurchaseStatsAggregator
 from app_backend.infrastructure.purchase.runtime.runtime_events import InventoryRefreshResult
+from app_backend.infrastructure.stats.runtime.stats_events import (
+    PurchaseCreateOrderStatsEvent,
+    PurchaseSubmitOrderStatsEvent,
+)
 
 RuntimeFactory = Callable[..., object]
 ExecutionGatewayFactory = Callable[[], object]
@@ -34,6 +39,7 @@ class PurchaseRuntimeService:
         recovery_delay_seconds_provider: RecoveryDelaySecondsProvider | None = None,
         execution_gateway_factory: ExecutionGatewayFactory | None = None,
         runtime_factory: RuntimeFactory | None = None,
+        stats_sink=None,
     ) -> None:
         self._account_repository = account_repository
         self._inventory_snapshot_repository = inventory_snapshot_repository
@@ -41,6 +47,7 @@ class PurchaseRuntimeService:
         self._recovery_delay_seconds_provider = recovery_delay_seconds_provider
         self._execution_gateway_factory = execution_gateway_factory or PurchaseExecutionGateway
         self._runtime_factory = runtime_factory or self._build_default_runtime
+        self._stats_sink = stats_sink
         self._runtime = None
         self._on_no_available_accounts = None
         self._on_accounts_available = None
@@ -289,6 +296,7 @@ class PurchaseRuntimeService:
                 inventory_refresh_gateway_factory=self._inventory_refresh_gateway_factory,
                 recovery_delay_seconds_provider=self._recovery_delay_seconds_provider,
                 execution_gateway_factory=self._execution_gateway_factory,
+                stats_sink=self._stats_sink,
             )
         return self._runtime_factory(accounts, None)
 
@@ -333,6 +341,7 @@ class PurchaseRuntimeService:
                 "inventory_refresh_gateway_factory",
                 "recovery_delay_seconds_provider",
                 "execution_gateway_factory",
+                "stats_sink",
             }:
                 return True
         return False
@@ -834,6 +843,7 @@ class PurchaseRuntimeService:
         inventory_refresh_gateway_factory: InventoryRefreshGatewayFactory | None = None,
         recovery_delay_seconds_provider: RecoveryDelaySecondsProvider | None = None,
         execution_gateway_factory: ExecutionGatewayFactory | None = None,
+        stats_sink=None,
     ):
         return _DefaultPurchaseRuntime(
             accounts,
@@ -843,6 +853,7 @@ class PurchaseRuntimeService:
             inventory_refresh_gateway_factory=inventory_refresh_gateway_factory,
             recovery_delay_seconds_provider=recovery_delay_seconds_provider,
             execution_gateway_factory=execution_gateway_factory or PurchaseExecutionGateway,
+            stats_sink=stats_sink,
         )
 
 
@@ -881,6 +892,7 @@ class _DefaultPurchaseRuntime:
         inventory_refresh_gateway_factory: InventoryRefreshGatewayFactory | None,
         recovery_delay_seconds_provider: RecoveryDelaySecondsProvider | None,
         execution_gateway_factory: ExecutionGatewayFactory,
+        stats_sink=None,
     ) -> None:
         self._accounts = list(accounts)
         self._account_repository = account_repository
@@ -890,6 +902,7 @@ class _DefaultPurchaseRuntime:
             recovery_delay_seconds_provider or self._default_recovery_delay_seconds
         )
         self._execution_gateway_factory = execution_gateway_factory
+        self._stats_sink = stats_sink
         self._running = False
         self._started_at: str | None = None
         self._stopped_at: str | None = None
@@ -1316,7 +1329,89 @@ class _DefaultPurchaseRuntime:
             status=stats_status,
             purchased_count=int(outcome.purchased_count),
         )
+        self._forward_stats_events(state, batch=batch, outcome=outcome)
         self._sync_account_repository_state(state)
+
+    def _forward_stats_events(self, state: _RuntimeAccountState, *, batch, outcome) -> None:
+        if self._stats_sink is None:
+            return
+
+        create_order_latency_ms = getattr(outcome, "create_order_latency_ms", None)
+        submit_order_latency_ms = getattr(outcome, "submit_order_latency_ms", None)
+        submitted_count = max(int(getattr(outcome, "submitted_count", 0) or 0), 0)
+
+        if create_order_latency_ms is not None:
+            create_status = "success" if submit_order_latency_ms is not None else str(outcome.status)
+            self._emit_stats_event(
+                PurchaseCreateOrderStatsEvent(
+                    timestamp=datetime.now().isoformat(timespec="seconds"),
+                    runtime_session_id=getattr(batch, "runtime_session_id", None),
+                    query_config_id=getattr(batch, "query_config_id", None),
+                    query_item_id=getattr(batch, "query_item_id", None),
+                    external_item_id=str(getattr(batch, "external_item_id", "") or ""),
+                    rule_fingerprint=self._build_rule_fingerprint(batch),
+                    detail_min_wear=getattr(batch, "detail_min_wear", None),
+                    detail_max_wear=getattr(batch, "detail_max_wear", None),
+                    max_price=getattr(batch, "max_price", None),
+                    item_name=str(getattr(batch, "query_item_name", "") or "") or None,
+                    product_url=getattr(batch, "product_url", None),
+                    account_id=state.account_id,
+                    account_display_name=state.display_name,
+                    create_order_latency_ms=float(create_order_latency_ms),
+                    submitted_count=submitted_count,
+                    status=create_status,
+                    error=None if create_status == "success" else outcome.error,
+                )
+            )
+
+        if submit_order_latency_ms is None:
+            return
+
+        success_count = min(max(int(outcome.purchased_count), 0), submitted_count)
+        failed_count = max(submitted_count - success_count, 0)
+        self._emit_stats_event(
+            PurchaseSubmitOrderStatsEvent(
+                timestamp=datetime.now().isoformat(timespec="seconds"),
+                runtime_session_id=getattr(batch, "runtime_session_id", None),
+                query_config_id=getattr(batch, "query_config_id", None),
+                query_item_id=getattr(batch, "query_item_id", None),
+                external_item_id=str(getattr(batch, "external_item_id", "") or ""),
+                rule_fingerprint=self._build_rule_fingerprint(batch),
+                detail_min_wear=getattr(batch, "detail_min_wear", None),
+                detail_max_wear=getattr(batch, "detail_max_wear", None),
+                max_price=getattr(batch, "max_price", None),
+                item_name=str(getattr(batch, "query_item_name", "") or "") or None,
+                product_url=getattr(batch, "product_url", None),
+                account_id=state.account_id,
+                account_display_name=state.display_name,
+                submit_order_latency_ms=float(submit_order_latency_ms),
+                submitted_count=submitted_count,
+                success_count=success_count,
+                failed_count=failed_count,
+                status=str(outcome.status),
+                error=outcome.error,
+            )
+        )
+
+    def _emit_stats_event(self, event: object) -> None:
+        if self._stats_sink is None:
+            return
+        try:
+            result = self._stats_sink(event)
+            if inspect.isawaitable(result):
+                _run_coroutine_sync(result)
+        except Exception:
+            return
+
+    @staticmethod
+    def _build_rule_fingerprint(batch) -> str:
+        return "|".join(
+            [
+                "" if getattr(batch, "detail_min_wear", None) is None else str(getattr(batch, "detail_min_wear", None)),
+                "" if getattr(batch, "detail_max_wear", None) is None else str(getattr(batch, "detail_max_wear", None)),
+                "" if getattr(batch, "max_price", None) is None else str(getattr(batch, "max_price", None)),
+            ]
+        )
 
     def _reconcile_inventory_after_success(
         self,

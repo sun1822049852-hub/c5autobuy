@@ -152,5 +152,6 @@ class GetPurchaseRuntimeStatusUseCase:
                 "actual_dedicated_count": int(raw_mode.get("actual_dedicated_count", 0)),
                 "status": str(raw_mode.get("status") or ""),
                 "status_message": str(raw_mode.get("status_message") or ""),
+                "shared_available_count": int(raw_mode.get("shared_available_count", 0)),
             }
         return normalized

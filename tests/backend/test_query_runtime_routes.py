@@ -439,3 +439,131 @@ async def test_query_runtime_status_returns_item_rows_for_mode_status_labels(cli
             },
         }
     ]
+
+
+async def test_update_query_runtime_manual_allocations_returns_runtime_snapshot(client, app):
+    class FakeQueryRuntimeService:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def apply_manual_allocations(self, *, config_id: str, items: list[dict[str, object]]) -> dict[str, object]:
+            self.calls.append(
+                {
+                    "config_id": config_id,
+                    "items": items,
+                }
+            )
+            return {
+                "running": True,
+                "config_id": config_id,
+                "config_name": "查询配置A",
+                "message": "运行中",
+                "account_count": 1,
+                "started_at": "2026-03-22T12:00:00",
+                "stopped_at": None,
+                "total_query_count": 0,
+                "total_found_count": 0,
+                "modes": {},
+                "group_rows": [],
+                "recent_events": [],
+                "item_rows": [
+                    {
+                        "query_item_id": "item-1",
+                        "item_name": "AK-47 | Redline",
+                        "max_price": 123.45,
+                        "min_wear": 0.1,
+                        "max_wear": 0.7,
+                        "detail_min_wear": 0.12,
+                        "detail_max_wear": 0.3,
+                        "manual_paused": False,
+                        "query_count": 5,
+                        "modes": {
+                            "new_api": {
+                                "mode_type": "new_api",
+                                "target_dedicated_count": 1,
+                                "actual_dedicated_count": 2,
+                                "status": "dedicated",
+                                "status_message": "专属中 2/1",
+                            }
+                        },
+                    }
+                ],
+            }
+
+    app.state.query_runtime_service = FakeQueryRuntimeService()
+
+    response = await client.put(
+        "/query-runtime/configs/cfg-1/manual-assignments",
+        json={
+            "items": [
+                {
+                    "query_item_id": "item-1",
+                    "mode_type": "new_api",
+                    "target_actual_count": 2,
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    assert app.state.query_runtime_service.calls == [
+        {
+            "config_id": "cfg-1",
+            "items": [
+                {
+                    "query_item_id": "item-1",
+                    "mode_type": "new_api",
+                    "target_actual_count": 2,
+                }
+            ],
+        }
+    ]
+    assert response.json()["item_rows"][0]["modes"]["new_api"]["actual_dedicated_count"] == 2
+
+
+async def test_update_query_runtime_manual_allocations_returns_404_for_missing_config(client, app):
+    class FakeQueryRuntimeService:
+        def apply_manual_allocations(self, *, config_id: str, items: list[dict[str, object]]) -> dict[str, object]:
+            raise KeyError("查询配置不存在")
+
+    app.state.query_runtime_service = FakeQueryRuntimeService()
+
+    response = await client.put(
+        "/query-runtime/configs/missing/manual-assignments",
+        json={
+            "items": [
+                {
+                    "query_item_id": "item-1",
+                    "mode_type": "new_api",
+                    "target_actual_count": 1,
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "查询配置不存在"}
+
+
+async def test_update_query_runtime_manual_allocations_returns_409_when_config_is_not_running(client, app):
+    class FakeQueryRuntimeService:
+        def apply_manual_allocations(self, *, config_id: str, items: list[dict[str, object]]) -> dict[str, object]:
+            raise ValueError("当前配置未在运行，无法提交运行时分配")
+
+    app.state.query_runtime_service = FakeQueryRuntimeService()
+
+    response = await client.put(
+        "/query-runtime/configs/cfg-1/manual-assignments",
+        json={
+            "items": [
+                {
+                    "query_item_id": "item-1",
+                    "mode_type": "new_api",
+                    "target_actual_count": 1,
+                }
+            ]
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "当前配置未在运行，无法提交运行时分配"}

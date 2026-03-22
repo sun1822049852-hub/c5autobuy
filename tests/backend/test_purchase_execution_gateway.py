@@ -143,6 +143,85 @@ async def test_purchase_execution_gateway_executes_order_then_payment(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_purchase_execution_gateway_returns_stage_latencies_on_success(monkeypatch):
+    session = FakeSession(
+        responses=[
+            (200, json.dumps({"success": True, "data": "order-1"})),
+            (200, json.dumps({"success": True, "data": {"successCount": 1}})),
+        ]
+    )
+    gateway = await _build_gateway(monkeypatch, session=session, signer=FakeSigner(result="fake-sign"))
+    perf_values = iter([1.0, 1.025, 2.0, 2.045])
+    monkeypatch.setattr(
+        "app_backend.infrastructure.purchase.runtime.purchase_execution_gateway.time.perf_counter",
+        lambda: next(perf_values),
+    )
+
+    result = await gateway.execute(
+        account=build_account(),
+        batch=build_batch(),
+        selected_steam_id="steam-1",
+    )
+
+    assert result.submitted_count == 1
+    assert result.create_order_latency_ms == 25.0
+    assert result.submit_order_latency_ms == 45.0
+
+
+@pytest.mark.asyncio
+async def test_purchase_execution_gateway_keeps_create_order_latency_when_order_creation_fails(monkeypatch):
+    session = FakeSession(
+        responses=[
+            (200, json.dumps({"success": False, "errorMsg": "库存不足"})),
+        ]
+    )
+    gateway = await _build_gateway(monkeypatch, session=session, signer=FakeSigner(result="fake-sign"))
+    perf_values = iter([1.0, 1.025])
+    monkeypatch.setattr(
+        "app_backend.infrastructure.purchase.runtime.purchase_execution_gateway.time.perf_counter",
+        lambda: next(perf_values),
+    )
+
+    result = await gateway.execute(
+        account=build_account(),
+        batch=build_batch(),
+        selected_steam_id="steam-1",
+    )
+
+    assert result.status == "order_failed"
+    assert result.submitted_count == 1
+    assert result.create_order_latency_ms == 25.0
+    assert result.submit_order_latency_ms is None
+
+
+@pytest.mark.asyncio
+async def test_purchase_execution_gateway_keeps_both_stage_latencies_when_payment_fails(monkeypatch):
+    session = FakeSession(
+        responses=[
+            (200, json.dumps({"success": True, "data": "order-1"})),
+            (200, json.dumps({"success": False, "errorMsg": "余额不足"})),
+        ]
+    )
+    gateway = await _build_gateway(monkeypatch, session=session, signer=FakeSigner(result="fake-sign"))
+    perf_values = iter([1.0, 1.025, 2.0, 2.045])
+    monkeypatch.setattr(
+        "app_backend.infrastructure.purchase.runtime.purchase_execution_gateway.time.perf_counter",
+        lambda: next(perf_values),
+    )
+
+    result = await gateway.execute(
+        account=build_account(),
+        batch=build_batch(),
+        selected_steam_id="steam-1",
+    )
+
+    assert result.status == "payment_failed"
+    assert result.submitted_count == 1
+    assert result.create_order_latency_ms == 25.0
+    assert result.submit_order_latency_ms == 45.0
+
+
+@pytest.mark.asyncio
 async def test_purchase_execution_gateway_maps_order_not_login_to_auth_invalid(monkeypatch):
     session = FakeSession(
         responses=[

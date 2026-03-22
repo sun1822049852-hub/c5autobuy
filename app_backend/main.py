@@ -12,6 +12,7 @@ from app_backend.api.routes import purchase_runtime as purchase_runtime_routes
 from app_backend.api.routes import query_configs as query_config_routes
 from app_backend.api.routes import query_items as query_item_routes
 from app_backend.api.routes import query_runtime as query_runtime_routes
+from app_backend.api.routes import stats as stats_routes
 from app_backend.api.routes import tasks as task_routes
 from app_backend.api.websocket import tasks as task_websocket_routes
 from app_backend.infrastructure.db.base import build_engine, build_session_factory, create_schema
@@ -24,7 +25,12 @@ from app_backend.infrastructure.repositories.account_inventory_snapshot_reposito
     SqliteAccountInventorySnapshotRepository,
 )
 from app_backend.infrastructure.repositories.account_repository import SqliteAccountRepository
+from app_backend.infrastructure.repositories.purchase_ui_preferences_repository import (
+    SqlitePurchaseUiPreferencesRepository,
+)
+from app_backend.infrastructure.repositories.stats_repository import SqliteStatsRepository
 from app_backend.infrastructure.repositories.query_config_repository import SqliteQueryConfigRepository
+from app_backend.infrastructure.stats.runtime.stats_pipeline import StatsPipeline
 from app_backend.infrastructure.query.collectors.detail_account_selector import DetailAccountSelector
 from app_backend.infrastructure.query.collectors.product_detail_collector import ProductDetailCollector
 from app_backend.infrastructure.query.collectors.product_detail_fetcher import ProductDetailFetcher
@@ -43,15 +49,21 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     repository = SqliteAccountRepository(session_factory)
     query_config_repository = SqliteQueryConfigRepository(session_factory)
     inventory_snapshot_repository = SqliteAccountInventorySnapshotRepository(session_factory)
+    purchase_ui_preferences_repository = SqlitePurchaseUiPreferencesRepository(session_factory)
+    stats_repository = SqliteStatsRepository(session_factory)
+    stats_pipeline = StatsPipeline(repository=stats_repository)
+    stats_pipeline.start()
     purchase_runtime_service = PurchaseRuntimeService(
         account_repository=repository,
         inventory_snapshot_repository=inventory_snapshot_repository,
         inventory_refresh_gateway_factory=InventoryRefreshGateway,
+        stats_sink=stats_pipeline.enqueue,
     )
     query_runtime_service = QueryRuntimeService(
         query_config_repository=query_config_repository,
         account_repository=repository,
         purchase_runtime_service=purchase_runtime_service,
+        stats_sink=stats_pipeline.enqueue,
     )
     task_manager = TaskManager()
     login_adapter = SeleniumLoginAdapter()
@@ -75,6 +87,7 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     )
     app.state.account_repository = repository
     app.state.query_config_repository = query_config_repository
+    app.state.purchase_ui_preferences_repository = purchase_ui_preferences_repository
     app.state.purchase_runtime_service = purchase_runtime_service
     app.state.query_runtime_service = query_runtime_service
     app.state.task_manager = task_manager
@@ -82,6 +95,8 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     app.state.product_url_parser = product_url_parser
     app.state.product_detail_collector = product_detail_collector
     app.state.query_item_detail_refresh_service = query_item_detail_refresh_service
+    app.state.stats_repository = stats_repository
+    app.state.stats_pipeline = stats_pipeline
 
     app.include_router(account_center_routes.router)
     app.include_router(account_routes.router)
@@ -89,6 +104,7 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     app.include_router(query_config_routes.router)
     app.include_router(query_item_routes.router)
     app.include_router(query_runtime_routes.router)
+    app.include_router(stats_routes.router)
     app.include_router(task_routes.router)
     app.include_router(task_websocket_routes.router)
 

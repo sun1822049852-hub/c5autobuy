@@ -23,13 +23,16 @@ class QueryRuntimeService:
         account_repository,
         runtime_factory: RuntimeFactory | None = None,
         purchase_runtime_service=None,
+        stats_sink=None,
     ) -> None:
         self._query_config_repository = query_config_repository
         self._account_repository = account_repository
         self._runtime_factory = runtime_factory or self._build_default_runtime
         self._purchase_runtime_service = purchase_runtime_service
+        self._stats_sink = stats_sink
         self._state_lock = threading.RLock()
         self._runtime = None
+        self._retained_runtime = None
         self._runtime_accounts: dict[str, RuntimeAccountAdapter] = {}
         self._pending_resume_config_id: str | None = None
         self._pending_resume_config_name: str | None = None
@@ -56,6 +59,7 @@ class QueryRuntimeService:
                     return False, "已有查询任务在运行"
                 runtime_to_stop = self._runtime
                 self._runtime = None
+                self._clear_retained_runtime_locked()
                 self._clear_pending_resume_state()
             else:
                 config = self._query_config_repository.get_config(config_id)
@@ -79,25 +83,38 @@ class QueryRuntimeService:
             purchase_started, purchase_message = self._ensure_purchase_runtime_started()
             if not purchase_started:
                 return False, purchase_message
-            if allow_pending_resume:
+            retained_runtime = self._get_retained_runtime_locked(config_id)
+            if retained_runtime is not None:
+                runtime_session_id = (
+                    self._extract_runtime_session_id(retained_runtime)
+                    or self._pending_resume_runtime_session_id
+                    or self._build_runtime_session_id()
+                )
+            elif allow_pending_resume:
                 runtime_session_id = self._pending_resume_runtime_session_id
             else:
                 runtime_session_id = self._pending_resume_runtime_session_id or self._build_runtime_session_id()
+            if not allow_pending_resume:
                 self._bind_purchase_runtime_session(config=config, runtime_session_id=runtime_session_id)
             if not self._purchase_runtime_has_available_accounts():
                 self._mark_waiting_for_purchase_recovery(config, runtime_session_id=runtime_session_id)
                 return True, "查询任务已启动，等待购买账号恢复"
 
-            accounts = list(self._account_repository.list_accounts())
-            hit_sink = self._resolve_hit_sink()
-            runtime = self._create_runtime(
-                config,
-                accounts,
-                hit_sink=hit_sink,
-                runtime_session_id=runtime_session_id,
-            )
+            preserve_allocation_state = retained_runtime is not None
+            if retained_runtime is not None:
+                runtime = retained_runtime
+            else:
+                accounts = list(self._account_repository.list_accounts())
+                hit_sink = self._resolve_hit_sink()
+                runtime = self._create_runtime(
+                    config,
+                    accounts,
+                    hit_sink=hit_sink,
+                    runtime_session_id=runtime_session_id,
+                )
             self._runtime = runtime
-            runtime.start()
+            self._retained_runtime = runtime
+            self._start_runtime(runtime, preserve_allocation_state=preserve_allocation_state)
             self._clear_pending_resume_state()
             return True, "查询任务已启动"
 
@@ -185,6 +202,40 @@ class QueryRuntimeService:
             query_item_id=query_item_id,
         )
 
+    def apply_manual_allocations(
+        self,
+        *,
+        config_id: str,
+        items: list[dict[str, object]],
+    ) -> dict[str, object]:
+        config = self._query_config_repository.get_config(config_id)
+        if config is None:
+            raise KeyError("查询配置不存在")
+
+        known_item_ids = {
+            str(item.query_item_id)
+            for item in config.items
+        }
+        for raw_item in items:
+            if not isinstance(raw_item, dict):
+                continue
+            query_item_id = str(raw_item.get("query_item_id") or "").strip()
+            if query_item_id and query_item_id not in known_item_ids:
+                raise KeyError("查询商品不存在")
+
+        with self._state_lock:
+            active_config_id = self._get_active_config_id_locked()
+            runtime_is_running = self._has_running_runtime_locked()
+            runtime = self._runtime if runtime_is_running else None
+            if active_config_id != config_id or not runtime_is_running or runtime is None:
+                raise ValueError("当前配置未在运行，无法提交运行时分配")
+
+        apply_manual_allocations = getattr(runtime, "apply_manual_allocations", None)
+        if not callable(apply_manual_allocations):
+            raise ValueError("当前运行时不支持运行时分配调整")
+        apply_manual_allocations(config=config, items=list(items))
+        return self.get_status()
+
     def _has_running_runtime(self) -> bool:
         with self._state_lock:
             return self._has_running_runtime_locked()
@@ -194,6 +245,18 @@ class QueryRuntimeService:
             return False
         snapshot = self._runtime.snapshot()
         return bool(snapshot.get("running"))
+
+    def _get_retained_runtime_locked(self, config_id: str) -> object | None:
+        runtime = self._retained_runtime
+        if runtime is None:
+            return None
+        retained_config_id = self._extract_runtime_config_id(runtime)
+        if retained_config_id != str(config_id):
+            return None
+        return runtime
+
+    def _clear_retained_runtime_locked(self) -> None:
+        self._retained_runtime = None
 
     def _has_pending_resume_state(self) -> bool:
         return bool(self._pending_resume_config_id)
@@ -386,6 +449,7 @@ class QueryRuntimeService:
                     "actual_dedicated_count": 0,
                     "status": status,
                     "status_message": status_message,
+                    "shared_available_count": 0,
                 }
             rows.append(
                 {
@@ -397,9 +461,9 @@ class QueryRuntimeService:
                     "detail_min_wear": item.detail_min_wear,
                     "detail_max_wear": item.detail_max_wear,
                     "manual_paused": bool(item.manual_paused),
-                    "query_count": 0,
-                    "modes": modes,
-                }
+            "query_count": 0,
+            "modes": modes,
+        }
             )
         return rows
 
@@ -465,6 +529,7 @@ class QueryRuntimeService:
                         "actual_dedicated_count": int(raw_mode.get("actual_dedicated_count", 0)),
                         "status": str(raw_mode.get("status") or ""),
                         "status_message": str(raw_mode.get("status_message") or ""),
+                        "shared_available_count": int(raw_mode.get("shared_available_count", 0)),
                     }
             normalized.append(
                 {
@@ -550,6 +615,7 @@ class QueryRuntimeService:
         runtime_account_provider=None,
         hit_sink=None,
         event_sink=None,
+        stats_sink=None,
     ) -> QueryTaskRuntime:
         return QueryTaskRuntime(
             config,
@@ -558,6 +624,7 @@ class QueryRuntimeService:
             runtime_account_provider=runtime_account_provider,
             hit_sink=hit_sink,
             event_sink=event_sink,
+            stats_sink=stats_sink,
         )
 
     def _create_runtime(self, config, accounts: list[object], *, hit_sink=None, runtime_session_id: str | None = None):
@@ -572,6 +639,9 @@ class QueryRuntimeService:
         event_sink = self._resolve_event_sink()
         if event_sink is not None and self._runtime_factory_accepts_parameter("event_sink"):
             kwargs["event_sink"] = event_sink
+        stats_sink = self._resolve_stats_sink()
+        if stats_sink is not None and self._runtime_factory_accepts_parameter("stats_sink"):
+            kwargs["stats_sink"] = stats_sink
         runtime_account_provider = self._resolve_runtime_account_provider()
         if runtime_account_provider is not None and self._runtime_factory_accepts_parameter(
             "runtime_account_provider",
@@ -585,6 +655,8 @@ class QueryRuntimeService:
             fallback_kwargs = dict(kwargs)
             if "unexpected keyword argument 'event_sink'" in message:
                 fallback_kwargs.pop("event_sink", None)
+            if "unexpected keyword argument 'stats_sink'" in message:
+                fallback_kwargs.pop("stats_sink", None)
             if "unexpected keyword argument 'hit_sink'" in message:
                 fallback_kwargs.pop("hit_sink", None)
             if "unexpected keyword argument 'runtime_account_provider'" in message:
@@ -620,6 +692,9 @@ class QueryRuntimeService:
 
     def _resolve_runtime_account_provider(self):
         return self._get_or_create_runtime_account
+
+    def _resolve_stats_sink(self):
+        return self._stats_sink
 
     def _ensure_purchase_runtime_started(self) -> tuple[bool, str]:
         if self._purchase_runtime_service is None:
@@ -717,6 +792,18 @@ class QueryRuntimeService:
         self._pending_resume_runtime_session_id = str(runtime_session_id or "") or None
         self._paused_at = datetime.now().isoformat(timespec="seconds")
 
+    def _start_runtime(self, runtime, *, preserve_allocation_state: bool) -> None:
+        start_runtime = getattr(runtime, "start", None)
+        if not callable(start_runtime):
+            return
+        if self._callable_accepts_parameter(
+            start_runtime,
+            "preserve_allocation_state",
+        ):
+            start_runtime(preserve_allocation_state=preserve_allocation_state)
+            return
+        start_runtime()
+
     @staticmethod
     def _build_runtime_session_id() -> str:
         return uuid4().hex
@@ -736,6 +823,37 @@ class QueryRuntimeService:
             return None
         value = str(data.get("runtime_session_id") or "").strip()
         return value or None
+
+    @staticmethod
+    def _extract_runtime_config_id(runtime) -> str | None:
+        if runtime is None:
+            return None
+        runtime_config = getattr(runtime, "config", None)
+        runtime_config_id = getattr(runtime_config, "config_id", None)
+        if runtime_config_id:
+            return str(runtime_config_id)
+        snapshot = getattr(runtime, "snapshot", None)
+        if not callable(snapshot):
+            return None
+        data = snapshot()
+        if not isinstance(data, dict):
+            return None
+        value = str(data.get("config_id") or "").strip()
+        return value or None
+
+    @staticmethod
+    def _callable_accepts_parameter(callable_obj, parameter_name: str) -> bool:
+        try:
+            parameters = signature(callable_obj).parameters.values()
+        except (TypeError, ValueError):
+            return False
+
+        for parameter in parameters:
+            if parameter.kind == Parameter.VAR_KEYWORD:
+                return True
+            if parameter.name == parameter_name:
+                return True
+        return False
 
     def _bind_purchase_runtime_session(self, *, config: QueryConfig, runtime_session_id: str | None) -> None:
         if self._purchase_runtime_service is None:

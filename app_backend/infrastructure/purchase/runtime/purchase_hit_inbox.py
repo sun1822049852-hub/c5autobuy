@@ -34,6 +34,9 @@ class PurchaseHitInbox:
             total_price=float(hit.get("total_price") or 0.0),
             total_wear_sum=float(total_wear_sum) if total_wear_sum is not None else None,
             source_mode_type=str(hit.get("mode_type") or ""),
+            detail_min_wear=float(hit["detail_min_wear"]) if hit.get("detail_min_wear") is not None else None,
+            detail_max_wear=float(hit["detail_max_wear"]) if hit.get("detail_max_wear") is not None else None,
+            max_price=float(hit["max_price"]) if hit.get("max_price") is not None else None,
         )
 
     def _clean_expired(self, current_time: float) -> None:

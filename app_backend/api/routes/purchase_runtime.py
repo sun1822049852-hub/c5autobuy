@@ -6,6 +6,11 @@ from app_backend.api.schemas.purchase_runtime import (
     PurchaseRuntimeInventoryDetailResponse,
     PurchaseRuntimeStartRequest,
     PurchaseRuntimeStatusResponse,
+    PurchaseRuntimeUiPreferencesRequest,
+    PurchaseRuntimeUiPreferencesResponse,
+)
+from app_backend.application.use_cases.get_purchase_ui_preferences import (
+    GetPurchaseUiPreferencesUseCase,
 )
 from app_backend.application.use_cases.get_purchase_runtime_inventory_detail import (
     GetPurchaseRuntimeInventoryDetailUseCase,
@@ -16,6 +21,9 @@ from app_backend.application.use_cases.refresh_purchase_runtime_inventory_detail
 from app_backend.application.use_cases.get_purchase_runtime_status import GetPurchaseRuntimeStatusUseCase
 from app_backend.application.use_cases.start_purchase_runtime import StartPurchaseRuntimeUseCase
 from app_backend.application.use_cases.stop_purchase_runtime import StopPurchaseRuntimeUseCase
+from app_backend.application.use_cases.update_purchase_ui_preferences import (
+    UpdatePurchaseUiPreferencesUseCase,
+)
 
 router = APIRouter(prefix="/purchase-runtime", tags=["purchase-runtime"])
 
@@ -28,6 +36,14 @@ def _query_runtime_service(request: Request):
     return request.app.state.query_runtime_service
 
 
+def _query_config_repository(request: Request):
+    return request.app.state.query_config_repository
+
+
+def _purchase_ui_preferences_repository(request: Request):
+    return request.app.state.purchase_ui_preferences_repository
+
+
 @router.get("/status", response_model=PurchaseRuntimeStatusResponse)
 async def get_purchase_runtime_status(request: Request) -> PurchaseRuntimeStatusResponse:
     use_case = GetPurchaseRuntimeStatusUseCase(
@@ -35,6 +51,32 @@ async def get_purchase_runtime_status(request: Request) -> PurchaseRuntimeStatus
         _query_runtime_service(request),
     )
     return PurchaseRuntimeStatusResponse.model_validate(use_case.execute())
+
+
+@router.get("/ui-preferences", response_model=PurchaseRuntimeUiPreferencesResponse)
+async def get_purchase_runtime_ui_preferences(request: Request) -> PurchaseRuntimeUiPreferencesResponse:
+    use_case = GetPurchaseUiPreferencesUseCase(
+        _purchase_ui_preferences_repository(request),
+        _query_config_repository(request),
+    )
+    return PurchaseRuntimeUiPreferencesResponse.model_validate(use_case.execute())
+
+
+@router.put("/ui-preferences", response_model=PurchaseRuntimeUiPreferencesResponse)
+async def update_purchase_runtime_ui_preferences(
+    payload: PurchaseRuntimeUiPreferencesRequest,
+    request: Request,
+) -> PurchaseRuntimeUiPreferencesResponse:
+    use_case = UpdatePurchaseUiPreferencesUseCase(
+        _purchase_ui_preferences_repository(request),
+        _query_config_repository(request),
+    )
+    try:
+        preferences = use_case.execute(selected_config_id=payload.selected_config_id)
+    except KeyError as exc:
+        detail = exc.args[0] if exc.args else "查询配置不存在"
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=detail) from exc
+    return PurchaseRuntimeUiPreferencesResponse.model_validate(preferences)
 
 
 @router.get("/accounts/{account_id}/inventory", response_model=PurchaseRuntimeInventoryDetailResponse)

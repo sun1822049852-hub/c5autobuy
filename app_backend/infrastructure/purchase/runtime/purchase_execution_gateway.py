@@ -28,26 +28,33 @@ class PurchaseExecutionGateway:
 
     async def execute(self, *, account, batch, selected_steam_id: str) -> PurchaseExecutionResult:
         runtime_account = account if isinstance(account, RuntimeAccountAdapter) else RuntimeAccountAdapter(account)
-        if not runtime_account.get_x_access_token() or not runtime_account.get_x_device_id():
-            return PurchaseExecutionResult.auth_invalid("Not login")
-
         item_id = str(getattr(batch, "external_item_id", None) or "")
         product_url = str(getattr(batch, "product_url", None) or "")
+        product_list = list(getattr(batch, "product_list", []) or [])
+        submitted_count = len(product_list)
+        if not runtime_account.get_x_access_token() or not runtime_account.get_x_device_id():
+            return PurchaseExecutionResult.auth_invalid(
+                "Not login",
+                submitted_count=submitted_count,
+            )
+
         if not item_id or not product_url:
             return PurchaseExecutionResult(
                 status="invalid_batch",
                 purchased_count=0,
+                submitted_count=submitted_count,
                 error="Missing external_item_id or product_url",
             )
 
-        product_list = list(getattr(batch, "product_list", []) or [])
         if not product_list:
             return PurchaseExecutionResult(
                 status="invalid_batch",
                 purchased_count=0,
+                submitted_count=0,
                 error="Missing product_list",
             )
 
+        create_started_at = time.perf_counter()
         order_success, order_id, order_error = await self.create_order(
             runtime_account=runtime_account,
             item_id=item_id,
@@ -56,9 +63,16 @@ class PurchaseExecutionGateway:
             product_list=product_list,
             product_url=product_url,
         )
+        create_order_latency_ms = self._elapsed_ms(create_started_at)
         if not order_success:
-            return self._build_error_result("order_failed", order_error)
+            return self._build_error_result(
+                "order_failed",
+                order_error,
+                submitted_count=submitted_count,
+                create_order_latency_ms=create_order_latency_ms,
+            )
 
+        submit_started_at = time.perf_counter()
         payment_success, success_count, payment_error = await self.process_payment(
             runtime_account=runtime_account,
             order_id=str(order_id),
@@ -66,13 +80,32 @@ class PurchaseExecutionGateway:
             selected_steam_id=selected_steam_id,
             product_url=product_url,
         )
+        submit_order_latency_ms = self._elapsed_ms(submit_started_at)
         if not payment_success:
-            return self._build_error_result("payment_failed", payment_error)
+            return self._build_error_result(
+                "payment_failed",
+                payment_error,
+                submitted_count=submitted_count,
+                create_order_latency_ms=create_order_latency_ms,
+                submit_order_latency_ms=submit_order_latency_ms,
+            )
 
         purchased_count = int(success_count or 0)
         if purchased_count <= 0:
-            return PurchaseExecutionResult(status="payment_success_no_items", purchased_count=0)
-        return PurchaseExecutionResult.success(purchased_count=purchased_count)
+            return PurchaseExecutionResult(
+                status="payment_success_no_items",
+                purchased_count=0,
+                submitted_count=submitted_count,
+                error=None,
+                create_order_latency_ms=create_order_latency_ms,
+                submit_order_latency_ms=submit_order_latency_ms,
+            )
+        return PurchaseExecutionResult.success(
+            purchased_count=purchased_count,
+            submitted_count=submitted_count,
+            create_order_latency_ms=create_order_latency_ms,
+            submit_order_latency_ms=submit_order_latency_ms,
+        )
 
     async def create_order(
         self,
@@ -288,15 +321,38 @@ class PurchaseExecutionGateway:
         return str(int(time.time() * 1000))
 
     @staticmethod
-    def _build_error_result(status: str, error: str | None) -> PurchaseExecutionResult:
+    def _build_error_result(
+        status: str,
+        error: str | None,
+        *,
+        submitted_count: int,
+        create_order_latency_ms: float | None = None,
+        submit_order_latency_ms: float | None = None,
+    ) -> PurchaseExecutionResult:
         if PurchaseExecutionGateway._is_auth_invalid(error):
-            return PurchaseExecutionResult.auth_invalid(error or "Not login")
-        return PurchaseExecutionResult(status=status, purchased_count=0, error=error)
+            return PurchaseExecutionResult.auth_invalid(
+                error or "Not login",
+                submitted_count=submitted_count,
+                create_order_latency_ms=create_order_latency_ms,
+                submit_order_latency_ms=submit_order_latency_ms,
+            )
+        return PurchaseExecutionResult(
+            status=status,
+            purchased_count=0,
+            submitted_count=submitted_count,
+            error=error,
+            create_order_latency_ms=create_order_latency_ms,
+            submit_order_latency_ms=submit_order_latency_ms,
+        )
 
     @staticmethod
     def _is_auth_invalid(error: str | None) -> bool:
         normalized = str(error or "").lower()
         return "not login" in normalized or "403" in normalized
+
+    @staticmethod
+    def _elapsed_ms(started_at: float) -> float:
+        return round((time.perf_counter() - float(started_at)) * 1000, 3)
 
 
 @lru_cache(maxsize=1)

@@ -16,21 +16,55 @@ class PurchaseHitBatch:
     total_price: float = 0.0
     total_wear_sum: float | None = None
     source_mode_type: str = ""
+    detail_min_wear: float | None = None
+    detail_max_wear: float | None = None
+    max_price: float | None = None
 
 
 @dataclass(slots=True)
 class PurchaseExecutionResult:
     status: str
     purchased_count: int = 0
+    submitted_count: int = 0
     error: str | None = None
+    create_order_latency_ms: float | None = None
+    submit_order_latency_ms: float | None = None
 
     @classmethod
-    def success(cls, *, purchased_count: int) -> "PurchaseExecutionResult":
-        return cls(status="success", purchased_count=int(purchased_count))
+    def success(
+        cls,
+        *,
+        purchased_count: int,
+        submitted_count: int = 0,
+        create_order_latency_ms: float | None = None,
+        submit_order_latency_ms: float | None = None,
+    ) -> "PurchaseExecutionResult":
+        return cls(
+            status="success",
+            purchased_count=int(purchased_count),
+            submitted_count=max(int(submitted_count), 0),
+            error=None,
+            create_order_latency_ms=create_order_latency_ms,
+            submit_order_latency_ms=submit_order_latency_ms,
+        )
 
     @classmethod
-    def auth_invalid(cls, error: str) -> "PurchaseExecutionResult":
-        return cls(status="auth_invalid", purchased_count=0, error=error)
+    def auth_invalid(
+        cls,
+        error: str,
+        *,
+        submitted_count: int = 0,
+        create_order_latency_ms: float | None = None,
+        submit_order_latency_ms: float | None = None,
+    ) -> "PurchaseExecutionResult":
+        return cls(
+            status="auth_invalid",
+            purchased_count=0,
+            submitted_count=max(int(submitted_count), 0),
+            error=error,
+            create_order_latency_ms=create_order_latency_ms,
+            submit_order_latency_ms=submit_order_latency_ms,
+        )
 
 
 @dataclass(slots=True)
@@ -56,8 +90,11 @@ class InventoryRefreshResult:
 class PurchaseWorkerOutcome:
     status: str
     purchased_count: int
+    submitted_count: int
     selected_steam_id: str | None
     pool_state: str
     capability_state: str
     requires_remote_refresh: bool
+    create_order_latency_ms: float | None = None
+    submit_order_latency_ms: float | None = None
     error: str | None = None
