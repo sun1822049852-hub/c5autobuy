@@ -48,6 +48,9 @@ class QueryTaskRuntime:
         for mode_setting in config.mode_settings:
             # Each mode keeps an independent scheduler state while querying the same config items.
             mode_scheduler = item_scheduler_factory(list(query_items))
+            apply_mode_setting = getattr(mode_scheduler, "apply_mode_setting", None)
+            if callable(apply_mode_setting):
+                apply_mode_setting(mode_setting)
             self._mode_runners.append(
                 self._build_mode_runner(
                     factory,
@@ -151,6 +154,21 @@ class QueryTaskRuntime:
         missing_modes = [mode_type for mode_type in mode_targets if mode_type not in applied_modes]
         if missing_modes:
             raise RuntimeError(f"manual allocation mode not refreshed: {','.join(missing_modes)}")
+
+    def apply_query_settings(self, *, config: QueryConfig) -> None:
+        self._config = config
+        mode_by_type = {
+            mode.mode_type: mode
+            for mode in config.mode_settings
+        }
+        for runner in self._mode_runners:
+            mode_type = str(getattr(runner, "mode_type", "") or "")
+            mode_setting = mode_by_type.get(mode_type)
+            if mode_setting is None:
+                continue
+            apply_mode_setting = getattr(runner, "apply_mode_setting", None)
+            if callable(apply_mode_setting):
+                apply_mode_setting(mode_setting)
 
     def _run_background_loop(self) -> None:
         loop = asyncio.new_event_loop()

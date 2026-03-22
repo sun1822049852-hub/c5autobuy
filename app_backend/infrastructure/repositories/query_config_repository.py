@@ -74,6 +74,8 @@ class SqliteQueryConfigRepository:
                         end_minute=0,
                         base_cooldown_min=0,
                         base_cooldown_max=0,
+                        item_min_cooldown_seconds=0.5,
+                        item_min_cooldown_strategy="divide_by_assigned_count",
                         random_delay_enabled=0,
                         random_delay_min=0,
                         random_delay_max=0,
@@ -137,6 +139,10 @@ class SqliteQueryConfigRepository:
                 end_minute=row.end_minute,
                 base_cooldown_min=row.base_cooldown_min,
                 base_cooldown_max=row.base_cooldown_max,
+                item_min_cooldown_seconds=float(getattr(row, "item_min_cooldown_seconds", 0.5)),
+                item_min_cooldown_strategy=str(
+                    getattr(row, "item_min_cooldown_strategy", "divide_by_assigned_count")
+                ),
                 random_delay_enabled=bool(row.random_delay_enabled),
                 random_delay_min=row.random_delay_min,
                 random_delay_max=row.random_delay_max,
@@ -331,6 +337,10 @@ class SqliteQueryConfigRepository:
                     end_minute=mode.end_minute,
                     base_cooldown_min=mode.base_cooldown_min,
                     base_cooldown_max=mode.base_cooldown_max,
+                    item_min_cooldown_seconds=float(getattr(mode, "item_min_cooldown_seconds", 0.5)),
+                    item_min_cooldown_strategy=str(
+                        getattr(mode, "item_min_cooldown_strategy", "divide_by_assigned_count")
+                    ),
                     random_delay_enabled=bool(mode.random_delay_enabled),
                     random_delay_min=mode.random_delay_min,
                     random_delay_max=mode.random_delay_max,

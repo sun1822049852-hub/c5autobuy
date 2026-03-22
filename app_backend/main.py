@@ -10,6 +10,7 @@ from app_backend.api.routes import account_center as account_center_routes
 from app_backend.api.routes import accounts as account_routes
 from app_backend.api.routes import purchase_runtime as purchase_runtime_routes
 from app_backend.api.routes import query_configs as query_config_routes
+from app_backend.api.routes import query_settings as query_settings_routes
 from app_backend.api.routes import query_items as query_item_routes
 from app_backend.api.routes import query_runtime as query_runtime_routes
 from app_backend.api.routes import stats as stats_routes
@@ -30,6 +31,7 @@ from app_backend.infrastructure.repositories.purchase_ui_preferences_repository 
 )
 from app_backend.infrastructure.repositories.stats_repository import SqliteStatsRepository
 from app_backend.infrastructure.repositories.query_config_repository import SqliteQueryConfigRepository
+from app_backend.infrastructure.repositories.query_settings_repository import SqliteQuerySettingsRepository
 from app_backend.infrastructure.stats.runtime.stats_pipeline import StatsPipeline
 from app_backend.infrastructure.query.collectors.detail_account_selector import DetailAccountSelector
 from app_backend.infrastructure.query.collectors.product_detail_collector import ProductDetailCollector
@@ -48,6 +50,7 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     session_factory = build_session_factory(engine)
     repository = SqliteAccountRepository(session_factory)
     query_config_repository = SqliteQueryConfigRepository(session_factory)
+    query_settings_repository = SqliteQuerySettingsRepository(session_factory)
     inventory_snapshot_repository = SqliteAccountInventorySnapshotRepository(session_factory)
     purchase_ui_preferences_repository = SqlitePurchaseUiPreferencesRepository(session_factory)
     stats_repository = SqliteStatsRepository(session_factory)
@@ -61,6 +64,7 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     )
     query_runtime_service = QueryRuntimeService(
         query_config_repository=query_config_repository,
+        query_settings_repository=query_settings_repository,
         account_repository=repository,
         purchase_runtime_service=purchase_runtime_service,
         stats_sink=stats_pipeline.enqueue,
@@ -87,6 +91,7 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     )
     app.state.account_repository = repository
     app.state.query_config_repository = query_config_repository
+    app.state.query_settings_repository = query_settings_repository
     app.state.purchase_ui_preferences_repository = purchase_ui_preferences_repository
     app.state.purchase_runtime_service = purchase_runtime_service
     app.state.query_runtime_service = query_runtime_service
@@ -102,6 +107,7 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     app.include_router(account_routes.router)
     app.include_router(purchase_runtime_routes.router)
     app.include_router(query_config_routes.router)
+    app.include_router(query_settings_routes.router)
     app.include_router(query_item_routes.router)
     app.include_router(query_runtime_routes.router)
     app.include_router(stats_routes.router)

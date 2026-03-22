@@ -34,6 +34,67 @@ const QUERY_CONFIGS = [
   },
 ];
 
+const QUERY_SETTINGS = {
+  modes: [
+    {
+      mode_type: "new_api",
+      enabled: true,
+      window_enabled: false,
+      start_hour: 0,
+      start_minute: 0,
+      end_hour: 0,
+      end_minute: 0,
+      base_cooldown_min: 1,
+      base_cooldown_max: 1,
+      item_min_cooldown_seconds: 0.5,
+      item_min_cooldown_strategy: "divide_by_assigned_count",
+      random_delay_enabled: false,
+      random_delay_min: 0,
+      random_delay_max: 0,
+      created_at: "2026-03-22T10:00:00",
+      updated_at: "2026-03-22T10:00:00",
+    },
+    {
+      mode_type: "fast_api",
+      enabled: true,
+      window_enabled: false,
+      start_hour: 0,
+      start_minute: 0,
+      end_hour: 0,
+      end_minute: 0,
+      base_cooldown_min: 0.2,
+      base_cooldown_max: 0.2,
+      item_min_cooldown_seconds: 0.5,
+      item_min_cooldown_strategy: "divide_by_assigned_count",
+      random_delay_enabled: false,
+      random_delay_min: 0,
+      random_delay_max: 0,
+      created_at: "2026-03-22T10:00:00",
+      updated_at: "2026-03-22T10:00:00",
+    },
+    {
+      mode_type: "token",
+      enabled: true,
+      window_enabled: false,
+      start_hour: 0,
+      start_minute: 0,
+      end_hour: 0,
+      end_minute: 0,
+      base_cooldown_min: 10,
+      base_cooldown_max: 10,
+      item_min_cooldown_seconds: 0.5,
+      item_min_cooldown_strategy: "divide_by_assigned_count",
+      random_delay_enabled: false,
+      random_delay_min: 0,
+      random_delay_max: 0,
+      created_at: "2026-03-22T10:00:00",
+      updated_at: "2026-03-22T10:00:00",
+    },
+  ],
+  warnings: [],
+  updated_at: "2026-03-22T10:00:00",
+};
+
 
 function buildModeAllocations(values = {}) {
   return ALL_MODES.map((modeType) => ({
@@ -345,10 +406,12 @@ function createFetchHarness({
   capacitySummary = buildCapacitySummary(),
   configDetails,
   initialStatus,
+  initialQuerySettings = QUERY_SETTINGS,
   initialUiPreferences = { selected_config_id: null, updated_at: null },
   queryConfigs = QUERY_CONFIGS,
 } = {}) {
   let purchaseRuntimeStatus = initialStatus || buildPurchaseRuntimeStatus();
+  let querySettings = JSON.parse(JSON.stringify(initialQuerySettings));
   let purchaseUiPreferences = {
     selected_config_id: initialUiPreferences?.selected_config_id ?? null,
     updated_at: initialUiPreferences?.updated_at ?? null,
@@ -385,6 +448,22 @@ function createFetchHarness({
     }
     if (url.pathname === "/query-configs" && method === "GET") {
       return jsonResponse(queryConfigs);
+    }
+    if (url.pathname === "/query-settings" && method === "GET") {
+      return jsonResponse(querySettings);
+    }
+    if (url.pathname === "/query-settings" && method === "PUT") {
+      const modes = Array.isArray(body?.modes) ? body.modes : [];
+      const hasTokenRisk = modes.some((mode) => (
+        mode?.mode_type === "token"
+        && (Number(mode?.base_cooldown_min) < 10 || Number(mode?.base_cooldown_max) < 10)
+      ));
+      querySettings = {
+        modes,
+        warnings: hasTokenRisk ? ["浏览器查询器基础冷却低于 10 秒，封号风险极高"] : [],
+        updated_at: "2026-03-22T11:30:00",
+      };
+      return jsonResponse(querySettings);
     }
     if (url.pathname === "/query-configs/capacity-summary" && method === "GET") {
       return jsonResponse(capacitySummary);
@@ -547,11 +626,11 @@ describe("purchase system page", () => {
 
     render(<App />);
 
-    await user.click(await screen.findByRole("button", { name: "购买系统" }));
+    await user.click(await screen.findByRole("button", { name: "扫货系统" }));
 
-    expect(screen.queryByRole("heading", { name: "购买系统" })).not.toBeInTheDocument();
-    expect(await screen.findByRole("region", { name: "购买运行控制台" })).toBeInTheDocument();
-    const actionRegion = screen.getByRole("region", { name: "购买运行动作" });
+    expect(screen.queryByRole("heading", { name: "扫货系统" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "扫货运行控制台" })).toBeInTheDocument();
+    const actionRegion = screen.getByRole("region", { name: "扫货运行动作" });
     expect(within(actionRegion).getByRole("button", { name: "最近事件" })).toBeInTheDocument();
     expect(within(actionRegion).getByRole("button", { name: "查看账号详情" })).toBeInTheDocument();
   });
@@ -574,11 +653,12 @@ describe("purchase system page", () => {
     const user = userEvent.setup();
 
     render(<App />);
-    await user.click(await screen.findByRole("button", { name: "购买系统" }));
+    await user.click(await screen.findByRole("button", { name: "扫货系统" }));
 
-    const commandDeck = screen.getByRole("region", { name: "购买运行控制台" });
+    const commandDeck = screen.getByRole("region", { name: "扫货运行控制台" });
     expect(within(commandDeck).getByText("白天配置")).toBeInTheDocument();
     expect(within(commandDeck).getByText("运行中")).toBeInTheDocument();
+    expect(within(commandDeck).getByRole("button", { name: "查询设置" })).toBeInTheDocument();
     expect(within(commandDeck).getByRole("button", { name: "切换配置" })).toBeInTheDocument();
     expect(within(commandDeck).getByText("累计购买")).toBeInTheDocument();
     expect(within(commandDeck).getByText("4")).toBeInTheDocument();
@@ -605,9 +685,9 @@ describe("purchase system page", () => {
     const user = userEvent.setup();
 
     render(<App />);
-    await user.click(await screen.findByRole("button", { name: "购买系统" }));
+    await user.click(await screen.findByRole("button", { name: "扫货系统" }));
 
-    const commandDeck = screen.getByRole("region", { name: "购买运行控制台" });
+    const commandDeck = screen.getByRole("region", { name: "扫货运行控制台" });
     expect(within(commandDeck).getByText("白天配置")).toBeInTheDocument();
     expect(within(commandDeck).getByText("等待购买账号恢复")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "停止扫货" })).toBeInTheDocument();
@@ -619,7 +699,7 @@ describe("purchase system page", () => {
     const user = userEvent.setup();
 
     render(<App />);
-    await user.click(await screen.findByRole("button", { name: "购买系统" }));
+    await user.click(await screen.findByRole("button", { name: "扫货系统" }));
 
     const itemToggle = screen.getByRole("button", { name: "AK-47 | Redline" });
     expect(within(itemToggle).getByText("价格 <= 123.45")).toBeInTheDocument();
@@ -660,9 +740,9 @@ describe("purchase system page", () => {
     const user = userEvent.setup();
 
     render(<App />);
-    await user.click(await screen.findByRole("button", { name: "购买系统" }));
+    await user.click(await screen.findByRole("button", { name: "扫货系统" }));
 
-    const actionRegion = screen.getByRole("region", { name: "购买运行动作" });
+    const actionRegion = screen.getByRole("region", { name: "扫货运行动作" });
 
     await user.click(within(actionRegion).getByRole("button", { name: "最近事件" }));
     const recentEventsDialog = await screen.findByRole("dialog", { name: "最近事件" });
@@ -694,10 +774,10 @@ describe("purchase system page", () => {
     const user = userEvent.setup();
 
     render(<App />);
-    await user.click(await screen.findByRole("button", { name: "购买系统" }));
+    await user.click(await screen.findByRole("button", { name: "扫货系统" }));
 
-    const commandDeck = screen.getByRole("region", { name: "购买运行控制台" });
-    const actionRegion = screen.getByRole("region", { name: "购买运行动作" });
+    const commandDeck = screen.getByRole("region", { name: "扫货运行控制台" });
+    const actionRegion = screen.getByRole("region", { name: "扫货运行动作" });
     expect(within(commandDeck).getByText("未选择配置")).toBeInTheDocument();
     expect(within(commandDeck).getByRole("button", { name: "选择配置" })).toBeInTheDocument();
     expect(within(actionRegion).getByRole("button", { name: "开始扫货" })).toBeDisabled();
@@ -713,10 +793,10 @@ describe("purchase system page", () => {
     const user = userEvent.setup();
 
     render(<App />);
-    await user.click(await screen.findByRole("button", { name: "购买系统" }));
+    await user.click(await screen.findByRole("button", { name: "扫货系统" }));
 
     const itemsPanel = screen.getByRole("region", { name: "配置商品列表" });
-    expect(within(itemsPanel).getByRole("region", { name: "购买运行控制台" })).toBeInTheDocument();
+    expect(within(itemsPanel).getByRole("region", { name: "扫货运行控制台" })).toBeInTheDocument();
     expect(within(itemsPanel).getByText("未选择配置")).toBeInTheDocument();
     expect(within(itemsPanel).getByRole("button", { name: "AK-47 | Redline" })).toBeInTheDocument();
     expect(within(itemsPanel).getByText("展示样例")).toBeInTheDocument();
@@ -728,10 +808,10 @@ describe("purchase system page", () => {
     const user = userEvent.setup();
 
     render(<App />);
-    await user.click(await screen.findByRole("button", { name: "购买系统" }));
+    await user.click(await screen.findByRole("button", { name: "扫货系统" }));
 
-    const commandDeck = screen.getByRole("region", { name: "购买运行控制台" });
-    const actionRegion = screen.getByRole("region", { name: "购买运行动作" });
+    const commandDeck = screen.getByRole("region", { name: "扫货运行控制台" });
+    const actionRegion = screen.getByRole("region", { name: "扫货运行动作" });
     await user.click(within(commandDeck).getByRole("button", { name: "选择配置" }));
 
     const dialog = await screen.findByRole("dialog", { name: "选择查询配置" });
@@ -787,10 +867,10 @@ describe("purchase system page", () => {
     const user = userEvent.setup();
 
     render(<App />);
-    await user.click(await screen.findByRole("button", { name: "购买系统" }));
+    await user.click(await screen.findByRole("button", { name: "扫货系统" }));
 
-    const commandDeck = screen.getByRole("region", { name: "购买运行控制台" });
-    const actionRegion = screen.getByRole("region", { name: "购买运行动作" });
+    const commandDeck = screen.getByRole("region", { name: "扫货运行控制台" });
+    const actionRegion = screen.getByRole("region", { name: "扫货运行动作" });
     await user.click(within(commandDeck).getByRole("button", { name: "切换配置" }));
 
     const dialog = await screen.findByRole("dialog", { name: "选择查询配置" });
@@ -829,7 +909,7 @@ describe("purchase system page", () => {
     const user = userEvent.setup();
 
     render(<App />);
-    await user.click(await screen.findByRole("button", { name: "购买系统" }));
+    await user.click(await screen.findByRole("button", { name: "扫货系统" }));
 
     const itemToggle = await screen.findByRole("button", { name: "AK-47 | Redline" });
     await user.click(itemToggle);
@@ -892,9 +972,9 @@ describe("purchase system page", () => {
     const user = userEvent.setup();
 
     render(<App />);
-    await user.click(await screen.findByRole("button", { name: "购买系统" }));
+    await user.click(await screen.findByRole("button", { name: "扫货系统" }));
 
-    const commandDeck = screen.getByRole("region", { name: "购买运行控制台" });
+    const commandDeck = screen.getByRole("region", { name: "扫货运行控制台" });
     await user.click(within(commandDeck).getByRole("button", { name: "选择配置" }));
 
     const dialog = await screen.findByRole("dialog", { name: "选择查询配置" });
@@ -929,7 +1009,7 @@ describe("purchase system page", () => {
     const user = userEvent.setup();
 
     render(<App />);
-    await user.click(await screen.findByRole("button", { name: "购买系统" }));
+    await user.click(await screen.findByRole("button", { name: "扫货系统" }));
 
     const itemToggle = await screen.findByRole("button", { name: "AK-47 | Redline" });
     await user.click(itemToggle);
@@ -970,13 +1050,13 @@ describe("purchase system page", () => {
     const user = userEvent.setup();
 
     render(<App />);
-    await user.click(await screen.findByRole("button", { name: "购买系统" }));
+    await user.click(await screen.findByRole("button", { name: "扫货系统" }));
 
     const itemToggle = await screen.findByRole("button", { name: "AK-47 | Redline" });
     await user.click(itemToggle);
     await user.click(screen.getAllByRole("button", { name: "浏览器查询器 增加实际分配" })[0]);
 
-    const commandDeck = screen.getByRole("region", { name: "购买运行控制台" });
+    const commandDeck = screen.getByRole("region", { name: "扫货运行控制台" });
     await user.click(within(commandDeck).getByRole("button", { name: "切换配置" }));
 
     const dialog = await screen.findByRole("dialog", { name: "选择查询配置" });
@@ -1023,9 +1103,9 @@ describe("purchase system page", () => {
     const user = userEvent.setup();
 
     render(<App />);
-    await user.click(await screen.findByRole("button", { name: "购买系统" }));
+    await user.click(await screen.findByRole("button", { name: "扫货系统" }));
 
-    const commandDeck = screen.getByRole("region", { name: "购买运行控制台" });
+    const commandDeck = screen.getByRole("region", { name: "扫货运行控制台" });
     expect(within(commandDeck).getByText("夜刀配置")).toBeInTheDocument();
     expect(within(commandDeck).queryByText("白天配置")).not.toBeInTheDocument();
     expect(within(commandDeck).getByText("运行中")).toBeInTheDocument();
@@ -1043,12 +1123,78 @@ describe("purchase system page", () => {
     const user = userEvent.setup();
 
     render(<App />);
-    await user.click(await screen.findByRole("button", { name: "购买系统" }));
+    await user.click(await screen.findByRole("button", { name: "扫货系统" }));
 
-    const commandDeck = screen.getByRole("region", { name: "购买运行控制台" });
-    const actionRegion = screen.getByRole("region", { name: "购买运行动作" });
+    const commandDeck = screen.getByRole("region", { name: "扫货运行控制台" });
+    const actionRegion = screen.getByRole("region", { name: "扫货运行动作" });
     expect(within(commandDeck).getByText("未选择配置")).toBeInTheDocument();
     expect(within(commandDeck).queryByText("白天配置")).not.toBeInTheDocument();
     expect(within(actionRegion).getByRole("button", { name: "开始扫货" })).toBeDisabled();
+  });
+
+  it("opens query settings, blocks invalid minimums and warns before saving risky token cooldowns", async () => {
+    const harness = createFetchHarness();
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "扫货系统" }));
+
+    const commandDeck = screen.getByRole("region", { name: "扫货运行控制台" });
+    await user.click(within(commandDeck).getByRole("button", { name: "查询设置" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "查询设置" });
+    const fastApiMinInput = within(dialog).getByLabelText("fast API 基础冷却最小");
+    const tokenMinInput = within(dialog).getByLabelText("浏览器 token 基础冷却最小");
+    const newApiItemMinInput = within(dialog).getByLabelText("new API 商品最小冷却");
+    const newApiItemStrategySelect = within(dialog).getByLabelText("new API 商品冷却策略");
+
+    expect(newApiItemMinInput).toHaveValue(0.5);
+    expect(newApiItemStrategySelect).toHaveValue("divide_by_assigned_count");
+
+    await user.clear(fastApiMinInput);
+    await user.type(fastApiMinInput, "0.1");
+    await user.click(within(dialog).getByRole("button", { name: "保存" }));
+
+    expect(within(dialog).getByText("fast API 基础冷却不能低于 0.2 秒")).toBeInTheDocument();
+
+    await user.clear(fastApiMinInput);
+    await user.type(fastApiMinInput, "0.25");
+    await user.clear(newApiItemMinInput);
+    await user.type(newApiItemMinInput, "0.75");
+    await user.selectOptions(newApiItemStrategySelect, "fixed");
+    await user.clear(tokenMinInput);
+    await user.type(tokenMinInput, "9");
+    await user.click(within(dialog).getByRole("button", { name: "保存" }));
+
+    await waitFor(() => {
+      expect(confirmSpy).toHaveBeenCalledWith("浏览器查询器基础冷却低于 10 秒，封号风险极高。是否仍然保存？");
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "查询设置" })).not.toBeInTheDocument();
+    });
+    expect(
+      harness.calls.some((call) => call.method === "PUT" && call.pathname === "/query-settings"),
+    ).toBe(true);
+    expect(harness.calls).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          method: "PUT",
+          pathname: "/query-settings",
+          body: expect.objectContaining({
+            modes: expect.arrayContaining([
+              expect.objectContaining({
+                mode_type: "new_api",
+                item_min_cooldown_seconds: 0.75,
+                item_min_cooldown_strategy: "fixed",
+              }),
+            ]),
+          }),
+        }),
+      ]),
+    );
+
+    confirmSpy.mockRestore();
   });
 });

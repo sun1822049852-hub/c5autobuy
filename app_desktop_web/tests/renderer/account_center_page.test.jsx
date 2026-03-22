@@ -75,7 +75,7 @@ describe("account center page", () => {
 
     expect(screen.getByRole("button", { name: "账号中心" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "配置管理" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "购买系统" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "扫货系统" })).toBeInTheDocument();
 
     await waitFor(() => {
       expect(screen.getByText("C5 账号中心")).toBeInTheDocument();

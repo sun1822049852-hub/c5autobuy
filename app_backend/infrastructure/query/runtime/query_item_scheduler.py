@@ -14,12 +14,23 @@ class QueryItemReservation:
 
 
 class QueryItemScheduler:
-    _DYNAMIC_COOLDOWN_BASE_SECONDS = 0.5
-
-    def __init__(self, query_items: list[QueryItem], *, min_cooldown_seconds: float = 0.1) -> None:
+    def __init__(
+        self,
+        query_items: list[QueryItem],
+        *,
+        min_cooldown_seconds: float = 0.1,
+        item_min_cooldown_seconds: float = 0.5,
+        item_min_cooldown_strategy: str = "divide_by_assigned_count",
+    ) -> None:
         self._query_items = list(query_items)
         self._min_cooldown_seconds = max(float(min_cooldown_seconds), 0.0)
+        self._item_min_cooldown_seconds = 0.5
+        self._item_min_cooldown_strategy = "divide_by_assigned_count"
         self._lock = asyncio.Lock()
+        self.apply_item_cooldown_settings(
+            item_min_cooldown_seconds=item_min_cooldown_seconds,
+            item_min_cooldown_strategy=item_min_cooldown_strategy,
+        )
         self.reset()
 
     async def reserve_next(self, *, now: float | datetime | int | None = None) -> QueryItemReservation | None:
@@ -54,6 +65,24 @@ class QueryItemScheduler:
             for query_item in self._query_items
         }
 
+    def apply_mode_setting(self, mode_setting) -> None:
+        self.apply_item_cooldown_settings(
+            item_min_cooldown_seconds=getattr(mode_setting, "item_min_cooldown_seconds", 0.5),
+            item_min_cooldown_strategy=getattr(mode_setting, "item_min_cooldown_strategy", "divide_by_assigned_count"),
+        )
+
+    def apply_item_cooldown_settings(
+        self,
+        *,
+        item_min_cooldown_seconds: float,
+        item_min_cooldown_strategy: str,
+    ) -> None:
+        self._item_min_cooldown_seconds = max(float(item_min_cooldown_seconds), 0.0)
+        strategy = str(item_min_cooldown_strategy or "divide_by_assigned_count")
+        if strategy not in {"fixed", "divide_by_assigned_count"}:
+            strategy = "divide_by_assigned_count"
+        self._item_min_cooldown_strategy = strategy
+
     def _reserve_item_locked(
         self,
         query_item: QueryItem,
@@ -69,8 +98,10 @@ class QueryItemScheduler:
     def _compute_cooldown_seconds(self, actual_assigned_count: int | None) -> float:
         if actual_assigned_count is None:
             return self._min_cooldown_seconds
+        if self._item_min_cooldown_strategy == "fixed":
+            return self._item_min_cooldown_seconds
         count = max(int(actual_assigned_count), 1)
-        return self._DYNAMIC_COOLDOWN_BASE_SECONDS / count
+        return self._item_min_cooldown_seconds / count
 
     @staticmethod
     def _to_seconds(value: float | datetime | int | None) -> float:

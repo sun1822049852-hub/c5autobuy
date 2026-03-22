@@ -3,6 +3,7 @@ import time
 from types import SimpleNamespace
 
 from app_backend.domain.models.query_config import QueryConfig, QueryItem, QueryModeSetting
+from app_backend.domain.models.query_settings import QuerySettings, QuerySettingsMode
 
 
 def build_config(config_id: str = "cfg-1") -> QueryConfig:
@@ -198,6 +199,14 @@ class FakeRuntime:
             "config_name": self.config.name,
             "message": "运行中" if self.started and not self.stopped else "未运行",
         }
+
+
+class FakeQuerySettingsRepository:
+    def __init__(self, settings: QuerySettings) -> None:
+        self._settings = settings
+
+    def get_settings(self) -> QuerySettings:
+        return self._settings
 
 
 class FakePurchaseRuntimeService:
@@ -1846,6 +1855,111 @@ def test_runtime_service_respects_mode_enabled_flag():
     assert snapshot["modes"]["fast_api"]["in_window"] is False
     assert snapshot["modes"]["fast_api"]["query_count"] == 0
     assert snapshot["modes"]["fast_api"]["found_count"] == 0
+
+
+def test_runtime_service_prefers_global_query_settings_over_legacy_config_mode_settings():
+    from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
+
+    config = build_config("cfg-1")
+    config.mode_settings[0].base_cooldown_min = 99.0
+    config.mode_settings[0].base_cooldown_max = 99.0
+    config.mode_settings[1].enabled = True
+    config.mode_settings[1].base_cooldown_min = 88.0
+    config.mode_settings[1].base_cooldown_max = 88.0
+    repository = FakeQueryConfigRepository(config)
+    purchase_service = FakePurchaseRuntimeService()
+    captured_configs = []
+
+    global_settings = QuerySettings(
+        modes=[
+            QuerySettingsMode(
+                mode_type="new_api",
+                enabled=True,
+                window_enabled=False,
+                start_hour=0,
+                start_minute=0,
+                end_hour=0,
+                end_minute=0,
+                base_cooldown_min=1.5,
+                base_cooldown_max=1.8,
+                item_min_cooldown_seconds=0.7,
+                item_min_cooldown_strategy="fixed",
+                random_delay_enabled=False,
+                random_delay_min=0.0,
+                random_delay_max=0.0,
+                created_at="2026-03-22T12:00:00",
+                updated_at="2026-03-22T12:00:00",
+            ),
+            QuerySettingsMode(
+                mode_type="fast_api",
+                enabled=False,
+                window_enabled=False,
+                start_hour=0,
+                start_minute=0,
+                end_hour=0,
+                end_minute=0,
+                base_cooldown_min=0.2,
+                base_cooldown_max=0.3,
+                item_min_cooldown_seconds=0.4,
+                item_min_cooldown_strategy="divide_by_assigned_count",
+                random_delay_enabled=False,
+                random_delay_min=0.0,
+                random_delay_max=0.0,
+                created_at="2026-03-22T12:00:00",
+                updated_at="2026-03-22T12:00:00",
+            ),
+            QuerySettingsMode(
+                mode_type="token",
+                enabled=True,
+                window_enabled=True,
+                start_hour=12,
+                start_minute=0,
+                end_hour=23,
+                end_minute=0,
+                base_cooldown_min=10.0,
+                base_cooldown_max=12.0,
+                item_min_cooldown_seconds=15.0,
+                item_min_cooldown_strategy="fixed",
+                random_delay_enabled=True,
+                random_delay_min=1.0,
+                random_delay_max=2.0,
+                created_at="2026-03-22T12:00:00",
+                updated_at="2026-03-22T12:00:00",
+            ),
+        ],
+        updated_at="2026-03-22T12:00:00",
+    )
+
+    service = QueryRuntimeService(
+        query_config_repository=repository,
+        query_settings_repository=FakeQuerySettingsRepository(global_settings),
+        account_repository=FakeAccountRepository(
+            [
+                build_account("a1", api_key="api-1"),
+                build_account("a2", cookie_raw="foo=bar; NC5_accessToken=token-1"),
+            ]
+        ),
+        runtime_factory=lambda next_config, accounts: captured_configs.append(next_config) or FakeRuntime(next_config, accounts),
+        purchase_runtime_service=purchase_service,
+    )
+
+    started, _message = service.start(config_id="cfg-1")
+
+    assert started is True
+    assert len(captured_configs) == 1
+    runtime_mode_settings = {
+        mode.mode_type: mode
+        for mode in captured_configs[0].mode_settings
+    }
+    assert runtime_mode_settings["new_api"].base_cooldown_min == 1.5
+    assert runtime_mode_settings["new_api"].item_min_cooldown_seconds == 0.7
+    assert runtime_mode_settings["new_api"].item_min_cooldown_strategy == "fixed"
+    assert runtime_mode_settings["fast_api"].enabled is False
+    assert runtime_mode_settings["fast_api"].base_cooldown_min == 0.2
+    assert runtime_mode_settings["fast_api"].item_min_cooldown_strategy == "divide_by_assigned_count"
+    assert runtime_mode_settings["token"].window_enabled is True
+    assert runtime_mode_settings["token"].start_hour == 12
+    assert runtime_mode_settings["token"].item_min_cooldown_seconds == 15.0
 
 
 def test_runtime_service_propagates_not_login_event_to_account_repository_and_purchase_runtime():

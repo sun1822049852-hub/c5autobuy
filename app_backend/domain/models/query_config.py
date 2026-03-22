@@ -85,6 +85,8 @@ class QueryModeSetting:
     random_delay_max: float
     created_at: str
     updated_at: str
+    item_min_cooldown_seconds: float = 0.5
+    item_min_cooldown_strategy: str = "divide_by_assigned_count"
 
 
 @dataclass(slots=True)

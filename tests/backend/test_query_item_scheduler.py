@@ -107,3 +107,55 @@ async def test_query_item_scheduler_uses_dynamic_cooldown_when_one_item_has_mult
 
     assert first.execute_at == 10.0
     assert second.execute_at == 10.25
+
+
+async def test_query_item_scheduler_supports_fixed_item_min_cooldown_strategy():
+    from app_backend.infrastructure.query.runtime.query_item_scheduler import QueryItemScheduler
+
+    item = build_item("item-1")
+    scheduler = QueryItemScheduler(
+        [item],
+        min_cooldown_seconds=0.1,
+        item_min_cooldown_seconds=0.9,
+        item_min_cooldown_strategy="fixed",
+    )
+
+    first = await scheduler.reserve_item(
+        item,
+        now=10.0,
+        actual_assigned_count=3,
+    )
+    second = await scheduler.reserve_item(
+        item,
+        now=10.0,
+        actual_assigned_count=3,
+    )
+
+    assert first.execute_at == 10.0
+    assert second.execute_at == 10.9
+
+
+async def test_query_item_scheduler_supports_divide_by_assigned_count_strategy():
+    from app_backend.infrastructure.query.runtime.query_item_scheduler import QueryItemScheduler
+
+    item = build_item("item-1")
+    scheduler = QueryItemScheduler(
+        [item],
+        min_cooldown_seconds=0.1,
+        item_min_cooldown_seconds=0.9,
+        item_min_cooldown_strategy="divide_by_assigned_count",
+    )
+
+    first = await scheduler.reserve_item(
+        item,
+        now=10.0,
+        actual_assigned_count=3,
+    )
+    second = await scheduler.reserve_item(
+        item,
+        now=10.0,
+        actual_assigned_count=3,
+    )
+
+    assert first.execute_at == 10.0
+    assert second.execute_at == 10.3

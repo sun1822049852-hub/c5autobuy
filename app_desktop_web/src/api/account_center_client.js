@@ -146,6 +146,14 @@ export function createAccountCenterClient({
         method: "GET",
       });
     },
+    async getQuerySettings() {
+      return http.getJson("/query-settings", {
+        method: "GET",
+      });
+    },
+    async updateQuerySettings(payload) {
+      return http.putJson("/query-settings", payload);
+    },
     async getQueryRuntimeStatus() {
       return http.getJson("/query-runtime/status", {
         method: "GET",

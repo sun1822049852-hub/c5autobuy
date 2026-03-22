@@ -35,6 +35,7 @@ def create_schema(engine: Engine) -> None:
         QueryItemStatsDailyRecord,
         QueryItemStatsTotalRecord,
         QueryModeSettingRecord,
+        QuerySettingsModeRecord,
     )
 
     Base.metadata.create_all(
@@ -47,6 +48,7 @@ def create_schema(engine: Engine) -> None:
             QueryConfigItemRecord.__table__,
             QueryItemModeAllocationRecord.__table__,
             QueryModeSettingRecord.__table__,
+            QuerySettingsModeRecord.__table__,
             PurchaseUiPreferenceRecord.__table__,
             QueryItemStatsTotalRecord.__table__,
             QueryItemStatsDailyRecord.__table__,
@@ -64,6 +66,8 @@ def create_schema(engine: Engine) -> None:
             for column in inspector.get_columns("query_config_items")
     )
     _ensure_query_config_item_columns(engine)
+    _ensure_query_mode_setting_columns(engine)
+    _ensure_query_settings_mode_columns(engine)
     _ensure_account_columns(engine)
     _backfill_query_products(engine, had_detail_min_wear=had_detail_min_wear_before_migration)
 
@@ -80,6 +84,42 @@ def _ensure_query_config_item_columns(engine: Engine) -> None:
             connection.execute(text("ALTER TABLE query_config_items ADD COLUMN detail_min_wear FLOAT"))
         if "manual_paused" not in existing_columns:
             connection.execute(text("ALTER TABLE query_config_items ADD COLUMN manual_paused INTEGER NOT NULL DEFAULT 0"))
+
+
+def _ensure_query_mode_setting_columns(engine: Engine) -> None:
+    inspector = inspect(engine)
+    if "query_mode_settings" not in inspector.get_table_names():
+        return
+    existing_columns = {column["name"] for column in inspector.get_columns("query_mode_settings")}
+    with engine.begin() as connection:
+        if "item_min_cooldown_seconds" not in existing_columns:
+            connection.execute(
+                text("ALTER TABLE query_mode_settings ADD COLUMN item_min_cooldown_seconds FLOAT NOT NULL DEFAULT 0.5")
+            )
+        if "item_min_cooldown_strategy" not in existing_columns:
+            connection.execute(
+                text(
+                    "ALTER TABLE query_mode_settings ADD COLUMN item_min_cooldown_strategy TEXT NOT NULL DEFAULT 'divide_by_assigned_count'"
+                )
+            )
+
+
+def _ensure_query_settings_mode_columns(engine: Engine) -> None:
+    inspector = inspect(engine)
+    if "query_settings_modes" not in inspector.get_table_names():
+        return
+    existing_columns = {column["name"] for column in inspector.get_columns("query_settings_modes")}
+    with engine.begin() as connection:
+        if "item_min_cooldown_seconds" not in existing_columns:
+            connection.execute(
+                text("ALTER TABLE query_settings_modes ADD COLUMN item_min_cooldown_seconds FLOAT NOT NULL DEFAULT 0.5")
+            )
+        if "item_min_cooldown_strategy" not in existing_columns:
+            connection.execute(
+                text(
+                    "ALTER TABLE query_settings_modes ADD COLUMN item_min_cooldown_strategy TEXT NOT NULL DEFAULT 'divide_by_assigned_count'"
+                )
+            )
 
 
 def _ensure_account_columns(engine: Engine) -> None:

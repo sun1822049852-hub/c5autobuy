@@ -10,7 +10,7 @@ export function PurchaseRuntimeActions({
   onSubmitChanges,
 }) {
   return (
-    <section aria-label="购买运行动作" className="purchase-runtime-actions">
+    <section aria-label="扫货运行动作" className="purchase-runtime-actions">
       <div className="purchase-runtime-actions__surface">
         <div className="purchase-runtime-actions__buttons">
           <button

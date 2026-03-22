@@ -3,11 +3,13 @@ from __future__ import annotations
 import asyncio
 import threading
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime
 from inspect import Parameter, signature
 from uuid import uuid4
 
 from app_backend.domain.enums.account_states import PurchaseCapabilityState, PurchasePoolState
+from app_backend.domain.enums.query_modes import QueryMode
 from app_backend.domain.models.query_config import QueryConfig, QueryModeSetting
 from app_backend.infrastructure.query.runtime.runtime_account_adapter import RuntimeAccountAdapter
 from app_backend.infrastructure.query.runtime.query_task_runtime import QueryTaskRuntime
@@ -20,12 +22,14 @@ class QueryRuntimeService:
         self,
         *,
         query_config_repository,
+        query_settings_repository=None,
         account_repository,
         runtime_factory: RuntimeFactory | None = None,
         purchase_runtime_service=None,
         stats_sink=None,
     ) -> None:
         self._query_config_repository = query_config_repository
+        self._query_settings_repository = query_settings_repository
         self._account_repository = account_repository
         self._runtime_factory = runtime_factory or self._build_default_runtime
         self._purchase_runtime_service = purchase_runtime_service
@@ -57,6 +61,7 @@ class QueryRuntimeService:
                 config = self._query_config_repository.get_config(config_id)
                 if config is None:
                     return False, "已有查询任务在运行"
+                config = self._resolve_runtime_config(config)
                 runtime_to_stop = self._runtime
                 self._runtime = None
                 self._clear_retained_runtime_locked()
@@ -65,6 +70,7 @@ class QueryRuntimeService:
                 config = self._query_config_repository.get_config(config_id)
                 if config is None:
                     return False, "查询配置不存在"
+                config = self._resolve_runtime_config(config)
 
         if runtime_to_stop is not None:
             runtime_to_stop.stop()
@@ -146,6 +152,7 @@ class QueryRuntimeService:
         config = self._query_config_repository.get_config(config_id)
         if config is None:
             raise KeyError(config_id)
+        config = self._resolve_runtime_config(config)
 
         if all(str(item.query_item_id) != str(query_item_id) for item in config.items):
             raise KeyError(query_item_id)
@@ -211,6 +218,7 @@ class QueryRuntimeService:
         config = self._query_config_repository.get_config(config_id)
         if config is None:
             raise KeyError("查询配置不存在")
+        config = self._resolve_runtime_config(config)
 
         known_item_ids = {
             str(item.query_item_id)
@@ -235,6 +243,28 @@ class QueryRuntimeService:
             raise ValueError("当前运行时不支持运行时分配调整")
         apply_manual_allocations(config=config, items=list(items))
         return self.get_status()
+
+    def apply_query_settings(self) -> None:
+        with self._state_lock:
+            active_config_id = self._get_active_config_id_locked()
+            if not active_config_id:
+                return
+            config = self._query_config_repository.get_config(active_config_id)
+            if config is None:
+                return
+            runtime_config = self._resolve_runtime_config(config)
+            runtime = self._runtime or self._retained_runtime
+            if self._has_pending_resume_state():
+                self._pending_resume_config_name = runtime_config.name
+        if runtime is None:
+            return
+        apply_query_settings = getattr(runtime, "apply_query_settings", None)
+        if not callable(apply_query_settings):
+            return
+        try:
+            apply_query_settings(config=runtime_config)
+        except Exception:
+            return
 
     def _has_running_runtime(self) -> bool:
         with self._state_lock:
@@ -315,6 +345,8 @@ class QueryRuntimeService:
     def _build_waiting_snapshot(self) -> dict[str, object]:
         config_id = self._pending_resume_config_id
         config = self._query_config_repository.get_config(config_id) if config_id else None
+        if config is not None:
+            config = self._resolve_runtime_config(config)
         snapshot = {
             "running": False,
             "config_id": config_id,
@@ -336,6 +368,8 @@ class QueryRuntimeService:
         return snapshot
 
     def _normalize_snapshot(self, snapshot: dict[str, object], config: QueryConfig | None) -> dict[str, object]:
+        if config is not None:
+            config = self._resolve_runtime_config(config)
         normalized = {
             "running": bool(snapshot.get("running")),
             "config_id": snapshot.get("config_id"),
@@ -466,6 +500,55 @@ class QueryRuntimeService:
         }
             )
         return rows
+
+    def _resolve_runtime_config(self, config: QueryConfig) -> QueryConfig:
+        if self._query_settings_repository is None:
+            return config
+        get_settings = getattr(self._query_settings_repository, "get_settings", None)
+        if not callable(get_settings):
+            return config
+        settings = get_settings()
+        if settings is None:
+            return config
+        settings_modes = {
+            str(mode.mode_type): mode
+            for mode in getattr(settings, "modes", []) or []
+        }
+        if not settings_modes:
+            return config
+        now = datetime.now().isoformat(timespec="seconds")
+        runtime_modes: list[QueryModeSetting] = []
+        for mode_type in QueryMode.ALL:
+            mode = settings_modes.get(mode_type)
+            if mode is None:
+                continue
+            runtime_modes.append(
+                QueryModeSetting(
+                    mode_setting_id=f"global:{mode_type}",
+                    config_id=str(config.config_id),
+                    mode_type=mode_type,
+                    enabled=bool(mode.enabled),
+                    window_enabled=bool(mode.window_enabled),
+                    start_hour=int(mode.start_hour),
+                    start_minute=int(mode.start_minute),
+                    end_hour=int(mode.end_hour),
+                    end_minute=int(mode.end_minute),
+                    base_cooldown_min=float(mode.base_cooldown_min),
+                    base_cooldown_max=float(mode.base_cooldown_max),
+                    item_min_cooldown_seconds=float(getattr(mode, "item_min_cooldown_seconds", 0.5)),
+                    item_min_cooldown_strategy=str(
+                        getattr(mode, "item_min_cooldown_strategy", "divide_by_assigned_count")
+                    ),
+                    random_delay_enabled=bool(mode.random_delay_enabled),
+                    random_delay_min=float(mode.random_delay_min),
+                    random_delay_max=float(mode.random_delay_max),
+                    created_at=getattr(mode, "created_at", now),
+                    updated_at=getattr(mode, "updated_at", now),
+                )
+            )
+        if not runtime_modes:
+            return config
+        return replace(config, mode_settings=runtime_modes)
 
     @staticmethod
     def _normalize_recent_events(raw_events: object) -> list[dict[str, object]]:

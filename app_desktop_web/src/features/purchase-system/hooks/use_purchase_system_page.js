@@ -33,9 +33,232 @@ const EMPTY_CONFIG_LEAVE_PROMPT = {
   nextConfigId: null,
 };
 
+const QUERY_SETTINGS_MODE_LABELS = {
+  new_api: "new API",
+  fast_api: "fast API",
+  token: "浏览器 token",
+};
+
+const QUERY_SETTINGS_MINIMUMS = {
+  new_api: 1,
+  fast_api: 0.2,
+};
+
 
 function toErrorMessage(error) {
   return error instanceof Error ? error.message : String(error);
+}
+
+
+function formatTimePart(value) {
+  return String(Math.max(0, Math.trunc(Number(value) || 0))).padStart(2, "0");
+}
+
+
+function formatTimeValue(hour, minute) {
+  return `${formatTimePart(hour)}:${formatTimePart(minute)}`;
+}
+
+
+function parseDecimalInput(value) {
+  if (value === "" || value === null || value === undefined) {
+    return Number.NaN;
+  }
+  const nextValue = Number(value);
+  return Number.isFinite(nextValue) ? nextValue : Number.NaN;
+}
+
+
+function parseTimeValue(value) {
+  const matched = /^(\d{2}):(\d{2})$/.exec(String(value || ""));
+  if (!matched) {
+    return null;
+  }
+
+  const hour = Number(matched[1]);
+  const minute = Number(matched[2]);
+  if (!Number.isInteger(hour) || !Number.isInteger(minute)) {
+    return null;
+  }
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+    return null;
+  }
+  return { hour, minute };
+}
+
+
+function normalizeQuerySettingsDraft(settings) {
+  const modeMap = new Map((settings?.modes || []).map((mode) => [mode?.mode_type, mode]));
+
+  return {
+    modes: ALL_MODES.map((modeType) => {
+      const mode = modeMap.get(modeType) || {};
+      return {
+        mode_type: modeType,
+        enabled: mode.enabled !== undefined ? Boolean(mode.enabled) : true,
+        window_enabled: Boolean(mode.window_enabled),
+        start_time: formatTimeValue(mode.start_hour, mode.start_minute),
+        end_time: formatTimeValue(mode.end_hour, mode.end_minute),
+        base_cooldown_min: String(mode.base_cooldown_min ?? ""),
+        base_cooldown_max: String(mode.base_cooldown_max ?? ""),
+        item_min_cooldown_seconds: String(mode.item_min_cooldown_seconds ?? "0.5"),
+        item_min_cooldown_strategy: String(mode.item_min_cooldown_strategy ?? "divide_by_assigned_count"),
+        random_delay_enabled: Boolean(mode.random_delay_enabled),
+        random_delay_min: String(mode.random_delay_min ?? "0"),
+        random_delay_max: String(mode.random_delay_max ?? "0"),
+      };
+    }),
+    warnings: Array.isArray(settings?.warnings) ? settings.warnings : [],
+  };
+}
+
+
+function updateQuerySettingsDraft(currentDraft, modeType, field, value) {
+  if (!currentDraft) {
+    return currentDraft;
+  }
+
+  return {
+    ...currentDraft,
+    modes: currentDraft.modes.map((mode) => (mode.mode_type === modeType
+      ? (() => {
+        const nextMode = {
+          ...mode,
+          [field]: value,
+        };
+
+        if (field === "base_cooldown_min") {
+          const nextMin = parseDecimalInput(value);
+          const currentMax = parseDecimalInput(mode.base_cooldown_max);
+          if (Number.isFinite(nextMin) && Number.isFinite(currentMax) && nextMin > currentMax) {
+            nextMode.base_cooldown_max = String(nextMin);
+          }
+        }
+
+        if (field === "random_delay_min") {
+          const nextMin = parseDecimalInput(value);
+          const currentMax = parseDecimalInput(mode.random_delay_max);
+          if (Number.isFinite(nextMin) && Number.isFinite(currentMax) && nextMin > currentMax) {
+            nextMode.random_delay_max = String(nextMin);
+          }
+        }
+
+        return nextMode;
+      })()
+      : mode)),
+  };
+}
+
+
+function validateAndBuildQuerySettingsPayload(draft) {
+  if (!draft) {
+    return {
+      error: "查询设置尚未加载完成。",
+      hasTokenRisk: false,
+      payload: null,
+    };
+  }
+
+  const payloadModes = [];
+  let hasTokenRisk = false;
+
+  for (const mode of draft.modes || []) {
+    const label = QUERY_SETTINGS_MODE_LABELS[mode.mode_type] || mode.mode_type || "查询器";
+    const baseCooldownMin = parseDecimalInput(mode.base_cooldown_min);
+    const baseCooldownMax = parseDecimalInput(mode.base_cooldown_max);
+    const itemMinCooldownSeconds = parseDecimalInput(mode.item_min_cooldown_seconds);
+    const itemMinCooldownStrategy = String(mode.item_min_cooldown_strategy || "divide_by_assigned_count");
+    if (!Number.isFinite(baseCooldownMin)) {
+      return { error: `${label} 基础冷却最小必须填写数值`, hasTokenRisk: false, payload: null };
+    }
+    if (!Number.isFinite(baseCooldownMax)) {
+      return { error: `${label} 基础冷却最大必须填写数值`, hasTokenRisk: false, payload: null };
+    }
+    if (baseCooldownMax < baseCooldownMin) {
+      return { error: `${label} 基础冷却最大不能小于最小值`, hasTokenRisk: false, payload: null };
+    }
+
+    const minimum = QUERY_SETTINGS_MINIMUMS[mode.mode_type];
+    if (minimum !== undefined && baseCooldownMin < minimum) {
+      return { error: `${label} 基础冷却不能低于 ${minimum} 秒`, hasTokenRisk: false, payload: null };
+    }
+    if (!Number.isFinite(itemMinCooldownSeconds)) {
+      return { error: `${label} 商品最小冷却必须填写数值`, hasTokenRisk: false, payload: null };
+    }
+    if (itemMinCooldownSeconds < 0) {
+      return { error: `${label} 商品最小冷却不能为负数`, hasTokenRisk: false, payload: null };
+    }
+    if (!["fixed", "divide_by_assigned_count"].includes(itemMinCooldownStrategy)) {
+      return { error: `${label} 商品冷却策略无效`, hasTokenRisk: false, payload: null };
+    }
+
+    let randomDelayMin = 0;
+    let randomDelayMax = 0;
+    if (mode.random_delay_enabled) {
+      randomDelayMin = parseDecimalInput(mode.random_delay_min);
+      randomDelayMax = parseDecimalInput(mode.random_delay_max);
+      if (!Number.isFinite(randomDelayMin)) {
+        return { error: `${label} 随机冷却最小必须填写数值`, hasTokenRisk: false, payload: null };
+      }
+      if (!Number.isFinite(randomDelayMax)) {
+        return { error: `${label} 随机冷却最大必须填写数值`, hasTokenRisk: false, payload: null };
+      }
+      if (randomDelayMin < 0 || randomDelayMax < 0) {
+        return { error: `${label} 随机冷却不能为负数`, hasTokenRisk: false, payload: null };
+      }
+      if (randomDelayMax < randomDelayMin) {
+        return { error: `${label} 随机冷却最大不能小于最小值`, hasTokenRisk: false, payload: null };
+      }
+    }
+
+    let startHour = 0;
+    let startMinute = 0;
+    let endHour = 0;
+    let endMinute = 0;
+    if (mode.window_enabled) {
+      const start = parseTimeValue(mode.start_time);
+      const end = parseTimeValue(mode.end_time);
+      if (!start) {
+        return { error: `${label} 开始时间格式必须为 HH:MM`, hasTokenRisk: false, payload: null };
+      }
+      if (!end) {
+        return { error: `${label} 结束时间格式必须为 HH:MM`, hasTokenRisk: false, payload: null };
+      }
+      startHour = start.hour;
+      startMinute = start.minute;
+      endHour = end.hour;
+      endMinute = end.minute;
+    }
+
+    if (mode.mode_type === "token" && (baseCooldownMin < 10 || baseCooldownMax < 10)) {
+      hasTokenRisk = true;
+    }
+
+    payloadModes.push({
+      mode_type: mode.mode_type,
+      enabled: Boolean(mode.enabled),
+      window_enabled: Boolean(mode.window_enabled),
+      start_hour: startHour,
+      start_minute: startMinute,
+      end_hour: endHour,
+      end_minute: endMinute,
+      base_cooldown_min: baseCooldownMin,
+      base_cooldown_max: baseCooldownMax,
+      item_min_cooldown_seconds: itemMinCooldownSeconds,
+      item_min_cooldown_strategy: itemMinCooldownStrategy,
+      random_delay_enabled: Boolean(mode.random_delay_enabled),
+      random_delay_min: randomDelayMin,
+      random_delay_max: randomDelayMax,
+    });
+  }
+
+  return {
+    error: "",
+    hasTokenRisk,
+    payload: {
+      modes: payloadModes,
+    },
+  };
 }
 
 
@@ -338,6 +561,12 @@ export function usePurchaseSystemPage({ client }) {
   const [isActionPending, setIsActionPending] = useState(false);
   const [isSubmittingDrafts, setIsSubmittingDrafts] = useState(false);
   const [loadError, setLoadError] = useState("");
+  const [querySettingsDraft, setQuerySettingsDraft] = useState(null);
+  const [querySettingsWarnings, setQuerySettingsWarnings] = useState([]);
+  const [querySettingsError, setQuerySettingsError] = useState("");
+  const [isQuerySettingsOpen, setIsQuerySettingsOpen] = useState(false);
+  const [isQuerySettingsLoading, setIsQuerySettingsLoading] = useState(false);
+  const [isQuerySettingsSaving, setIsQuerySettingsSaving] = useState(false);
   const [configLeavePrompt, setConfigLeavePrompt] = useState(EMPTY_CONFIG_LEAVE_PROMPT);
   const recentEventsModal = useFloatingRuntimeModalState({
     initialPosition: { x: 96, y: 84 },
@@ -385,6 +614,68 @@ export function usePurchaseSystemPage({ client }) {
     setSelectedConfigDetail(detail);
     setManualAllocationDrafts({});
     return detail;
+  }
+
+  async function openQuerySettings() {
+    setIsQuerySettingsOpen(true);
+    setIsQuerySettingsLoading(true);
+    setQuerySettingsError("");
+    try {
+      const nextSettings = await client.getQuerySettings();
+      const normalizedDraft = normalizeQuerySettingsDraft(nextSettings);
+      setQuerySettingsDraft(normalizedDraft);
+      setQuerySettingsWarnings(normalizedDraft.warnings);
+    } catch (error) {
+      setQuerySettingsError(toErrorMessage(error));
+    } finally {
+      setIsQuerySettingsLoading(false);
+    }
+  }
+
+  function closeQuerySettings() {
+    if (isQuerySettingsSaving) {
+      return;
+    }
+    setIsQuerySettingsOpen(false);
+    setQuerySettingsError("");
+  }
+
+  function onQuerySettingsChange(modeType, field, value) {
+    setQuerySettingsDraft((currentDraft) => updateQuerySettingsDraft(currentDraft, modeType, field, value));
+    setQuerySettingsError("");
+  }
+
+  async function onSaveQuerySettings() {
+    const nextState = validateAndBuildQuerySettingsPayload(querySettingsDraft);
+    if (nextState.error) {
+      setQuerySettingsError(nextState.error);
+      return false;
+    }
+
+    if (nextState.hasTokenRisk) {
+      const confirmed = typeof window.confirm === "function"
+        ? window.confirm("浏览器查询器基础冷却低于 10 秒，封号风险极高。是否仍然保存？")
+        : true;
+      if (!confirmed) {
+        return false;
+      }
+    }
+
+    setIsQuerySettingsSaving(true);
+    try {
+      const savedSettings = await client.updateQuerySettings(nextState.payload);
+      const normalizedDraft = normalizeQuerySettingsDraft(savedSettings);
+      setQuerySettingsDraft(normalizedDraft);
+      setQuerySettingsWarnings(normalizedDraft.warnings);
+      setQuerySettingsError("");
+      setIsQuerySettingsOpen(false);
+      return true;
+    } catch (error) {
+      setQuerySettingsError(toErrorMessage(error));
+      return false;
+    } finally {
+      setIsQuerySettingsSaving(false);
+    }
   }
 
   useEffect(() => {
@@ -759,6 +1050,9 @@ export function usePurchaseSystemPage({ client }) {
     isConfigLeavePromptOpen: configLeavePrompt.isOpen,
     isConfigLeavePromptSaving: configLeavePrompt.isSaving,
     isLoading,
+    isQuerySettingsLoading,
+    isQuerySettingsOpen,
+    isQuerySettingsSaving,
     isRecentEventsOpen: recentEventsModal.isOpen,
     isAccountMonitorOpen: accountMonitorModal.isOpen,
     isSubmitDisabled: !hasUnsavedRuntimeDrafts || !isSelectedConfigRunning || isSubmittingDrafts,
@@ -768,6 +1062,7 @@ export function usePurchaseSystemPage({ client }) {
     configLeavePromptError: configLeavePrompt.error,
     onCloseAccountMonitor: accountMonitorModal.onClose,
     onCloseConfigDialog: closeConfigDialog,
+    onCloseQuerySettings: closeQuerySettings,
     onCloseRecentEvents: recentEventsModal.onClose,
     onConfigDialogSelect: setSelectorDraftId,
     onConfirmConfigDialog: confirmConfigSelection,
@@ -781,9 +1076,15 @@ export function usePurchaseSystemPage({ client }) {
     },
     onOpenAccountDetails: accountMonitorModal.onOpen,
     onOpenConfigDialog: openConfigDialog,
+    onOpenQuerySettings: openQuerySettings,
     onOpenRecentEvents: recentEventsModal.onOpen,
+    onQuerySettingsChange,
     onRuntimeAction,
+    onSaveQuerySettings,
     onSubmitRuntimeDrafts,
+    querySettingsDraft,
+    querySettingsError,
+    querySettingsWarnings,
     recentEvents: status.recent_events,
     recentEventsModal,
     runtimeMessage,

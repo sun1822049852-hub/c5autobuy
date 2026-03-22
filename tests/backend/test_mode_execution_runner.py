@@ -15,6 +15,8 @@ def build_mode(
     start_minute: int = 0,
     end_hour: int = 0,
     end_minute: int = 0,
+    item_min_cooldown_seconds: float = 0.5,
+    item_min_cooldown_strategy: str = "divide_by_assigned_count",
 ) -> QueryModeSetting:
     return QueryModeSetting(
         mode_setting_id=f"{mode_type}-1",
@@ -31,6 +33,8 @@ def build_mode(
         random_delay_enabled=False,
         random_delay_min=0.0,
         random_delay_max=0.0,
+        item_min_cooldown_seconds=item_min_cooldown_seconds,
+        item_min_cooldown_strategy=item_min_cooldown_strategy,
         created_at="2026-03-16T10:00:00",
         updated_at="2026-03-16T10:00:00",
     )
@@ -686,6 +690,37 @@ async def test_mode_runner_keeps_recent_hit_and_error_events():
     assert snapshot["recent_events"][1]["total_wear_sum"] == 0.1234
     assert snapshot["recent_events"][1]["product_list"][0]["productId"] == "p-1"
     assert snapshot["recent_events"][1]["query_item_name"] == "商品-1380979899390261111"
+
+
+def test_mode_runner_apply_mode_setting_forwards_item_cooldown_strategy_to_scheduler():
+    from app_backend.infrastructure.query.runtime.mode_runner import ModeRunner
+
+    applied = []
+
+    class FakeScheduler:
+        def reset(self) -> None:
+            return
+
+        def apply_mode_setting(self, mode_setting: QueryModeSetting) -> None:
+            applied.append(
+                (
+                    mode_setting.item_min_cooldown_seconds,
+                    mode_setting.item_min_cooldown_strategy,
+                )
+            )
+
+    runner = ModeRunner(
+        build_mode("new_api", item_min_cooldown_seconds=0.5, item_min_cooldown_strategy="divide_by_assigned_count"),
+        [build_account("a1", api_key="api-1")],
+        query_items=[build_item("1380979899390261111")],
+        query_item_scheduler=FakeScheduler(),
+    )
+
+    runner.apply_mode_setting(
+        build_mode("new_api", item_min_cooldown_seconds=0.9, item_min_cooldown_strategy="fixed")
+    )
+
+    assert applied == [(0.9, "fixed")]
 
 
 async def test_mode_runner_adds_rate_limit_increment_into_cycle_cooldown(monkeypatch):

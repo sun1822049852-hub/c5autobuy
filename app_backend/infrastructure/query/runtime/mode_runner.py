@@ -119,6 +119,19 @@ class ModeRunner:
             applied = bool(apply_runtime(query_item)) or applied
         return applied
 
+    def apply_mode_setting(self, mode_setting: QueryModeSetting) -> None:
+        self._mode_setting = mode_setting
+        self._window_scheduler = WindowScheduler(
+            window_enabled=bool(mode_setting.window_enabled),
+            start_hour=mode_setting.start_hour,
+            start_minute=mode_setting.start_minute,
+            end_hour=mode_setting.end_hour,
+            end_minute=mode_setting.end_minute,
+        )
+        apply_mode_setting = getattr(self._query_item_scheduler, "apply_mode_setting", None)
+        if callable(apply_mode_setting):
+            apply_mode_setting(mode_setting)
+
     def apply_manual_allocation_targets(self, *, target_actual_counts: dict[str, int]) -> None:
         allocation_workers = self._allocation_workers()
         self._query_mode_allocator.apply_target_actual_counts(

@@ -13,7 +13,7 @@ const NAV_ITEMS = [
   },
   {
     id: "purchase-system",
-    label: "购买系统",
+    label: "扫货系统",
     tag: "Live",
   },
   {

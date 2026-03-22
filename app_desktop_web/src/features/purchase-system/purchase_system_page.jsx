@@ -4,6 +4,7 @@ import { PurchaseAccountMonitorModal } from "./components/purchase_account_monit
 import { PurchaseConfigSelectorDialog } from "./components/purchase_config_selector_dialog.jsx";
 import { PurchaseItemPanel } from "./components/purchase_item_panel.jsx";
 import { PurchaseRecentEventsModal } from "./components/purchase_recent_events_modal.jsx";
+import { QuerySettingsModal } from "./components/query_settings_modal.jsx";
 import { PurchaseRuntimeActions } from "./components/purchase_runtime_actions.jsx";
 import { PurchaseRuntimeHeader } from "./components/purchase_runtime_header.jsx";
 import { usePurchaseSystemPage } from "./hooks/use_purchase_system_page.js";
@@ -62,6 +63,9 @@ export function PurchaseSystemPage({ bootstrapConfig, client, onLeaveStateChange
     isConfigLeavePromptOpen,
     isConfigLeavePromptSaving,
     isLoading,
+    isQuerySettingsLoading,
+    isQuerySettingsOpen,
+    isQuerySettingsSaving,
     isRecentEventsOpen,
     isSubmitDisabled,
     isSubmittingDrafts,
@@ -78,9 +82,16 @@ export function PurchaseSystemPage({ bootstrapConfig, client, onLeaveStateChange
     onIncreaseAllocation,
     onOpenAccountDetails,
     onOpenConfigDialog,
+    onOpenQuerySettings,
     onOpenRecentEvents,
+    onCloseQuerySettings,
+    onQuerySettingsChange,
     onRuntimeAction,
+    onSaveQuerySettings,
     onSubmitRuntimeDrafts,
+    querySettingsDraft,
+    querySettingsError,
+    querySettingsWarnings,
     recentEvents,
     recentEventsModal,
     runtimeMessage,
@@ -119,7 +130,9 @@ export function PurchaseSystemPage({ bootstrapConfig, client, onLeaveStateChange
             configActionLabel={configActionLabel}
             displayConfigName={configDisplayName}
             isLoading={isLoading}
+            isQuerySettingsLoading={isQuerySettingsLoading}
             onOpenConfigDialog={onOpenConfigDialog}
+            onOpenQuerySettings={onOpenQuerySettings}
             runtimeMessage={runtimeMessage}
             totalPurchasedCount={totalPurchasedCount}
           />
@@ -158,6 +171,18 @@ export function PurchaseSystemPage({ bootstrapConfig, client, onLeaveStateChange
         onConfirm={onConfirmConfigDialog}
         onSelect={onConfigDialogSelect}
         selectedConfigId={selectedDialogConfigId}
+      />
+
+      <QuerySettingsModal
+        draft={querySettingsDraft}
+        error={querySettingsError}
+        isLoading={isQuerySettingsLoading}
+        isOpen={isQuerySettingsOpen}
+        isSaving={isQuerySettingsSaving}
+        onChange={onQuerySettingsChange}
+        onClose={onCloseQuerySettings}
+        onSave={onSaveQuerySettings}
+        warnings={querySettingsWarnings}
       />
 
       <PurchaseRecentEventsModal

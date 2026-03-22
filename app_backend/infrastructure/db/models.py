@@ -132,6 +132,27 @@ class QueryModeSettingRecord(Base):
     config: Mapped[QueryConfigRecord] = relationship(back_populates="mode_settings")
 
 
+class QuerySettingsModeRecord(Base):
+    __tablename__ = "query_settings_modes"
+
+    mode_type: Mapped[str] = mapped_column(Text, primary_key=True)
+    enabled: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    window_enabled: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    start_hour: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    start_minute: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    end_hour: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    end_minute: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    base_cooldown_min: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    base_cooldown_max: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    item_min_cooldown_seconds: Mapped[float] = mapped_column(Float, nullable=False, default=0.5)
+    item_min_cooldown_strategy: Mapped[str] = mapped_column(Text, nullable=False, default="divide_by_assigned_count")
+    random_delay_enabled: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    random_delay_min: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    random_delay_max: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+
 class AccountInventorySnapshotRecord(Base):
     __tablename__ = "account_inventory_snapshots"
 

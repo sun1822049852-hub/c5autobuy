@@ -685,7 +685,7 @@ describe("query system editing", () => {
     await user.type(maxPriceInput, "211");
     await user.click(within(editorOne).getByRole("button", { name: "应用修改" }));
 
-    await user.click(screen.getByRole("button", { name: "购买系统" }));
+    await user.click(screen.getByRole("button", { name: "扫货系统" }));
 
     const leaveDialog = await screen.findByRole("dialog", { name: "未保存修改" });
     await user.click(within(leaveDialog).getByRole("button", { name: "不保存" }));
