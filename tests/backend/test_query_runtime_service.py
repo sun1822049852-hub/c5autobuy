@@ -257,6 +257,18 @@ class FakePurchaseRuntimeService:
         self.mark_auth_invalid_calls.append({"account_id": account_id, "error": error})
 
 
+def set_mode_target(query_item: QueryItem, mode_type: str, target: int) -> None:
+    for allocation in query_item.mode_allocations:
+        if allocation.mode_type == mode_type:
+            allocation.target_dedicated_count = target
+            return
+    raise AssertionError(f"mode allocation not found: {mode_type}")
+
+
+def build_active_worker(account_id: str) -> object:
+    return SimpleNamespace(account=SimpleNamespace(account_id=account_id))
+
+
 def test_query_task_runtime_starts_mode_runners_and_aggregates_snapshot():
     from app_backend.infrastructure.query.runtime.query_task_runtime import QueryTaskRuntime
 
@@ -379,6 +391,79 @@ def test_query_task_runtime_starts_mode_runners_and_aggregates_snapshot():
             },
         }
     ]
+
+
+async def test_query_mode_allocator_spreads_initial_assignments_before_filling_remaining_targets():
+    from app_backend.infrastructure.query.runtime.query_item_scheduler import QueryItemScheduler
+    from app_backend.infrastructure.query.runtime.query_mode_allocator import QueryModeAllocator
+
+    item_one = build_config("cfg-1").items[0]
+    item_two = build_config("cfg-1").items[0]
+    item_two.query_item_id = "item-2"
+    item_two.external_item_id = "item-2"
+    item_two.item_name = "商品-2"
+    item_two.market_hash_name = "Test Item 2"
+    item_two.product_url = "https://www.c5game.com/csgo/730/asset/item-2"
+
+    set_mode_target(item_one, "new_api", 2)
+    set_mode_target(item_two, "new_api", 1)
+
+    allocator = QueryModeAllocator(
+        "new_api",
+        [item_one, item_two],
+        query_item_scheduler=QueryItemScheduler([item_one, item_two]),
+    )
+
+    snapshot = allocator.snapshot(
+        active_workers=[build_active_worker("a1"), build_active_worker("a2")],
+    )
+    rows = {
+        row["query_item_id"]: row
+        for row in snapshot["item_rows"]
+    }
+
+    assert rows["item-1"]["actual_dedicated_count"] == 1
+    assert rows["item-2"]["actual_dedicated_count"] == 1
+    assert rows["item-1"]["status"] == "dedicated"
+    assert rows["item-2"]["status"] == "dedicated"
+
+
+async def test_query_mode_allocator_released_dedicated_workers_fall_back_to_shared_pool_instead_of_rebalancing_targets():
+    from app_backend.infrastructure.query.runtime.query_item_scheduler import QueryItemScheduler
+    from app_backend.infrastructure.query.runtime.query_mode_allocator import QueryModeAllocator
+
+    item_one = build_config("cfg-1").items[0]
+    item_two = build_config("cfg-1").items[0]
+    item_two.query_item_id = "item-2"
+    item_two.external_item_id = "item-2"
+    item_two.item_name = "商品-2"
+    item_two.market_hash_name = "Test Item 2"
+    item_two.product_url = "https://www.c5game.com/csgo/730/asset/item-2"
+
+    set_mode_target(item_one, "new_api", 1)
+    set_mode_target(item_two, "new_api", 2)
+
+    allocator = QueryModeAllocator(
+        "new_api",
+        [item_one, item_two],
+        query_item_scheduler=QueryItemScheduler([item_one, item_two]),
+    )
+
+    workers = [build_active_worker("a1"), build_active_worker("a2")]
+    allocator.snapshot(active_workers=workers)
+
+    item_one.manual_paused = True
+    allocator.apply_query_item_runtime(item_one)
+
+    snapshot = allocator.snapshot(active_workers=workers)
+    rows = {
+        row["query_item_id"]: row
+        for row in snapshot["item_rows"]
+    }
+
+    assert rows["item-1"]["status"] == "manual_paused"
+    assert rows["item-2"]["actual_dedicated_count"] == 1
+    assert rows["item-2"]["status"] == "dedicated"
 
 
 def test_query_task_runtime_builds_one_query_item_scheduler_per_mode():

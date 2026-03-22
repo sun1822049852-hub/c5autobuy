@@ -20,11 +20,13 @@ class QueryModeAllocator:
         self._query_item_scheduler = query_item_scheduler
         self._lock = RLock()
         self._dedicated_bindings: dict[str, str] = {}
+        self._has_initialized_bindings = False
         self._shared_pointer = 0
 
     def reset(self) -> None:
         with self._lock:
             self._dedicated_bindings = {}
+            self._has_initialized_bindings = False
             self._shared_pointer = 0
 
     async def reserve_next(
@@ -102,42 +104,27 @@ class QueryModeAllocator:
         for worker_id in active_worker_ids:
             item_id = self._dedicated_bindings.get(worker_id)
             query_item = items_by_id.get(item_id or "")
-            if query_item is None or query_item.manual_paused or raw_targets.get(item_id or "", 0) <= 0:
-                unbound_worker_ids.append(worker_id)
-                continue
-            if dedicated_counts[item_id] >= raw_targets[item_id]:
+            if query_item is None or query_item.manual_paused:
                 unbound_worker_ids.append(worker_id)
                 continue
             dedicated_bindings[worker_id] = item_id
             dedicated_counts[item_id] += 1
 
-        for query_item in self._query_items:
-            item_id = str(query_item.query_item_id)
-            target = raw_targets[item_id]
-            if query_item.manual_paused or target <= 0:
-                continue
-
-            current_count = dedicated_counts[item_id]
-            missing_count = target - current_count
-            if missing_count <= 0:
-                continue
-
-            if current_count == 0:
-                if len(unbound_worker_ids) < target:
-                    continue
-            elif len(unbound_worker_ids) < missing_count:
-                continue
-
-            for _ in range(missing_count):
-                worker_id = unbound_worker_ids.pop(0)
-                dedicated_bindings[worker_id] = item_id
-                dedicated_counts[item_id] += 1
+        if not self._has_initialized_bindings and active_worker_ids:
+            self._seed_initial_bindings_locked(
+                dedicated_bindings=dedicated_bindings,
+                dedicated_counts=dedicated_counts,
+                items_by_id=items_by_id,
+                raw_targets=raw_targets,
+                unbound_worker_ids=unbound_worker_ids,
+            )
+            self._has_initialized_bindings = True
 
         self._dedicated_bindings = dict(dedicated_bindings)
         shared_item_ids = [
             item_id
             for item_id, query_item in items_by_id.items()
-            if not query_item.manual_paused and (raw_targets[item_id] == 0 or dedicated_counts[item_id] == 0)
+            if not query_item.manual_paused and dedicated_counts[item_id] == 0
         ]
         return {
             "items_by_id": items_by_id,
@@ -147,6 +134,38 @@ class QueryModeAllocator:
             "shared_worker_ids": list(unbound_worker_ids),
             "shared_item_ids": shared_item_ids,
         }
+
+    def _seed_initial_bindings_locked(
+        self,
+        *,
+        dedicated_bindings: dict[str, str],
+        dedicated_counts: dict[str, int],
+        items_by_id: dict[str, QueryItem],
+        raw_targets: dict[str, int],
+        unbound_worker_ids: list[str],
+    ) -> None:
+        candidate_item_ids = [
+            item_id
+            for item_id, query_item in items_by_id.items()
+            if not query_item.manual_paused and raw_targets.get(item_id, 0) > 0
+        ]
+        if not candidate_item_ids or not unbound_worker_ids:
+            return
+
+        while unbound_worker_ids:
+            assigned_in_round = False
+            for item_id in candidate_item_ids:
+                target = max(int(raw_targets.get(item_id, 0)), 0)
+                if dedicated_counts[item_id] >= target:
+                    continue
+                worker_id = unbound_worker_ids.pop(0)
+                dedicated_bindings[worker_id] = item_id
+                dedicated_counts[item_id] += 1
+                assigned_in_round = True
+                if not unbound_worker_ids:
+                    break
+            if not assigned_in_round:
+                break
 
     def _build_item_row(self, query_item: QueryItem, *, state: dict[str, object]) -> dict[str, object]:
         item_id = str(query_item.query_item_id)
