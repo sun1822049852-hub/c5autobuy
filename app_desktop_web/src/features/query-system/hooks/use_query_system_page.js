@@ -521,13 +521,13 @@ export function useQuerySystemPage({ client }) {
 
   async function saveConfig() {
     if (!draftConfig) {
-      return;
+      return false;
     }
 
     const validation = validateDraftConfig(draftConfig, capacityModeMap);
     if (!validation.valid) {
       setSaveError(validation.message);
-      return;
+      return false;
     }
 
     setIsSaving(true);
@@ -544,8 +544,10 @@ export function useQuerySystemPage({ client }) {
       await refreshConfigList();
       const refreshed = await loadConfigDetail(draftConfig.config_id);
       setConfigs((current) => upsertConfigSummary(current, refreshed));
+      return true;
     } catch (error) {
       setSaveError(toErrorMessage(error));
+      return false;
     } finally {
       setIsSaving(false);
     }
@@ -598,17 +600,16 @@ export function useQuerySystemPage({ client }) {
     toggleItemDeleteMode,
     runtimeMessage: runtimeStatus.message || "未运行",
     saveBarDisabled: !currentConfig || isSaving || !hasUnsavedChanges,
-    saveBarMessage: (
+    saveBarLabel: (
       !currentConfig
-        ? "请选择或新建一个配置。"
+        ? "请选择配置"
         : isSaving
-          ? "正在保存当前配置..."
-          : saveError
-            ? saveError
-            : hasUnsavedChanges
-              ? "有未保存修改"
-              : "已保存"
+          ? "保存中..."
+          : hasUnsavedChanges
+            ? "保存到当前配置"
+            : "已保存"
     ),
+    saveBarError: saveError,
     saveConfig,
     selectConfig,
   };

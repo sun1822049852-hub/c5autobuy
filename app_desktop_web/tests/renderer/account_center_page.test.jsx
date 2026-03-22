@@ -83,6 +83,10 @@ describe("account center page", () => {
       expect(screen.getByText("C5 账号中心")).toBeInTheDocument();
     });
 
+    expect(screen.getByText("ACCOUNT CENTER")).toBeInTheDocument();
+    expect(screen.queryByText(/统一管理账号备注/)).not.toBeInTheDocument();
+    expect(screen.queryByText("后端状态：ready")).not.toBeInTheDocument();
+
     expect(screen.getByText("总账号")).toBeInTheDocument();
     expect(screen.getByText("未登录")).toBeInTheDocument();
     expect(screen.getByText("无 API Key")).toBeInTheDocument();
@@ -100,6 +104,16 @@ describe("account center page", () => {
     expect(screen.getByText("账号 A")).toBeInTheDocument();
     expect(screen.getByText("账号 B")).toBeInTheDocument();
     expect(screen.getByText("账号 C")).toBeInTheDocument();
+
+    const toolbar = screen.getByRole("searchbox", { name: "搜索账号" }).closest(".account-page__toolbar");
+    expect(toolbar).toHaveClass("account-page__toolbar--compact");
+    expect(screen.getByText("当前聚焦 总账号")).toBeInTheDocument();
+    expect(within(toolbar).getByRole("button", { name: "刷新" })).toBeInTheDocument();
+    expect(within(toolbar).getByRole("button", { name: "添加账号" })).toBeInTheDocument();
+
+    const overviewGrid = screen.getByLabelText("概览卡片");
+    expect(overviewGrid.closest(".account-page__hero-side")).not.toBeNull();
+    expect(overviewGrid).toHaveClass("overview-grid--compact-row");
   });
 
   it("filters the main list when clicking overview cards", async () => {

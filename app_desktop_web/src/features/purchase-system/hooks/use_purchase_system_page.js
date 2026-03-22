@@ -21,8 +21,16 @@ const EMPTY_STATUS = {
   item_rows: [],
 };
 
-const EMPTY_CAPACITY_SUMMARY = {
-  modes: {},
+const EMPTY_UI_PREFERENCES = {
+  selected_config_id: null,
+  updated_at: null,
+};
+
+const EMPTY_CONFIG_LEAVE_PROMPT = {
+  error: "",
+  isOpen: false,
+  isSaving: false,
+  nextConfigId: null,
 };
 
 
@@ -49,6 +57,7 @@ function normalizeModeStatus(modeStatus, modeType) {
     mode_type: modeStatus?.mode_type || modeType,
     target_dedicated_count: parseAllocationValue(modeStatus?.target_dedicated_count),
     actual_dedicated_count: parseAllocationValue(modeStatus?.actual_dedicated_count),
+    shared_available_count: parseAllocationValue(modeStatus?.shared_available_count),
     status: modeStatus?.status || "inactive",
     status_message: modeStatus?.status_message || "未运行",
   };
@@ -58,9 +67,7 @@ function normalizeModeStatus(modeStatus, modeType) {
 function normalizePurchaseItemRow(row) {
   const normalizedModes = {};
   for (const modeType of ALL_MODES) {
-    if (row?.modes?.[modeType]) {
-      normalizedModes[modeType] = normalizeModeStatus(row.modes[modeType], modeType);
-    }
+    normalizedModes[modeType] = normalizeModeStatus(row?.modes?.[modeType], modeType);
   }
 
   return {
@@ -116,6 +123,18 @@ function normalizeStatus(status) {
 }
 
 
+function normalizeUiPreferences(preferences) {
+  return {
+    ...EMPTY_UI_PREFERENCES,
+    ...preferences,
+    selected_config_id: preferences?.selected_config_id
+      ? String(preferences.selected_config_id)
+      : null,
+    updated_at: preferences?.updated_at ? String(preferences.updated_at) : null,
+  };
+}
+
+
 function normalizeConfigList(configs) {
   if (!Array.isArray(configs)) {
     return [];
@@ -129,6 +148,20 @@ function normalizeConfigList(configs) {
 }
 
 
+function toModeAllocationMap(modeAllocations) {
+  const normalized = Object.fromEntries(ALL_MODES.map((modeType) => [modeType, 0]));
+
+  for (const allocation of modeAllocations || []) {
+    if (!allocation || !ALL_MODES.includes(allocation.mode_type)) {
+      continue;
+    }
+    normalized[allocation.mode_type] = parseAllocationValue(allocation.target_dedicated_count);
+  }
+
+  return normalized;
+}
+
+
 function normalizeQueryItem(item) {
   return {
     ...item,
@@ -136,7 +169,7 @@ function normalizeQueryItem(item) {
     detail_min_wear: item?.detail_min_wear ?? item?.min_wear ?? null,
     detail_max_wear: item?.detail_max_wear ?? item?.max_wear ?? null,
     manual_paused: Boolean(item?.manual_paused),
-    mode_allocations: toModeAllocationList(toModeAllocationMap(item?.mode_allocations)),
+    mode_allocations: item?.mode_allocations || [],
   };
 }
 
@@ -158,28 +191,6 @@ function normalizeQueryConfigDetail(config) {
 }
 
 
-function toModeAllocationMap(modeAllocations) {
-  const normalized = Object.fromEntries(ALL_MODES.map((modeType) => [modeType, 0]));
-
-  for (const allocation of modeAllocations || []) {
-    if (!allocation || !ALL_MODES.includes(allocation.mode_type)) {
-      continue;
-    }
-    normalized[allocation.mode_type] = parseAllocationValue(allocation.target_dedicated_count);
-  }
-
-  return normalized;
-}
-
-
-function toModeAllocationList(modeAllocationMap) {
-  return ALL_MODES.map((modeType) => ({
-    mode_type: modeType,
-    target_dedicated_count: parseAllocationValue(modeAllocationMap[modeType]),
-  }));
-}
-
-
 function getConfigById(configs, configId) {
   if (!configId) {
     return null;
@@ -189,23 +200,13 @@ function getConfigById(configs, configId) {
 }
 
 
-function createItemDraft(item) {
-  return {
-    manualPaused: Boolean(item?.manual_paused),
-    modeAllocations: toModeAllocationMap(item?.mode_allocations),
-  };
-}
-
-
-function replaceConfigItem(detail, queryItemId, nextItem) {
-  if (!detail) {
-    return detail;
+function resolvePersistedConfigId(configs, preferences) {
+  const preferredConfigId = preferences?.selected_config_id || null;
+  if (!preferredConfigId) {
+    return null;
   }
 
-  return {
-    ...detail,
-    items: detail.items.map((item) => (item.query_item_id === queryItemId ? nextItem : item)),
-  };
+  return getConfigById(configs, preferredConfigId)?.config_id || null;
 }
 
 
@@ -223,100 +224,121 @@ function buildRuntimeItemMap(status, configId) {
 }
 
 
-function buildModeStatus({ draft, isCurrentConfigActive, modeType, runtimeMode }) {
-  const target = parseAllocationValue(draft.modeAllocations[modeType]);
+function buildSharedAvailableByMode(runtimeItemMap) {
+  const sharedByMode = Object.fromEntries(ALL_MODES.map((modeType) => [modeType, 0]));
 
-  if (draft.manualPaused) {
-    return {
-      mode_type: modeType,
-      target_dedicated_count: target,
-      actual_dedicated_count: 0,
-      status: "manual_paused",
-      status_message: "手动暂停",
-    };
-  }
-
-  if (!isCurrentConfigActive) {
-    return {
-      mode_type: modeType,
-      target_dedicated_count: target,
-      actual_dedicated_count: 0,
-      status: "inactive",
-      status_message: "未运行",
-    };
-  }
-
-  if (runtimeMode) {
-    return normalizeModeStatus(
-      {
-        ...runtimeMode,
-        target_dedicated_count: runtimeMode.target_dedicated_count ?? target,
-      },
-      modeType,
-    );
-  }
-
-  return {
-    mode_type: modeType,
-    target_dedicated_count: target,
-    actual_dedicated_count: 0,
-    status: target > 0 ? "no_capacity" : "shared",
-    status_message: target > 0 ? `无可用账号 0/${target}` : "共享中",
-  };
-}
-
-
-function buildRemainingEntry(rawRemainingCount, currentValue) {
-  const remainingCount = Math.max(rawRemainingCount, 0);
-  const overflowCount = currentValue > remainingCount ? currentValue - remainingCount : 0;
-  return {
-    remainingCount,
-    overflowCount,
-  };
-}
-
-
-function buildRemainingByMode(items, currentItemId, draft, capacityModes) {
-  return Object.fromEntries(ALL_MODES.map((modeType) => {
-    const usedByOthers = items.reduce((total, item) => {
-      if (item.query_item_id === currentItemId || item.manual_paused) {
-        return total;
+  for (const row of Object.values(runtimeItemMap)) {
+    for (const modeType of ALL_MODES) {
+      if (!sharedByMode[modeType] && row?.modes?.[modeType]) {
+        sharedByMode[modeType] = parseAllocationValue(row.modes[modeType].shared_available_count);
       }
-      return total + toModeAllocationMap(item.mode_allocations)[modeType];
-    }, 0);
+    }
+  }
 
-    const availableCount = capacityModes[modeType]?.available_account_count ?? 0;
-    const currentValue = draft.manualPaused ? 0 : parseAllocationValue(draft.modeAllocations[modeType]);
-
-    return [modeType, buildRemainingEntry(availableCount - usedByOthers, currentValue)];
-  }));
+  return sharedByMode;
 }
 
 
-function applyRuntimeMessage(result, fallbackMessage) {
-  if (result?.message) {
-    return String(result.message);
+function getBaseActualCount(runtimeItemMap, queryItemId, modeType) {
+  return parseAllocationValue(runtimeItemMap[queryItemId]?.modes?.[modeType]?.actual_dedicated_count);
+}
+
+
+function getTargetCount(item, modeType) {
+  return parseAllocationValue(toModeAllocationMap(item?.mode_allocations)[modeType]);
+}
+
+
+function getDraftActualCount(manualAllocationDrafts, runtimeItemMap, queryItemId, modeType) {
+  const draftValue = manualAllocationDrafts?.[queryItemId]?.[modeType];
+  if (draftValue === undefined) {
+    return getBaseActualCount(runtimeItemMap, queryItemId, modeType);
   }
-  if (result?.status === "failed_after_save") {
-    return "已保存，但当前运行时未同步成功，请重试应用";
+  return parseAllocationValue(draftValue);
+}
+
+
+function updateManualAllocationDrafts(currentDrafts, runtimeItemMap, queryItemId, modeType, nextActualCount) {
+  const nextDrafts = { ...currentDrafts };
+  const baseActualCount = getBaseActualCount(runtimeItemMap, queryItemId, modeType);
+  const nextItemDraft = {
+    ...(nextDrafts[queryItemId] || {}),
+  };
+
+  if (nextActualCount === baseActualCount) {
+    delete nextItemDraft[modeType];
+  } else {
+    nextItemDraft[modeType] = parseAllocationValue(nextActualCount);
   }
-  return fallbackMessage;
+
+  if (!Object.keys(nextItemDraft).length) {
+    delete nextDrafts[queryItemId];
+    return nextDrafts;
+  }
+
+  nextDrafts[queryItemId] = nextItemDraft;
+  return nextDrafts;
+}
+
+
+function buildDraftDeltaByMode(items, runtimeItemMap, manualAllocationDrafts) {
+  const deltas = Object.fromEntries(ALL_MODES.map((modeType) => [modeType, 0]));
+
+  for (const item of items || []) {
+    for (const modeType of ALL_MODES) {
+      deltas[modeType] += getDraftActualCount(
+        manualAllocationDrafts,
+        runtimeItemMap,
+        item.query_item_id,
+        modeType,
+      ) - getBaseActualCount(runtimeItemMap, item.query_item_id, modeType);
+    }
+  }
+
+  return deltas;
+}
+
+
+function buildDraftPayloadItems(items, runtimeItemMap, manualAllocationDrafts) {
+  const payloadItems = [];
+
+  for (const item of items || []) {
+    for (const modeType of ALL_MODES) {
+      const baseActualCount = getBaseActualCount(runtimeItemMap, item.query_item_id, modeType);
+      const draftActualCount = getDraftActualCount(
+        manualAllocationDrafts,
+        runtimeItemMap,
+        item.query_item_id,
+        modeType,
+      );
+      if (draftActualCount === baseActualCount) {
+        continue;
+      }
+      payloadItems.push({
+        query_item_id: item.query_item_id,
+        mode_type: modeType,
+        target_actual_count: draftActualCount,
+      });
+    }
+  }
+
+  return payloadItems;
 }
 
 
 export function usePurchaseSystemPage({ client }) {
   const [status, setStatus] = useState(EMPTY_STATUS);
   const [configList, setConfigList] = useState([]);
-  const [capacitySummary, setCapacitySummary] = useState(EMPTY_CAPACITY_SUMMARY);
   const [selectedConfigId, setSelectedConfigId] = useState(null);
   const [selectedConfigDetail, setSelectedConfigDetail] = useState(null);
   const [selectorDraftId, setSelectorDraftId] = useState(null);
-  const [itemDrafts, setItemDrafts] = useState({});
-  const [itemSaveStates, setItemSaveStates] = useState({});
+  const [manualAllocationDrafts, setManualAllocationDrafts] = useState({});
   const [isConfigDialogOpen, setIsConfigDialogOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isActionPending, setIsActionPending] = useState(false);
+  const [isSubmittingDrafts, setIsSubmittingDrafts] = useState(false);
   const [loadError, setLoadError] = useState("");
+  const [configLeavePrompt, setConfigLeavePrompt] = useState(EMPTY_CONFIG_LEAVE_PROMPT);
   const recentEventsModal = useFloatingRuntimeModalState({
     initialPosition: { x: 96, y: 84 },
     initialSize: { width: 680, height: 420 },
@@ -350,30 +372,18 @@ export function usePurchaseSystemPage({ client }) {
     return normalized;
   }
 
-  async function refreshCapacitySummary() {
-    const nextCapacitySummary = await client.getQueryCapacitySummary();
-    setCapacitySummary(nextCapacitySummary || EMPTY_CAPACITY_SUMMARY);
-    return nextCapacitySummary || EMPTY_CAPACITY_SUMMARY;
-  }
-
-  async function loadSelectedConfigDetail(configId, { resetItemUi = true } = {}) {
+  async function loadSelectedConfigDetail(configId) {
     if (!configId) {
       setSelectedConfigId(null);
       setSelectedConfigDetail(null);
-      if (resetItemUi) {
-        setItemDrafts({});
-        setItemSaveStates({});
-      }
+      setManualAllocationDrafts({});
       return null;
     }
 
     const detail = normalizeQueryConfigDetail(await client.getQueryConfig(configId));
     setSelectedConfigId(configId);
     setSelectedConfigDetail(detail);
-    if (resetItemUi) {
-      setItemDrafts({});
-      setItemSaveStates({});
-    }
+    setManualAllocationDrafts({});
     return detail;
   }
 
@@ -383,27 +393,30 @@ export function usePurchaseSystemPage({ client }) {
     async function loadPage() {
       setIsLoading(true);
       try {
-        const [nextStatus, nextConfigs, nextCapacitySummary] = await Promise.all([
+        const [nextStatus, nextConfigs, nextUiPreferences] = await Promise.all([
           client.getPurchaseRuntimeStatus(),
           client.listQueryConfigs(),
-          client.getQueryCapacitySummary(),
+          client.getPurchaseUiPreferences(),
         ]);
         if (!active) {
           return;
         }
 
         const normalizedStatus = normalizeStatus(nextStatus);
+        const normalizedConfigs = normalizeConfigList(nextConfigs);
+        const normalizedUiPreferences = normalizeUiPreferences(nextUiPreferences);
         setStatus(normalizedStatus);
-        setConfigList(normalizeConfigList(nextConfigs));
-        setCapacitySummary(nextCapacitySummary || EMPTY_CAPACITY_SUMMARY);
+        setConfigList(normalizedConfigs);
         setLoadError("");
 
-        const preferredConfigId = normalizedStatus.active_query_config?.config_id || null;
+        const preferredConfigId = resolvePersistedConfigId(normalizedConfigs, normalizedUiPreferences)
+          || normalizedStatus.active_query_config?.config_id
+          || null;
+
         if (!preferredConfigId) {
           setSelectedConfigId(null);
           setSelectedConfigDetail(null);
-          setItemDrafts({});
-          setItemSaveStates({});
+          setManualAllocationDrafts({});
           return;
         }
 
@@ -413,8 +426,7 @@ export function usePurchaseSystemPage({ client }) {
         }
         setSelectedConfigId(preferredConfigId);
         setSelectedConfigDetail(detail);
-        setItemDrafts({});
-        setItemSaveStates({});
+        setManualAllocationDrafts({});
       } catch (error) {
         if (!active) {
           return;
@@ -441,45 +453,18 @@ export function usePurchaseSystemPage({ client }) {
     };
   }, [client]);
 
-  useEffect(() => {
-    const activeConfigId = status.active_query_config?.config_id || null;
-    if (!activeConfigId || selectedConfigDetail?.config_id === activeConfigId) {
-      return;
-    }
-
-    let cancelled = false;
-    client.getQueryConfig(activeConfigId)
-      .then((detail) => {
-        if (cancelled) {
-          return;
-        }
-        setSelectedConfigId(activeConfigId);
-        setSelectedConfigDetail(normalizeQueryConfigDetail(detail));
-        setItemDrafts({});
-        setItemSaveStates({});
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          setLoadError(toErrorMessage(error));
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [client, selectedConfigDetail?.config_id, status.active_query_config?.config_id]);
-
   const activeConfig = status.active_query_config;
   const selectedConfigSummary = useMemo(
     () => getConfigById(configList, selectedConfigId),
     [configList, selectedConfigId],
   );
-  const configDisplayName = activeConfig?.config_name
-    || selectedConfigDetail?.name
+  const configDisplayName = selectedConfigDetail?.name
     || selectedConfigSummary?.name
     || "未选择配置";
   const runtimeMessage = activeConfig?.message || status.message || "未运行";
   const isRuntimeRunning = Boolean(status.running);
+  const isSelectedConfigRunning = Boolean(selectedConfigDetail?.config_id)
+    && isConfigActive(status, selectedConfigDetail.config_id);
   const actionLabel = isRuntimeRunning ? "停止扫货" : "开始扫货";
   const configActionLabel = isRuntimeRunning ? "切换配置" : "选择配置";
   const isActionDisabled = isActionPending || (!isRuntimeRunning && !selectedConfigId);
@@ -488,194 +473,155 @@ export function usePurchaseSystemPage({ client }) {
     () => buildRuntimeItemMap(status, selectedConfigDetail?.config_id || null),
     [selectedConfigDetail?.config_id, status],
   );
+  const baseSharedAvailableByMode = useMemo(
+    () => buildSharedAvailableByMode(runtimeItemMap),
+    [runtimeItemMap],
+  );
+  const draftDeltaByMode = useMemo(
+    () => buildDraftDeltaByMode(selectedConfigDetail?.items || [], runtimeItemMap, manualAllocationDrafts),
+    [manualAllocationDrafts, runtimeItemMap, selectedConfigDetail?.items],
+  );
+  const sharedAvailableByMode = useMemo(
+    () => Object.fromEntries(ALL_MODES.map((modeType) => ([
+      modeType,
+      Math.max(0, baseSharedAvailableByMode[modeType] - draftDeltaByMode[modeType]),
+    ]))),
+    [baseSharedAvailableByMode, draftDeltaByMode],
+  );
+  const draftPayloadItems = useMemo(
+    () => buildDraftPayloadItems(selectedConfigDetail?.items || [], runtimeItemMap, manualAllocationDrafts),
+    [manualAllocationDrafts, runtimeItemMap, selectedConfigDetail?.items],
+  );
+  const hasUnsavedRuntimeDrafts = draftPayloadItems.length > 0;
+
   const itemRows = useMemo(() => {
     if (!selectedConfigDetail) {
       return [];
     }
 
-    const isCurrentConfigActive = isConfigActive(status, selectedConfigDetail.config_id);
     return selectedConfigDetail.items.map((item) => {
-      const draft = itemDrafts[item.query_item_id] || createItemDraft(item);
       const runtimeRow = runtimeItemMap[item.query_item_id];
-      const statusByMode = Object.fromEntries(ALL_MODES.map((modeType) => ([
-        modeType,
-        buildModeStatus({
-          draft,
-          isCurrentConfigActive,
-          modeType,
-          runtimeMode: runtimeRow?.modes?.[modeType],
-        }),
-      ])));
+      const sourceStats = runtimeRow?.source_mode_stats?.length
+        ? runtimeRow.source_mode_stats
+        : (runtimeRow?.recent_hit_sources || []);
+      const modeRows = MODE_ROWS.map((modeType) => {
+        const runtimeMode = normalizeModeStatus(runtimeRow?.modes?.[modeType], modeType);
+        const actualCount = isSelectedConfigRunning
+          ? getDraftActualCount(manualAllocationDrafts, runtimeItemMap, item.query_item_id, modeType)
+          : 0;
+        const targetCount = getTargetCount(item, modeType);
+
+        return {
+          ...runtimeMode,
+          actual_dedicated_count: actualCount,
+          target_dedicated_count: targetCount,
+          shared_available_count: isSelectedConfigRunning ? sharedAvailableByMode[modeType] : 0,
+          can_decrease: isSelectedConfigRunning && actualCount > 0,
+          can_increase: isSelectedConfigRunning && sharedAvailableByMode[modeType] > 0,
+          is_draft: actualCount !== runtimeMode.actual_dedicated_count,
+          status_message: isSelectedConfigRunning ? runtimeMode.status_message : "未运行",
+        };
+      });
 
       return {
         ...item,
-        manual_paused: draft.manualPaused,
-        source_mode_stats: runtimeRow?.source_mode_stats || [],
+        source_mode_stats: sourceStats,
         recent_hit_sources: runtimeRow?.recent_hit_sources || [],
         query_execution_count: runtimeRow?.query_execution_count ?? 0,
         matched_product_count: runtimeRow?.matched_product_count ?? 0,
         purchase_success_count: runtimeRow?.purchase_success_count ?? 0,
         purchase_failed_count: runtimeRow?.purchase_failed_count ?? 0,
-        draft,
-        remainingByMode: buildRemainingByMode(
-          selectedConfigDetail.items,
-          item.query_item_id,
-          draft,
-          capacitySummary.modes || {},
-        ),
-        statusByMode,
-        saveState: itemSaveStates[item.query_item_id] || null,
+        mode_rows: modeRows,
       };
     });
-  }, [capacitySummary.modes, itemDrafts, itemSaveStates, runtimeItemMap, selectedConfigDetail, status]);
+  }, [
+    isSelectedConfigRunning,
+    manualAllocationDrafts,
+    runtimeItemMap,
+    selectedConfigDetail,
+    sharedAvailableByMode,
+  ]);
 
-  function updateItemDraft(queryItemId, updater) {
-    const item = selectedConfigDetail?.items.find((entry) => entry.query_item_id === queryItemId);
-    if (!item) {
+  function adjustManualAllocation(queryItemId, modeType, delta) {
+    if (!isSelectedConfigRunning) {
       return;
     }
 
-    setItemDrafts((current) => {
-      const baseDraft = current[queryItemId] || createItemDraft(item);
-      return {
-        ...current,
-        [queryItemId]: updater(baseDraft),
-      };
-    });
-    setItemSaveStates((current) => {
-      if (!current[queryItemId]) {
-        return current;
-      }
-      return {
-        ...current,
-        [queryItemId]: null,
-      };
-    });
-  }
-
-  function onItemAllocationChange(queryItemId, modeType, value) {
-    updateItemDraft(queryItemId, (current) => ({
-      ...current,
-      modeAllocations: {
-        ...current.modeAllocations,
-        [modeType]: parseAllocationValue(value),
-      },
-    }));
-  }
-
-  function onItemManualPausedChange(queryItemId, value) {
-    updateItemDraft(queryItemId, (current) => ({
-      ...current,
-      manualPaused: Boolean(value),
-    }));
-  }
-
-  async function onSaveItemAllocation(queryItemId) {
-    if (!selectedConfigDetail) {
-      return;
-    }
-
-    const item = selectedConfigDetail.items.find((entry) => entry.query_item_id === queryItemId);
-    if (!item) {
-      return;
-    }
-
-    const draft = itemDrafts[queryItemId] || createItemDraft(item);
-    const remainingByMode = buildRemainingByMode(
-      selectedConfigDetail.items,
+    const currentActualCount = getDraftActualCount(
+      manualAllocationDrafts,
+      runtimeItemMap,
       queryItemId,
-      draft,
-      capacitySummary.modes || {},
+      modeType,
     );
-    const hasOverflow = Object.values(remainingByMode).some((entry) => entry.overflowCount > 0);
-    if (hasOverflow) {
-      setItemSaveStates((current) => ({
-        ...current,
-        [queryItemId]: {
-          message: "校验失败，无法保存",
-          pending: false,
-          status: "error",
-        },
-      }));
+    if (delta > 0 && sharedAvailableByMode[modeType] < delta) {
       return;
     }
 
-    setItemSaveStates((current) => ({
-      ...current,
-      [queryItemId]: {
-        message: "",
-        pending: true,
-        status: "pending",
-      },
-    }));
+    const nextActualCount = Math.max(0, currentActualCount + delta);
+    setManualAllocationDrafts((current) => updateManualAllocationDrafts(
+      current,
+      runtimeItemMap,
+      queryItemId,
+      modeType,
+      nextActualCount,
+    ));
+  }
 
-    const payload = {
-      detail_min_wear: item.detail_min_wear,
-      detail_max_wear: item.detail_max_wear,
-      max_price: item.max_price,
-      manual_paused: Boolean(draft.manualPaused),
-      mode_allocations: Object.fromEntries(
-        ALL_MODES.map((modeType) => [modeType, parseAllocationValue(draft.modeAllocations[modeType])]),
-      ),
-    };
+  async function onSubmitRuntimeDrafts() {
+    if (!selectedConfigDetail || !isSelectedConfigRunning || !draftPayloadItems.length) {
+      return false;
+    }
 
+    setIsSubmittingDrafts(true);
     try {
-      const updatedItem = normalizeQueryItem(
-        await client.updateQueryItem(selectedConfigDetail.config_id, queryItemId, payload),
-      );
-      setSelectedConfigDetail((current) => replaceConfigItem(current, queryItemId, updatedItem));
-      setItemDrafts((current) => {
-        const nextDrafts = { ...current };
-        delete nextDrafts[queryItemId];
-        return nextDrafts;
+      await client.submitQueryRuntimeManualAllocations(selectedConfigDetail.config_id, {
+        items: draftPayloadItems,
       });
-
-      let applyResult;
-      try {
-        applyResult = await client.applyQueryItemRuntime(selectedConfigDetail.config_id, queryItemId);
-      } catch (error) {
-        applyResult = {
-          status: "failed_after_save",
-          message: applyRuntimeMessage(null, toErrorMessage(error)),
-        };
-      }
-
-      setItemSaveStates((current) => ({
-        ...current,
-        [queryItemId]: {
-          message: applyRuntimeMessage(
-            applyResult,
-            "已保存，并已应用到当前运行配置",
-          ),
-          pending: false,
-          status: String(applyResult?.status || "applied"),
-        },
-      }));
-
-      const [statusResult, detailResult, capacityResult] = await Promise.allSettled([
+      const [nextStatus, nextDetail] = await Promise.all([
         client.getPurchaseRuntimeStatus(),
         client.getQueryConfig(selectedConfigDetail.config_id),
-        client.getQueryCapacitySummary(),
       ]);
-
-      if (statusResult.status === "fulfilled") {
-        setStatus(normalizeStatus(statusResult.value));
-      }
-      if (detailResult.status === "fulfilled") {
-        setSelectedConfigDetail(normalizeQueryConfigDetail(detailResult.value));
-      }
-      if (capacityResult.status === "fulfilled") {
-        setCapacitySummary(capacityResult.value || EMPTY_CAPACITY_SUMMARY);
-      }
+      setStatus(normalizeStatus(nextStatus));
+      setSelectedConfigDetail(normalizeQueryConfigDetail(nextDetail));
+      setManualAllocationDrafts({});
+      setLoadError("");
+      return true;
     } catch (error) {
-      setItemSaveStates((current) => ({
-        ...current,
-        [queryItemId]: {
-          message: toErrorMessage(error),
-          pending: false,
-          status: "error",
-        },
-      }));
+      setLoadError(toErrorMessage(error));
+      return false;
+    } finally {
+      setIsSubmittingDrafts(false);
+    }
+  }
+
+  async function performConfigSelection(nextConfigId) {
+    if (!nextConfigId) {
+      return false;
+    }
+
+    setIsActionPending(true);
+    try {
+      await client.updatePurchaseUiPreferences(nextConfigId);
+      await loadSelectedConfigDetail(nextConfigId);
+
+      if (!isRuntimeRunning || nextConfigId === activeConfig?.config_id) {
+        setIsConfigDialogOpen(false);
+        setSelectorDraftId(null);
+        setLoadError("");
+        return true;
+      }
+
+      const nextStatus = await client.startPurchaseRuntime(nextConfigId);
+      setStatus(normalizeStatus(nextStatus));
+      setIsConfigDialogOpen(false);
+      setSelectorDraftId(null);
+      setLoadError("");
+      return true;
+    } catch (error) {
+      setLoadError(toErrorMessage(error));
+      return false;
+    } finally {
+      setIsActionPending(false);
     }
   }
 
@@ -690,6 +636,7 @@ export function usePurchaseSystemPage({ client }) {
         ? await client.stopPurchaseRuntime()
         : await client.startPurchaseRuntime(selectedConfigId);
       setStatus(normalizeStatus(nextStatus));
+      setManualAllocationDrafts({});
       setLoadError("");
     } catch (error) {
       setLoadError(toErrorMessage(error));
@@ -701,10 +648,7 @@ export function usePurchaseSystemPage({ client }) {
   async function openConfigDialog() {
     try {
       const nextConfigs = await refreshConfigList();
-      const nextSelectionId = activeConfig?.config_id
-        || selectedConfigId
-        || nextConfigs[0]?.config_id
-        || null;
+      const nextSelectionId = selectedConfigId || nextConfigs[0]?.config_id || null;
       setSelectorDraftId(nextSelectionId);
       setIsConfigDialogOpen(true);
       setLoadError("");
@@ -726,27 +670,78 @@ export function usePurchaseSystemPage({ client }) {
       return;
     }
 
-    setIsActionPending(true);
-    try {
-      await loadSelectedConfigDetail(selectorDraftId);
-
-      if (!isRuntimeRunning || selectorDraftId === activeConfig?.config_id) {
-        setIsConfigDialogOpen(false);
-        setSelectorDraftId(null);
-        setLoadError("");
-        return;
-      }
-
-      const nextStatus = await client.startPurchaseRuntime(selectorDraftId);
-      setStatus(normalizeStatus(nextStatus));
+    if (hasUnsavedRuntimeDrafts && selectorDraftId !== selectedConfigId) {
+      setConfigLeavePrompt({
+        error: "",
+        isOpen: true,
+        isSaving: false,
+        nextConfigId: selectorDraftId,
+      });
       setIsConfigDialogOpen(false);
       setSelectorDraftId(null);
-      setLoadError("");
-    } catch (error) {
-      setLoadError(toErrorMessage(error));
-    } finally {
-      setIsActionPending(false);
+      return;
     }
+
+    await performConfigSelection(selectorDraftId);
+  }
+
+  async function confirmSaveBeforeConfigSwitch() {
+    if (!configLeavePrompt.nextConfigId) {
+      return;
+    }
+
+    setConfigLeavePrompt((current) => ({
+      ...current,
+      error: "",
+      isSaving: true,
+    }));
+
+    const nextConfigId = configLeavePrompt.nextConfigId;
+    const saved = await onSubmitRuntimeDrafts();
+    if (!saved) {
+      setConfigLeavePrompt((current) => ({
+        ...current,
+        error: "保存失败，请先修复后再切换配置。",
+        isSaving: false,
+      }));
+      return;
+    }
+
+    const switched = await performConfigSelection(nextConfigId);
+    if (!switched) {
+      setConfigLeavePrompt((current) => ({
+        ...current,
+        error: "切换失败，请重试。",
+        isSaving: false,
+      }));
+      return;
+    }
+
+    setConfigLeavePrompt(EMPTY_CONFIG_LEAVE_PROMPT);
+  }
+
+  async function discardBeforeConfigSwitch() {
+    if (!configLeavePrompt.nextConfigId) {
+      return;
+    }
+
+    setConfigLeavePrompt((current) => ({
+      ...current,
+      error: "",
+      isSaving: true,
+    }));
+
+    const switched = await performConfigSelection(configLeavePrompt.nextConfigId);
+    if (!switched) {
+      setConfigLeavePrompt((current) => ({
+        ...current,
+        error: "切换失败，请重试。",
+        isSaving: false,
+      }));
+      return;
+    }
+
+    setConfigLeavePrompt(EMPTY_CONFIG_LEAVE_PROMPT);
   }
 
   return {
@@ -757,38 +752,50 @@ export function usePurchaseSystemPage({ client }) {
     configList,
     dialogActionLabel,
     activeQueryConfig: activeConfig,
+    hasUnsavedRuntimeDrafts,
     isActionDisabled,
     isActionPending,
     isConfigDialogOpen,
+    isConfigLeavePromptOpen: configLeavePrompt.isOpen,
+    isConfigLeavePromptSaving: configLeavePrompt.isSaving,
     isLoading,
     isRecentEventsOpen: recentEventsModal.isOpen,
     isAccountMonitorOpen: accountMonitorModal.isOpen,
+    isSubmitDisabled: !hasUnsavedRuntimeDrafts || !isSelectedConfigRunning || isSubmittingDrafts,
+    isSubmittingDrafts,
     itemRows,
     loadError,
+    configLeavePromptError: configLeavePrompt.error,
     onCloseAccountMonitor: accountMonitorModal.onClose,
-    onConfigDialogSelect: setSelectorDraftId,
-    onOpenConfigDialog: openConfigDialog,
     onCloseConfigDialog: closeConfigDialog,
-    onConfirmConfigDialog: confirmConfigSelection,
     onCloseRecentEvents: recentEventsModal.onClose,
+    onConfigDialogSelect: setSelectorDraftId,
+    onConfirmConfigDialog: confirmConfigSelection,
+    onConfirmDiscardConfigSwitch: discardBeforeConfigSwitch,
+    onConfirmSaveConfigSwitch: confirmSaveBeforeConfigSwitch,
+    onDecreaseAllocation(queryItemId, modeType) {
+      adjustManualAllocation(queryItemId, modeType, -1);
+    },
+    onIncreaseAllocation(queryItemId, modeType) {
+      adjustManualAllocation(queryItemId, modeType, 1);
+    },
     onOpenAccountDetails: accountMonitorModal.onOpen,
+    onOpenConfigDialog: openConfigDialog,
     onOpenRecentEvents: recentEventsModal.onOpen,
     onRuntimeAction,
-    onItemAllocationChange,
-    onItemManualPausedChange,
-    onSaveItemAllocation,
-    queueSize: status.queue_size,
+    onSubmitRuntimeDrafts,
     recentEvents: status.recent_events,
     recentEventsModal,
     runtimeMessage,
-    runtimeSessionId: status.runtime_session_id || null,
     selectedDialogConfigId: selectorDraftId,
     status,
     totalAccountCount: status.total_account_count,
     totalPurchasedCount: status.total_purchased_count,
     activeAccountCount: status.active_account_count,
     accountMonitorModal,
-    refreshCapacitySummary,
     refreshStatus,
   };
 }
+
+
+const MODE_ROWS = ["new_api", "fast_api", "token"];

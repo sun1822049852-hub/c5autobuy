@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { spawn } from "node:child_process";
 
 
@@ -5,6 +7,39 @@ function sleep(ms) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+
+function getPythonRelativePath(platform = process.platform) {
+  return platform === "win32"
+    ? path.join(".venv", "Scripts", "python.exe")
+    : path.join(".venv", "bin", "python");
+}
+
+
+export function resolvePythonExecutable(
+  projectRoot,
+  {
+    existsSync = fs.existsSync,
+    platform = process.platform,
+  } = {},
+) {
+  const pythonRelativePath = getPythonRelativePath(platform);
+  let currentDirectory = path.resolve(projectRoot);
+
+  while (true) {
+    const candidatePath = path.join(currentDirectory, pythonRelativePath);
+    if (existsSync(candidatePath)) {
+      return candidatePath;
+    }
+
+    const parentDirectory = path.dirname(currentDirectory);
+    if (parentDirectory === currentDirectory) {
+      return path.join(path.resolve(projectRoot), pythonRelativePath);
+    }
+
+    currentDirectory = parentDirectory;
+  }
 }
 
 

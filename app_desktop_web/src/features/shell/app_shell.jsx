@@ -14,6 +14,16 @@ const NAV_ITEMS = [
     label: "购买系统",
     tag: "Live",
   },
+  {
+    id: "query-stats",
+    label: "查询统计",
+    tag: "Live",
+  },
+  {
+    id: "account-capability-stats",
+    label: "账号能力统计",
+    tag: "Live",
+  },
 ];
 
 

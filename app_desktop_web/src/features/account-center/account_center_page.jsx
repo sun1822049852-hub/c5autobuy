@@ -56,43 +56,47 @@ export function AccountCenterPage({ bootstrapConfig, client }) {
     loginTaskSnapshot,
     isLoginTaskStarting,
   } = useAccountCenterPage({ client });
+  const activeCardLabel = overviewCards.find((card) => card.id === activeFilter)?.label ?? "全部账号";
 
   return (
     <section className="account-page">
       <header className="account-page__hero">
-        <div className="account-page__hero-copy">
-          <div className="account-page__eyebrow">Account Center</div>
-          <h1 className="account-page__title">
-            {isLoading ? "账号中心加载中" : "C5 账号中心"}
-          </h1>
-          <p className="account-page__subtitle">
-            统一管理账号备注、API Key、代理与购买状态，后续模块迁移也从这套桌面 Web 壳继续扩展。
-          </p>
-        </div>
-        <div className="account-page__hero-meta">
-          <div className="account-page__backend-pill">
-            后端状态：{bootstrapConfig.backendStatus}
+        <div className="account-page__hero-main">
+          <div className="account-page__hero-copy">
+            <div className="account-page__eyebrow">ACCOUNT CENTER</div>
+            <h1 className="account-page__title">
+              {isLoading ? "账号中心加载中" : "C5 账号中心"}
+            </h1>
           </div>
-          <div className="account-page__hero-actions">
-            <button className="ghost-button" type="button" onClick={refreshAccounts}>刷新</button>
+        </div>
+
+        <div className="account-page__hero-side">
+          <div className="account-page__hero-overview">
+            <OverviewCards
+              activeFilter={activeFilter}
+              cards={overviewCards}
+              className="overview-grid--compact-row"
+              onSelect={setActiveFilter}
+            />
           </div>
         </div>
       </header>
 
-      <OverviewCards
-        activeFilter={activeFilter}
-        cards={overviewCards}
-        onSelect={setActiveFilter}
-      />
-
-      <section className="account-page__toolbar">
+      <section className="account-page__toolbar account-page__toolbar--compact">
         <div className="account-page__toolbar-copy">
           <div className="account-page__toolbar-title">账号列表</div>
           <div className="account-page__toolbar-subtitle">
-            当前聚焦 {overviewCards.find((card) => card.id === activeFilter)?.label ?? "全部账号"}
+            当前聚焦 {activeCardLabel}
           </div>
         </div>
         <div className="account-page__toolbar-actions">
+          <button
+            className="ghost-button account-page__toolbar-button account-page__toolbar-button--secondary"
+            type="button"
+            onClick={refreshAccounts}
+          >
+            刷新
+          </button>
           <input
             aria-label="搜索账号"
             className="account-page__toolbar-search"
@@ -101,7 +105,7 @@ export function AccountCenterPage({ bootstrapConfig, client }) {
             value={searchTerm}
             onChange={(event) => setSearchTerm(event.target.value)}
           />
-          <button className="accent-button" type="button" onClick={openCreateDialog}>
+          <button className="accent-button account-page__toolbar-button" type="button" onClick={openCreateDialog}>
             添加账号
           </button>
         </div>

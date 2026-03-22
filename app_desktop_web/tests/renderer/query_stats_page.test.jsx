@@ -1,0 +1,220 @@
+// @vitest-environment jsdom
+
+import "@testing-library/jest-dom/vitest";
+
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi } from "vitest";
+
+import { App } from "../../src/App.jsx";
+
+
+function jsonResponse(payload, status = 200) {
+  return Promise.resolve({
+    ok: status >= 200 && status < 300,
+    status,
+    json: async () => payload,
+    text: async () => JSON.stringify(payload),
+  });
+}
+
+
+function installDesktopApp(fetchImpl) {
+  window.fetch = fetchImpl;
+  window.desktopApp = {
+    getBootstrapConfig() {
+      return {
+        apiBaseUrl: "http://127.0.0.1:8123",
+        backendStatus: "ready",
+      };
+    },
+  };
+}
+
+
+function createFetchHarness() {
+  const calls = [];
+  const fetchImpl = vi.fn(async (input, options = {}) => {
+    const url = new URL(input);
+    const method = String(options.method ?? "GET").toUpperCase();
+    calls.push({
+      method,
+      pathname: url.pathname,
+      search: url.search,
+    });
+
+    if (url.pathname === "/account-center/accounts" && method === "GET") {
+      return jsonResponse([]);
+    }
+
+    if (url.pathname === "/stats/query-items" && method === "GET") {
+      const rangeMode = url.searchParams.get("range_mode") || "total";
+      if (rangeMode === "day") {
+        return jsonResponse({
+          range_mode: "day",
+          date: url.searchParams.get("date"),
+          items: [
+            {
+              external_item_id: "ext-1",
+              item_name: "AK-47 | Redline",
+              product_url: "https://example.com/items/ext-1",
+              query_execution_count: 4,
+              matched_product_count: 2,
+              purchase_success_count: 1,
+              purchase_failed_count: 1,
+              source_mode_stats: [
+                { mode_type: "new_api", hit_count: 2 },
+              ],
+              updated_at: "2026-03-22T10:00:00",
+            },
+          ],
+        });
+      }
+      if (rangeMode === "range") {
+        return jsonResponse({
+          range_mode: "range",
+          start_date: url.searchParams.get("start_date"),
+          end_date: url.searchParams.get("end_date"),
+          items: [
+            {
+              external_item_id: "ext-1",
+              item_name: "AK-47 | Redline",
+              product_url: "https://example.com/items/ext-1",
+              query_execution_count: 8,
+              matched_product_count: 3,
+              purchase_success_count: 2,
+              purchase_failed_count: 1,
+              source_mode_stats: [
+                { mode_type: "fast_api", hit_count: 3 },
+              ],
+              updated_at: "2026-03-22T10:00:00",
+            },
+          ],
+        });
+      }
+
+      return jsonResponse({
+        range_mode: "total",
+        items: [
+          {
+            external_item_id: "ext-1",
+            item_name: "AK-47 | Redline",
+            product_url: "https://example.com/items/ext-1",
+            query_execution_count: 12,
+            matched_product_count: 5,
+            purchase_success_count: 2,
+            purchase_failed_count: 3,
+            source_mode_stats: [
+              { mode_type: "new_api", hit_count: 3 },
+              { mode_type: "fast_api", hit_count: 2 },
+            ],
+            updated_at: "2026-03-22T10:00:00",
+          },
+        ],
+      });
+    }
+
+    throw new Error(`Unhandled request: ${method} ${url.pathname}${url.search}`);
+  });
+
+  return { calls, fetchImpl };
+}
+
+
+describe("query stats page", () => {
+  it("switches to the query stats page and renders aggregated item stats", async () => {
+    const harness = createFetchHarness();
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "查询统计" }));
+
+    const table = await screen.findByRole("table", { name: "查询统计表" });
+    expect(within(table).getByText("AK-47 | Redline")).toBeInTheDocument();
+    expect(within(table).getByText("12")).toBeInTheDocument();
+    expect(within(table).getByText("5")).toBeInTheDocument();
+    expect(within(table).getByText("2")).toBeInTheDocument();
+    expect(within(table).getByText("3")).toBeInTheDocument();
+    expect(within(table).getByText("api查询器 3 · api高速查询器 2")).toBeInTheDocument();
+
+    expect(harness.calls).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          method: "GET",
+          pathname: "/stats/query-items",
+          search: "?range_mode=total",
+        }),
+      ]),
+    );
+
+    expect(table.closest(".stats-page")).toHaveClass("stats-page--compact");
+  });
+
+  it("supports compact day and range filtering controls", async () => {
+    const harness = createFetchHarness();
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "查询统计" }));
+
+    await user.click(await screen.findByRole("button", { name: "按天" }));
+    await user.click(screen.getByRole("button", { name: "打开统计日期选择" }));
+    const dayDialog = await screen.findByRole("dialog", { name: "选择统计日期" });
+    expect(within(dayDialog).getByText("2026年3月")).toBeInTheDocument();
+    await user.click(within(dayDialog).getByRole("button", { name: "选择日期 2026-03-22" }));
+    await user.click(screen.getByRole("button", { name: "刷新统计" }));
+
+    await waitFor(() => {
+      expect(harness.calls).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            method: "GET",
+            pathname: "/stats/query-items",
+            search: "?range_mode=day&date=2026-03-22",
+          }),
+        ]),
+      );
+    });
+
+    const table = screen.getByRole("table", { name: "查询统计表" });
+    expect(within(table).getByText("4")).toBeInTheDocument();
+    expect(within(table).getByText("2")).toBeInTheDocument();
+    expect(within(table).getAllByText("1")).toHaveLength(2);
+    expect(within(table).getByText("api查询器 2")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "打开统计日期选择" })).toHaveTextContent("2026-03-22 00:00:00");
+
+    await user.click(screen.getByRole("button", { name: "时间段" }));
+    await user.click(screen.getByRole("button", { name: "打开统计时间段选择" }));
+    const rangeDialog = await screen.findByRole("dialog", { name: "选择统计时间段" });
+    expect(within(rangeDialog).getByText("2026年3月")).toBeInTheDocument();
+    expect(within(rangeDialog).getByText("2026年4月")).toBeInTheDocument();
+    expect(within(rangeDialog).getByRole("button", { name: "总计" })).toBeInTheDocument();
+    expect(within(rangeDialog).getByRole("button", { name: "今天" })).toBeInTheDocument();
+    expect(within(rangeDialog).getByRole("button", { name: "近7天" })).toBeInTheDocument();
+    expect(within(rangeDialog).getByRole("button", { name: "本月" })).toBeInTheDocument();
+    expect(within(rangeDialog).getByRole("button", { name: "选择日期 2026-03-28" })).toBeDisabled();
+    await user.click(within(rangeDialog).getByRole("button", { name: "开始日期 2026-03-22 00:00:00" }));
+    await user.click(within(rangeDialog).getByRole("button", { name: "选择日期 2026-03-21" }));
+    await user.click(screen.getByRole("button", { name: "刷新统计" }));
+
+    await waitFor(() => {
+      expect(harness.calls).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            method: "GET",
+            pathname: "/stats/query-items",
+            search: "?range_mode=range&start_date=2026-03-21&end_date=2026-03-22",
+          }),
+        ]),
+      );
+    });
+
+    expect(screen.getByRole("button", { name: "打开统计时间段选择" })).toHaveTextContent(
+      "2026-03-21 00:00:00 ~ 2026-03-22 23:59:59",
+    );
+    expect(within(table).getByText("8")).toBeInTheDocument();
+    expect(within(table).getByText("api高速查询器 3")).toBeInTheDocument();
+  });
+});

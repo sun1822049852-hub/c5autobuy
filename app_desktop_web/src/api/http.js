@@ -65,6 +65,18 @@ export function createHttpClient({ baseUrl, fetchImpl } = {}) {
       });
       return response.json();
     },
+    async putJson(path, payload, options = {}) {
+      const response = await request(path, {
+        ...options,
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          ...options.headers,
+        },
+        body: JSON.stringify(payload),
+      });
+      return response.json();
+    },
     async delete(path, options = {}) {
       await request(path, {
         ...options,

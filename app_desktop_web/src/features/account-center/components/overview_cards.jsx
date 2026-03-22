@@ -1,6 +1,8 @@
-export function OverviewCards({ cards, activeFilter, onSelect }) {
+export function OverviewCards({ activeFilter, cards, className = "", onSelect }) {
+  const gridClassName = ["overview-grid", className].filter(Boolean).join(" ");
+
   return (
-    <section className="overview-grid" aria-label="概览卡片">
+    <section className={gridClassName} aria-label="概览卡片">
       {cards.map((card) => (
         <button
           key={card.id}
