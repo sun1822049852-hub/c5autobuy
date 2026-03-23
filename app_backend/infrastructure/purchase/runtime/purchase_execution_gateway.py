@@ -10,6 +10,10 @@ from typing import Any
 
 import aiohttp
 
+from app_backend.infrastructure.c5.response_status import (
+    classify_c5_response_error,
+    is_auth_invalid_c5_error,
+)
 from app_backend.infrastructure.query.runtime.runtime_account_adapter import RuntimeAccountAdapter
 from xsign import XSignWrapper
 
@@ -40,7 +44,7 @@ class PurchaseExecutionGateway:
                 error="Missing external_item_id or product_url",
             )
 
-        product_list = list(getattr(batch, "product_list", []) or [])
+        product_list = getattr(batch, "product_list", []) or []
         if not product_list:
             return PurchaseExecutionResult(
                 status="invalid_batch",
@@ -112,11 +116,17 @@ class PurchaseExecutionGateway:
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=self.ORDER_TIMEOUT_SECONDS),
             ) as response:
-                return self.parse_order_response(await response.text())
+                status = response.status
+                text = await response.text()
         except asyncio.TimeoutError:
             return False, None, "订单创建请求超时"
         except Exception as exc:
             return False, None, f"订单创建请求失败: {exc}"
+
+        http_error = classify_c5_response_error(status=status, text=text)
+        if http_error is not None:
+            return False, None, http_error
+        return self.parse_order_response(text)
 
     async def process_payment(
         self,
@@ -154,11 +164,17 @@ class PurchaseExecutionGateway:
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=self.PAY_TIMEOUT_SECONDS),
             ) as response:
-                return self.parse_payment_response(await response.text())
+                status = response.status
+                text = await response.text()
         except asyncio.TimeoutError:
             return False, 0, "请求超时"
         except Exception as exc:
             return False, 0, f"请求失败: {exc}"
+
+        http_error = classify_c5_response_error(status=status, text=text)
+        if http_error is not None:
+            return False, 0, http_error
+        return self.parse_payment_response(text)
 
     @staticmethod
     def build_order_request_body(
@@ -175,7 +191,7 @@ class PurchaseExecutionGateway:
             "delivery": 0,
             "pageSource": "",
             "receiveSteamId": str(selected_steam_id),
-            "productList": list(product_list),
+            "productList": product_list,
             "actRebateAmount": 0,
         }
 
@@ -295,8 +311,7 @@ class PurchaseExecutionGateway:
 
     @staticmethod
     def _is_auth_invalid(error: str | None) -> bool:
-        normalized = str(error or "").lower()
-        return "not login" in normalized or "403" in normalized
+        return is_auth_invalid_c5_error(error)
 
 
 @lru_cache(maxsize=1)

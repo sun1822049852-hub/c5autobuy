@@ -67,6 +67,7 @@ class ModeRunner:
         self._recent_events: list[dict[str, object]] = []
         self._worker_cooldown_until: dict[str, float | None] = {}
         self._item_query_counts: dict[str, int] = {}
+        self._background_hit_tasks: set[asyncio.Task[object]] = set()
 
     def start(self) -> None:
         self._started = True
@@ -80,6 +81,7 @@ class ModeRunner:
             str(query_item.query_item_id): 0
             for query_item in self._query_items
         }
+        self._cancel_background_hit_tasks()
         self._query_item_scheduler.reset()
         self._query_mode_allocator.reset()
         self._workers = [
@@ -90,6 +92,7 @@ class ModeRunner:
     def stop(self) -> None:
         self._started = False
         self._has_run_cycle = False
+        self._cancel_background_hit_tasks()
         self._workers = []
 
     def apply_query_item_runtime(self, query_item: QueryItem) -> bool:
@@ -365,7 +368,7 @@ class ModeRunner:
 
         result = self._hit_sink(self._serialize_event(event))
         if inspect.isawaitable(result):
-            await result
+            self._track_background_hit_task(result)
 
     async def _forward_event(self, event: QueryExecutionEvent) -> None:
         if self._event_sink is None:
@@ -443,12 +446,34 @@ class ModeRunner:
             "query_item_name": event.query_item_name,
             "message": event.message,
             "match_count": int(event.match_count),
-            "product_list": list(event.product_list),
+            "product_list": event.product_list,
             "total_price": event.total_price,
             "total_wear_sum": event.total_wear_sum,
             "latency_ms": event.latency_ms,
             "error": event.error,
         }
+
+    def _track_background_hit_task(self, result) -> None:
+        task = asyncio.create_task(result)
+        self._background_hit_tasks.add(task)
+        task.add_done_callback(self._handle_background_hit_task_done)
+
+    def _handle_background_hit_task_done(self, task: asyncio.Task[object]) -> None:
+        self._background_hit_tasks.discard(task)
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:  # pragma: no cover - defensive background sink guard
+            self._last_error = str(exc)
+
+    def _cancel_background_hit_tasks(self) -> None:
+        if not self._background_hit_tasks:
+            return
+        for task in list(self._background_hit_tasks):
+            if not task.done():
+                task.cancel()
+        self._background_hit_tasks.clear()
 
     @staticmethod
     def _to_timestamp(value: datetime | float | int) -> float:

@@ -164,6 +164,12 @@ class BlockingExecutionGateway:
         return self._result
 
 
+class PerAccountBlockingExecutionGateway(BlockingExecutionGateway):
+    def __init__(self, result: PurchaseExecutionResult, *, created_gateways: list["PerAccountBlockingExecutionGateway"]) -> None:
+        super().__init__(result)
+        created_gateways.append(self)
+
+
 class StubInventoryRefreshGateway:
     def __init__(self, result) -> None:
         self._results = list(result) if isinstance(result, list) else [result]
@@ -679,6 +685,89 @@ def test_purchase_runtime_service_queues_hit_without_waiting_for_purchase_comple
         assert wait_until(lambda: service.get_status()["total_purchased_count"] == 1)
     finally:
         gateway.release.set()
+        service.stop()
+
+
+def test_purchase_runtime_service_starts_purchase_on_multiple_accounts_in_parallel():
+    from app_backend.infrastructure.purchase.runtime.purchase_runtime_service import PurchaseRuntimeService
+
+    snapshot_repository = FakeInventorySnapshotRepository(
+        {
+            "a1": type(
+                "Snapshot",
+                (),
+                {
+                    "account_id": "a1",
+                    "selected_steam_id": "steam-1",
+                    "inventories": [
+                        {"steamId": "steam-1", "nickname": "主仓-1", "inventory_num": 910, "inventory_max": 1000},
+                    ],
+                    "refreshed_at": "2026-03-16T20:00:00",
+                    "last_error": None,
+                },
+            )(),
+            "a2": type(
+                "Snapshot",
+                (),
+                {
+                    "account_id": "a2",
+                    "selected_steam_id": "steam-2",
+                    "inventories": [
+                        {"steamId": "steam-2", "nickname": "主仓-2", "inventory_num": 910, "inventory_max": 1000},
+                    ],
+                    "refreshed_at": "2026-03-16T20:00:00",
+                    "last_error": None,
+                },
+            )(),
+        }
+    )
+    gateways: list[PerAccountBlockingExecutionGateway] = []
+    service = PurchaseRuntimeService(
+        account_repository=FakeAccountRepository([build_account("a1"), build_account("a2")]),
+        settings_repository=FakeSettingsRepository(),
+        inventory_snapshot_repository=snapshot_repository,
+        execution_gateway_factory=lambda: PerAccountBlockingExecutionGateway(
+            PurchaseExecutionResult.success(purchased_count=1),
+            created_gateways=gateways,
+        ),
+    )
+    service.start()
+
+    try:
+        first = service.accept_query_hit(
+            {
+                "external_item_id": "1380979899390261111",
+                "query_item_name": "AK-1",
+                "product_url": "https://www.c5game.com/csgo/730/asset/1380979899390261111",
+                "product_list": [{"productId": "p-1", "price": 88.0, "actRebateAmount": 0}],
+                "total_price": 88.0,
+                "total_wear_sum": 0.1234,
+                "mode_type": "new_api",
+            }
+        )
+        second = service.accept_query_hit(
+            {
+                "external_item_id": "1380979899390262222",
+                "query_item_name": "AK-2",
+                "product_url": "https://www.c5game.com/csgo/730/asset/1380979899390262222",
+                "product_list": [{"productId": "p-2", "price": 89.0, "actRebateAmount": 0}],
+                "total_price": 89.0,
+                "total_wear_sum": 0.2234,
+                "mode_type": "new_api",
+            }
+        )
+
+        assert first == {"accepted": True, "status": "queued"}
+        assert second == {"accepted": True, "status": "queued"}
+        assert wait_until(lambda: len(gateways) == 2)
+        assert wait_until(lambda: all(gateway.started.is_set() for gateway in gateways), timeout=0.2)
+
+        for gateway in gateways:
+            gateway.release.set()
+        assert wait_until(lambda: service.get_status()["total_purchased_count"] == 2)
+    finally:
+        for gateway in gateways:
+            gateway.release.set()
         service.stop()
 
 

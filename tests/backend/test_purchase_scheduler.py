@@ -12,14 +12,60 @@ def build_batch(name: str = "AK") -> PurchaseHitBatch:
     )
 
 
-def test_purchase_scheduler_round_robins_across_active_accounts():
+def test_purchase_scheduler_dispatches_hit_directly_to_ready_account():
     scheduler = PurchaseScheduler()
     scheduler.register_account("a1", available=True)
-    scheduler.register_account("a2", available=True)
 
-    assert scheduler.select_next_account_id() == "a1"
-    assert scheduler.select_next_account_id() == "a2"
-    assert scheduler.select_next_account_id() == "a1"
+    status = scheduler.submit(build_batch("AK"))
+
+    assert status == "dispatched"
+    assert scheduler.queue_size() == 1
+    account_id, batch = scheduler.claim_next_dispatch()
+    assert account_id == "a1"
+    assert batch.query_item_name == "AK"
+    assert scheduler.account_status("a1")["busy"] is True
+
+
+def test_purchase_scheduler_queues_hit_when_no_ready_account_exists():
+    scheduler = PurchaseScheduler()
+    scheduler.register_account("a1", available=True)
+    scheduler.submit(build_batch("AK"))
+    scheduler.claim_next_dispatch()
+
+    status = scheduler.submit(build_batch("M4A1"))
+
+    assert status == "queued"
+    assert scheduler.queue_size() == 1
+    assert scheduler.pending_queue_size() == 1
+
+
+def test_purchase_scheduler_completion_immediately_dispatches_next_pending_hit():
+    scheduler = PurchaseScheduler()
+    scheduler.register_account("a1", available=True)
+    scheduler.submit(build_batch("AK"))
+    scheduler.claim_next_dispatch()
+    scheduler.submit(build_batch("M4A1"))
+
+    dispatched = scheduler.finish_account("a1")
+
+    assert dispatched is True
+    account_id, batch = scheduler.claim_next_dispatch()
+    assert account_id == "a1"
+    assert batch.query_item_name == "M4A1"
+    assert scheduler.pending_queue_size() == 0
+
+
+def test_purchase_scheduler_returns_account_to_ready_pool_when_no_pending_hit_exists():
+    scheduler = PurchaseScheduler()
+    scheduler.register_account("a1", available=True)
+    scheduler.submit(build_batch("AK"))
+    scheduler.claim_next_dispatch()
+
+    dispatched = scheduler.finish_account("a1")
+
+    assert dispatched is False
+    assert scheduler.ready_account_ids() == ["a1"]
+    assert scheduler.account_status("a1")["busy"] is False
 
 
 def test_purchase_scheduler_removes_account_from_pool_without_dropping_registration():
@@ -29,35 +75,27 @@ def test_purchase_scheduler_removes_account_from_pool_without_dropping_registrat
     scheduler.mark_no_inventory("a1")
 
     assert scheduler.available_account_ids() == []
+    assert scheduler.ready_account_ids() == []
     assert scheduler.account_status("a1")["available"] is False
     assert scheduler.account_status("a1")["disabled_reason"] == "no_available_inventory"
 
 
-def test_purchase_scheduler_recovers_account_to_pool():
+def test_purchase_scheduler_recovery_assigns_pending_hit_before_rejoining_ready_pool():
     scheduler = PurchaseScheduler()
     scheduler.register_account("a1", available=False)
+    scheduler.submit(build_batch("AK"))
 
     scheduler.mark_inventory_recovered("a1")
 
-    assert scheduler.available_account_ids() == ["a1"]
-    assert scheduler.account_status("a1")["available"] is True
-    assert scheduler.account_status("a1")["disabled_reason"] is None
-
-
-def test_purchase_scheduler_queues_batches():
-    scheduler = PurchaseScheduler()
-
-    scheduler.submit(build_batch("AK"))
-    scheduler.submit(build_batch("M4A1"))
-
-    assert scheduler.queue_size() == 2
-    assert scheduler.pop_next_batch().query_item_name == "AK"
-    assert scheduler.pop_next_batch().query_item_name == "M4A1"
+    account_id, batch = scheduler.claim_next_dispatch()
+    assert account_id == "a1"
+    assert batch.query_item_name == "AK"
+    assert scheduler.ready_account_ids() == []
 
 
 def test_purchase_scheduler_can_clear_backlog_batches():
     scheduler = PurchaseScheduler()
-
+    scheduler.register_account("a1", available=True)
     scheduler.submit(build_batch("AK"))
     scheduler.submit(build_batch("M4A1"))
 

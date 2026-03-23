@@ -294,6 +294,45 @@ async def test_purchase_execution_gateway_returns_payment_request_failed_text(mo
 
 
 @pytest.mark.asyncio
+async def test_purchase_execution_gateway_maps_http_403_order_response_to_auth_invalid(monkeypatch):
+    session = FakeSession(
+        responses=[
+            (403, "<html>forbidden</html>"),
+        ]
+    )
+    gateway = await _build_gateway(monkeypatch, session=session, signer=FakeSigner(result="fake-sign"))
+
+    result = await gateway.execute(
+        account=build_account(),
+        batch=build_batch(),
+        selected_steam_id="steam-1",
+    )
+
+    assert result.status == "auth_invalid"
+    assert result.error == "HTTP 403 Forbidden"
+
+
+@pytest.mark.asyncio
+async def test_purchase_execution_gateway_maps_http_403_payment_response_to_auth_invalid(monkeypatch):
+    session = FakeSession(
+        responses=[
+            (200, json.dumps({"success": True, "data": "order-1"})),
+            (403, "<html>forbidden</html>"),
+        ]
+    )
+    gateway = await _build_gateway(monkeypatch, session=session, signer=FakeSigner(result="fake-sign"))
+
+    result = await gateway.execute(
+        account=build_account(),
+        batch=build_batch(),
+        selected_steam_id="steam-1",
+    )
+
+    assert result.status == "auth_invalid"
+    assert result.error == "HTTP 403 Forbidden"
+
+
+@pytest.mark.asyncio
 async def test_purchase_execution_gateway_keeps_legacy_order_body_and_headers(monkeypatch):
     session = FakeSession(
         responses=[

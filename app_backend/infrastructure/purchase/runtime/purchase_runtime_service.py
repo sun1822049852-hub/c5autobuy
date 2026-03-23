@@ -1248,21 +1248,44 @@ class _DefaultPurchaseRuntime:
         return int(selected_inventory.get("inventory_max", 1000))
 
     async def _drain_scheduler(self) -> None:
-        while self._scheduler.queue_size() > 0:
-            account_id = self._scheduler.select_next_account_id()
-            if not account_id:
-                return
-            state = self._account_states.get(account_id)
-            if state is None:
-                self._scheduler.mark_unavailable(account_id, reason="missing_account_state")
-                continue
+        in_flight_tasks: set[asyncio.Task[None]] = set()
+        while self._scheduler.queue_size() > 0 or in_flight_tasks:
+            while True:
+                dispatch = self._scheduler.claim_next_dispatch()
+                if dispatch is None:
+                    break
+                account_id, batch = dispatch
+                state = self._account_states.get(account_id)
+                if state is None:
+                    self._scheduler.mark_unavailable(account_id, reason="missing_account_state")
+                    continue
 
-            try:
-                batch = self._scheduler.pop_next_batch()
-            except IndexError:
+                in_flight_tasks.add(
+                    asyncio.create_task(self._process_claimed_batch(state, batch))
+                )
+
+            if not in_flight_tasks:
                 return
+
+            done_tasks, _pending_tasks = await asyncio.wait(
+                in_flight_tasks,
+                timeout=0.01,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if not done_tasks:
+                continue
+            for task in done_tasks:
+                in_flight_tasks.discard(task)
+                task.result()
+
+    async def _process_claimed_batch(self, state: _RuntimeAccountState, batch) -> None:
+        try:
             outcome = await state.worker.process(batch)
             self._apply_worker_outcome(state, batch, outcome)
+        finally:
+            dispatched = self._scheduler.finish_account(state.account_id)
+            if dispatched:
+                self._signal_drain_worker()
 
     def _apply_worker_outcome(self, state: _RuntimeAccountState, batch, outcome) -> None:
         state.capability_state = outcome.capability_state
@@ -1380,6 +1403,8 @@ class _DefaultPurchaseRuntime:
             self._scheduler.mark_no_inventory(state.account_id)
             self._schedule_recovery_check(state.account_id)
         self._handle_active_account_count_change(previous_active_account_count)
+        if self._scheduler.active_account_count() > 0 and self._scheduler.queue_size() > 0:
+            self._signal_drain_worker()
 
     def _handle_active_account_count_change(self, previous_active_account_count: int) -> None:
         current_active_account_count = self._scheduler.active_account_count()
@@ -1632,7 +1657,7 @@ class _DefaultPurchaseRuntime:
                 "runtime_session_id": getattr(batch, "runtime_session_id", None),
                 "external_item_id": getattr(batch, "external_item_id", None),
                 "product_url": getattr(batch, "product_url", None),
-                "product_list": list(getattr(batch, "product_list", []) or []),
+                "product_list": getattr(batch, "product_list", []) or [],
                 "total_price": float(getattr(batch, "total_price", 0.0) or 0.0),
                 "total_wear_sum": getattr(batch, "total_wear_sum", None),
                 "source_mode_type": str(getattr(batch, "source_mode_type", "") or ""),
@@ -1653,7 +1678,7 @@ class _DefaultPurchaseRuntime:
                 "runtime_session_id": str(hit.get("runtime_session_id") or "") or None,
                 "external_item_id": hit.get("external_item_id"),
                 "product_url": hit.get("product_url"),
-                "product_list": list(hit.get("product_list") or []),
+                "product_list": hit.get("product_list") or [],
                 "total_price": float(hit["total_price"]) if hit.get("total_price") is not None else None,
                 "total_wear_sum": (
                     float(hit["total_wear_sum"])

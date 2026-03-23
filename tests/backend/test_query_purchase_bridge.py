@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from app_backend.domain.models.account import Account
 from app_backend.domain.models.query_config import QueryConfig, QueryItem, QueryModeSetting
 
@@ -219,6 +221,67 @@ async def test_mode_runner_skips_hit_sink_for_zero_match_event():
     await runner.run_once()
 
     assert purchase_service.accepted_hits == []
+
+
+async def test_mode_runner_does_not_wait_for_async_hit_sink_completion():
+    from app_backend.infrastructure.query.runtime.mode_runner import ModeRunner
+    from app_backend.infrastructure.query.runtime.runtime_events import QueryExecutionEvent
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    accepted_hits: list[dict[str, object]] = []
+
+    class FakeWorker:
+        def __init__(self, account: Account) -> None:
+            self.account = account
+
+        def snapshot(self) -> dict[str, object]:
+            return {"account_id": self.account.account_id, "active": True}
+
+        async def run_once(self, query_item: QueryItem) -> QueryExecutionEvent:
+            return QueryExecutionEvent(
+                timestamp="2026-03-16T10:00:00",
+                level="info",
+                mode_type="new_api",
+                query_config_id="cfg-1",
+                runtime_session_id="run-1",
+                account_id=self.account.account_id,
+                account_display_name=self.account.display_name,
+                query_item_id=query_item.query_item_id,
+                external_item_id=query_item.external_item_id,
+                product_url=query_item.product_url,
+                query_item_name=query_item.item_name,
+                message="query completed",
+                match_count=1,
+                product_list=[{"productId": "p-1", "price": 88.0, "actRebateAmount": 0}],
+                total_price=88.0,
+                total_wear_sum=0.1234,
+                latency_ms=12.0,
+                error=None,
+            )
+
+    async def async_hit_sink(hit: dict[str, object]) -> dict[str, object]:
+        accepted_hits.append(dict(hit))
+        started.set()
+        await release.wait()
+        return {"accepted": True, "status": "queued"}
+
+    runner = ModeRunner(
+        build_mode("new_api"),
+        [build_account()],
+        query_items=[build_item(item_name="AK")],
+        worker_factory=lambda mode_type, account: FakeWorker(account),
+        hit_sink=async_hit_sink,
+    )
+
+    runner.start()
+    try:
+        run_task = asyncio.create_task(runner.run_once())
+        await asyncio.wait_for(started.wait(), timeout=0.1)
+        await asyncio.wait_for(run_task, timeout=0.1)
+        assert accepted_hits[0]["query_item_name"] == "AK"
+    finally:
+        release.set()
 
 
 def test_query_task_runtime_passes_hit_sink_to_mode_runners():
