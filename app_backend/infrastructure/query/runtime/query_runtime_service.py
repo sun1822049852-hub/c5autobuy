@@ -9,6 +9,11 @@ from uuid import uuid4
 
 from app_backend.domain.enums.account_states import PurchaseCapabilityState, PurchasePoolState
 from app_backend.domain.models.query_config import QueryConfig, QueryModeSetting
+from app_backend.domain.models.runtime_settings import (
+    build_default_query_settings_json,
+    build_query_settings_from_mode_settings,
+    build_runtime_mode_settings,
+)
 from app_backend.infrastructure.query.runtime.runtime_account_adapter import RuntimeAccountAdapter
 from app_backend.infrastructure.query.runtime.query_task_runtime import QueryTaskRuntime
 
@@ -23,11 +28,13 @@ class QueryRuntimeService:
         account_repository,
         runtime_factory: RuntimeFactory | None = None,
         purchase_runtime_service=None,
+        runtime_settings_repository=None,
     ) -> None:
         self._query_config_repository = query_config_repository
         self._account_repository = account_repository
         self._runtime_factory = runtime_factory or self._build_default_runtime
         self._purchase_runtime_service = purchase_runtime_service
+        self._runtime_settings_repository = runtime_settings_repository
         self._state_lock = threading.RLock()
         self._runtime = None
         self._runtime_accounts: dict[str, RuntimeAccountAdapter] = {}
@@ -252,6 +259,7 @@ class QueryRuntimeService:
     def _build_waiting_snapshot(self) -> dict[str, object]:
         config_id = self._pending_resume_config_id
         config = self._query_config_repository.get_config(config_id) if config_id else None
+        mode_settings = self._build_effective_mode_settings(config)
         snapshot = {
             "running": False,
             "config_id": config_id,
@@ -267,9 +275,8 @@ class QueryRuntimeService:
             "recent_events": [],
             "item_rows": self._build_default_item_rows(config),
         }
-        if config is not None:
-            for mode_setting in config.mode_settings:
-                snapshot["modes"][mode_setting.mode_type] = self._build_default_mode_snapshot(mode_setting)
+        for mode_setting in mode_settings:
+            snapshot["modes"][mode_setting.mode_type] = self._build_default_mode_snapshot(mode_setting)
         return snapshot
 
     def _normalize_snapshot(self, snapshot: dict[str, object], config: QueryConfig | None) -> dict[str, object]:
@@ -294,10 +301,9 @@ class QueryRuntimeService:
                 if isinstance(mode_snapshot, dict):
                     normalized["modes"][str(mode_type)] = self._normalize_mode_snapshot(mode_snapshot)
 
-        if config is not None:
-            for mode_setting in config.mode_settings:
-                if mode_setting.mode_type not in normalized["modes"]:
-                    normalized["modes"][mode_setting.mode_type] = self._build_default_mode_snapshot(mode_setting)
+        for mode_setting in self._build_effective_mode_settings(config):
+            if mode_setting.mode_type not in normalized["modes"]:
+                normalized["modes"][mode_setting.mode_type] = self._build_default_mode_snapshot(mode_setting)
         return normalized
 
     @staticmethod
@@ -360,19 +366,19 @@ class QueryRuntimeService:
             "last_error": None,
         }
 
-    @staticmethod
-    def _build_default_item_rows(config: QueryConfig | None) -> list[dict[str, object]]:
+    def _build_default_item_rows(self, config: QueryConfig | None) -> list[dict[str, object]]:
         if config is None:
             return []
 
         rows: list[dict[str, object]] = []
+        mode_settings = self._build_effective_mode_settings(config)
         for item in config.items:
             allocation_map = {
                 allocation.mode_type: int(allocation.target_dedicated_count)
                 for allocation in item.mode_allocations
             }
             modes: dict[str, dict[str, object]] = {}
-            for mode_setting in config.mode_settings:
+            for mode_setting in mode_settings:
                 target = int(allocation_map.get(mode_setting.mode_type, 0))
                 if item.manual_paused:
                     status = "manual_paused"
@@ -402,6 +408,20 @@ class QueryRuntimeService:
                 }
             )
         return rows
+
+    def _build_effective_mode_settings(self, config: QueryConfig | None) -> list[QueryModeSetting]:
+        config_id = str(getattr(config, "config_id", "runtime") or "runtime")
+        return build_runtime_mode_settings(
+            self._get_effective_query_settings(config),
+            config_id=config_id,
+        )
+
+    def _get_effective_query_settings(self, config: QueryConfig | None) -> dict[str, object]:
+        if self._runtime_settings_repository is not None:
+            return self._runtime_settings_repository.get().query_settings_json
+        if config is not None:
+            return build_query_settings_from_mode_settings(config.mode_settings)
+        return build_default_query_settings_json()
 
     @staticmethod
     def _normalize_recent_events(raw_events: object) -> list[dict[str, object]]:
@@ -550,6 +570,7 @@ class QueryRuntimeService:
         runtime_account_provider=None,
         hit_sink=None,
         event_sink=None,
+        query_settings_json=None,
     ) -> QueryTaskRuntime:
         return QueryTaskRuntime(
             config,
@@ -558,10 +579,12 @@ class QueryRuntimeService:
             runtime_account_provider=runtime_account_provider,
             hit_sink=hit_sink,
             event_sink=event_sink,
+            query_settings_json=query_settings_json,
         )
 
     def _create_runtime(self, config, accounts: list[object], *, hit_sink=None, runtime_session_id: str | None = None):
         kwargs = {}
+        query_settings_json = self._get_effective_query_settings(config)
         if runtime_session_id is not None and self._runtime_factory_accepts_parameter(
             "runtime_session_id",
             allow_var_keyword=False,
@@ -578,6 +601,8 @@ class QueryRuntimeService:
             allow_var_keyword=False,
         ):
             kwargs["runtime_account_provider"] = runtime_account_provider
+        if self._runtime_factory_accepts_parameter("query_settings_json", allow_var_keyword=False):
+            kwargs["query_settings_json"] = query_settings_json
         try:
             return self._runtime_factory(config, accounts, **kwargs)
         except TypeError as exc:
@@ -589,9 +614,20 @@ class QueryRuntimeService:
                 fallback_kwargs.pop("hit_sink", None)
             if "unexpected keyword argument 'runtime_account_provider'" in message:
                 fallback_kwargs.pop("runtime_account_provider", None)
+            if "unexpected keyword argument 'query_settings_json'" in message:
+                fallback_kwargs.pop("query_settings_json", None)
             if fallback_kwargs == kwargs:
                 raise
             return self._runtime_factory(config, accounts, **fallback_kwargs)
+
+    def apply_query_settings(self, *, query_settings: dict[str, object]) -> None:
+        with self._state_lock:
+            if not self._has_running_runtime_locked():
+                return
+            runtime = self._runtime
+        apply_query_settings = getattr(runtime, "apply_query_settings", None)
+        if callable(apply_query_settings):
+            apply_query_settings(query_settings_json=query_settings)
 
     def _resolve_hit_sink(self):
         if self._purchase_runtime_service is None:

@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any
 
 from app_backend.domain.models.query_config import QueryItem, QueryModeSetting
+from app_backend.domain.models.runtime_settings import QueryItemPacingSetting
 
 from .account_query_worker import AccountQueryWorker
 from .query_mode_allocator import QueryModeAllocator
@@ -109,6 +110,28 @@ class ModeRunner:
         if callable(apply_runtime):
             applied = bool(apply_runtime(query_item)) or applied
         return applied
+
+    def apply_runtime_settings(
+        self,
+        *,
+        mode_setting: QueryModeSetting,
+        item_pacing: QueryItemPacingSetting | None = None,
+    ) -> None:
+        self._mode_setting = mode_setting
+        if hasattr(self._query_item_scheduler, "apply_pacing_settings"):
+            self._query_item_scheduler.apply_pacing_settings(item_pacing)
+        self._window_scheduler = WindowScheduler(
+            window_enabled=bool(mode_setting.window_enabled),
+            start_hour=mode_setting.start_hour,
+            start_minute=mode_setting.start_minute,
+            end_hour=mode_setting.end_hour,
+            end_minute=mode_setting.end_minute,
+        )
+        if self._started:
+            self._workers = [
+                self._worker_factory(self._mode_setting.mode_type, account)
+                for account in self._eligible_accounts()
+            ]
 
     async def cleanup(self) -> None:
         for worker in self._workers:

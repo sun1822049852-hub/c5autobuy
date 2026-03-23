@@ -13,6 +13,10 @@ class AccountCenterAccountResponse(BaseModel):
     api_key: str | None = None
     proxy_mode: str
     proxy_url: str | None = None
+    account_proxy_mode: str | None = None
+    account_proxy_url: str | None = None
+    api_proxy_mode: str | None = None
+    api_proxy_url: str | None = None
     proxy_display: str
     purchase_capability_state: str
     purchase_pool_state: str

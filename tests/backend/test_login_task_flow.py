@@ -67,5 +67,7 @@ async def test_login_task_binds_purchase_capability_and_persists_account(app, cl
     assert account_payload["c5_user_id"] == "90001"
     assert account_payload["c5_nick_name"] == "扫码账号"
     assert account_payload["cookie_raw"] == "foo=bar"
+    assert account_payload["account_proxy_url"] == "http://127.0.0.1:8899"
+    assert account_payload["api_proxy_url"] == "http://127.0.0.1:8899"
     assert account_payload["purchase_capability_state"] == "bound"
     assert account_payload["purchase_pool_state"] == "not_connected"

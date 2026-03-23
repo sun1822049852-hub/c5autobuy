@@ -12,6 +12,7 @@ from app_backend.api.routes import purchase_runtime as purchase_runtime_routes
 from app_backend.api.routes import query_configs as query_config_routes
 from app_backend.api.routes import query_items as query_item_routes
 from app_backend.api.routes import query_runtime as query_runtime_routes
+from app_backend.api.routes import runtime_settings as runtime_settings_routes
 from app_backend.api.routes import tasks as task_routes
 from app_backend.api.websocket import tasks as task_websocket_routes
 from app_backend.infrastructure.db.base import build_engine, build_session_factory, create_schema
@@ -25,6 +26,9 @@ from app_backend.infrastructure.repositories.account_inventory_snapshot_reposito
 )
 from app_backend.infrastructure.repositories.account_repository import SqliteAccountRepository
 from app_backend.infrastructure.repositories.query_config_repository import SqliteQueryConfigRepository
+from app_backend.infrastructure.repositories.runtime_settings_repository import (
+    SqliteRuntimeSettingsRepository,
+)
 from app_backend.infrastructure.query.collectors.detail_account_selector import DetailAccountSelector
 from app_backend.infrastructure.query.collectors.product_detail_collector import ProductDetailCollector
 from app_backend.infrastructure.query.collectors.product_detail_fetcher import ProductDetailFetcher
@@ -42,6 +46,7 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     session_factory = build_session_factory(engine)
     repository = SqliteAccountRepository(session_factory)
     query_config_repository = SqliteQueryConfigRepository(session_factory)
+    runtime_settings_repository = SqliteRuntimeSettingsRepository(session_factory)
     inventory_snapshot_repository = SqliteAccountInventorySnapshotRepository(session_factory)
     purchase_runtime_service = PurchaseRuntimeService(
         account_repository=repository,
@@ -52,6 +57,7 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         query_config_repository=query_config_repository,
         account_repository=repository,
         purchase_runtime_service=purchase_runtime_service,
+        runtime_settings_repository=runtime_settings_repository,
     )
     task_manager = TaskManager()
     login_adapter = SeleniumLoginAdapter()
@@ -75,6 +81,7 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     )
     app.state.account_repository = repository
     app.state.query_config_repository = query_config_repository
+    app.state.runtime_settings_repository = runtime_settings_repository
     app.state.purchase_runtime_service = purchase_runtime_service
     app.state.query_runtime_service = query_runtime_service
     app.state.task_manager = task_manager
@@ -89,6 +96,7 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     app.include_router(query_config_routes.router)
     app.include_router(query_item_routes.router)
     app.include_router(query_runtime_routes.router)
+    app.include_router(runtime_settings_routes.router)
     app.include_router(task_routes.router)
     app.include_router(task_websocket_routes.router)
 

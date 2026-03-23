@@ -6,6 +6,11 @@ from datetime import datetime
 from inspect import Parameter, signature
 
 from app_backend.domain.models.query_config import QueryConfig, QueryModeSetting
+from app_backend.domain.models.runtime_settings import (
+    build_item_pacing_settings,
+    build_query_settings_from_mode_settings,
+    build_runtime_mode_settings,
+)
 
 from .mode_runner import ModeRunner
 from .query_item_scheduler import QueryItemScheduler
@@ -25,6 +30,7 @@ class QueryTaskRuntime:
         runtime_account_provider=None,
         hit_sink=None,
         event_sink=None,
+        query_settings_json=None,
     ) -> None:
         self._config = config
         self._accounts = list(accounts)
@@ -41,11 +47,21 @@ class QueryTaskRuntime:
         self._stop_requested = threading.Event()
         factory = mode_runner_factory or self._build_default_mode_runner
         item_scheduler_factory = query_item_scheduler_factory or self._build_default_query_item_scheduler
+        self._query_settings_json = query_settings_json or build_query_settings_from_mode_settings(config.mode_settings)
+        self._runtime_mode_settings = build_runtime_mode_settings(
+            self._query_settings_json,
+            config_id=str(self._config.config_id),
+        )
+        self._item_pacing_settings = build_item_pacing_settings(self._query_settings_json)
         query_items = list(self._config.items)
         self._mode_runners = []
-        for mode_setting in config.mode_settings:
+        for mode_setting in self._runtime_mode_settings:
             # Each mode keeps an independent scheduler state while querying the same config items.
-            mode_scheduler = item_scheduler_factory(list(query_items))
+            mode_scheduler = self._build_query_item_scheduler(
+                item_scheduler_factory,
+                list(query_items),
+                item_pacing=self._item_pacing_settings.get(mode_setting.mode_type),
+            )
             self._mode_runners.append(
                 self._build_mode_runner(
                     factory,
@@ -118,6 +134,28 @@ class QueryTaskRuntime:
 
         if self._mode_runners and not applied:
             raise RuntimeError("query item runtime not refreshed")
+
+    def apply_query_settings(self, *, query_settings_json: dict[str, object]) -> None:
+        self._query_settings_json = dict(query_settings_json)
+        self._runtime_mode_settings = build_runtime_mode_settings(
+            self._query_settings_json,
+            config_id=str(self._config.config_id),
+        )
+        self._item_pacing_settings = build_item_pacing_settings(self._query_settings_json)
+        runners_by_mode = {
+            str(runner.snapshot().get("mode_type") or ""): runner
+            for runner in self._mode_runners
+        }
+        for mode_setting in self._runtime_mode_settings:
+            runner = runners_by_mode.get(mode_setting.mode_type)
+            if runner is None:
+                continue
+            apply_runtime_settings = getattr(runner, "apply_runtime_settings", None)
+            if callable(apply_runtime_settings):
+                apply_runtime_settings(
+                    mode_setting=mode_setting,
+                    item_pacing=self._item_pacing_settings.get(mode_setting.mode_type),
+                )
 
     def _run_background_loop(self) -> None:
         loop = asyncio.new_event_loop()
@@ -209,8 +247,23 @@ class QueryTaskRuntime:
         )
 
     @staticmethod
-    def _build_default_query_item_scheduler(query_items: list[object]) -> QueryItemScheduler:
-        return QueryItemScheduler(list(query_items))
+    def _build_default_query_item_scheduler(
+        query_items: list[object],
+        *,
+        item_pacing=None,
+    ) -> QueryItemScheduler:
+        return QueryItemScheduler(list(query_items), item_pacing=item_pacing)
+
+    @staticmethod
+    def _build_query_item_scheduler(factory, query_items: list[object], *, item_pacing=None):
+        kwargs = {}
+        if item_pacing is not None and QueryTaskRuntime._factory_accepts_parameter(
+            factory,
+            "item_pacing",
+            allow_var_keyword=False,
+        ):
+            kwargs["item_pacing"] = item_pacing
+        return factory(query_items, **kwargs)
 
     @staticmethod
     def _build_mode_runner(

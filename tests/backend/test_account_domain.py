@@ -25,3 +25,28 @@ def test_display_name_prefers_remark_then_platform_then_default():
     )
 
     assert account.display_name == "备注名"
+
+
+def test_account_defaults_split_proxy_fields_from_account_proxy():
+    account = Account(
+        account_id="a2",
+        default_name="默认账号",
+        remark_name=None,
+        proxy_mode="custom",
+        proxy_url="http://127.0.0.1:8001",
+        api_key=None,
+        c5_user_id=None,
+        c5_nick_name=None,
+        cookie_raw=None,
+        purchase_capability_state="unbound",
+        purchase_pool_state="not_connected",
+        last_login_at=None,
+        last_error=None,
+        created_at="2026-03-16T10:00:00",
+        updated_at="2026-03-16T10:00:00",
+    )
+
+    assert account.account_proxy_mode == "custom"
+    assert account.account_proxy_url == "http://127.0.0.1:8001"
+    assert account.api_proxy_mode == "custom"
+    assert account.api_proxy_url == "http://127.0.0.1:8001"

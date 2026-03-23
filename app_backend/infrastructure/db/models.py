@@ -14,6 +14,10 @@ class AccountRecord(Base):
     remark_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     proxy_mode: Mapped[str] = mapped_column(Text, nullable=False)
     proxy_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    account_proxy_mode: Mapped[str] = mapped_column(Text, nullable=False, default="direct")
+    account_proxy_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    api_proxy_mode: Mapped[str] = mapped_column(Text, nullable=False, default="direct")
+    api_proxy_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     api_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     c5_user_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     c5_nick_name: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -140,3 +144,12 @@ class AccountInventorySnapshotRecord(Base):
     inventories_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
     refreshed_at: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class RuntimeSettingsRecord(Base):
+    __tablename__ = "runtime_settings"
+
+    settings_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    query_settings_json: Mapped[str] = mapped_column(Text, nullable=False)
+    purchase_settings_json: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False)

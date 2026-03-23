@@ -56,6 +56,10 @@ async def create_account(
     use_case = CreateAccountUseCase(_repository(request))
     account = use_case.execute(
         remark_name=payload.remark_name,
+        account_proxy_mode=payload.account_proxy_mode,
+        account_proxy_url=payload.account_proxy_url,
+        api_proxy_mode=payload.api_proxy_mode,
+        api_proxy_url=payload.api_proxy_url,
         proxy_mode=payload.proxy_mode,
         proxy_url=payload.proxy_url,
         api_key=payload.api_key,
@@ -83,6 +87,10 @@ async def update_account(
         account = use_case.execute(
             account_id=account_id,
             remark_name=payload.remark_name,
+            account_proxy_mode=payload.account_proxy_mode,
+            account_proxy_url=payload.account_proxy_url,
+            api_proxy_mode=payload.api_proxy_mode,
+            api_proxy_url=payload.api_proxy_url,
             proxy_mode=payload.proxy_mode,
             proxy_url=payload.proxy_url,
             api_key=payload.api_key,

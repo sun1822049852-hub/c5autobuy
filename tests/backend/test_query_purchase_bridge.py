@@ -316,7 +316,11 @@ def test_query_task_runtime_passes_hit_sink_to_mode_runners():
         mode_runner_factory=lambda mode_setting, accounts, **kwargs: FakeModeRunner(mode_setting, accounts, **kwargs),
     )
 
-    assert captured_sinks == {"new_api": sink}
+    assert captured_sinks == {
+        "new_api": sink,
+        "fast_api": sink,
+        "token": sink,
+    }
 
 
 def test_query_runtime_service_passes_purchase_hit_sink_into_runtime_factory():

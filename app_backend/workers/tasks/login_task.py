@@ -25,7 +25,7 @@ async def run_login_task(
             task_manager.set_state(task_id, state)
 
         capture = await login_adapter.run_login(
-            proxy_url=account.proxy_url,
+            proxy_url=account.account_proxy_url,
             emit_state=emit_state,
         )
 

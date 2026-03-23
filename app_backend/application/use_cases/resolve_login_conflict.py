@@ -46,8 +46,10 @@ class ResolveLoginConflictUseCase:
 
         new_account = CreateAccountUseCase(self._repository).execute(
             remark_name=None,
-            proxy_mode="direct",
-            proxy_url=None,
+            account_proxy_mode="direct",
+            account_proxy_url=None,
+            api_proxy_mode="direct",
+            api_proxy_url=None,
             api_key=None,
         )
 

@@ -74,6 +74,8 @@ async def test_login_task_with_same_c5_user_updates_existing_account(app, client
     assert account_payload["account_id"] == account["account_id"]
     assert account_payload["remark_name"] == "原账号"
     assert account_payload["proxy_url"] == "http://127.0.0.1:9001"
+    assert account_payload["account_proxy_url"] == "http://127.0.0.1:9001"
+    assert account_payload["api_proxy_url"] == "http://127.0.0.1:9001"
     assert account_payload["api_key"] == "api-old"
     assert account_payload["c5_user_id"] == "10001"
     assert account_payload["c5_nick_name"] == "同账号新昵称"
@@ -158,12 +160,18 @@ async def test_resolve_login_conflict_create_new_account_keeps_old_account(app, 
     new_account = next(item for item in accounts_payload if item["account_id"] != account["account_id"])
     assert old_account["remark_name"] == "保留旧账号"
     assert old_account["proxy_url"] == "http://127.0.0.1:9003"
+    assert old_account["account_proxy_url"] == "http://127.0.0.1:9003"
+    assert old_account["api_proxy_url"] == "http://127.0.0.1:9003"
     assert old_account["api_key"] == "api-keep"
     assert old_account["c5_user_id"] == "10001"
 
     assert new_account["remark_name"] is None
     assert new_account["proxy_mode"] == "direct"
     assert new_account["proxy_url"] is None
+    assert new_account["account_proxy_mode"] == "direct"
+    assert new_account["account_proxy_url"] is None
+    assert new_account["api_proxy_mode"] == "direct"
+    assert new_account["api_proxy_url"] is None
     assert new_account["api_key"] is None
     assert new_account["c5_user_id"] == "30003"
     assert new_account["c5_nick_name"] == "新增账号"
@@ -215,6 +223,10 @@ async def test_resolve_login_conflict_replace_with_new_account_recreates_account
     assert new_account["remark_name"] is None
     assert new_account["proxy_mode"] == "direct"
     assert new_account["proxy_url"] is None
+    assert new_account["account_proxy_mode"] == "direct"
+    assert new_account["account_proxy_url"] is None
+    assert new_account["api_proxy_mode"] == "direct"
+    assert new_account["api_proxy_url"] is None
     assert new_account["api_key"] is None
     assert new_account["c5_user_id"] == "40004"
     assert new_account["c5_nick_name"] == "替换账号"

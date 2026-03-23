@@ -3,6 +3,11 @@ import time
 from types import SimpleNamespace
 
 from app_backend.domain.models.query_config import QueryConfig, QueryItem, QueryModeSetting
+from app_backend.domain.models.runtime_settings import (
+    build_default_purchase_settings_json,
+    build_default_query_settings_json,
+    normalize_query_settings_json,
+)
 
 
 def build_config(config_id: str = "cfg-1") -> QueryConfig:
@@ -255,6 +260,23 @@ class FakePurchaseRuntimeService:
 
     def mark_account_auth_invalid(self, *, account_id: str, error: str | None = None) -> None:
         self.mark_auth_invalid_calls.append({"account_id": account_id, "error": error})
+
+
+class FakeRuntimeSettingsRepository:
+    def __init__(self, query_settings: dict[str, object] | None = None) -> None:
+        self._query_settings = normalize_query_settings_json(query_settings)
+
+    def get(self):
+        return SimpleNamespace(
+            settings_id="default",
+            query_settings_json=self._query_settings,
+            purchase_settings_json=build_default_purchase_settings_json(),
+            updated_at="2026-03-23T12:00:00",
+        )
+
+    def save_query_settings(self, query_settings: dict[str, object]):
+        self._query_settings = normalize_query_settings_json(query_settings)
+        return self.get()
 
 
 def test_query_task_runtime_starts_mode_runners_and_aggregates_snapshot():
@@ -1509,3 +1531,187 @@ def test_runtime_service_propagates_not_login_event_to_account_repository_and_pu
     assert purchase_service.mark_auth_invalid_calls == [
         {"account_id": "a1", "error": "Not login"}
     ]
+
+
+def test_runtime_service_waiting_snapshot_uses_global_query_settings_when_repository_is_present():
+    from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
+
+    config = build_config("cfg-1")
+    config.mode_settings[1].enabled = False
+    runtime_settings_repository = FakeRuntimeSettingsRepository()
+    service = QueryRuntimeService(
+        query_config_repository=FakeQueryConfigRepository(config),
+        account_repository=FakeAccountRepository(),
+        purchase_runtime_service=FakePurchaseRuntimeService(active_account_count=0),
+        runtime_settings_repository=runtime_settings_repository,
+    )
+
+    started, message = service.start(config_id="cfg-1")
+    snapshot = service.get_status()
+
+    assert started is True
+    assert message == "查询任务已启动，等待购买账号恢复"
+    assert snapshot["message"] == "等待购买账号恢复"
+    assert snapshot["modes"]["fast_api"]["enabled"] is True
+
+
+def test_runtime_service_start_passes_saved_global_query_settings_to_runtime_factory():
+    from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
+
+    config = build_config("cfg-1")
+    config.mode_settings[1].enabled = True
+    runtime_settings_repository = FakeRuntimeSettingsRepository()
+    saved_settings = build_default_query_settings_json()
+    saved_settings["modes"]["fast_api"]["enabled"] = False
+    runtime_settings_repository.save_query_settings(saved_settings)
+    captured_query_settings: list[dict[str, object]] = []
+
+    class CapturingRuntime(FakeRuntime):
+        def __init__(self, config, accounts, *, query_settings_json=None, runtime_session_id=None) -> None:
+            super().__init__(config, accounts)
+            self.runtime_session_id = runtime_session_id
+            captured_query_settings.append(query_settings_json)
+
+        def snapshot(self) -> dict:
+            payload = super().snapshot()
+            payload.update(
+                {
+                    "modes": {},
+                    "group_rows": [],
+                    "recent_events": [],
+                    "item_rows": [],
+                    "total_query_count": 0,
+                    "total_found_count": 0,
+                }
+            )
+            return payload
+
+    service = QueryRuntimeService(
+        query_config_repository=FakeQueryConfigRepository(config),
+        account_repository=FakeAccountRepository([build_account("a1", api_key="api-1")]),
+        runtime_factory=lambda config, accounts, query_settings_json=None, runtime_session_id=None: CapturingRuntime(
+            config,
+            accounts,
+            query_settings_json=query_settings_json,
+            runtime_session_id=runtime_session_id,
+        ),
+        purchase_runtime_service=FakePurchaseRuntimeService(active_account_count=1),
+        runtime_settings_repository=runtime_settings_repository,
+    )
+
+    started, message = service.start(config_id="cfg-1")
+
+    assert started is True
+    assert message == "查询任务已启动"
+    assert captured_query_settings[0]["modes"]["fast_api"]["enabled"] is False
+
+
+def test_runtime_service_apply_query_settings_hot_applies_live_runtime_without_rebuild():
+    from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
+
+    config = build_config("cfg-1")
+    runtime_settings_repository = FakeRuntimeSettingsRepository()
+    created_runtimes = []
+
+    class RuntimeWithApply(FakeRuntime):
+        def __init__(self, config, accounts, *, query_settings_json=None, runtime_session_id=None) -> None:
+            super().__init__(config, accounts)
+            self.runtime_session_id = runtime_session_id
+            self.query_settings_json = query_settings_json
+            self.apply_calls: list[dict[str, object]] = []
+            created_runtimes.append(self)
+
+        def apply_query_settings(self, *, query_settings_json: dict[str, object]) -> None:
+            self.apply_calls.append(query_settings_json)
+
+        def snapshot(self) -> dict:
+            payload = super().snapshot()
+            payload.update(
+                {
+                    "runtime_session_id": self.runtime_session_id,
+                    "modes": {},
+                    "group_rows": [],
+                    "recent_events": [],
+                    "item_rows": [],
+                    "total_query_count": 0,
+                    "total_found_count": 0,
+                }
+            )
+            return payload
+
+    service = QueryRuntimeService(
+        query_config_repository=FakeQueryConfigRepository(config),
+        account_repository=FakeAccountRepository([build_account("a1", api_key="api-1")]),
+        runtime_factory=lambda config, accounts, query_settings_json=None, runtime_session_id=None: RuntimeWithApply(
+            config,
+            accounts,
+            query_settings_json=query_settings_json,
+            runtime_session_id=runtime_session_id,
+        ),
+        purchase_runtime_service=FakePurchaseRuntimeService(active_account_count=1),
+        runtime_settings_repository=runtime_settings_repository,
+    )
+
+    service.start(config_id="cfg-1")
+    updated_settings = build_default_query_settings_json()
+    updated_settings["modes"]["token"]["enabled"] = False
+    runtime_settings_repository.save_query_settings(updated_settings)
+
+    service.apply_query_settings(query_settings=updated_settings)
+
+    assert len(created_runtimes) == 1
+    assert created_runtimes[0].runtime_session_id is not None
+    assert created_runtimes[0].apply_calls == [updated_settings]
+
+
+def test_runtime_service_resume_after_recovery_uses_latest_global_query_settings():
+    from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
+
+    config = build_config("cfg-1")
+    runtime_settings_repository = FakeRuntimeSettingsRepository()
+    purchase_runtime_service = FakePurchaseRuntimeService(active_account_count=0)
+    captured_query_settings: list[dict[str, object]] = []
+
+    class CapturingRuntime(FakeRuntime):
+        def __init__(self, config, accounts, *, query_settings_json=None, runtime_session_id=None) -> None:
+            super().__init__(config, accounts)
+            self.runtime_session_id = runtime_session_id
+            captured_query_settings.append(query_settings_json)
+
+        def snapshot(self) -> dict:
+            payload = super().snapshot()
+            payload.update(
+                {
+                    "runtime_session_id": self.runtime_session_id,
+                    "modes": {},
+                    "group_rows": [],
+                    "recent_events": [],
+                    "item_rows": [],
+                    "total_query_count": 0,
+                    "total_found_count": 0,
+                }
+            )
+            return payload
+
+    service = QueryRuntimeService(
+        query_config_repository=FakeQueryConfigRepository(config),
+        account_repository=FakeAccountRepository([build_account("a1", api_key="api-1")]),
+        runtime_factory=lambda config, accounts, query_settings_json=None, runtime_session_id=None: CapturingRuntime(
+            config,
+            accounts,
+            query_settings_json=query_settings_json,
+            runtime_session_id=runtime_session_id,
+        ),
+        purchase_runtime_service=purchase_runtime_service,
+        runtime_settings_repository=runtime_settings_repository,
+    )
+
+    started, message = service.start(config_id="cfg-1")
+    updated_settings = build_default_query_settings_json()
+    updated_settings["modes"]["token"]["enabled"] = False
+    runtime_settings_repository.save_query_settings(updated_settings)
+    purchase_runtime_service.emit_accounts_recovered(active_account_count=1)
+
+    assert started is True
+    assert message == "查询任务已启动，等待购买账号恢复"
+    assert captured_query_settings[0]["modes"]["token"]["enabled"] is False

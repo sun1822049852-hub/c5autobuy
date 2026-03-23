@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from app_backend.domain.models.query_config import QueryItem
+from app_backend.domain.models.runtime_settings import QueryItemPacingSetting
 
 
 @dataclass(slots=True)
@@ -14,12 +15,17 @@ class QueryItemReservation:
 
 
 class QueryItemScheduler:
-    _DYNAMIC_COOLDOWN_BASE_SECONDS = 0.5
-
-    def __init__(self, query_items: list[QueryItem], *, min_cooldown_seconds: float = 0.1) -> None:
+    def __init__(
+        self,
+        query_items: list[QueryItem],
+        *,
+        min_cooldown_seconds: float = 0.1,
+        item_pacing: QueryItemPacingSetting | None = None,
+    ) -> None:
         self._query_items = list(query_items)
         self._min_cooldown_seconds = max(float(min_cooldown_seconds), 0.0)
         self._lock = asyncio.Lock()
+        self.apply_pacing_settings(item_pacing)
         self.reset()
 
     async def reserve_next(self, *, now: float | datetime | int | None = None) -> QueryItemReservation | None:
@@ -54,6 +60,14 @@ class QueryItemScheduler:
             for query_item in self._query_items
         }
 
+    def apply_pacing_settings(self, item_pacing: QueryItemPacingSetting | None) -> None:
+        if item_pacing is None:
+            self._dynamic_cooldown_strategy = "fixed_divided_by_actual_allocated_workers"
+            self._dynamic_cooldown_fixed_seconds = 0.5
+            return
+        self._dynamic_cooldown_strategy = str(item_pacing.strategy or "")
+        self._dynamic_cooldown_fixed_seconds = max(float(item_pacing.fixed_seconds), 0.0)
+
     def _reserve_item_locked(
         self,
         query_item: QueryItem,
@@ -70,7 +84,9 @@ class QueryItemScheduler:
         if actual_assigned_count is None:
             return self._min_cooldown_seconds
         count = max(int(actual_assigned_count), 1)
-        return self._DYNAMIC_COOLDOWN_BASE_SECONDS / count
+        if self._dynamic_cooldown_strategy == "fixed_divided_by_actual_allocated_workers":
+            return self._dynamic_cooldown_fixed_seconds / count
+        return self._min_cooldown_seconds
 
     @staticmethod
     def _to_seconds(value: float | datetime | int | None) -> float:

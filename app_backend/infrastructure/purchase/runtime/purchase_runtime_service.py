@@ -512,7 +512,16 @@ class PurchaseRuntimeService:
             purchase_disabled=bool(getattr(account, "purchase_disabled", False)),
             selected_row=selected_row,
         )
-        proxy_url = getattr(account, "proxy_url", None) or None
+        proxy_mode = str(getattr(account, "account_proxy_mode", None) or getattr(account, "proxy_mode", "") or "direct")
+        proxy_url = getattr(account, "account_proxy_url", None)
+        if proxy_url is None:
+            proxy_url = getattr(account, "proxy_url", None)
+        proxy_url = proxy_url or None
+        api_proxy_mode = str(getattr(account, "api_proxy_mode", None) or proxy_mode or "direct")
+        api_proxy_url = getattr(account, "api_proxy_url", None)
+        if api_proxy_url is None:
+            api_proxy_url = proxy_url
+        api_proxy_url = api_proxy_url or None
         api_key = getattr(account, "api_key", None) or None
         purchase_disabled = bool(getattr(account, "purchase_disabled", False))
         return {
@@ -523,8 +532,12 @@ class PurchaseRuntimeService:
             "default_name": str(getattr(account, "default_name", "") or ""),
             "api_key_present": bool(api_key),
             "api_key": api_key,
-            "proxy_mode": str(getattr(account, "proxy_mode", "") or "direct"),
+            "proxy_mode": proxy_mode,
             "proxy_url": proxy_url,
+            "account_proxy_mode": proxy_mode,
+            "account_proxy_url": proxy_url,
+            "api_proxy_mode": api_proxy_mode,
+            "api_proxy_url": api_proxy_url,
             "proxy_display": proxy_url or "直连",
             "purchase_capability_state": purchase_capability_state,
             "purchase_pool_state": purchase_pool_state,

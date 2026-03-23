@@ -107,3 +107,33 @@ async def test_query_item_scheduler_uses_dynamic_cooldown_when_one_item_has_mult
 
     assert first.execute_at == 10.0
     assert second.execute_at == 10.25
+
+
+async def test_query_item_scheduler_uses_global_item_pacing_fixed_seconds_for_dynamic_cooldown():
+    from app_backend.domain.models.runtime_settings import QueryItemPacingSetting
+    from app_backend.infrastructure.query.runtime.query_item_scheduler import QueryItemScheduler
+
+    item = build_item("item-1")
+    scheduler = QueryItemScheduler(
+        [item],
+        min_cooldown_seconds=0.1,
+        item_pacing=QueryItemPacingSetting(
+            mode_type="new_api",
+            strategy="fixed_divided_by_actual_allocated_workers",
+            fixed_seconds=2.0,
+        ),
+    )
+
+    first = await scheduler.reserve_item(
+        item,
+        now=10.0,
+        actual_assigned_count=4,
+    )
+    second = await scheduler.reserve_item(
+        item,
+        now=10.0,
+        actual_assigned_count=4,
+    )
+
+    assert first.execute_at == 10.0
+    assert second.execute_at == 10.5

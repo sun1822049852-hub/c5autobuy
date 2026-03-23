@@ -30,8 +30,12 @@ class SqliteAccountRepository:
                 account_id=account.account_id,
                 default_name=account.default_name,
                 remark_name=account.remark_name,
-                proxy_mode=account.proxy_mode,
-                proxy_url=account.proxy_url,
+                proxy_mode=account.account_proxy_mode,
+                proxy_url=account.account_proxy_url,
+                account_proxy_mode=account.account_proxy_mode,
+                account_proxy_url=account.account_proxy_url,
+                api_proxy_mode=account.api_proxy_mode,
+                api_proxy_url=account.api_proxy_url,
                 api_key=account.api_key,
                 c5_user_id=account.c5_user_id,
                 c5_nick_name=account.c5_nick_name,
@@ -59,7 +63,17 @@ class SqliteAccountRepository:
             if row is None:
                 raise KeyError(account_id)
 
-            for key, value in changes.items():
+            normalized_changes = dict(changes)
+            if "account_proxy_mode" in normalized_changes and "proxy_mode" not in normalized_changes:
+                normalized_changes["proxy_mode"] = normalized_changes["account_proxy_mode"]
+            if "account_proxy_url" in normalized_changes and "proxy_url" not in normalized_changes:
+                normalized_changes["proxy_url"] = normalized_changes["account_proxy_url"]
+            if "proxy_mode" in normalized_changes and "account_proxy_mode" not in normalized_changes:
+                normalized_changes["account_proxy_mode"] = normalized_changes["proxy_mode"]
+            if "proxy_url" in normalized_changes and "account_proxy_url" not in normalized_changes:
+                normalized_changes["account_proxy_url"] = normalized_changes["proxy_url"]
+
+            for key, value in normalized_changes.items():
                 if hasattr(row, key):
                     setattr(row, key, value)
 
@@ -95,12 +109,20 @@ class SqliteAccountRepository:
 
     @staticmethod
     def _to_domain(row: AccountRecord) -> Account:
+        account_proxy_mode = getattr(row, "account_proxy_mode", None) or row.proxy_mode or "direct"
+        account_proxy_url = getattr(row, "account_proxy_url", None)
+        if account_proxy_url is None:
+            account_proxy_url = row.proxy_url
+        api_proxy_mode = getattr(row, "api_proxy_mode", None) or account_proxy_mode
+        api_proxy_url = getattr(row, "api_proxy_url", None)
+        if api_proxy_url is None:
+            api_proxy_url = account_proxy_url
         return Account(
             account_id=row.account_id,
             default_name=row.default_name,
             remark_name=row.remark_name,
-            proxy_mode=row.proxy_mode,
-            proxy_url=row.proxy_url,
+            proxy_mode=account_proxy_mode,
+            proxy_url=account_proxy_url,
             api_key=row.api_key,
             c5_user_id=row.c5_user_id,
             c5_nick_name=row.c5_nick_name,
@@ -116,4 +138,8 @@ class SqliteAccountRepository:
             new_api_enabled=bool(row.new_api_enabled),
             fast_api_enabled=bool(row.fast_api_enabled),
             token_enabled=bool(row.token_enabled),
+            account_proxy_mode=account_proxy_mode,
+            account_proxy_url=account_proxy_url,
+            api_proxy_mode=api_proxy_mode,
+            api_proxy_url=api_proxy_url,
         )
