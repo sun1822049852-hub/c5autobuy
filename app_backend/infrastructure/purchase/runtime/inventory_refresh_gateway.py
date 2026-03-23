@@ -10,6 +10,10 @@ from typing import Any
 
 import aiohttp
 
+from app_backend.infrastructure.c5.response_status import (
+    classify_c5_response_error,
+    is_auth_invalid_c5_error,
+)
 from app_backend.infrastructure.query.runtime.runtime_account_adapter import RuntimeAccountAdapter
 from xsign import XSignWrapper
 
@@ -67,11 +71,19 @@ class InventoryRefreshGateway:
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=self.REQUEST_TIMEOUT_SECONDS),
             ) as response:
-                return self.parse_response(await response.text())
+                status = response.status
+                text = await response.text()
         except asyncio.TimeoutError:
             return InventoryRefreshResult(status="error", inventories=[], error="请求超时")
         except Exception as exc:
             return InventoryRefreshResult(status="error", inventories=[], error=f"请求失败: {exc}")
+
+        http_error = classify_c5_response_error(status=status, text=text)
+        if http_error is not None:
+            if is_auth_invalid_c5_error(http_error):
+                return InventoryRefreshResult.auth_invalid(http_error)
+            return InventoryRefreshResult(status="error", inventories=[], error=http_error)
+        return self.parse_response(text)
 
     @classmethod
     def build_request_body(cls) -> dict[str, str]:

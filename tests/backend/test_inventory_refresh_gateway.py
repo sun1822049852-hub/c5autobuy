@@ -204,6 +204,21 @@ async def test_inventory_refresh_gateway_maps_403_to_auth_invalid(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_inventory_refresh_gateway_maps_http_403_status_to_auth_invalid(monkeypatch):
+    session = FakeSession(
+        responses=[
+            (403, "<html>forbidden</html>"),
+        ]
+    )
+    gateway = await _build_gateway(monkeypatch, session=session, signer=FakeSigner(result="fake-sign"))
+
+    result = await gateway.refresh(account=build_account())
+
+    assert result.status == "auth_invalid"
+    assert result.error == "HTTP 403 Forbidden"
+
+
+@pytest.mark.asyncio
 async def test_inventory_refresh_gateway_returns_xsign_error_text(monkeypatch):
     session = FakeSession(responses=[])
     gateway = await _build_gateway(

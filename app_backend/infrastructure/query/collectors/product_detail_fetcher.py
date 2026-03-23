@@ -16,6 +16,8 @@ try:
 except ModuleNotFoundError:  # pragma: no cover - optional dependency in unit tests
     aiohttp = None
 
+from app_backend.infrastructure.c5.response_status import classify_c5_response_error
+
 
 @lru_cache(maxsize=1)
 def get_default_xsign_wrapper() -> XSignWrapper:
@@ -93,13 +95,14 @@ class ProductDetailFetcher:
                 headers=headers,
                 timeout=self._build_request_timeout(),
             ) as response:
+                status = response.status
                 text = await response.text()
         except asyncio.TimeoutError:
             raise ValueError("请求超时") from None
         except Exception as exc:
             raise ValueError(f"请求失败: {exc}") from exc
 
-        return self._parse_success_payload(text)
+        return self._parse_success_payload(status=status, text=text)
 
     async def _fetch_market_payload(
         self,
@@ -125,13 +128,14 @@ class ProductDetailFetcher:
                 headers=headers,
                 timeout=self._build_request_timeout(),
             ) as response:
+                status = response.status
                 text = await response.text()
         except asyncio.TimeoutError:
             raise ValueError("请求超时") from None
         except Exception as exc:
             raise ValueError(f"请求失败: {exc}") from exc
 
-        return self._parse_success_payload(text)
+        return self._parse_success_payload(status=status, text=text)
 
     def _build_post_headers(
         self,
@@ -243,9 +247,10 @@ class ProductDetailFetcher:
             raise ValueError(f"x-sign生成失败: {exc}") from exc
 
     @staticmethod
-    def _parse_success_payload(text: str) -> dict[str, Any]:
-        if "Not login" in text:
-            raise ValueError("Not login")
+    def _parse_success_payload(*, status: int, text: str) -> dict[str, Any]:
+        http_error = classify_c5_response_error(status=status, text=text)
+        if http_error is not None:
+            raise ValueError(http_error)
 
         try:
             payload = json.loads(text)

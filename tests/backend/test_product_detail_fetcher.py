@@ -274,3 +274,32 @@ async def test_product_detail_fetcher_switches_to_next_account_after_request_fai
     assert len(first_session.post_calls) == 1
     assert second_session.post_calls[0]["headers"]["x-access-token"] == "token-2"
     assert len(second_session.get_calls) == 1
+
+
+async def test_product_detail_fetcher_raises_http_403_forbidden_instead_of_invalid_json():
+    from app_backend.infrastructure.query.collectors.product_detail_fetcher import ProductDetailFetcher
+
+    item_id = "1380979899390267393"
+    product_url = f"https://www.c5game.com/csgo/730/asset/{item_id}"
+    account = build_account(
+        "a1",
+        cookie_raw="NC5_accessToken=token-1; NC5_deviceId=device-1",
+    )
+    session = FakeSession(
+        post_responses=[
+            (403, "<html>forbidden</html>"),
+        ],
+        get_responses=[],
+    )
+    fetcher = ProductDetailFetcher(
+        selector=FakeSelector([account]),
+        xsign_wrapper=FakeSigner(),
+        runtime_account_factory=lambda current: FakeRuntimeAccount(current, session),
+    )
+
+    try:
+        await fetcher.fetch(external_item_id=item_id, product_url=product_url)
+    except ValueError as exc:
+        assert str(exc) == "HTTP 403 Forbidden"
+    else:  # pragma: no cover - defensive guard for regression reporting
+        raise AssertionError("expected ValueError for forbidden detail request")
