@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import os
 import random
@@ -15,8 +16,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
+from app_backend.infrastructure.c5.user_agent import (
+    DEFAULT_ACCOUNT_USER_AGENTS,
+    get_effective_user_agent,
+)
+
 ProgressCallback = Callable[[str], Awaitable[None] | None]
-BrowserFactory = Callable[[str | None], "BrowserSession | Any"]
+BrowserFactory = Callable[..., "BrowserSession | Any"]
 SleepFunc = Callable[[float], Awaitable[None]]
 TimeProvider = Callable[[], float]
 MillisProvider = Callable[[], int]
@@ -77,10 +83,11 @@ class SeleniumLoginRunner:
         self,
         *,
         proxy_url: str | None,
+        user_agent: str | None = None,
         emit_state: ProgressCallback | None = None,
     ) -> dict[str, object]:
         callback = emit_state or _noop_emit
-        browser = self._browser_factory(proxy_url)
+        browser = self._build_browser(proxy_url=proxy_url, user_agent=user_agent)
         session = browser if isinstance(browser, BrowserSession) else BrowserSession(driver=browser)
         driver = session.driver
         browser_closed_before_login = False
@@ -514,7 +521,7 @@ class SeleniumLoginRunner:
             return
 
     @classmethod
-    def _create_default_browser(cls, proxy_url: str | None) -> BrowserSession:
+    def _create_default_browser(cls, proxy_url: str | None, user_agent: str | None = None) -> BrowserSession:
         from selenium import webdriver
         from selenium.webdriver.edge.options import Options
         from selenium.webdriver.edge.service import Service
@@ -533,6 +540,7 @@ class SeleniumLoginRunner:
             port=port,
             user_data_dir=user_data_dir,
             proxy_url=proxy_url,
+            user_agent=get_effective_user_agent(user_agent),
             cleanup_callbacks=cleanup_callbacks,
         )
 
@@ -561,18 +569,7 @@ class SeleniumLoginRunner:
 
     @staticmethod
     def _default_user_agents() -> list[str]:
-        return [
-            (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 "
-                "Safari/537.36 Edg/120.0.0.0"
-            ),
-            (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 "
-                "Safari/537.36 Edg/119.0.0.0"
-            ),
-        ]
+        return list(DEFAULT_ACCOUNT_USER_AGENTS)
 
     @classmethod
     def _build_edge_launch_command(
@@ -582,12 +579,14 @@ class SeleniumLoginRunner:
         port: int,
         user_data_dir: str,
         proxy_url: str | None,
+        user_agent: str,
         cleanup_callbacks: list[Callable[[], None]],
     ) -> list[str]:
         command = [
             edge_path,
             f"--remote-debugging-port={port}",
             f"--user-data-dir={user_data_dir}",
+            f"--user-agent={user_agent}",
             "--no-first-run",
             "--no-default-browser-check",
             "--disable-sync",
@@ -782,3 +781,19 @@ class SeleniumLoginRunner:
                 callback()
             except Exception:
                 continue
+
+    def _build_browser(self, *, proxy_url: str | None, user_agent: str | None) -> BrowserSession | Any:
+        if _callable_accepts_user_agent(self._browser_factory):
+            return self._browser_factory(proxy_url, user_agent=user_agent)
+        return self._browser_factory(proxy_url)
+
+
+def _callable_accepts_user_agent(callback: Callable[..., Any]) -> bool:
+    try:
+        parameters = inspect.signature(callback).parameters.values()
+    except (TypeError, ValueError):
+        return True
+    return any(
+        parameter.name == "user_agent" or parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters
+    )

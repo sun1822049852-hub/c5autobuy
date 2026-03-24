@@ -129,3 +129,17 @@ def test_repository_round_trips_split_proxy_fields(tmp_path):
     assert reloaded.account_proxy_url == "http://127.0.0.1:8001"
     assert reloaded.api_proxy_mode == "custom"
     assert reloaded.api_proxy_url == "http://127.0.0.1:8002"
+
+
+def test_repository_round_trips_user_agent(tmp_path):
+    engine = build_engine(tmp_path / "app.db")
+    create_schema(engine)
+    repository = SqliteAccountRepository(build_session_factory(engine))
+    account = build_account("a1", "账号1")
+    account.user_agent = "Mozilla/5.0 test-account-agent"
+    repository.create_account(account)
+
+    reloaded = repository.get_account("a1")
+
+    assert reloaded is not None
+    assert reloaded.user_agent == "Mozilla/5.0 test-account-agent"

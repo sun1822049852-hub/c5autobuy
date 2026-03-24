@@ -116,6 +116,8 @@ def _ensure_account_columns(engine: Engine) -> None:
             connection.execute(text("ALTER TABLE accounts ADD COLUMN fast_api_enabled INTEGER NOT NULL DEFAULT 1"))
         if "token_enabled" not in existing_columns:
             connection.execute(text("ALTER TABLE accounts ADD COLUMN token_enabled INTEGER NOT NULL DEFAULT 1"))
+        if "user_agent" not in existing_columns:
+            connection.execute(text("ALTER TABLE accounts ADD COLUMN user_agent TEXT"))
         connection.execute(
             text(
                 """
@@ -186,6 +188,7 @@ def _rebuild_accounts_table_without_disabled(engine: Engine, *, existing_columns
         "new_api_enabled": "new_api_enabled" if "new_api_enabled" in existing_columns else "1",
         "fast_api_enabled": "fast_api_enabled" if "fast_api_enabled" in existing_columns else "1",
         "token_enabled": "token_enabled" if "token_enabled" in existing_columns else "1",
+        "user_agent": "user_agent" if "user_agent" in existing_columns else "NULL",
     }
 
     with engine.begin() as connection:
@@ -217,7 +220,8 @@ def _rebuild_accounts_table_without_disabled(engine: Engine, *, existing_columns
                     purchase_recovery_due_at TEXT,
                     new_api_enabled INTEGER NOT NULL DEFAULT 1,
                     fast_api_enabled INTEGER NOT NULL DEFAULT 1,
-                    token_enabled INTEGER NOT NULL DEFAULT 1
+                    token_enabled INTEGER NOT NULL DEFAULT 1,
+                    user_agent TEXT
                 )
                 """
             )
@@ -249,7 +253,8 @@ def _rebuild_accounts_table_without_disabled(engine: Engine, *, existing_columns
                     purchase_recovery_due_at,
                     new_api_enabled,
                     fast_api_enabled,
-                    token_enabled
+                    token_enabled,
+                    user_agent
                 )
                 SELECT
                     account_id,
@@ -275,7 +280,8 @@ def _rebuild_accounts_table_without_disabled(engine: Engine, *, existing_columns
                     {column_expr["purchase_recovery_due_at"]},
                     {column_expr["new_api_enabled"]},
                     {column_expr["fast_api_enabled"]},
-                    {column_expr["token_enabled"]}
+                    {column_expr["token_enabled"]},
+                    {column_expr["user_agent"]}
                 FROM accounts
                 """
             )

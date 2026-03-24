@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import unquote
 
+from app_backend.infrastructure.c5.user_agent import get_effective_user_agent
+
 try:
     import aiohttp
 except ModuleNotFoundError:  # pragma: no cover - optional dependency in unit tests
@@ -68,6 +70,9 @@ class RuntimeAccountAdapter:
     def get_api_key(self) -> str | None:
         api_key = getattr(self._account, "api_key", None)
         return api_key or None
+
+    def get_user_agent(self) -> str:
+        return get_effective_user_agent(getattr(self._account, "user_agent", None))
 
     def has_api_key(self) -> bool:
         return bool(self.get_api_key())

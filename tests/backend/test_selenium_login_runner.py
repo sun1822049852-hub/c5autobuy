@@ -326,8 +326,9 @@ async def test_selenium_login_runner_passes_proxy_url_to_browser_factory():
         monitor_request_data=_build_monitor_payload(),
     )
 
-    def browser_factory(proxy_url: str | None):
+    def browser_factory(proxy_url: str | None, user_agent: str | None = None):
         captured["proxy_url"] = proxy_url
+        captured["user_agent"] = user_agent
         return driver
 
     runner = SeleniumLoginRunner(
@@ -343,9 +344,10 @@ async def test_selenium_login_runner_passes_proxy_url_to_browser_factory():
         browser_close_poll_seconds=0,
     )
 
-    await runner.run(proxy_url="http://127.0.0.1:8888", emit_state=states.append)
+    await runner.run(proxy_url="http://127.0.0.1:8888", user_agent="ua-1", emit_state=states.append)
 
     assert captured["proxy_url"] == "http://127.0.0.1:8888"
+    assert captured["user_agent"] == "ua-1"
 
 
 @pytest.mark.asyncio
@@ -484,12 +486,13 @@ def test_create_default_browser_lets_selenium_manager_resolve_edge_driver(monkey
     monkeypatch.setattr(SeleniumLoginRunner, "_wait_for_debugger_port", staticmethod(lambda port, process, timeout_seconds=15.0: None))
     monkeypatch.setattr(SeleniumLoginRunner, "_wait_for_browser_settle", staticmethod(lambda seconds=5.0: None))
 
-    session = SeleniumLoginRunner._create_default_browser(proxy_url=None)
+    session = SeleniumLoginRunner._create_default_browser(proxy_url=None, user_agent="ua-1")
 
     assert isinstance(session, BrowserSession)
     assert session.driver is driver
     assert captured["executable_path"] is None
     assert captured_command["command"][-1] == "about:blank"
+    assert "--user-agent=ua-1" in captured_command["command"]
     assert session.preloaded_url is None
 
 

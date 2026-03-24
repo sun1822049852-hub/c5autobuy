@@ -26,20 +26,29 @@ class SqliteAccountRepository:
 
     def create_account(self, account: Account) -> Account:
         with self._session_factory() as session:
+            account_proxy_mode = getattr(account, "account_proxy_mode", None) or getattr(account, "proxy_mode", None) or "direct"
+            account_proxy_url = getattr(account, "account_proxy_url", None)
+            if account_proxy_url is None:
+                account_proxy_url = getattr(account, "proxy_url", None)
+            api_proxy_mode = getattr(account, "api_proxy_mode", None) or account_proxy_mode
+            api_proxy_url = getattr(account, "api_proxy_url", None)
+            if api_proxy_url is None:
+                api_proxy_url = account_proxy_url
             row = AccountRecord(
                 account_id=account.account_id,
                 default_name=account.default_name,
                 remark_name=account.remark_name,
-                proxy_mode=account.account_proxy_mode,
-                proxy_url=account.account_proxy_url,
-                account_proxy_mode=account.account_proxy_mode,
-                account_proxy_url=account.account_proxy_url,
-                api_proxy_mode=account.api_proxy_mode,
-                api_proxy_url=account.api_proxy_url,
+                proxy_mode=account_proxy_mode,
+                proxy_url=account_proxy_url,
+                account_proxy_mode=account_proxy_mode,
+                account_proxy_url=account_proxy_url,
+                api_proxy_mode=api_proxy_mode,
+                api_proxy_url=api_proxy_url,
                 api_key=account.api_key,
                 c5_user_id=account.c5_user_id,
                 c5_nick_name=account.c5_nick_name,
                 cookie_raw=account.cookie_raw,
+                user_agent=getattr(account, "user_agent", None),
                 purchase_capability_state=account.purchase_capability_state,
                 purchase_pool_state=account.purchase_pool_state,
                 last_login_at=account.last_login_at,
@@ -127,6 +136,7 @@ class SqliteAccountRepository:
             c5_user_id=row.c5_user_id,
             c5_nick_name=row.c5_nick_name,
             cookie_raw=row.cookie_raw,
+            user_agent=getattr(row, "user_agent", None),
             purchase_capability_state=row.purchase_capability_state,
             purchase_pool_state=row.purchase_pool_state,
             last_login_at=row.last_login_at,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
@@ -35,10 +36,14 @@ class SeleniumLoginAdapter:
         self,
         *,
         proxy_url: str | None,
+        user_agent: str | None = None,
         emit_state: ProgressCallback | None = None,
     ) -> LoginCapture:
         callback = emit_state or _noop_emit
-        payload = await self._login_runner(proxy_url=proxy_url, emit_state=callback)
+        if _callable_accepts_user_agent(self._login_runner):
+            payload = await self._login_runner(proxy_url=proxy_url, emit_state=callback, user_agent=user_agent)
+        else:
+            payload = await self._login_runner(proxy_url=proxy_url, emit_state=callback)
         return self._normalize_payload(payload)
 
     @staticmethod
@@ -51,3 +56,14 @@ class SeleniumLoginAdapter:
             c5_nick_name=str(payload.get("c5_nick_name") or ""),
             cookie_raw=str(payload.get("cookie_raw") or ""),
         )
+
+
+def _callable_accepts_user_agent(callback: Callable[..., Any]) -> bool:
+    try:
+        parameters = inspect.signature(callback).parameters.values()
+    except (TypeError, ValueError):
+        return True
+    return any(
+        parameter.name == "user_agent" or parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters
+    )

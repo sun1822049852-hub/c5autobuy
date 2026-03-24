@@ -11,6 +11,7 @@ from app_backend.domain.models.account import Account
 def build_account(
     *,
     cookie_raw: str = "foo=bar; NC5_accessToken=token-1; NC5_deviceId=device-1; _csrf=abc%3D",
+    user_agent: str = "ua-1",
 ) -> Account:
     return Account(
         account_id="a1",
@@ -28,6 +29,7 @@ def build_account(
         last_error=None,
         created_at="2026-03-16T10:00:00",
         updated_at="2026-03-16T10:00:00",
+        user_agent=user_agent,
     )
 
 
@@ -150,6 +152,7 @@ async def test_inventory_refresh_gateway_fetches_preview_inventories(monkeypatch
     assert result.status == "success"
     assert result.error is None
     assert [item["steamId"] for item in result.inventories] == ["steam-1", "steam-2"]
+    assert session.calls[0]["headers"]["User-Agent"] == "ua-1"
 
 
 @pytest.mark.asyncio

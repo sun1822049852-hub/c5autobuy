@@ -22,6 +22,7 @@ class AccountRecord(Base):
     c5_user_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     c5_nick_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     cookie_raw: Mapped[str | None] = mapped_column(Text, nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(Text, nullable=True)
     purchase_capability_state: Mapped[str] = mapped_column(Text, nullable=False)
     purchase_pool_state: Mapped[str] = mapped_column(Text, nullable=False)
     last_login_at: Mapped[str | None] = mapped_column(Text, nullable=True)

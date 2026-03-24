@@ -6,8 +6,9 @@ async def test_login_adapter_returns_c5_payload():
 
     captured: dict[str, str | None] = {}
 
-    async def fake_runner(proxy_url, emit_state):
+    async def fake_runner(proxy_url, emit_state, user_agent=None):
         captured["proxy_url"] = proxy_url
+        captured["user_agent"] = user_agent
         await emit_state("waiting_for_scan")
         return {
             "c5_user_id": "10001",
@@ -16,9 +17,10 @@ async def test_login_adapter_returns_c5_payload():
         }
 
     adapter = SeleniumLoginAdapter(login_runner=fake_runner)
-    result = await adapter.run_login(proxy_url="http://127.0.0.1:8888")
+    result = await adapter.run_login(proxy_url="http://127.0.0.1:8888", user_agent="ua-1")
 
     assert captured["proxy_url"] == "http://127.0.0.1:8888"
+    assert captured["user_agent"] == "ua-1"
     assert result.c5_user_id == "10001"
     assert result.c5_nick_name == "测试账号"
     assert result.cookie_raw == "foo=bar"

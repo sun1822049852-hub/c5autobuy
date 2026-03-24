@@ -5,7 +5,7 @@ import json
 from app_backend.domain.models.account import Account
 
 
-def build_account(account_id: str, *, cookie_raw: str) -> Account:
+def build_account(account_id: str, *, cookie_raw: str, user_agent: str = "ua-1") -> Account:
     return Account(
         account_id=account_id,
         default_name=f"账号-{account_id}",
@@ -25,6 +25,7 @@ def build_account(account_id: str, *, cookie_raw: str) -> Account:
         new_api_enabled=True,
         fast_api_enabled=True,
         token_enabled=True,
+        user_agent=user_agent,
     )
 
 
@@ -117,6 +118,9 @@ class FakeRuntimeAccount:
     def get_cookie_header_exact(self) -> str:
         return self.account.cookie_raw or ""
 
+    def get_user_agent(self) -> str:
+        return self.account.user_agent or "ua-default"
+
     async def get_global_session(self, force_new: bool = False):
         return self._session
 
@@ -200,8 +204,10 @@ async def test_product_detail_fetcher_merges_preview_and_market_hash_name():
     assert session.post_calls[0]["headers"]["Referer"] == product_url
     assert session.post_calls[0]["headers"]["x-access-token"] == "token-1"
     assert session.post_calls[0]["headers"]["x-device-id"] == "device-1"
+    assert session.post_calls[0]["headers"]["User-Agent"] == "ua-1"
     assert session.get_calls[0]["params"] == {"itemId": item_id, "page": 1, "limit": 10}
     assert session.get_calls[0]["headers"]["Referer"] == product_url
+    assert session.get_calls[0]["headers"]["User-Agent"] == "ua-1"
 
 
 async def test_product_detail_fetcher_switches_to_next_account_after_request_failure():

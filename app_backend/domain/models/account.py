@@ -29,6 +29,7 @@ class Account:
     account_proxy_url: str | None = None
     api_proxy_mode: str | None = None
     api_proxy_url: str | None = None
+    user_agent: str | None = None
 
     def __post_init__(self) -> None:
         account_proxy_mode = self.account_proxy_mode or self.proxy_mode or "direct"

@@ -24,6 +24,36 @@ async def test_post_accounts_creates_account(client):
     assert payload["token_enabled"] is True
 
 
+async def test_post_accounts_assigns_distinct_user_agents_for_api_key_only_accounts(client, app):
+    first_response = await client.post(
+        "/accounts",
+        json={
+            "remark_name": "查询账号A",
+            "proxy_mode": "direct",
+            "proxy_url": None,
+            "api_key": "key-a",
+        },
+    )
+    second_response = await client.post(
+        "/accounts",
+        json={
+            "remark_name": "查询账号B",
+            "proxy_mode": "direct",
+            "proxy_url": None,
+            "api_key": "key-b",
+        },
+    )
+
+    first_account = app.state.account_repository.get_account(first_response.json()["account_id"])
+    second_account = app.state.account_repository.get_account(second_response.json()["account_id"])
+
+    assert first_account is not None
+    assert second_account is not None
+    assert first_account.user_agent
+    assert second_account.user_agent
+    assert first_account.user_agent != second_account.user_agent
+
+
 async def test_post_accounts_treats_blank_custom_proxy_as_direct(client):
     response = await client.post(
         "/accounts",
