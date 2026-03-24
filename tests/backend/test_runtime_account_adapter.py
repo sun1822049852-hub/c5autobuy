@@ -12,7 +12,7 @@ def test_runtime_account_adapter_exposes_cookie_and_token_helpers():
     assert adapter.has_api_key() is True
     assert adapter.get_x_access_token() == "token-1"
     assert adapter.get_x_device_id() == "device-1"
-    assert adapter.get_user_agent() == "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0"
+    assert adapter.get_user_agent() == "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0"
     assert adapter.get_cookie_header_exact() == "foo=bar; NC5_accessToken=token-1; NC5_deviceId=device-1; _csrf=abc%3D"
     assert adapter.get_cookie_header_with_decoded_csrf() == "foo=bar; NC5_accessToken=token-1; NC5_deviceId=device-1; _csrf=abc="
 

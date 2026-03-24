@@ -5,27 +5,83 @@ from collections.abc import Iterable
 DEFAULT_ACCOUNT_USER_AGENTS: tuple[str, ...] = (
     (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0"
+        "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 Edg/126.0.0.0"
     ),
     (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36 Edg/123.0.0.0"
+        "(KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36 Edg/127.0.0.0"
     ),
     (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) "
-        "Gecko/20100101 Firefox/123.0"
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) "
+        "Gecko/20100101 Firefox/126.0"
+    ),
+    (
+        "Mozilla/5.0 (Windows NT 11.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 Edg/128.0.0.0"
+    ),
+    (
+        "Mozilla/5.0 (Windows NT 11.0; Win64; x64; rv:127.0) "
+        "Gecko/20100101 Firefox/127.0"
     ),
     (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        "(KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36 Edg/129.0.0.0"
     ),
     (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) "
-        "Gecko/20100101 Firefox/124.0"
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) "
+        "Gecko/20100101 Firefox/128.0"
+    ),
+    (
+        "Mozilla/5.0 (Windows NT 11.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0"
+    ),
+    (
+        "Mozilla/5.0 (Windows NT 11.0; Win64; x64; rv:129.0) "
+        "Gecko/20100101 Firefox/129.0"
     ),
     (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 Edg/125.0.0.0"
+        "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0"
+    ),
+    (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:130.0) "
+        "Gecko/20100101 Firefox/130.0"
+    ),
+    (
+        "Mozilla/5.0 (Windows NT 11.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36 Edg/132.0.0.0"
+    ),
+    (
+        "Mozilla/5.0 (Windows NT 11.0; Win64; x64; rv:131.0) "
+        "Gecko/20100101 Firefox/131.0"
+    ),
+    (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36 Edg/133.0.0.0"
+    ),
+    (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) "
+        "Gecko/20100101 Firefox/132.0"
+    ),
+    (
+        "Mozilla/5.0 (Windows NT 11.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36 Edg/134.0.0.0"
+    ),
+    (
+        "Mozilla/5.0 (Windows NT 11.0; Win64; x64; rv:133.0) "
+        "Gecko/20100101 Firefox/133.0"
+    ),
+    (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36 Edg/135.0.0.0"
+    ),
+    (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:134.0) "
+        "Gecko/20100101 Firefox/134.0"
+    ),
+    (
+        "Mozilla/5.0 (Windows NT 11.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36 Edg/136.0.0.0"
     ),
 )
 
