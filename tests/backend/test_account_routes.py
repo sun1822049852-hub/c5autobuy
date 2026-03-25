@@ -24,36 +24,6 @@ async def test_post_accounts_creates_account(client):
     assert payload["token_enabled"] is True
 
 
-async def test_post_accounts_assigns_distinct_user_agents_for_api_key_only_accounts(client, app):
-    first_response = await client.post(
-        "/accounts",
-        json={
-            "remark_name": "查询账号A",
-            "proxy_mode": "direct",
-            "proxy_url": None,
-            "api_key": "key-a",
-        },
-    )
-    second_response = await client.post(
-        "/accounts",
-        json={
-            "remark_name": "查询账号B",
-            "proxy_mode": "direct",
-            "proxy_url": None,
-            "api_key": "key-b",
-        },
-    )
-
-    first_account = app.state.account_repository.get_account(first_response.json()["account_id"])
-    second_account = app.state.account_repository.get_account(second_response.json()["account_id"])
-
-    assert first_account is not None
-    assert second_account is not None
-    assert first_account.user_agent
-    assert second_account.user_agent
-    assert first_account.user_agent != second_account.user_agent
-
-
 async def test_post_accounts_treats_blank_custom_proxy_as_direct(client):
     response = await client.post(
         "/accounts",
@@ -70,30 +40,6 @@ async def test_post_accounts_treats_blank_custom_proxy_as_direct(client):
     assert payload["proxy_mode"] == "direct"
     assert payload["proxy_url"] is None
     assert payload["api_key"] is None
-    assert payload["account_proxy_mode"] == "direct"
-    assert payload["account_proxy_url"] is None
-    assert payload["api_proxy_mode"] == "direct"
-    assert payload["api_proxy_url"] is None
-
-
-async def test_post_accounts_accepts_split_proxy_fields(client):
-    response = await client.post(
-        "/accounts",
-        json={
-            "remark_name": "双代理账号",
-            "account_proxy_mode": "custom",
-            "account_proxy_url": "http://127.0.0.1:8001",
-            "api_proxy_mode": "custom",
-            "api_proxy_url": "http://127.0.0.1:8002",
-            "api_key": "key-123",
-        },
-    )
-
-    assert response.status_code == 201
-    payload = response.json()
-    assert payload["account_proxy_url"] == "http://127.0.0.1:8001"
-    assert payload["api_proxy_url"] == "http://127.0.0.1:8002"
-    assert payload["proxy_url"] == "http://127.0.0.1:8001"
 
 
 async def test_get_accounts_returns_created_accounts(client):
@@ -142,38 +88,6 @@ async def test_patch_account_updates_allowed_fields(client):
     assert payload["remark_name"] == "新备注"
     assert payload["proxy_url"] == "http://127.0.0.1:8080"
     assert payload["api_key"] == "new-key"
-
-
-async def test_patch_account_keeps_api_proxy_independent(client):
-    created = await client.post(
-        "/accounts",
-        json={
-            "remark_name": None,
-            "account_proxy_mode": "custom",
-            "account_proxy_url": "http://127.0.0.1:8001",
-            "api_proxy_mode": "custom",
-            "api_proxy_url": "http://127.0.0.1:8002",
-            "api_key": None,
-        },
-    )
-    account_id = created.json()["account_id"]
-
-    response = await client.patch(
-        f"/accounts/{account_id}",
-        json={
-            "remark_name": None,
-            "account_proxy_mode": "custom",
-            "account_proxy_url": "http://127.0.0.1:8101",
-            "api_proxy_mode": "custom",
-            "api_proxy_url": "http://127.0.0.1:8102",
-            "api_key": None,
-        },
-    )
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["account_proxy_url"] == "http://127.0.0.1:8101"
-    assert payload["api_proxy_url"] == "http://127.0.0.1:8102"
 
 
 async def test_patch_account_normalizes_scheme_less_proxy_and_auth(client):

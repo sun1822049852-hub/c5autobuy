@@ -16,11 +16,6 @@ def test_create_schema_builds_accounts_table(tmp_path):
     assert "disabled" not in account_columns
     assert "purchase_disabled" in account_columns
     assert "purchase_recovery_due_at" in account_columns
-    assert "account_proxy_mode" in account_columns
-    assert "account_proxy_url" in account_columns
-    assert "api_proxy_mode" in account_columns
-    assert "api_proxy_url" in account_columns
-    assert "user_agent" in account_columns
 
 
 def test_create_schema_rebuilds_legacy_accounts_table_without_disabled_column(tmp_path):
@@ -99,31 +94,6 @@ def test_create_schema_rebuilds_legacy_accounts_table_without_disabled_column(tm
 
     assert "disabled" not in account_columns
     assert "purchase_disabled" in account_columns
-    assert "account_proxy_mode" in account_columns
-    assert "account_proxy_url" in account_columns
-    assert "api_proxy_mode" in account_columns
-    assert "api_proxy_url" in account_columns
-    assert "user_agent" in account_columns
-
-    migrated_connection = sqlite3.connect(db_path)
-    proxy_row = migrated_connection.execute(
-        """
-        SELECT
-            proxy_mode,
-            proxy_url,
-            account_proxy_mode,
-            account_proxy_url,
-            api_proxy_mode,
-            api_proxy_url,
-            user_agent
-        FROM accounts
-        WHERE account_id = ?
-        """,
-        ("a1",),
-    ).fetchone()
-    migrated_connection.close()
-
-    assert proxy_row == ("direct", None, "direct", None, "direct", None, None)
 
 
 def test_create_schema_backfills_query_products_and_config_threshold_columns_from_existing_query_config_items_table(tmp_path):

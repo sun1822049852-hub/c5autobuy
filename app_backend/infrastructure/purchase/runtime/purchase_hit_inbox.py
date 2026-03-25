@@ -30,7 +30,7 @@ class PurchaseHitInbox:
             runtime_session_id=str(hit.get("runtime_session_id") or "") or None,
             external_item_id=str(hit.get("external_item_id") or "") or None,
             product_url=str(hit.get("product_url") or "") or None,
-            product_list=hit.get("product_list") or [],
+            product_list=list(hit.get("product_list") or []),
             total_price=float(hit.get("total_price") or 0.0),
             total_wear_sum=float(total_wear_sum) if total_wear_sum is not None else None,
             source_mode_type=str(hit.get("mode_type") or ""),

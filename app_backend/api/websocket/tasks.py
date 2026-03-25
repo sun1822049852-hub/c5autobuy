@@ -6,7 +6,7 @@ from app_backend.api.schemas.tasks import TaskResponse
 
 router = APIRouter()
 
-_TERMINAL_STATES = {"succeeded", "failed", "cancelled", "conflict"}
+_TERMINAL_STATES = {"succeeded", "failed", "cancelled"}
 
 
 @router.websocket("/ws/tasks/{task_id}")

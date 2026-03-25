@@ -15,7 +15,7 @@ except ModuleNotFoundError:  # pragma: no cover - optional dependency in unit te
     ClientError = RuntimeError
 
 
-def build_account(*, api_key: str | None = "api-1", user_agent: str = "ua-1") -> Account:
+def build_account(*, api_key: str | None = "api-1") -> Account:
     return Account(
         account_id="a1",
         default_name="account-a1",
@@ -32,7 +32,6 @@ def build_account(*, api_key: str | None = "api-1", user_agent: str = "ua-1") ->
         last_error=None,
         created_at="2026-03-16T10:00:00",
         updated_at="2026-03-16T10:00:00",
-        user_agent=user_agent,
     )
 
 
@@ -133,7 +132,6 @@ async def test_fast_api_query_executor_filters_response_client_side():
     assert result.success is True
     assert result.match_count == 1
     assert result.product_list == [{"productId": "ok-1", "price": 88.8, "actRebateAmount": 0}]
-    assert session.calls[0]["headers"]["User-Agent"] == "ua-1"
     assert result.total_price == pytest.approx(88.8)
     assert result.total_wear_sum == pytest.approx(0.1234)
 

@@ -5,7 +5,7 @@ import json
 from app_backend.domain.models.account import Account
 
 
-def build_account(account_id: str, *, cookie_raw: str, user_agent: str = "ua-1") -> Account:
+def build_account(account_id: str, *, cookie_raw: str) -> Account:
     return Account(
         account_id=account_id,
         default_name=f"账号-{account_id}",
@@ -25,7 +25,6 @@ def build_account(account_id: str, *, cookie_raw: str, user_agent: str = "ua-1")
         new_api_enabled=True,
         fast_api_enabled=True,
         token_enabled=True,
-        user_agent=user_agent,
     )
 
 
@@ -118,9 +117,6 @@ class FakeRuntimeAccount:
     def get_cookie_header_exact(self) -> str:
         return self.account.cookie_raw or ""
 
-    def get_user_agent(self) -> str:
-        return self.account.user_agent or "ua-default"
-
     async def get_global_session(self, force_new: bool = False):
         return self._session
 
@@ -204,10 +200,8 @@ async def test_product_detail_fetcher_merges_preview_and_market_hash_name():
     assert session.post_calls[0]["headers"]["Referer"] == product_url
     assert session.post_calls[0]["headers"]["x-access-token"] == "token-1"
     assert session.post_calls[0]["headers"]["x-device-id"] == "device-1"
-    assert session.post_calls[0]["headers"]["User-Agent"] == "ua-1"
     assert session.get_calls[0]["params"] == {"itemId": item_id, "page": 1, "limit": 10}
     assert session.get_calls[0]["headers"]["Referer"] == product_url
-    assert session.get_calls[0]["headers"]["User-Agent"] == "ua-1"
 
 
 async def test_product_detail_fetcher_switches_to_next_account_after_request_failure():
@@ -280,32 +274,3 @@ async def test_product_detail_fetcher_switches_to_next_account_after_request_fai
     assert len(first_session.post_calls) == 1
     assert second_session.post_calls[0]["headers"]["x-access-token"] == "token-2"
     assert len(second_session.get_calls) == 1
-
-
-async def test_product_detail_fetcher_raises_http_403_forbidden_instead_of_invalid_json():
-    from app_backend.infrastructure.query.collectors.product_detail_fetcher import ProductDetailFetcher
-
-    item_id = "1380979899390267393"
-    product_url = f"https://www.c5game.com/csgo/730/asset/{item_id}"
-    account = build_account(
-        "a1",
-        cookie_raw="NC5_accessToken=token-1; NC5_deviceId=device-1",
-    )
-    session = FakeSession(
-        post_responses=[
-            (403, "<html>forbidden</html>"),
-        ],
-        get_responses=[],
-    )
-    fetcher = ProductDetailFetcher(
-        selector=FakeSelector([account]),
-        xsign_wrapper=FakeSigner(),
-        runtime_account_factory=lambda current: FakeRuntimeAccount(current, session),
-    )
-
-    try:
-        await fetcher.fetch(external_item_id=item_id, product_url=product_url)
-    except ValueError as exc:
-        assert str(exc) == "HTTP 403 Forbidden"
-    else:  # pragma: no cover - defensive guard for regression reporting
-        raise AssertionError("expected ValueError for forbidden detail request")

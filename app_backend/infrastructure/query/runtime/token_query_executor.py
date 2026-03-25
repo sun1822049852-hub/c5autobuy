@@ -64,7 +64,7 @@ class TokenQueryExecutor:
 
         headers: OrderedDict[str, str] = OrderedDict()
         headers["Host"] = "www.c5game.com"
-        headers["User-Agent"] = account.get_user_agent()
+        headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:146.0) Gecko/20100101 Firefox/146.0"
         headers["Accept"] = "application/json, text/plain, */*"
         headers["Accept-Language"] = "zh-CN"
         headers["Accept-Encoding"] = "gzip, deflate, br, zstd"

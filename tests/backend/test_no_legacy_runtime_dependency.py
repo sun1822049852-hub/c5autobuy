@@ -11,6 +11,7 @@ LEGACY_GATEWAY_FILES = [
 ]
 CODE_SCAN_TARGETS = [
     PROJECT_ROOT / "app_backend",
+    PROJECT_ROOT / "app_frontend",
     PROJECT_ROOT / "run_app.py",
 ]
 
@@ -49,14 +50,3 @@ def test_runtime_code_has_no_direct_legacy_module_reference():
     ]
 
     assert referenced_files == []
-
-
-def test_pyui_directory_is_removed():
-    assert not (PROJECT_ROOT / "app_frontend").exists()
-
-
-def test_packaging_has_no_pyui_dependency():
-    content = (PROJECT_ROOT / "pyproject.toml").read_text(encoding="utf-8")
-
-    assert "PySide6" not in content
-    assert "app_frontend*" not in content

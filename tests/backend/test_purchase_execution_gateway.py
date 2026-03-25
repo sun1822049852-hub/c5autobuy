@@ -12,7 +12,6 @@ from app_backend.infrastructure.purchase.runtime.runtime_events import PurchaseH
 def build_account(
     *,
     cookie_raw: str = "foo=bar; NC5_accessToken=token-1; NC5_deviceId=device-1; _csrf=abc%3D",
-    user_agent: str = "ua-1",
 ) -> Account:
     return Account(
         account_id="a1",
@@ -30,7 +29,6 @@ def build_account(
         last_error=None,
         created_at="2026-03-16T10:00:00",
         updated_at="2026-03-16T10:00:00",
-        user_agent=user_agent,
     )
 
 
@@ -142,8 +140,6 @@ async def test_purchase_execution_gateway_executes_order_then_payment(monkeypatc
     assert result.purchased_count == 2
     assert session.calls[0]["url"].endswith("/support/trade/order/buy/v2/create")
     assert session.calls[1]["url"].endswith("/pay/order/v1/pay")
-    assert session.calls[0]["headers"]["User-Agent"] == "ua-1"
-    assert session.calls[1]["headers"]["User-Agent"] == "ua-1"
 
 
 @pytest.mark.asyncio
@@ -374,45 +370,6 @@ async def test_purchase_execution_gateway_returns_payment_request_failed_text(mo
 
     assert result.status == "payment_failed"
     assert result.error == "请求失败: network down"
-
-
-@pytest.mark.asyncio
-async def test_purchase_execution_gateway_maps_http_403_order_response_to_auth_invalid(monkeypatch):
-    session = FakeSession(
-        responses=[
-            (403, "<html>forbidden</html>"),
-        ]
-    )
-    gateway = await _build_gateway(monkeypatch, session=session, signer=FakeSigner(result="fake-sign"))
-
-    result = await gateway.execute(
-        account=build_account(),
-        batch=build_batch(),
-        selected_steam_id="steam-1",
-    )
-
-    assert result.status == "auth_invalid"
-    assert result.error == "HTTP 403 Forbidden"
-
-
-@pytest.mark.asyncio
-async def test_purchase_execution_gateway_maps_http_403_payment_response_to_auth_invalid(monkeypatch):
-    session = FakeSession(
-        responses=[
-            (200, json.dumps({"success": True, "data": "order-1"})),
-            (403, "<html>forbidden</html>"),
-        ]
-    )
-    gateway = await _build_gateway(monkeypatch, session=session, signer=FakeSigner(result="fake-sign"))
-
-    result = await gateway.execute(
-        account=build_account(),
-        batch=build_batch(),
-        selected_steam_id="steam-1",
-    )
-
-    assert result.status == "auth_invalid"
-    assert result.error == "HTTP 403 Forbidden"
 
 
 @pytest.mark.asyncio

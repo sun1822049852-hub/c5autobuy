@@ -25,23 +25,6 @@ class Account:
     new_api_enabled: bool = True
     fast_api_enabled: bool = True
     token_enabled: bool = True
-    account_proxy_mode: str | None = None
-    account_proxy_url: str | None = None
-    api_proxy_mode: str | None = None
-    api_proxy_url: str | None = None
-    user_agent: str | None = None
-
-    def __post_init__(self) -> None:
-        account_proxy_mode = self.account_proxy_mode or self.proxy_mode or "direct"
-        account_proxy_url = self.account_proxy_url if self.account_proxy_url is not None else self.proxy_url
-        api_proxy_mode = self.api_proxy_mode or account_proxy_mode
-        api_proxy_url = self.api_proxy_url if self.api_proxy_url is not None else account_proxy_url
-        self.proxy_mode = account_proxy_mode
-        self.proxy_url = account_proxy_url
-        self.account_proxy_mode = account_proxy_mode
-        self.account_proxy_url = account_proxy_url
-        self.api_proxy_mode = api_proxy_mode
-        self.api_proxy_url = api_proxy_url
 
     @property
     def display_name(self) -> str:

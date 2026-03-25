@@ -23,9 +23,3 @@ def test_task_websocket_streams_state_updates(app):
             succeeded = websocket.receive_json()
             assert succeeded["state"] == "succeeded"
             assert succeeded["result"] == {"account_id": "a-1"}
-
-
-def test_task_websocket_treats_conflict_as_terminal_state():
-    from app_backend.api.websocket.tasks import _TERMINAL_STATES
-
-    assert "conflict" in _TERMINAL_STATES

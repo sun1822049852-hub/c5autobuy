@@ -73,7 +73,20 @@ class PurchaseStatsAggregator:
 
     def enqueue_hit(self, hit: dict[str, Any]) -> None:
         self.start()
-        self._queue.put(("hit", hit))
+        self._queue.put(
+            (
+                "hit",
+                {
+                    "runtime_session_id": self._normalize_optional_str(hit.get("runtime_session_id")),
+                    "query_item_id": self._normalize_optional_str(hit.get("query_item_id")),
+                    "timestamp": self._normalize_optional_str(hit.get("timestamp")),
+                    "mode_type": self._normalize_optional_str(hit.get("mode_type")),
+                    "account_id": self._normalize_optional_str(hit.get("account_id")),
+                    "account_display_name": self._normalize_optional_str(hit.get("account_display_name")),
+                    "product_list": self._normalize_product_list(hit.get("product_list")),
+                },
+            )
+        )
 
     def enqueue_outcome(
         self,
@@ -91,7 +104,7 @@ class PurchaseStatsAggregator:
                     "account_id": self._normalize_optional_str(account_id),
                     "runtime_session_id": self._normalize_optional_str(getattr(batch, "runtime_session_id", None)),
                     "query_item_id": self._normalize_optional_str(getattr(batch, "query_item_id", None)),
-                    "piece_count": len(getattr(batch, "product_list", []) or []),
+                    "piece_count": len(list(getattr(batch, "product_list", []) or [])),
                     "status": str(status or ""),
                     "purchased_count": max(int(purchased_count), 0),
                 },
@@ -151,7 +164,7 @@ class PurchaseStatsAggregator:
             return
         session_key = runtime_session_id or self._runtime_session_id or "__default__"
         query_item_id = self._normalize_optional_str(payload.get("query_item_id")) or ""
-        product_ids = self._extract_product_ids(payload.get("product_list"))
+        product_list = self._normalize_product_list(payload.get("product_list"))
         hit_timestamp = self._normalize_optional_str(payload.get("timestamp"))
         mode_type = self._normalize_optional_str(payload.get("mode_type")) or ""
         account_id = self._normalize_optional_str(payload.get("account_id"))
@@ -160,7 +173,8 @@ class PurchaseStatsAggregator:
         with self._lock:
             item_stats = self._ensure_item_stats(query_item_id)
             matched_in_hit = 0
-            for product_id in product_ids:
+            for product in product_list:
+                product_id = self._normalize_optional_str(product.get("productId"))
                 if not product_id:
                     continue
                 key = (session_key, query_item_id, product_id)
@@ -336,11 +350,11 @@ class PurchaseStatsAggregator:
         return text or None
 
     @staticmethod
-    def _extract_product_ids(value: object) -> list[str]:
+    def _normalize_product_list(value: object) -> list[dict[str, Any]]:
         if not isinstance(value, list):
             return []
         return [
-            str(product.get("productId") or "").strip()
+            dict(product)
             for product in value
             if isinstance(product, dict)
         ]

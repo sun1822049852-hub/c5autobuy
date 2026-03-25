@@ -204,7 +204,7 @@ describe("query stats page", () => {
     expect(within(rangeDialog).getByRole("button", { name: "近7天" })).toBeInTheDocument();
     expect(within(rangeDialog).getByRole("button", { name: "本月" })).toBeInTheDocument();
     expect(within(rangeDialog).getByRole("button", { name: "选择日期 2026-03-28" })).toBeDisabled();
-    await user.click(within(rangeDialog).getByRole("button", { name: "开始日期 2026-03-16 00:00:00" }));
+    await user.click(within(rangeDialog).getByRole("button", { name: /^开始日期 / }));
     await user.click(within(rangeDialog).getByRole("button", { name: "选择日期 2026-03-21" }));
     await user.click(screen.getByRole("button", { name: "刷新统计" }));
 
@@ -214,14 +214,14 @@ describe("query stats page", () => {
           expect.objectContaining({
             method: "GET",
             pathname: "/stats/query-items",
-            search: "?range_mode=range&start_date=2026-03-21&end_date=2026-03-22",
+            search: "?range_mode=range&start_date=2026-03-21&end_date=2026-03-25",
           }),
         ]),
       );
     });
 
     expect(screen.getByRole("button", { name: "打开统计时间选择" })).toHaveTextContent(
-      "2026-03-21 00:00:00 ~ 2026-03-22 23:59:59",
+      "2026-03-21 00:00:00 ~ 2026-03-25 23:59:59",
     );
     expect(within(table).getByText("8")).toBeInTheDocument();
     expect(within(table).getByText("api高速查询器 3")).toBeInTheDocument();

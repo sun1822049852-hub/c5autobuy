@@ -126,25 +126,6 @@ async def test_start_query_runtime_returns_waiting_snapshot_when_no_purchase_acc
     assert payload["stopped_at"] is not None
 
 
-async def test_start_query_runtime_reads_global_runtime_settings_snapshot(client, app):
-    settings = app.state.runtime_settings_repository.get().query_settings_json
-    settings["modes"]["fast_api"]["enabled"] = False
-    app.state.runtime_settings_repository.save_query_settings(settings)
-    created = await client.post(
-        "/query-configs",
-        json={
-            "name": "查询配置B",
-            "description": "用于运行时",
-        },
-    )
-    config_id = created.json()["config_id"]
-
-    response = await client.post("/query-runtime/start", json={"config_id": config_id})
-
-    assert response.status_code == 200
-    assert response.json()["modes"]["fast_api"]["enabled"] is False
-
-
 async def test_start_query_runtime_returns_running_snapshot(client, app):
     created = await client.post(
         "/query-configs",

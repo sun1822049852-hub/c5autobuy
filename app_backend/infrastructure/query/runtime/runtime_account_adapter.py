@@ -4,8 +4,6 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import unquote
 
-from app_backend.infrastructure.c5.user_agent import get_effective_user_agent
-
 try:
     import aiohttp
 except ModuleNotFoundError:  # pragma: no cover - optional dependency in unit tests
@@ -42,24 +40,12 @@ class RuntimeAccountAdapter:
         self.current_user_id = str(getattr(account, "account_id"))
         self.current_account_name = getattr(account, "display_name", None) or getattr(account, "default_name", None)
         self.login_status = self.get_x_access_token() is not None
-        self.account_proxies = {self.current_user_id: self.get_account_proxy_url()}
+        self.account_proxies = {self.current_user_id: self._proxy_url_or_none}
 
     @property
     def _proxy_url_or_none(self) -> str | None:
-        return self.get_account_proxy_url()
-
-    def get_account_proxy_url(self) -> str | None:
-        proxy_url = getattr(self._account, "account_proxy_url", None)
-        if proxy_url:
-            return proxy_url
-        legacy_proxy_url = getattr(self._account, "proxy_url", None)
-        return legacy_proxy_url or None
-
-    def get_api_proxy_url(self) -> str | None:
-        proxy_url = getattr(self._account, "api_proxy_url", None)
-        if proxy_url is not None:
-            return proxy_url or None
-        return self.get_account_proxy_url()
+        proxy_url = getattr(self._account, "proxy_url", None)
+        return proxy_url or None
 
     def get_account_id(self) -> str:
         return self.current_user_id
@@ -70,9 +56,6 @@ class RuntimeAccountAdapter:
     def get_api_key(self) -> str | None:
         api_key = getattr(self._account, "api_key", None)
         return api_key or None
-
-    def get_user_agent(self) -> str:
-        return get_effective_user_agent(getattr(self._account, "user_agent", None))
 
     def has_api_key(self) -> bool:
         return bool(self.get_api_key())
@@ -103,7 +86,6 @@ class RuntimeAccountAdapter:
                 limit_per_host=5,
                 timeout_total=30,
                 force_close=False,
-                proxy_url=self.get_account_proxy_url(),
             )
         return self._global_session
 
@@ -117,7 +99,6 @@ class RuntimeAccountAdapter:
                 limit_per_host=3,
                 timeout_total=20,
                 force_close=False,
-                proxy_url=self.get_api_proxy_url(),
             )
         return self._api_session
 
@@ -142,7 +123,6 @@ class RuntimeAccountAdapter:
         limit_per_host: int,
         timeout_total: float,
         force_close: bool,
-        proxy_url: str | None,
     ):
         if aiohttp is None:
             raise RuntimeError("aiohttp is required for runtime sessions")
@@ -156,7 +136,7 @@ class RuntimeAccountAdapter:
         try:
             return aiohttp.ClientSession(
                 connector=connector,
-                proxy=proxy_url,
+                proxy=self._proxy_url_or_none,
                 timeout=timeout,
                 cookie_jar=None,
             )
@@ -166,7 +146,7 @@ class RuntimeAccountAdapter:
                 timeout=timeout,
                 cookie_jar=None,
             )
-            setattr(session, "_default_proxy", proxy_url)
+            setattr(session, "_default_proxy", self._proxy_url_or_none)
             return session
 
     def _get_cookie_value(self, key: str) -> str | None:

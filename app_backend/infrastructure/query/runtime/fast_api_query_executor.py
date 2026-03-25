@@ -39,11 +39,11 @@ class FastApiQueryExecutor:
         }
 
     @staticmethod
-    def build_request_headers(account: RuntimeAccountAdapter) -> dict[str, str]:
+    def build_request_headers() -> dict[str, str]:
         return {
             "Content-Type": "application/json",
             "Accept": "application/json",
-            "User-Agent": account.get_user_agent(),
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         }
 
     async def execute_query(
@@ -79,7 +79,7 @@ class FastApiQueryExecutor:
                 url=self.build_request_url(),
                 params=self.build_request_params(runtime_account),
                 json=self.build_request_body(query_item),
-                headers=self.build_request_headers(runtime_account),
+                headers=self.build_request_headers(),
                 timeout=self._build_request_timeout(),
             ) as response:
                 status = response.status

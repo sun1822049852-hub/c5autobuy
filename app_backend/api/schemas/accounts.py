@@ -5,22 +5,14 @@ from pydantic import BaseModel, ConfigDict
 
 class AccountCreateRequest(BaseModel):
     remark_name: str | None = None
-    account_proxy_mode: str | None = None
-    account_proxy_url: str | None = None
-    api_proxy_mode: str | None = None
-    api_proxy_url: str | None = None
-    proxy_mode: str | None = None
+    proxy_mode: str
     proxy_url: str | None = None
     api_key: str | None = None
 
 
 class AccountUpdateRequest(BaseModel):
     remark_name: str | None = None
-    account_proxy_mode: str | None = None
-    account_proxy_url: str | None = None
-    api_proxy_mode: str | None = None
-    api_proxy_url: str | None = None
-    proxy_mode: str | None = None
+    proxy_mode: str
     proxy_url: str | None = None
     api_key: str | None = None
 
@@ -34,10 +26,6 @@ class AccountResponse(BaseModel):
     display_name: str
     proxy_mode: str
     proxy_url: str | None
-    account_proxy_mode: str
-    account_proxy_url: str | None
-    api_proxy_mode: str
-    api_proxy_url: str | None
     api_key: str | None
     c5_user_id: str | None
     c5_nick_name: str | None

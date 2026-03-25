@@ -10,7 +10,7 @@ from app_backend.domain.models.query_config import QueryItem
 from app_backend.infrastructure.query.runtime.runtime_account_adapter import RuntimeAccountAdapter
 
 
-def build_account(*, user_agent: str = "ua-1") -> Account:
+def build_account() -> Account:
     return Account(
         account_id="a1",
         default_name="account-a1",
@@ -27,7 +27,6 @@ def build_account(*, user_agent: str = "ua-1") -> Account:
         last_error=None,
         created_at="2026-03-16T10:00:00",
         updated_at="2026-03-16T10:00:00",
-        user_agent=user_agent,
     )
 
 
@@ -160,7 +159,6 @@ async def test_token_query_executor_parses_success_response_and_keeps_request_sh
     assert session.calls[0]["headers"]["x-sign"] == "fake-sign"
     assert session.calls[0]["headers"]["x-access-token"] == "token-1"
     assert session.calls[0]["headers"]["x-device-id"] == "device-1"
-    assert session.calls[0]["headers"]["User-Agent"] == "ua-1"
     assert session.calls[0]["headers"]["Cookie"] == build_account().cookie_raw
     assert session.calls[0]["headers"]["Referer"] == build_item().product_url
 

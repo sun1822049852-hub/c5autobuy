@@ -123,6 +123,8 @@ class QueryModeSettingRecord(Base):
     end_minute: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     base_cooldown_min: Mapped[float] = mapped_column(Float, nullable=False, default=0)
     base_cooldown_max: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    item_min_cooldown_seconds: Mapped[float] = mapped_column(Float, nullable=False, default=0.5)
+    item_min_cooldown_strategy: Mapped[str] = mapped_column(Text, nullable=False, default="divide_by_assigned_count")
     random_delay_enabled: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     random_delay_min: Mapped[float] = mapped_column(Float, nullable=False, default=0)
     random_delay_max: Mapped[float] = mapped_column(Float, nullable=False, default=0)
