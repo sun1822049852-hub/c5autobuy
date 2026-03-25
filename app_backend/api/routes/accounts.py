@@ -152,6 +152,7 @@ async def start_login_task(account_id: str, request: Request) -> TaskResponse:
         _repository(request),
         _task_manager(request),
         _login_adapter(request),
+        request.app.state.purchase_runtime_service,
     )
     try:
         task = use_case.execute(account_id)
@@ -169,6 +170,7 @@ async def resolve_login_conflict(
     use_case = ResolveLoginConflictUseCase(
         _repository(request),
         _task_manager(request),
+        request.app.state.purchase_runtime_service,
     )
     try:
         task = use_case.execute(

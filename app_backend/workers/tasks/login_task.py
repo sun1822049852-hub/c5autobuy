@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from app_backend.application.services.post_token_inventory_refresh import (
+    refresh_inventory_after_token_binding,
+)
 from app_backend.domain.enums.account_states import PurchaseCapabilityState, PurchasePoolState
 
 
@@ -12,6 +15,7 @@ async def run_login_task(
     repository,
     task_manager,
     login_adapter,
+    purchase_runtime_service=None,
 ) -> None:
     account = repository.get_account(account_id)
     if account is None:
@@ -68,6 +72,10 @@ async def run_login_task(
             last_login_at=now,
             last_error=None,
             updated_at=now,
+        )
+        refresh_inventory_after_token_binding(
+            account=updated,
+            purchase_runtime_service=purchase_runtime_service,
         )
         task_manager.set_result(
             task_id,

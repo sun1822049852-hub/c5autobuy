@@ -4,6 +4,7 @@ import asyncio
 from datetime import datetime
 
 from app_backend.domain.enums.account_states import PurchaseCapabilityState, PurchasePoolState
+from app_backend.infrastructure.purchase.runtime.runtime_events import InventoryRefreshResult
 from app_backend.infrastructure.selenium.login_adapter import LoginCapture
 
 
@@ -15,6 +16,23 @@ async def _wait_for_task(client, task_id: str, target_state: str) -> dict:
             return payload
         await asyncio.sleep(0.02)
     raise AssertionError(f"任务 {task_id} 未进入状态 {target_state}")
+
+
+class _RecordingRefreshGateway:
+    def __init__(self, result: InventoryRefreshResult | Exception) -> None:
+        self._result = result
+        self.calls: list[dict[str, str | None]] = []
+
+    async def refresh(self, *, account):
+        self.calls.append(
+            {
+                "account_id": account.account_id,
+                "cookie_raw": account.cookie_raw,
+            }
+        )
+        if isinstance(self._result, Exception):
+            raise self._result
+        return self._result
 
 
 async def _create_account(client, *, remark_name: str, proxy_mode: str = "custom", proxy_url: str | None = None, api_key: str | None = None) -> dict:
@@ -170,6 +188,60 @@ async def test_resolve_login_conflict_create_new_account_keeps_old_account(app, 
     assert new_account["cookie_raw"] == "new=create"
 
 
+async def test_resolve_login_conflict_create_new_account_refreshes_inventory_when_token_present(app, client):
+    class FakeLoginAdapter:
+        async def run_login(self, *, proxy_url: str | None, emit_state=None) -> LoginCapture:
+            await emit_state("waiting_for_scan")
+            await emit_state("captured_login_info")
+            await emit_state("waiting_for_browser_close")
+            return LoginCapture(
+                c5_user_id="30030",
+                c5_nick_name="新增带 token 账号",
+                cookie_raw="foo=bar; NC5_accessToken=token-30; NC5_deviceId=device-30",
+            )
+
+    refresh_gateway = _RecordingRefreshGateway(
+        InventoryRefreshResult.success(
+            inventories=[
+                {"steamId": "steam-30", "nickname": "主仓", "inventory_num": 870, "inventory_max": 1000},
+            ]
+        )
+    )
+    app.state.login_adapter = FakeLoginAdapter()
+    app.state.purchase_runtime_service._inventory_refresh_gateway_factory = lambda: refresh_gateway
+    account = await _create_account(
+        client,
+        remark_name="保留旧账号",
+        proxy_url="http://127.0.0.1:9013",
+        api_key="api-keep",
+    )
+    _bind_existing_account(app, account["account_id"], c5_user_id="10001", c5_nick_name="旧绑定")
+
+    start_response = await client.post(f"/accounts/{account['account_id']}/login")
+    conflict_payload = await _wait_for_task(client, start_response.json()["task_id"], "conflict")
+
+    resolve_response = await client.post(
+        f"/accounts/{account['account_id']}/login/resolve",
+        json={
+            "task_id": conflict_payload["task_id"],
+            "action": "create_new_account",
+        },
+    )
+
+    assert resolve_response.status_code == 200
+    resolved_task = resolve_response.json()
+    new_account_id = resolved_task["result"]["account_id"]
+    assert refresh_gateway.calls == [
+        {
+            "account_id": new_account_id,
+            "cookie_raw": "foo=bar; NC5_accessToken=token-30; NC5_deviceId=device-30",
+        }
+    ]
+    snapshot = app.state.purchase_runtime_service._inventory_snapshot_repository.get(new_account_id)
+    assert snapshot is not None
+    assert snapshot.inventories[0]["steamId"] == "steam-30"
+
+
 async def test_resolve_login_conflict_replace_with_new_account_recreates_account(app, client):
     class FakeLoginAdapter:
         async def run_login(self, *, proxy_url: str | None, emit_state=None) -> LoginCapture:
@@ -219,3 +291,52 @@ async def test_resolve_login_conflict_replace_with_new_account_recreates_account
     assert new_account["c5_user_id"] == "40004"
     assert new_account["c5_nick_name"] == "替换账号"
     assert new_account["cookie_raw"] == "new=replace"
+
+
+async def test_resolve_login_conflict_replace_with_new_account_keeps_success_when_inventory_refresh_fails(
+    app,
+    client,
+):
+    class FakeLoginAdapter:
+        async def run_login(self, *, proxy_url: str | None, emit_state=None) -> LoginCapture:
+            await emit_state("waiting_for_scan")
+            await emit_state("captured_login_info")
+            await emit_state("waiting_for_browser_close")
+            return LoginCapture(
+                c5_user_id="40040",
+                c5_nick_name="替换带 token 账号",
+                cookie_raw="foo=bar; NC5_accessToken=token-40; NC5_deviceId=device-40",
+            )
+
+    refresh_gateway = _RecordingRefreshGateway(RuntimeError("inventory refresh boom"))
+    app.state.login_adapter = FakeLoginAdapter()
+    app.state.purchase_runtime_service._inventory_refresh_gateway_factory = lambda: refresh_gateway
+    account = await _create_account(
+        client,
+        remark_name="将被替换",
+        proxy_url="http://127.0.0.1:9014",
+        api_key="api-replace",
+    )
+    _bind_existing_account(app, account["account_id"], c5_user_id="10001", c5_nick_name="旧绑定")
+
+    start_response = await client.post(f"/accounts/{account['account_id']}/login")
+    conflict_payload = await _wait_for_task(client, start_response.json()["task_id"], "conflict")
+
+    resolve_response = await client.post(
+        f"/accounts/{account['account_id']}/login/resolve",
+        json={
+            "task_id": conflict_payload["task_id"],
+            "action": "replace_with_new_account",
+        },
+    )
+
+    assert resolve_response.status_code == 200
+    resolved_task = resolve_response.json()
+    new_account_id = resolved_task["result"]["account_id"]
+    assert resolved_task["state"] == "succeeded"
+    assert refresh_gateway.calls == [
+        {
+            "account_id": new_account_id,
+            "cookie_raw": "foo=bar; NC5_accessToken=token-40; NC5_deviceId=device-40",
+        }
+    ]

@@ -2,14 +2,18 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from app_backend.application.services.post_token_inventory_refresh import (
+    refresh_inventory_after_token_binding,
+)
 from app_backend.application.use_cases.create_account import CreateAccountUseCase
 from app_backend.domain.enums.account_states import PurchaseCapabilityState, PurchasePoolState
 
 
 class ResolveLoginConflictUseCase:
-    def __init__(self, repository, task_manager) -> None:
+    def __init__(self, repository, task_manager, purchase_runtime_service=None) -> None:
         self._repository = repository
         self._task_manager = task_manager
+        self._purchase_runtime_service = purchase_runtime_service
 
     def execute(
         self,
@@ -62,6 +66,10 @@ class ResolveLoginConflictUseCase:
             last_login_at=now,
             last_error=None,
             updated_at=now,
+        )
+        refresh_inventory_after_token_binding(
+            account=bound_account,
+            purchase_runtime_service=self._purchase_runtime_service,
         )
 
         self._task_manager.clear_pending_conflict(task_id)
