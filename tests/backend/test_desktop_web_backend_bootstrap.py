@@ -63,18 +63,27 @@ def test_create_app_keeps_account_center_services_wired(tmp_path: Path):
     assert app.state.account_repository is not None
     assert app.state.purchase_runtime_service is not None
     assert app.state.query_runtime_service is not None
+    assert app.state.purchase_ui_preferences_repository is not None
+    assert app.state.stats_repository is not None
+    assert app.state.stats_pipeline is not None
+    assert getattr(app.state.purchase_runtime_service._stats_sink, "__self__", None) is app.state.stats_pipeline
+    assert getattr(app.state.purchase_runtime_service._stats_sink, "__name__", "") == "enqueue"
+    assert getattr(app.state.query_runtime_service._stats_sink, "__self__", None) is app.state.stats_pipeline
+    assert getattr(app.state.query_runtime_service._stats_sink, "__name__", "") == "enqueue"
 
 
-def test_create_app_bootstraps_runtime_settings_table(tmp_path: Path):
+def test_create_app_creates_stats_and_ui_preference_tables(tmp_path: Path):
     db_path = tmp_path / "desktop-web.db"
-
     create_app(db_path=db_path)
-    inspector = inspect(build_engine(db_path))
+    engine = build_engine(db_path)
+    inspector = inspect(engine)
 
-    assert "runtime_settings" in inspector.get_table_names()
-    assert {column["name"] for column in inspector.get_columns("runtime_settings")} == {
-        "settings_id",
-        "query_settings_json",
-        "purchase_settings_json",
-        "updated_at",
-    }
+    table_names = set(inspector.get_table_names())
+
+    assert "purchase_ui_preferences" in table_names
+    assert "query_item_stats_total" in table_names
+    assert "query_item_stats_daily" in table_names
+    assert "query_item_rule_stats_total" in table_names
+    assert "query_item_rule_stats_daily" in table_names
+    assert "account_capability_stats_total" in table_names
+    assert "account_capability_stats_daily" in table_names

@@ -19,15 +19,19 @@ class AccountPurchaseWorker:
         self._execution_gateway = execution_gateway
 
     async def process(self, batch) -> PurchaseWorkerOutcome:
+        submitted_count = self._resolve_submitted_count(batch)
         selected_steam_id = self._inventory_state.selected_steam_id
         if not selected_steam_id:
             return PurchaseWorkerOutcome(
                 status="no_inventory",
                 purchased_count=0,
+                submitted_count=submitted_count,
                 selected_steam_id=None,
                 pool_state=PurchasePoolState.PAUSED_NO_INVENTORY,
                 capability_state=getattr(self._account, "purchase_capability_state", PurchaseCapabilityState.UNBOUND),
                 requires_remote_refresh=True,
+                create_order_latency_ms=None,
+                submit_order_latency_ms=None,
                 error="No selected inventory",
             )
 
@@ -36,15 +40,19 @@ class AccountPurchaseWorker:
             batch=batch,
             selected_steam_id=selected_steam_id,
         )
+        submitted_count = self._resolve_submitted_count(batch, result=result)
 
         if result.status == "auth_invalid":
             return PurchaseWorkerOutcome(
                 status="auth_invalid",
                 purchased_count=0,
+                submitted_count=submitted_count,
                 selected_steam_id=selected_steam_id,
                 pool_state=PurchasePoolState.PAUSED_AUTH_INVALID,
                 capability_state=PurchaseCapabilityState.EXPIRED,
                 requires_remote_refresh=False,
+                create_order_latency_ms=getattr(result, "create_order_latency_ms", None),
+                submit_order_latency_ms=getattr(result, "submit_order_latency_ms", None),
                 error=result.error,
             )
 
@@ -53,6 +61,7 @@ class AccountPurchaseWorker:
             return PurchaseWorkerOutcome(
                 status="success",
                 purchased_count=result.purchased_count,
+                submitted_count=submitted_count,
                 selected_steam_id=self._inventory_state.selected_steam_id,
                 pool_state=(
                     PurchasePoolState.PAUSED_NO_INVENTORY
@@ -61,15 +70,27 @@ class AccountPurchaseWorker:
                 ),
                 capability_state=getattr(self._account, "purchase_capability_state", PurchaseCapabilityState.BOUND),
                 requires_remote_refresh=transition.requires_remote_refresh,
+                create_order_latency_ms=getattr(result, "create_order_latency_ms", None),
+                submit_order_latency_ms=getattr(result, "submit_order_latency_ms", None),
                 error=None,
             )
 
         return PurchaseWorkerOutcome(
             status=result.status,
             purchased_count=int(result.purchased_count),
+            submitted_count=submitted_count,
             selected_steam_id=selected_steam_id,
             pool_state=getattr(self._account, "purchase_pool_state", PurchasePoolState.NOT_CONNECTED),
             capability_state=getattr(self._account, "purchase_capability_state", PurchaseCapabilityState.UNBOUND),
             requires_remote_refresh=False,
+            create_order_latency_ms=getattr(result, "create_order_latency_ms", None),
+            submit_order_latency_ms=getattr(result, "submit_order_latency_ms", None),
             error=result.error,
         )
+
+    @staticmethod
+    def _resolve_submitted_count(batch, *, result=None) -> int:
+        resolved = int(getattr(result, "submitted_count", 0) or 0)
+        if resolved > 0:
+            return resolved
+        return len(list(getattr(batch, "product_list", []) or []))

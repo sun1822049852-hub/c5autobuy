@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from app_backend.domain.models.query_config import QueryItem
-from app_backend.domain.models.runtime_settings import QueryItemPacingSetting
 
 
 @dataclass(slots=True)
@@ -20,12 +19,18 @@ class QueryItemScheduler:
         query_items: list[QueryItem],
         *,
         min_cooldown_seconds: float = 0.1,
-        item_pacing: QueryItemPacingSetting | None = None,
+        item_min_cooldown_seconds: float = 0.5,
+        item_min_cooldown_strategy: str = "divide_by_assigned_count",
     ) -> None:
         self._query_items = list(query_items)
         self._min_cooldown_seconds = max(float(min_cooldown_seconds), 0.0)
+        self._item_min_cooldown_seconds = 0.5
+        self._item_min_cooldown_strategy = "divide_by_assigned_count"
         self._lock = asyncio.Lock()
-        self.apply_pacing_settings(item_pacing)
+        self.apply_item_cooldown_settings(
+            item_min_cooldown_seconds=item_min_cooldown_seconds,
+            item_min_cooldown_strategy=item_min_cooldown_strategy,
+        )
         self.reset()
 
     async def reserve_next(self, *, now: float | datetime | int | None = None) -> QueryItemReservation | None:
@@ -60,13 +65,23 @@ class QueryItemScheduler:
             for query_item in self._query_items
         }
 
-    def apply_pacing_settings(self, item_pacing: QueryItemPacingSetting | None) -> None:
-        if item_pacing is None:
-            self._dynamic_cooldown_strategy = "fixed_divided_by_actual_allocated_workers"
-            self._dynamic_cooldown_fixed_seconds = 0.5
-            return
-        self._dynamic_cooldown_strategy = str(item_pacing.strategy or "")
-        self._dynamic_cooldown_fixed_seconds = max(float(item_pacing.fixed_seconds), 0.0)
+    def apply_mode_setting(self, mode_setting) -> None:
+        self.apply_item_cooldown_settings(
+            item_min_cooldown_seconds=getattr(mode_setting, "item_min_cooldown_seconds", 0.5),
+            item_min_cooldown_strategy=getattr(mode_setting, "item_min_cooldown_strategy", "divide_by_assigned_count"),
+        )
+
+    def apply_item_cooldown_settings(
+        self,
+        *,
+        item_min_cooldown_seconds: float,
+        item_min_cooldown_strategy: str,
+    ) -> None:
+        self._item_min_cooldown_seconds = max(float(item_min_cooldown_seconds), 0.0)
+        strategy = str(item_min_cooldown_strategy or "divide_by_assigned_count")
+        if strategy not in {"fixed", "divide_by_assigned_count"}:
+            strategy = "divide_by_assigned_count"
+        self._item_min_cooldown_strategy = strategy
 
     def _reserve_item_locked(
         self,
@@ -83,10 +98,10 @@ class QueryItemScheduler:
     def _compute_cooldown_seconds(self, actual_assigned_count: int | None) -> float:
         if actual_assigned_count is None:
             return self._min_cooldown_seconds
+        if self._item_min_cooldown_strategy == "fixed":
+            return self._item_min_cooldown_seconds
         count = max(int(actual_assigned_count), 1)
-        if self._dynamic_cooldown_strategy == "fixed_divided_by_actual_allocated_workers":
-            return self._dynamic_cooldown_fixed_seconds / count
-        return self._min_cooldown_seconds
+        return self._item_min_cooldown_seconds / count
 
     @staticmethod
     def _to_seconds(value: float | datetime | int | None) -> float:

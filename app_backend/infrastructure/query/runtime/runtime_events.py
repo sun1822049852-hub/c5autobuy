@@ -33,5 +33,8 @@ class QueryExecutionEvent:
     product_list: list[dict[str, Any]] = field(default_factory=list)
     total_price: float | None = None
     total_wear_sum: float | None = None
+    detail_min_wear: float | None = None
+    detail_max_wear: float | None = None
+    max_price: float | None = None
     latency_ms: float | None = None
     error: str | None = None

@@ -14,23 +14,9 @@ function formatSourceModeLabel(source) {
 }
 
 
-function saveFeedbackClassName(saveState) {
-  if (!saveState?.message) {
-    return "purchase-item-panel__save-feedback";
-  }
-
-  if (saveState.status === "error" || saveState.status === "failed_after_save") {
-    return "purchase-item-panel__save-feedback is-danger";
-  }
-
-  return "purchase-item-panel__save-feedback is-success";
-}
-
-
 export function PurchaseItemPanel({
-  onAllocationChange,
-  onManualPausedChange,
-  onSave,
+  onDecreaseAllocation,
+  onIncreaseAllocation,
   row,
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -45,8 +31,7 @@ export function PurchaseItemPanel({
     { label: "成功", value: row.purchase_success_count ?? 0 },
     { label: "失败", value: row.purchase_failed_count ?? 0 },
   ];
-  const saveState = row.saveState || null;
-  const isSaving = Boolean(saveState?.pending);
+  const modeRows = Array.isArray(row.mode_rows) ? row.mode_rows : [];
 
   return (
     <section className="purchase-item-panel">
@@ -104,50 +89,28 @@ export function PurchaseItemPanel({
           <div className="purchase-item-panel__detail-card">
             <div className="purchase-item-panel__detail-title">查询分配</div>
             {isPreview ? (
-              <div className="purchase-item-panel__detail-copy">选择真实配置后，这里会显示查询分配与热应用控制。</div>
+              <div className="purchase-item-panel__detail-copy">选择真实配置后，这里会显示运行时查询分配。</div>
             ) : (
-              <>
-                <div className="purchase-item-panel__allocation-grid">
-                  {MODE_ORDER.map((modeType) => (
+              <div className="purchase-item-panel__allocation-grid">
+                {MODE_ORDER.map((modeType) => {
+                  const modeRow = modeRows.find((entry) => entry.mode_type === modeType);
+                  return (
                     <PurchaseModeAllocationInput
                       key={modeType}
-                      disabled={isSaving}
+                      actualCount={modeRow?.actual_dedicated_count ?? 0}
+                      canDecrease={Boolean(modeRow?.can_decrease)}
+                      canIncrease={Boolean(modeRow?.can_increase)}
+                      disabled={false}
                       modeType={modeType}
-                      overflowCount={row.remainingByMode?.[modeType]?.overflowCount ?? 0}
-                      remainingCount={row.remainingByMode?.[modeType]?.remainingCount ?? 0}
-                      statusMessage={row.statusByMode?.[modeType]?.status_message ?? "未运行"}
-                      value={row.draft?.modeAllocations?.[modeType] ?? 0}
-                      onChange={(value) => onAllocationChange?.(row.query_item_id, modeType, value)}
+                      sharedAvailableCount={modeRow?.shared_available_count ?? 0}
+                      statusMessage={modeRow?.status_message ?? "未运行"}
+                      targetCount={modeRow?.target_dedicated_count ?? 0}
+                      onDecrease={() => onDecreaseAllocation?.(row.query_item_id, modeType)}
+                      onIncrease={() => onIncreaseAllocation?.(row.query_item_id, modeType)}
                     />
-                  ))}
+                  );
+                })}
                 </div>
-
-                <label className="purchase-item-panel__pause-toggle">
-                  <input
-                    type="checkbox"
-                    checked={Boolean(row.draft?.manualPaused)}
-                    aria-label={`${itemName} 手动暂停`}
-                    disabled={isSaving}
-                    onChange={(event) => onManualPausedChange?.(row.query_item_id, event.target.checked)}
-                  />
-                  <span>手动暂停该商品</span>
-                </label>
-
-                {saveState?.message ? (
-                  <div className={saveFeedbackClassName(saveState)}>{saveState.message}</div>
-                ) : null}
-
-                <div className="purchase-item-panel__actions">
-                  <button
-                    className="accent-button purchase-item-panel__save-button"
-                    disabled={isSaving}
-                    type="button"
-                    onClick={() => onSave?.(row.query_item_id)}
-                  >
-                    {isSaving ? "保存中..." : "保存分配"}
-                  </button>
-                </div>
-              </>
             )}
           </div>
         </div>

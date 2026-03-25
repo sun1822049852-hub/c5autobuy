@@ -3,17 +3,14 @@ from __future__ import annotations
 import asyncio
 import threading
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime
 from inspect import Parameter, signature
 from uuid import uuid4
 
 from app_backend.domain.enums.account_states import PurchaseCapabilityState, PurchasePoolState
+from app_backend.domain.enums.query_modes import QueryMode
 from app_backend.domain.models.query_config import QueryConfig, QueryModeSetting
-from app_backend.domain.models.runtime_settings import (
-    build_default_query_settings_json,
-    build_query_settings_from_mode_settings,
-    build_runtime_mode_settings,
-)
 from app_backend.infrastructure.query.runtime.runtime_account_adapter import RuntimeAccountAdapter
 from app_backend.infrastructure.query.runtime.query_task_runtime import QueryTaskRuntime
 
@@ -25,18 +22,21 @@ class QueryRuntimeService:
         self,
         *,
         query_config_repository,
+        query_settings_repository=None,
         account_repository,
         runtime_factory: RuntimeFactory | None = None,
         purchase_runtime_service=None,
-        runtime_settings_repository=None,
+        stats_sink=None,
     ) -> None:
         self._query_config_repository = query_config_repository
+        self._query_settings_repository = query_settings_repository
         self._account_repository = account_repository
         self._runtime_factory = runtime_factory or self._build_default_runtime
         self._purchase_runtime_service = purchase_runtime_service
-        self._runtime_settings_repository = runtime_settings_repository
+        self._stats_sink = stats_sink
         self._state_lock = threading.RLock()
         self._runtime = None
+        self._retained_runtime = None
         self._runtime_accounts: dict[str, RuntimeAccountAdapter] = {}
         self._pending_resume_config_id: str | None = None
         self._pending_resume_config_name: str | None = None
@@ -61,13 +61,16 @@ class QueryRuntimeService:
                 config = self._query_config_repository.get_config(config_id)
                 if config is None:
                     return False, "已有查询任务在运行"
+                config = self._resolve_runtime_config(config)
                 runtime_to_stop = self._runtime
                 self._runtime = None
+                self._clear_retained_runtime_locked()
                 self._clear_pending_resume_state()
             else:
                 config = self._query_config_repository.get_config(config_id)
                 if config is None:
                     return False, "查询配置不存在"
+                config = self._resolve_runtime_config(config)
 
         if runtime_to_stop is not None:
             runtime_to_stop.stop()
@@ -86,25 +89,38 @@ class QueryRuntimeService:
             purchase_started, purchase_message = self._ensure_purchase_runtime_started()
             if not purchase_started:
                 return False, purchase_message
-            if allow_pending_resume:
+            retained_runtime = self._get_retained_runtime_locked(config_id)
+            if retained_runtime is not None:
+                runtime_session_id = (
+                    self._extract_runtime_session_id(retained_runtime)
+                    or self._pending_resume_runtime_session_id
+                    or self._build_runtime_session_id()
+                )
+            elif allow_pending_resume:
                 runtime_session_id = self._pending_resume_runtime_session_id
             else:
                 runtime_session_id = self._pending_resume_runtime_session_id or self._build_runtime_session_id()
+            if not allow_pending_resume:
                 self._bind_purchase_runtime_session(config=config, runtime_session_id=runtime_session_id)
             if not self._purchase_runtime_has_available_accounts():
                 self._mark_waiting_for_purchase_recovery(config, runtime_session_id=runtime_session_id)
                 return True, "查询任务已启动，等待购买账号恢复"
 
-            accounts = list(self._account_repository.list_accounts())
-            hit_sink = self._resolve_hit_sink()
-            runtime = self._create_runtime(
-                config,
-                accounts,
-                hit_sink=hit_sink,
-                runtime_session_id=runtime_session_id,
-            )
+            preserve_allocation_state = retained_runtime is not None
+            if retained_runtime is not None:
+                runtime = retained_runtime
+            else:
+                accounts = list(self._account_repository.list_accounts())
+                hit_sink = self._resolve_hit_sink()
+                runtime = self._create_runtime(
+                    config,
+                    accounts,
+                    hit_sink=hit_sink,
+                    runtime_session_id=runtime_session_id,
+                )
             self._runtime = runtime
-            runtime.start()
+            self._retained_runtime = runtime
+            self._start_runtime(runtime, preserve_allocation_state=preserve_allocation_state)
             self._clear_pending_resume_state()
             return True, "查询任务已启动"
 
@@ -136,6 +152,7 @@ class QueryRuntimeService:
         config = self._query_config_repository.get_config(config_id)
         if config is None:
             raise KeyError(config_id)
+        config = self._resolve_runtime_config(config)
 
         if all(str(item.query_item_id) != str(query_item_id) for item in config.items):
             raise KeyError(query_item_id)
@@ -192,6 +209,63 @@ class QueryRuntimeService:
             query_item_id=query_item_id,
         )
 
+    def apply_manual_allocations(
+        self,
+        *,
+        config_id: str,
+        items: list[dict[str, object]],
+    ) -> dict[str, object]:
+        config = self._query_config_repository.get_config(config_id)
+        if config is None:
+            raise KeyError("查询配置不存在")
+        config = self._resolve_runtime_config(config)
+
+        known_item_ids = {
+            str(item.query_item_id)
+            for item in config.items
+        }
+        for raw_item in items:
+            if not isinstance(raw_item, dict):
+                continue
+            query_item_id = str(raw_item.get("query_item_id") or "").strip()
+            if query_item_id and query_item_id not in known_item_ids:
+                raise KeyError("查询商品不存在")
+
+        with self._state_lock:
+            active_config_id = self._get_active_config_id_locked()
+            runtime_is_running = self._has_running_runtime_locked()
+            runtime = self._runtime if runtime_is_running else None
+            if active_config_id != config_id or not runtime_is_running or runtime is None:
+                raise ValueError("当前配置未在运行，无法提交运行时分配")
+
+        apply_manual_allocations = getattr(runtime, "apply_manual_allocations", None)
+        if not callable(apply_manual_allocations):
+            raise ValueError("当前运行时不支持运行时分配调整")
+        apply_manual_allocations(config=config, items=list(items))
+        return self.get_status()
+
+    def apply_query_settings(self) -> None:
+        with self._state_lock:
+            active_config_id = self._get_active_config_id_locked()
+            if not active_config_id:
+                return
+            config = self._query_config_repository.get_config(active_config_id)
+            if config is None:
+                return
+            runtime_config = self._resolve_runtime_config(config)
+            runtime = self._runtime or self._retained_runtime
+            if self._has_pending_resume_state():
+                self._pending_resume_config_name = runtime_config.name
+        if runtime is None:
+            return
+        apply_query_settings = getattr(runtime, "apply_query_settings", None)
+        if not callable(apply_query_settings):
+            return
+        try:
+            apply_query_settings(config=runtime_config)
+        except Exception:
+            return
+
     def _has_running_runtime(self) -> bool:
         with self._state_lock:
             return self._has_running_runtime_locked()
@@ -201,6 +275,18 @@ class QueryRuntimeService:
             return False
         snapshot = self._runtime.snapshot()
         return bool(snapshot.get("running"))
+
+    def _get_retained_runtime_locked(self, config_id: str) -> object | None:
+        runtime = self._retained_runtime
+        if runtime is None:
+            return None
+        retained_config_id = self._extract_runtime_config_id(runtime)
+        if retained_config_id != str(config_id):
+            return None
+        return runtime
+
+    def _clear_retained_runtime_locked(self) -> None:
+        self._retained_runtime = None
 
     def _has_pending_resume_state(self) -> bool:
         return bool(self._pending_resume_config_id)
@@ -259,7 +345,8 @@ class QueryRuntimeService:
     def _build_waiting_snapshot(self) -> dict[str, object]:
         config_id = self._pending_resume_config_id
         config = self._query_config_repository.get_config(config_id) if config_id else None
-        mode_settings = self._build_effective_mode_settings(config)
+        if config is not None:
+            config = self._resolve_runtime_config(config)
         snapshot = {
             "running": False,
             "config_id": config_id,
@@ -275,11 +362,14 @@ class QueryRuntimeService:
             "recent_events": [],
             "item_rows": self._build_default_item_rows(config),
         }
-        for mode_setting in mode_settings:
-            snapshot["modes"][mode_setting.mode_type] = self._build_default_mode_snapshot(mode_setting)
+        if config is not None:
+            for mode_setting in config.mode_settings:
+                snapshot["modes"][mode_setting.mode_type] = self._build_default_mode_snapshot(mode_setting)
         return snapshot
 
     def _normalize_snapshot(self, snapshot: dict[str, object], config: QueryConfig | None) -> dict[str, object]:
+        if config is not None:
+            config = self._resolve_runtime_config(config)
         normalized = {
             "running": bool(snapshot.get("running")),
             "config_id": snapshot.get("config_id"),
@@ -301,9 +391,10 @@ class QueryRuntimeService:
                 if isinstance(mode_snapshot, dict):
                     normalized["modes"][str(mode_type)] = self._normalize_mode_snapshot(mode_snapshot)
 
-        for mode_setting in self._build_effective_mode_settings(config):
-            if mode_setting.mode_type not in normalized["modes"]:
-                normalized["modes"][mode_setting.mode_type] = self._build_default_mode_snapshot(mode_setting)
+        if config is not None:
+            for mode_setting in config.mode_settings:
+                if mode_setting.mode_type not in normalized["modes"]:
+                    normalized["modes"][mode_setting.mode_type] = self._build_default_mode_snapshot(mode_setting)
         return normalized
 
     @staticmethod
@@ -366,19 +457,19 @@ class QueryRuntimeService:
             "last_error": None,
         }
 
-    def _build_default_item_rows(self, config: QueryConfig | None) -> list[dict[str, object]]:
+    @staticmethod
+    def _build_default_item_rows(config: QueryConfig | None) -> list[dict[str, object]]:
         if config is None:
             return []
 
         rows: list[dict[str, object]] = []
-        mode_settings = self._build_effective_mode_settings(config)
         for item in config.items:
             allocation_map = {
                 allocation.mode_type: int(allocation.target_dedicated_count)
                 for allocation in item.mode_allocations
             }
             modes: dict[str, dict[str, object]] = {}
-            for mode_setting in mode_settings:
+            for mode_setting in config.mode_settings:
                 target = int(allocation_map.get(mode_setting.mode_type, 0))
                 if item.manual_paused:
                     status = "manual_paused"
@@ -392,6 +483,7 @@ class QueryRuntimeService:
                     "actual_dedicated_count": 0,
                     "status": status,
                     "status_message": status_message,
+                    "shared_available_count": 0,
                 }
             rows.append(
                 {
@@ -403,25 +495,60 @@ class QueryRuntimeService:
                     "detail_min_wear": item.detail_min_wear,
                     "detail_max_wear": item.detail_max_wear,
                     "manual_paused": bool(item.manual_paused),
-                    "query_count": 0,
-                    "modes": modes,
-                }
+            "query_count": 0,
+            "modes": modes,
+        }
             )
         return rows
 
-    def _build_effective_mode_settings(self, config: QueryConfig | None) -> list[QueryModeSetting]:
-        config_id = str(getattr(config, "config_id", "runtime") or "runtime")
-        return build_runtime_mode_settings(
-            self._get_effective_query_settings(config),
-            config_id=config_id,
-        )
-
-    def _get_effective_query_settings(self, config: QueryConfig | None) -> dict[str, object]:
-        if self._runtime_settings_repository is not None:
-            return self._runtime_settings_repository.get().query_settings_json
-        if config is not None:
-            return build_query_settings_from_mode_settings(config.mode_settings)
-        return build_default_query_settings_json()
+    def _resolve_runtime_config(self, config: QueryConfig) -> QueryConfig:
+        if self._query_settings_repository is None:
+            return config
+        get_settings = getattr(self._query_settings_repository, "get_settings", None)
+        if not callable(get_settings):
+            return config
+        settings = get_settings()
+        if settings is None:
+            return config
+        settings_modes = {
+            str(mode.mode_type): mode
+            for mode in getattr(settings, "modes", []) or []
+        }
+        if not settings_modes:
+            return config
+        now = datetime.now().isoformat(timespec="seconds")
+        runtime_modes: list[QueryModeSetting] = []
+        for mode_type in QueryMode.ALL:
+            mode = settings_modes.get(mode_type)
+            if mode is None:
+                continue
+            runtime_modes.append(
+                QueryModeSetting(
+                    mode_setting_id=f"global:{mode_type}",
+                    config_id=str(config.config_id),
+                    mode_type=mode_type,
+                    enabled=bool(mode.enabled),
+                    window_enabled=bool(mode.window_enabled),
+                    start_hour=int(mode.start_hour),
+                    start_minute=int(mode.start_minute),
+                    end_hour=int(mode.end_hour),
+                    end_minute=int(mode.end_minute),
+                    base_cooldown_min=float(mode.base_cooldown_min),
+                    base_cooldown_max=float(mode.base_cooldown_max),
+                    item_min_cooldown_seconds=float(getattr(mode, "item_min_cooldown_seconds", 0.5)),
+                    item_min_cooldown_strategy=str(
+                        getattr(mode, "item_min_cooldown_strategy", "divide_by_assigned_count")
+                    ),
+                    random_delay_enabled=bool(mode.random_delay_enabled),
+                    random_delay_min=float(mode.random_delay_min),
+                    random_delay_max=float(mode.random_delay_max),
+                    created_at=getattr(mode, "created_at", now),
+                    updated_at=getattr(mode, "updated_at", now),
+                )
+            )
+        if not runtime_modes:
+            return config
+        return replace(config, mode_settings=runtime_modes)
 
     @staticmethod
     def _normalize_recent_events(raw_events: object) -> list[dict[str, object]]:
@@ -485,6 +612,7 @@ class QueryRuntimeService:
                         "actual_dedicated_count": int(raw_mode.get("actual_dedicated_count", 0)),
                         "status": str(raw_mode.get("status") or ""),
                         "status_message": str(raw_mode.get("status_message") or ""),
+                        "shared_available_count": int(raw_mode.get("shared_available_count", 0)),
                     }
             normalized.append(
                 {
@@ -570,7 +698,7 @@ class QueryRuntimeService:
         runtime_account_provider=None,
         hit_sink=None,
         event_sink=None,
-        query_settings_json=None,
+        stats_sink=None,
     ) -> QueryTaskRuntime:
         return QueryTaskRuntime(
             config,
@@ -579,12 +707,11 @@ class QueryRuntimeService:
             runtime_account_provider=runtime_account_provider,
             hit_sink=hit_sink,
             event_sink=event_sink,
-            query_settings_json=query_settings_json,
+            stats_sink=stats_sink,
         )
 
     def _create_runtime(self, config, accounts: list[object], *, hit_sink=None, runtime_session_id: str | None = None):
         kwargs = {}
-        query_settings_json = self._get_effective_query_settings(config)
         if runtime_session_id is not None and self._runtime_factory_accepts_parameter(
             "runtime_session_id",
             allow_var_keyword=False,
@@ -595,14 +722,15 @@ class QueryRuntimeService:
         event_sink = self._resolve_event_sink()
         if event_sink is not None and self._runtime_factory_accepts_parameter("event_sink"):
             kwargs["event_sink"] = event_sink
+        stats_sink = self._resolve_stats_sink()
+        if stats_sink is not None and self._runtime_factory_accepts_parameter("stats_sink"):
+            kwargs["stats_sink"] = stats_sink
         runtime_account_provider = self._resolve_runtime_account_provider()
         if runtime_account_provider is not None and self._runtime_factory_accepts_parameter(
             "runtime_account_provider",
             allow_var_keyword=False,
         ):
             kwargs["runtime_account_provider"] = runtime_account_provider
-        if self._runtime_factory_accepts_parameter("query_settings_json", allow_var_keyword=False):
-            kwargs["query_settings_json"] = query_settings_json
         try:
             return self._runtime_factory(config, accounts, **kwargs)
         except TypeError as exc:
@@ -610,24 +738,15 @@ class QueryRuntimeService:
             fallback_kwargs = dict(kwargs)
             if "unexpected keyword argument 'event_sink'" in message:
                 fallback_kwargs.pop("event_sink", None)
+            if "unexpected keyword argument 'stats_sink'" in message:
+                fallback_kwargs.pop("stats_sink", None)
             if "unexpected keyword argument 'hit_sink'" in message:
                 fallback_kwargs.pop("hit_sink", None)
             if "unexpected keyword argument 'runtime_account_provider'" in message:
                 fallback_kwargs.pop("runtime_account_provider", None)
-            if "unexpected keyword argument 'query_settings_json'" in message:
-                fallback_kwargs.pop("query_settings_json", None)
             if fallback_kwargs == kwargs:
                 raise
             return self._runtime_factory(config, accounts, **fallback_kwargs)
-
-    def apply_query_settings(self, *, query_settings: dict[str, object]) -> None:
-        with self._state_lock:
-            if not self._has_running_runtime_locked():
-                return
-            runtime = self._runtime
-        apply_query_settings = getattr(runtime, "apply_query_settings", None)
-        if callable(apply_query_settings):
-            apply_query_settings(query_settings_json=query_settings)
 
     def _resolve_hit_sink(self):
         if self._purchase_runtime_service is None:
@@ -656,6 +775,9 @@ class QueryRuntimeService:
 
     def _resolve_runtime_account_provider(self):
         return self._get_or_create_runtime_account
+
+    def _resolve_stats_sink(self):
+        return self._stats_sink
 
     def _ensure_purchase_runtime_started(self) -> tuple[bool, str]:
         if self._purchase_runtime_service is None:
@@ -753,6 +875,18 @@ class QueryRuntimeService:
         self._pending_resume_runtime_session_id = str(runtime_session_id or "") or None
         self._paused_at = datetime.now().isoformat(timespec="seconds")
 
+    def _start_runtime(self, runtime, *, preserve_allocation_state: bool) -> None:
+        start_runtime = getattr(runtime, "start", None)
+        if not callable(start_runtime):
+            return
+        if self._callable_accepts_parameter(
+            start_runtime,
+            "preserve_allocation_state",
+        ):
+            start_runtime(preserve_allocation_state=preserve_allocation_state)
+            return
+        start_runtime()
+
     @staticmethod
     def _build_runtime_session_id() -> str:
         return uuid4().hex
@@ -772,6 +906,37 @@ class QueryRuntimeService:
             return None
         value = str(data.get("runtime_session_id") or "").strip()
         return value or None
+
+    @staticmethod
+    def _extract_runtime_config_id(runtime) -> str | None:
+        if runtime is None:
+            return None
+        runtime_config = getattr(runtime, "config", None)
+        runtime_config_id = getattr(runtime_config, "config_id", None)
+        if runtime_config_id:
+            return str(runtime_config_id)
+        snapshot = getattr(runtime, "snapshot", None)
+        if not callable(snapshot):
+            return None
+        data = snapshot()
+        if not isinstance(data, dict):
+            return None
+        value = str(data.get("config_id") or "").strip()
+        return value or None
+
+    @staticmethod
+    def _callable_accepts_parameter(callable_obj, parameter_name: str) -> bool:
+        try:
+            parameters = signature(callable_obj).parameters.values()
+        except (TypeError, ValueError):
+            return False
+
+        for parameter in parameters:
+            if parameter.kind == Parameter.VAR_KEYWORD:
+                return True
+            if parameter.name == parameter_name:
+                return True
+        return False
 
     def _bind_purchase_runtime_session(self, *, config: QueryConfig, runtime_session_id: str | None) -> None:
         if self._purchase_runtime_service is None:

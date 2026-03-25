@@ -30,6 +30,20 @@ function buildModeAllocations(values = {}) {
 }
 
 
+function delayedJsonResponse(payload, status = 200, delayMs = 0) {
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      resolve({
+        ok: status >= 200 && status < 300,
+        status,
+        json: async () => payload,
+        text: async () => JSON.stringify(payload),
+      });
+    }, delayMs);
+  });
+}
+
+
 function installDesktopApp(fetchImpl) {
   window.fetch = fetchImpl;
   window.desktopApp = {
@@ -243,6 +257,7 @@ function createFetchHarness({
     fast_api: { mode_type: "fast_api", available_account_count: 1 },
     token: { mode_type: "token", available_account_count: 3 },
   },
+  saveDelayMs = 0,
 } = {}) {
   let detail = buildConfigDetail();
   const runtimeStatus = buildRuntimeStatus();
@@ -322,7 +337,11 @@ function createFetchHarness({
             : item
         )),
       };
-      return jsonResponse(detail.items.find((item) => item.query_item_id === queryItemId));
+      return delayedJsonResponse(
+        detail.items.find((item) => item.query_item_id === queryItemId),
+        200,
+        saveDelayMs,
+      );
     }
     if (updateMatch && method === "DELETE") {
       const queryItemId = updateMatch[1];
@@ -330,7 +349,7 @@ function createFetchHarness({
         ...detail,
         items: detail.items.filter((item) => item.query_item_id !== queryItemId),
       };
-      return jsonResponse({}, 204);
+      return delayedJsonResponse({}, 204, saveDelayMs);
     }
 
     if (url.pathname === "/query-configs/cfg-1/items" && method === "POST") {
@@ -359,7 +378,7 @@ function createFetchHarness({
         ...detail,
         items: [...detail.items, createdItem],
       };
-      return jsonResponse(createdItem, 201);
+      return delayedJsonResponse(createdItem, 201, saveDelayMs);
     }
 
     throw new Error(`Unhandled request: ${method} ${url.pathname}`);
@@ -422,7 +441,7 @@ describe("query system editing", () => {
   });
 
   it("adds a draft item from the centered create dialog and saves both existing and new items", async () => {
-    const harness = createFetchHarness();
+    const harness = createFetchHarness({ saveDelayMs: 40 });
     installDesktopApp(harness.fetchImpl);
     const user = userEvent.setup();
 
@@ -489,14 +508,16 @@ describe("query system editing", () => {
 
     expect(await screen.findByRole("region", { name: "商品 M4A1-S | Printstream" })).toBeInTheDocument();
 
-    const saveButton = screen.getByRole("button", { name: "保存当前配置" });
-    const saveHeader = saveButton.closest("section");
-    expect(saveHeader).not.toBeNull();
+    expect(screen.getByRole("button", { name: "保存到当前配置" })).toBeInTheDocument();
 
-    await user.click(saveButton);
+    await user.click(screen.getByRole("button", { name: "保存到当前配置" }));
 
     await waitFor(() => {
-      expect(within(saveHeader).getByText("已保存")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "保存中..." })).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "已保存" })).toBeInTheDocument();
     });
 
     expect(harness.calls).toEqual(
@@ -572,13 +593,11 @@ describe("query system editing", () => {
     await user.type(itemTwoNewApi, "1");
     await user.click(within(editorTwo).getByRole("button", { name: "应用修改" }));
 
-    const saveButton = screen.getByRole("button", { name: "保存当前配置" });
-    const saveHeader = saveButton.closest("section");
-    expect(saveHeader).not.toBeNull();
+    const saveButton = screen.getByRole("button", { name: "保存到当前配置" });
 
     await user.click(saveButton);
 
-    expect(within(saveHeader).getByText("校验失败，无法保存")).toBeInTheDocument();
+    expect(screen.getByText("校验失败，无法保存")).toBeInTheDocument();
     expect(
       harness.calls.some(
         (call) => call.method === "PATCH" && call.pathname.startsWith("/query-configs/cfg-1/items/"),
@@ -606,7 +625,8 @@ describe("query system editing", () => {
       expect(screen.queryByRole("region", { name: "商品 AK-47 | Redline" })).not.toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole("button", { name: "保存当前配置" }));
+    expect(screen.getByRole("button", { name: "保存到当前配置" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "保存到当前配置" }));
 
     await waitFor(() => {
       expect(
@@ -615,5 +635,69 @@ describe("query system editing", () => {
         ),
       ).toBe(true);
     });
+  });
+
+  it("prompts before leaving the page and saves when the user chooses save", async () => {
+    const harness = createFetchHarness({ saveDelayMs: 40 });
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    await openQuerySystem(user);
+
+    const itemOne = await screen.findByRole("region", { name: "商品 AK-47 | Redline" });
+    await user.click(within(itemOne).getByRole("button", { name: "修改价格 AK-47 | Redline" }));
+    const editorOne = await screen.findByRole("dialog", { name: "编辑商品" });
+    const maxPriceInput = within(editorOne).getByLabelText("最高价格");
+    await user.clear(maxPriceInput);
+    await user.type(maxPriceInput, "233");
+    await user.click(within(editorOne).getByRole("button", { name: "应用修改" }));
+
+    await user.click(screen.getByRole("button", { name: "账号中心" }));
+
+    const leaveDialog = await screen.findByRole("dialog", { name: "未保存修改" });
+    expect(within(leaveDialog).getByText("当前修改尚未保存，离开前选择保存或直接丢弃。")).toBeInTheDocument();
+
+    await user.click(within(leaveDialog).getByRole("button", { name: "保存" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("C5 账号中心")).toBeInTheDocument();
+    });
+
+    expect(
+      harness.calls.some(
+        (call) => call.method === "PATCH" && call.pathname === "/query-configs/cfg-1/items/item-1",
+      ),
+    ).toBe(true);
+  });
+
+  it("prompts before leaving the page and discards local edits when the user chooses not to save", async () => {
+    const harness = createFetchHarness();
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    await openQuerySystem(user);
+
+    const itemOne = await screen.findByRole("region", { name: "商品 AK-47 | Redline" });
+    await user.click(within(itemOne).getByRole("button", { name: "修改价格 AK-47 | Redline" }));
+    const editorOne = await screen.findByRole("dialog", { name: "编辑商品" });
+    const maxPriceInput = within(editorOne).getByLabelText("最高价格");
+    await user.clear(maxPriceInput);
+    await user.type(maxPriceInput, "211");
+    await user.click(within(editorOne).getByRole("button", { name: "应用修改" }));
+
+    await user.click(screen.getByRole("button", { name: "扫货系统" }));
+
+    const leaveDialog = await screen.findByRole("dialog", { name: "未保存修改" });
+    await user.click(within(leaveDialog).getByRole("button", { name: "不保存" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "开始扫货" })).toBeInTheDocument();
+    });
+
+    expect(
+      harness.calls.some(
+        (call) => call.method === "PATCH" && call.pathname === "/query-configs/cfg-1/items/item-1",
+      ),
+    ).toBe(false);
   });
 });

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import asyncio
-
 from app_backend.domain.models.account import Account
 from app_backend.domain.models.query_config import QueryConfig, QueryItem, QueryModeSetting
 
@@ -82,6 +80,14 @@ def build_account(account_id: str = "a1", *, api_key: str | None = "api-1") -> A
     )
 
 
+def set_mode_target(query_item: QueryItem, mode_type: str, target: int) -> None:
+    for allocation in query_item.mode_allocations:
+        if allocation.mode_type == mode_type:
+            allocation.target_dedicated_count = target
+            return
+    raise AssertionError(f"mode allocation not found: {mode_type}")
+
+
 class StubPurchaseRuntimeService:
     def __init__(self) -> None:
         self.accepted_hits: list[dict[str, object]] = []
@@ -107,6 +113,17 @@ class StubPurchaseRuntimeService:
         payload = dict(hit)
         self.accepted_hits.append(payload)
         return {"accepted": True, "status": "queued"}
+
+
+class StubStatsSink:
+    def __init__(self, *, error: Exception | None = None) -> None:
+        self.events: list[object] = []
+        self._error = error
+
+    def __call__(self, event: object) -> None:
+        if self._error is not None:
+            raise self._error
+        self.events.append(event)
 
 
 class FakeQueryConfigRepository:
@@ -223,13 +240,122 @@ async def test_mode_runner_skips_hit_sink_for_zero_match_event():
     assert purchase_service.accepted_hits == []
 
 
-async def test_mode_runner_does_not_wait_for_async_hit_sink_completion():
+async def test_mode_runner_emits_query_execution_and_hit_stats_events():
+    from app_backend.infrastructure.query.runtime.mode_runner import ModeRunner
+    from app_backend.infrastructure.query.runtime.runtime_events import QueryExecutionEvent
+    from app_backend.infrastructure.stats.runtime.stats_events import (
+        QueryExecutionStatsEvent,
+        QueryHitStatsEvent,
+    )
+
+    stats_sink = StubStatsSink()
+
+    class FakeWorker:
+        def __init__(self, account: Account) -> None:
+            self.account = account
+
+        def snapshot(self) -> dict[str, object]:
+            return {"account_id": self.account.account_id, "active": True}
+
+        async def run_once(self, query_item: QueryItem) -> QueryExecutionEvent:
+            return QueryExecutionEvent(
+                timestamp="2026-03-16T10:00:00",
+                level="info",
+                mode_type="new_api",
+                query_config_id="cfg-1",
+                runtime_session_id="run-1",
+                account_id=self.account.account_id,
+                account_display_name=self.account.display_name,
+                query_item_id=query_item.query_item_id,
+                external_item_id=query_item.external_item_id,
+                product_url=query_item.product_url,
+                query_item_name=query_item.item_name,
+                message="query completed",
+                match_count=2,
+                product_list=[{"productId": "p-1", "price": 88.0, "actRebateAmount": 0}],
+                total_price=88.0,
+                total_wear_sum=0.1234,
+                latency_ms=12.0,
+                error=None,
+            )
+
+    runner = ModeRunner(
+        build_mode("new_api"),
+        [build_account()],
+        query_items=[build_item(item_name="AK")],
+        worker_factory=lambda mode_type, account: FakeWorker(account),
+        stats_sink=stats_sink,
+    )
+
+    runner.start()
+    await runner.run_once()
+
+    assert len(stats_sink.events) == 2
+    assert isinstance(stats_sink.events[0], QueryExecutionStatsEvent)
+    assert isinstance(stats_sink.events[1], QueryHitStatsEvent)
+    assert stats_sink.events[0].query_item_id == "item-1"
+    assert stats_sink.events[1].matched_count == 2
+
+
+async def test_mode_runner_spreads_initial_assignments_before_reusing_the_same_item():
     from app_backend.infrastructure.query.runtime.mode_runner import ModeRunner
     from app_backend.infrastructure.query.runtime.runtime_events import QueryExecutionEvent
 
-    started = asyncio.Event()
-    release = asyncio.Event()
-    accepted_hits: list[dict[str, object]] = []
+    item_one = build_item("item-1", item_name="AK")
+    item_two = build_item("item-2", item_name="M4")
+    set_mode_target(item_one, "new_api", 2)
+    set_mode_target(item_two, "new_api", 1)
+    queried_item_ids: list[str] = []
+
+    class FakeWorker:
+        def __init__(self, account: Account) -> None:
+            self.account = account
+
+        def snapshot(self) -> dict[str, object]:
+            return {"account_id": self.account.account_id, "active": True}
+
+        async def run_once(self, query_item: QueryItem) -> QueryExecutionEvent:
+            queried_item_ids.append(str(query_item.query_item_id))
+            return QueryExecutionEvent(
+                timestamp="2026-03-16T10:00:00",
+                level="info",
+                mode_type="new_api",
+                query_config_id="cfg-1",
+                runtime_session_id="run-1",
+                account_id=self.account.account_id,
+                account_display_name=self.account.display_name,
+                query_item_id=query_item.query_item_id,
+                external_item_id=query_item.external_item_id,
+                product_url=query_item.product_url,
+                query_item_name=query_item.item_name,
+                message="query completed",
+                match_count=0,
+                product_list=[],
+                total_price=None,
+                total_wear_sum=None,
+                latency_ms=12.0,
+                error=None,
+            )
+
+    runner = ModeRunner(
+        build_mode("new_api"),
+        [build_account("a1"), build_account("a2")],
+        query_items=[item_one, item_two],
+        worker_factory=lambda mode_type, account: FakeWorker(account),
+    )
+
+    runner.start()
+    await runner.run_once()
+
+    assert queried_item_ids == ["item-1", "item-2"]
+
+
+async def test_mode_runner_ignores_stats_sink_failures_and_keeps_hit_flow():
+    from app_backend.infrastructure.query.runtime.mode_runner import ModeRunner
+    from app_backend.infrastructure.query.runtime.runtime_events import QueryExecutionEvent
+
+    purchase_service = StubPurchaseRuntimeService()
+    stats_sink = StubStatsSink(error=RuntimeError("stats down"))
 
     class FakeWorker:
         def __init__(self, account: Account) -> None:
@@ -260,39 +386,42 @@ async def test_mode_runner_does_not_wait_for_async_hit_sink_completion():
                 error=None,
             )
 
-    async def async_hit_sink(hit: dict[str, object]) -> dict[str, object]:
-        accepted_hits.append(dict(hit))
-        started.set()
-        await release.wait()
-        return {"accepted": True, "status": "queued"}
-
     runner = ModeRunner(
         build_mode("new_api"),
         [build_account()],
         query_items=[build_item(item_name="AK")],
         worker_factory=lambda mode_type, account: FakeWorker(account),
-        hit_sink=async_hit_sink,
+        hit_sink=purchase_service.accept_query_hit,
+        stats_sink=stats_sink,
     )
 
     runner.start()
-    try:
-        run_task = asyncio.create_task(runner.run_once())
-        await asyncio.wait_for(started.wait(), timeout=0.1)
-        await asyncio.wait_for(run_task, timeout=0.1)
-        assert accepted_hits[0]["query_item_name"] == "AK"
-    finally:
-        release.set()
+    await runner.run_once()
+
+    assert purchase_service.accepted_hits[0]["query_item_name"] == "AK"
 
 
 def test_query_task_runtime_passes_hit_sink_to_mode_runners():
     from app_backend.infrastructure.query.runtime.query_task_runtime import QueryTaskRuntime
 
     sink = object()
+    stats_sink = object()
     captured_sinks: dict[str, object] = {}
+    captured_stats_sinks: dict[str, object] = {}
 
     class FakeModeRunner:
-        def __init__(self, mode_setting, accounts, *, query_items=None, query_item_scheduler=None, hit_sink=None) -> None:
+        def __init__(
+            self,
+            mode_setting,
+            accounts,
+            *,
+            query_items=None,
+            query_item_scheduler=None,
+            hit_sink=None,
+            stats_sink=None,
+        ) -> None:
             captured_sinks[mode_setting.mode_type] = hit_sink
+            captured_stats_sinks[mode_setting.mode_type] = stats_sink
 
         def snapshot(self) -> dict[str, object]:
             return {
@@ -313,28 +442,29 @@ def test_query_task_runtime_passes_hit_sink_to_mode_runners():
         build_config(),
         [build_account()],
         hit_sink=sink,
+        stats_sink=stats_sink,
         mode_runner_factory=lambda mode_setting, accounts, **kwargs: FakeModeRunner(mode_setting, accounts, **kwargs),
     )
 
-    assert captured_sinks == {
-        "new_api": sink,
-        "fast_api": sink,
-        "token": sink,
-    }
+    assert captured_sinks == {"new_api": sink}
+    assert captured_stats_sinks == {"new_api": stats_sink}
 
 
 def test_query_runtime_service_passes_purchase_hit_sink_into_runtime_factory():
     from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
+    from app_backend.infrastructure.stats.runtime.stats_events import QueryExecutionStatsEvent
 
     purchase_service = StubPurchaseRuntimeService()
+    stats_sink = StubStatsSink()
     captured_hit_sink = {}
 
     class FakeRuntime:
-        def __init__(self, config, accounts, *, hit_sink=None) -> None:
+        def __init__(self, config, accounts, *, hit_sink=None, stats_sink=None) -> None:
             self.config = config
             self.started = False
             self.stopped = False
             captured_hit_sink["sink"] = hit_sink
+            captured_hit_sink["stats_sink"] = stats_sink
 
         def start(self) -> None:
             self.started = True
@@ -346,6 +476,26 @@ def test_query_runtime_service_passes_purchase_hit_sink_into_runtime_factory():
                     "total_wear_sum": 0.1234,
                     "mode_type": "new_api",
                 }
+            )
+            captured_hit_sink["stats_sink"](
+                QueryExecutionStatsEvent(
+                    timestamp="2026-03-16T10:00:00",
+                    query_config_id="cfg-1",
+                    query_item_id="item-1",
+                    external_item_id="item-1",
+                    rule_fingerprint="fp-1",
+                    detail_min_wear=0.0,
+                    detail_max_wear=0.25,
+                    max_price=100.0,
+                    mode_type="new_api",
+                    account_id="a1",
+                    account_display_name="Account-a1",
+                    item_name="AK",
+                    product_url="https://www.c5game.com/csgo/730/asset/item-1",
+                    latency_ms=12.0,
+                    success=True,
+                    error=None,
+                )
             )
 
         def stop(self) -> None:
@@ -371,10 +521,13 @@ def test_query_runtime_service_passes_purchase_hit_sink_into_runtime_factory():
         account_repository=FakeAccountRepository(),
         runtime_factory=lambda config, accounts, **kwargs: FakeRuntime(config, accounts, **kwargs),
         purchase_runtime_service=purchase_service,
+        stats_sink=stats_sink,
     )
 
     started, _message = service.start(config_id="cfg-1")
 
     assert started is True
     assert callable(captured_hit_sink["sink"])
+    assert callable(captured_hit_sink["stats_sink"])
     assert purchase_service.accepted_hits[0]["query_item_name"] == "AK"
+    assert len(stats_sink.events) == 1

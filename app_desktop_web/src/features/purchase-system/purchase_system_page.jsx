@@ -1,10 +1,14 @@
+import { useEffect, useRef } from "react";
+
 import { PurchaseAccountMonitorModal } from "./components/purchase_account_monitor_modal.jsx";
 import { PurchaseConfigSelectorDialog } from "./components/purchase_config_selector_dialog.jsx";
 import { PurchaseItemPanel } from "./components/purchase_item_panel.jsx";
 import { PurchaseRecentEventsModal } from "./components/purchase_recent_events_modal.jsx";
+import { QuerySettingsModal } from "./components/query_settings_modal.jsx";
 import { PurchaseRuntimeActions } from "./components/purchase_runtime_actions.jsx";
 import { PurchaseRuntimeHeader } from "./components/purchase_runtime_header.jsx";
 import { usePurchaseSystemPage } from "./hooks/use_purchase_system_page.js";
+import { UnsavedChangesDialog } from "../shell/unsaved_changes_dialog.jsx";
 
 const PREVIEW_ITEM_ROWS = [
   {
@@ -40,22 +44,31 @@ const PREVIEW_ITEM_ROWS = [
 ];
 
 
-export function PurchaseSystemPage({ bootstrapConfig, client }) {
+export function PurchaseSystemPage({ bootstrapConfig, client, onLeaveStateChange }) {
   const {
     activeQueryConfig,
     actionLabel,
     accountMonitorModal,
     accountRows,
+    configLeavePromptError,
     configActionLabel,
     configDisplayName,
     configList,
     dialogActionLabel,
+    hasUnsavedRuntimeDrafts,
     isActionDisabled,
     isActionPending,
     isAccountMonitorOpen,
     isConfigDialogOpen,
+    isConfigLeavePromptOpen,
+    isConfigLeavePromptSaving,
     isLoading,
+    isQuerySettingsLoading,
+    isQuerySettingsOpen,
+    isQuerySettingsSaving,
     isRecentEventsOpen,
+    isSubmitDisabled,
+    isSubmittingDrafts,
     itemRows,
     loadError,
     onCloseAccountMonitor,
@@ -63,19 +76,44 @@ export function PurchaseSystemPage({ bootstrapConfig, client }) {
     onCloseRecentEvents,
     onConfigDialogSelect,
     onConfirmConfigDialog,
-    onItemAllocationChange,
-    onItemManualPausedChange,
+    onConfirmDiscardConfigSwitch,
+    onConfirmSaveConfigSwitch,
+    onDecreaseAllocation,
+    onIncreaseAllocation,
     onOpenAccountDetails,
     onOpenConfigDialog,
+    onOpenQuerySettings,
     onOpenRecentEvents,
+    onCloseQuerySettings,
+    onQuerySettingsChange,
     onRuntimeAction,
-    onSaveItemAllocation,
+    onSaveQuerySettings,
+    onSubmitRuntimeDrafts,
+    querySettingsDraft,
+    querySettingsError,
+    querySettingsWarnings,
     recentEvents,
     recentEventsModal,
     runtimeMessage,
     selectedDialogConfigId,
     totalPurchasedCount,
   } = usePurchaseSystemPage({ client });
+  const submitRuntimeDraftsRef = useRef(onSubmitRuntimeDrafts);
+
+  submitRuntimeDraftsRef.current = onSubmitRuntimeDrafts;
+
+  useEffect(() => {
+    onLeaveStateChange?.({
+      canPromptOnLeave: hasUnsavedRuntimeDrafts,
+      requestSave() {
+        return submitRuntimeDraftsRef.current();
+      },
+    });
+
+    return () => {
+      onLeaveStateChange?.(null);
+    };
+  }, [hasUnsavedRuntimeDrafts, onLeaveStateChange]);
   const hasRealItems = (itemRows || []).length > 0;
   const displayRows = hasRealItems ? itemRows : PREVIEW_ITEM_ROWS;
 
@@ -92,7 +130,9 @@ export function PurchaseSystemPage({ bootstrapConfig, client }) {
             configActionLabel={configActionLabel}
             displayConfigName={configDisplayName}
             isLoading={isLoading}
+            isQuerySettingsLoading={isQuerySettingsLoading}
             onOpenConfigDialog={onOpenConfigDialog}
+            onOpenQuerySettings={onOpenQuerySettings}
             runtimeMessage={runtimeMessage}
             totalPurchasedCount={totalPurchasedCount}
           />
@@ -102,9 +142,8 @@ export function PurchaseSystemPage({ bootstrapConfig, client }) {
               <PurchaseItemPanel
                 key={row.query_item_id}
                 row={row}
-                onAllocationChange={onItemAllocationChange}
-                onManualPausedChange={onItemManualPausedChange}
-                onSave={onSaveItemAllocation}
+                onDecreaseAllocation={onDecreaseAllocation}
+                onIncreaseAllocation={onIncreaseAllocation}
               />
             ))}
           </div>
@@ -115,9 +154,12 @@ export function PurchaseSystemPage({ bootstrapConfig, client }) {
         actionLabel={actionLabel}
         isActionDisabled={isActionDisabled}
         isPending={isActionPending}
+        isSubmitDisabled={isSubmitDisabled}
+        isSubmitPending={isSubmittingDrafts}
         onAction={onRuntimeAction}
         onOpenAccountDetails={onOpenAccountDetails}
         onOpenRecentEvents={onOpenRecentEvents}
+        onSubmitChanges={onSubmitRuntimeDrafts}
       />
 
       <PurchaseConfigSelectorDialog
@@ -129,6 +171,18 @@ export function PurchaseSystemPage({ bootstrapConfig, client }) {
         onConfirm={onConfirmConfigDialog}
         onSelect={onConfigDialogSelect}
         selectedConfigId={selectedDialogConfigId}
+      />
+
+      <QuerySettingsModal
+        draft={querySettingsDraft}
+        error={querySettingsError}
+        isLoading={isQuerySettingsLoading}
+        isOpen={isQuerySettingsOpen}
+        isSaving={isQuerySettingsSaving}
+        onChange={onQuerySettingsChange}
+        onClose={onCloseQuerySettings}
+        onSave={onSaveQuerySettings}
+        warnings={querySettingsWarnings}
       />
 
       <PurchaseRecentEventsModal
@@ -149,6 +203,14 @@ export function PurchaseSystemPage({ bootstrapConfig, client }) {
         position={accountMonitorModal.position}
         rows={accountRows}
         size={accountMonitorModal.size}
+      />
+
+      <UnsavedChangesDialog
+        error={configLeavePromptError}
+        isOpen={isConfigLeavePromptOpen}
+        isSaving={isConfigLeavePromptSaving}
+        onDiscard={onConfirmDiscardConfigSwitch}
+        onSave={onConfirmSaveConfigSwitch}
       />
     </section>
   );

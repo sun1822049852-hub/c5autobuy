@@ -120,3 +120,13 @@ class QueryRuntimePrepareResponse(BaseModel):
 class QueryRuntimePrepareRequest(BaseModel):
     config_id: str
     force_refresh: bool = False
+
+
+class QueryRuntimeManualAllocationItemRequest(BaseModel):
+    query_item_id: str
+    mode_type: str
+    target_actual_count: int
+
+
+class QueryRuntimeManualAllocationRequest(BaseModel):
+    items: list[QueryRuntimeManualAllocationItemRequest]

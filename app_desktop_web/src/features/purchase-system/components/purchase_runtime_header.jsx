@@ -3,7 +3,9 @@ export function PurchaseRuntimeHeader({
   configActionLabel,
   displayConfigName,
   isLoading,
+  isQuerySettingsLoading,
   onOpenConfigDialog,
+  onOpenQuerySettings,
   runtimeMessage,
   totalPurchasedCount,
 }) {
@@ -11,7 +13,7 @@ export function PurchaseRuntimeHeader({
   const stateText = isLoading ? "加载中..." : (runtimeMessage || "未运行");
 
   return (
-    <section aria-label="购买运行控制台" className="purchase-runtime-header">
+    <section aria-label="扫货运行控制台" className="purchase-runtime-header">
       <div className="purchase-runtime-header__primary">
         <div className="purchase-runtime-header__eyebrow">当前配置</div>
         <div className="purchase-runtime-header__name-row">
@@ -21,6 +23,17 @@ export function PurchaseRuntimeHeader({
       </div>
 
       <div className="purchase-runtime-header__inline-actions">
+        <button
+          className="ghost-button purchase-runtime-header__config-button"
+          disabled={isQuerySettingsLoading}
+          type="button"
+          onClick={() => {
+            onOpenQuerySettings?.();
+          }}
+        >
+          {isQuerySettingsLoading ? "加载设置..." : "查询设置"}
+        </button>
+
         <button
           className="ghost-button purchase-runtime-header__config-button"
           type="button"

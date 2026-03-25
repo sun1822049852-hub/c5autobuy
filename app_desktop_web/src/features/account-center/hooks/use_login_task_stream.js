@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 
-const TERMINAL_TASK_STATES = new Set(["succeeded", "failed", "cancelled", "conflict"]);
+const TERMINAL_TASK_STATES = new Set(["succeeded", "success", "failed", "cancelled", "conflict"]);
 
 
 export function useLoginTaskStream({ client }) {

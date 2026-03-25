@@ -126,4 +126,143 @@ describe("purchase system client", () => {
       query_item_id: "item-1",
     });
   });
+
+  it("submits runtime manual allocation drafts for the purchase page", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        running: true,
+        config_id: "cfg-2",
+        config_name: "夜刀配置",
+        message: "运行中",
+      }),
+    });
+    const client = createAccountCenterClient({
+      apiBaseUrl: "http://127.0.0.1:8123",
+      fetchImpl,
+    });
+
+    const response = await client.submitQueryRuntimeManualAllocations("cfg-2", {
+      items: [
+        {
+          query_item_id: "item-1",
+          mode_type: "new_api",
+          target_actual_count: 2,
+        },
+      ],
+    });
+
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "http://127.0.0.1:8123/query-runtime/configs/cfg-2/manual-assignments",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({
+          items: [
+            {
+              query_item_id: "item-1",
+              mode_type: "new_api",
+              target_actual_count: 2,
+            },
+          ],
+        }),
+      }),
+    );
+    expect(response.running).toBe(true);
+    expect(response.config_id).toBe("cfg-2");
+  });
+
+  it("loads and updates purchase ui preferences", async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ selected_config_id: "cfg-1", updated_at: "2026-03-22T10:00:00" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ selected_config_id: "cfg-2", updated_at: "2026-03-22T10:05:00" }),
+      });
+    const client = createAccountCenterClient({
+      apiBaseUrl: "http://127.0.0.1:8123",
+      fetchImpl,
+    });
+
+    const currentPreferences = await client.getPurchaseUiPreferences();
+    const updatedPreferences = await client.updatePurchaseUiPreferences("cfg-2");
+
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      1,
+      "http://127.0.0.1:8123/purchase-runtime/ui-preferences",
+      expect.objectContaining({
+        method: "GET",
+      }),
+    );
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      2,
+      "http://127.0.0.1:8123/purchase-runtime/ui-preferences",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({ selected_config_id: "cfg-2" }),
+      }),
+    );
+    expect(currentPreferences.selected_config_id).toBe("cfg-1");
+    expect(updatedPreferences.selected_config_id).toBe("cfg-2");
+  });
+
+  it("loads query item stats with only the provided range params", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        range_mode: "range",
+        start_date: "2026-03-21",
+        end_date: "2026-03-22",
+        items: [],
+      }),
+    });
+    const client = createAccountCenterClient({
+      apiBaseUrl: "http://127.0.0.1:8123",
+      fetchImpl,
+    });
+
+    const response = await client.getQueryItemStats({
+      rangeMode: "range",
+      startDate: "2026-03-21",
+      endDate: "2026-03-22",
+    });
+
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "http://127.0.0.1:8123/stats/query-items?range_mode=range&start_date=2026-03-21&end_date=2026-03-22",
+      expect.objectContaining({
+        method: "GET",
+      }),
+    );
+    expect(response.range_mode).toBe("range");
+  });
+
+  it("loads account capability stats with day mode params", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        range_mode: "day",
+        date: "2026-03-21",
+        items: [],
+      }),
+    });
+    const client = createAccountCenterClient({
+      apiBaseUrl: "http://127.0.0.1:8123",
+      fetchImpl,
+    });
+
+    const response = await client.getAccountCapabilityStats({
+      rangeMode: "day",
+      date: "2026-03-21",
+    });
+
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "http://127.0.0.1:8123/stats/account-capability?range_mode=day&date=2026-03-21",
+      expect.objectContaining({
+        method: "GET",
+      }),
+    );
+    expect(response.range_mode).toBe("day");
+  });
 });

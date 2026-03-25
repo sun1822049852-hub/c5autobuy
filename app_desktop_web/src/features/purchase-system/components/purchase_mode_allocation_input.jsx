@@ -11,39 +11,59 @@ export function getPurchaseModeLabel(modeType) {
 
 
 export function PurchaseModeAllocationInput({
+  actualCount = 0,
+  canDecrease = false,
+  canIncrease = false,
   disabled = false,
   modeType,
-  overflowCount = 0,
-  remainingCount = 0,
+  sharedAvailableCount = 0,
   statusMessage = "未运行",
-  value,
-  onChange,
+  targetCount = 0,
+  onDecrease,
+  onIncrease,
 }) {
   const label = getPurchaseModeLabel(modeType);
 
   return (
-    <label className="purchase-mode-allocation-input">
+    <div className="purchase-mode-allocation-input">
       <div className="purchase-mode-allocation-input__top">
         <span className="purchase-mode-allocation-input__label">{label}</span>
         <span className="purchase-mode-allocation-input__status">{statusMessage}</span>
       </div>
 
-      <div className="purchase-mode-allocation-input__body">
-        <input
-          className="purchase-mode-allocation-input__field"
-          type="number"
-          min="0"
-          step="1"
-          value={value}
-          disabled={disabled}
-          aria-label={`${label} 目标分配数`}
-          onChange={(event) => onChange(event.target.value)}
-        />
-
-        <span className={`purchase-mode-allocation-input__meta${overflowCount > 0 ? " is-danger" : ""}`}>
-          {overflowCount > 0 ? `${label} 已超出 ${overflowCount}` : `${label} 还可分配 ${remainingCount}`}
-        </span>
+      <div className="purchase-mode-allocation-input__summary">
+        {`实际 ${actualCount} / 配置 ${targetCount}`}
       </div>
-    </label>
+
+      <div className="purchase-mode-allocation-input__controls">
+        <button
+          aria-label={`${label} 减少实际分配`}
+          className="ghost-button purchase-mode-allocation-input__step"
+          disabled={disabled || !canDecrease}
+          type="button"
+          onClick={() => {
+            onDecrease?.();
+          }}
+        >
+          -
+        </button>
+
+        <div className="purchase-mode-allocation-input__value">{actualCount}</div>
+
+        <button
+          aria-label={`${label} 增加实际分配`}
+          className="ghost-button purchase-mode-allocation-input__step"
+          disabled={disabled || !canIncrease}
+          type="button"
+          onClick={() => {
+            onIncrease?.();
+          }}
+        >
+          +
+        </button>
+      </div>
+
+      <div className="purchase-mode-allocation-input__meta">{`共享余量 ${sharedAvailableCount}`}</div>
+    </div>
   );
 }

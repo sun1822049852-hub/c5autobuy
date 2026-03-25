@@ -109,31 +109,53 @@ async def test_query_item_scheduler_uses_dynamic_cooldown_when_one_item_has_mult
     assert second.execute_at == 10.25
 
 
-async def test_query_item_scheduler_uses_global_item_pacing_fixed_seconds_for_dynamic_cooldown():
-    from app_backend.domain.models.runtime_settings import QueryItemPacingSetting
+async def test_query_item_scheduler_supports_fixed_item_min_cooldown_strategy():
     from app_backend.infrastructure.query.runtime.query_item_scheduler import QueryItemScheduler
 
     item = build_item("item-1")
     scheduler = QueryItemScheduler(
         [item],
         min_cooldown_seconds=0.1,
-        item_pacing=QueryItemPacingSetting(
-            mode_type="new_api",
-            strategy="fixed_divided_by_actual_allocated_workers",
-            fixed_seconds=2.0,
-        ),
+        item_min_cooldown_seconds=0.9,
+        item_min_cooldown_strategy="fixed",
     )
 
     first = await scheduler.reserve_item(
         item,
         now=10.0,
-        actual_assigned_count=4,
+        actual_assigned_count=3,
     )
     second = await scheduler.reserve_item(
         item,
         now=10.0,
-        actual_assigned_count=4,
+        actual_assigned_count=3,
     )
 
     assert first.execute_at == 10.0
-    assert second.execute_at == 10.5
+    assert second.execute_at == 10.9
+
+
+async def test_query_item_scheduler_supports_divide_by_assigned_count_strategy():
+    from app_backend.infrastructure.query.runtime.query_item_scheduler import QueryItemScheduler
+
+    item = build_item("item-1")
+    scheduler = QueryItemScheduler(
+        [item],
+        min_cooldown_seconds=0.1,
+        item_min_cooldown_seconds=0.9,
+        item_min_cooldown_strategy="divide_by_assigned_count",
+    )
+
+    first = await scheduler.reserve_item(
+        item,
+        now=10.0,
+        actual_assigned_count=3,
+    )
+    second = await scheduler.reserve_item(
+        item,
+        now=10.0,
+        actual_assigned_count=3,
+    )
+
+    assert first.execute_at == 10.0
+    assert second.execute_at == 10.3

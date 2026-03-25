@@ -6,11 +6,6 @@ from datetime import datetime
 from inspect import Parameter, signature
 
 from app_backend.domain.models.query_config import QueryConfig, QueryModeSetting
-from app_backend.domain.models.runtime_settings import (
-    build_item_pacing_settings,
-    build_query_settings_from_mode_settings,
-    build_runtime_mode_settings,
-)
 
 from .mode_runner import ModeRunner
 from .query_item_scheduler import QueryItemScheduler
@@ -30,7 +25,7 @@ class QueryTaskRuntime:
         runtime_account_provider=None,
         hit_sink=None,
         event_sink=None,
-        query_settings_json=None,
+        stats_sink=None,
     ) -> None:
         self._config = config
         self._accounts = list(accounts)
@@ -38,6 +33,7 @@ class QueryTaskRuntime:
         self._runtime_account_provider = runtime_account_provider
         self._hit_sink = hit_sink
         self._event_sink = event_sink
+        self._stats_sink = stats_sink
         self._running = False
         self._started_at: str | None = None
         self._stopped_at: str | None = None
@@ -47,21 +43,14 @@ class QueryTaskRuntime:
         self._stop_requested = threading.Event()
         factory = mode_runner_factory or self._build_default_mode_runner
         item_scheduler_factory = query_item_scheduler_factory or self._build_default_query_item_scheduler
-        self._query_settings_json = query_settings_json or build_query_settings_from_mode_settings(config.mode_settings)
-        self._runtime_mode_settings = build_runtime_mode_settings(
-            self._query_settings_json,
-            config_id=str(self._config.config_id),
-        )
-        self._item_pacing_settings = build_item_pacing_settings(self._query_settings_json)
         query_items = list(self._config.items)
         self._mode_runners = []
-        for mode_setting in self._runtime_mode_settings:
+        for mode_setting in config.mode_settings:
             # Each mode keeps an independent scheduler state while querying the same config items.
-            mode_scheduler = self._build_query_item_scheduler(
-                item_scheduler_factory,
-                list(query_items),
-                item_pacing=self._item_pacing_settings.get(mode_setting.mode_type),
-            )
+            mode_scheduler = item_scheduler_factory(list(query_items))
+            apply_mode_setting = getattr(mode_scheduler, "apply_mode_setting", None)
+            if callable(apply_mode_setting):
+                apply_mode_setting(mode_setting)
             self._mode_runners.append(
                 self._build_mode_runner(
                     factory,
@@ -74,6 +63,7 @@ class QueryTaskRuntime:
                     runtime_account_provider=self._runtime_account_provider,
                     hit_sink=self._hit_sink,
                     event_sink=self._event_sink,
+                    stats_sink=self._stats_sink,
                 )
             )
 
@@ -85,12 +75,15 @@ class QueryTaskRuntime:
     def runtime_session_id(self) -> str | None:
         return self._runtime_session_id
 
-    def start(self) -> None:
+    def start(self, *, preserve_allocation_state: bool = False) -> None:
         self._stop_requested.clear()
         for runner in self._mode_runners:
             start = getattr(runner, "start", None)
             if callable(start):
-                start()
+                self._start_mode_runner(
+                    start,
+                    preserve_allocation_state=preserve_allocation_state,
+                )
         self._running = True
         self._started_at = datetime.now().isoformat(timespec="seconds")
         self._stopped_at = None
@@ -135,27 +128,47 @@ class QueryTaskRuntime:
         if self._mode_runners and not applied:
             raise RuntimeError("query item runtime not refreshed")
 
-    def apply_query_settings(self, *, query_settings_json: dict[str, object]) -> None:
-        self._query_settings_json = dict(query_settings_json)
-        self._runtime_mode_settings = build_runtime_mode_settings(
-            self._query_settings_json,
-            config_id=str(self._config.config_id),
-        )
-        self._item_pacing_settings = build_item_pacing_settings(self._query_settings_json)
-        runners_by_mode = {
-            str(runner.snapshot().get("mode_type") or ""): runner
-            for runner in self._mode_runners
-        }
-        for mode_setting in self._runtime_mode_settings:
-            runner = runners_by_mode.get(mode_setting.mode_type)
-            if runner is None:
+    def apply_manual_allocations(self, *, config: QueryConfig, items: list[dict[str, object]]) -> None:
+        self._config = config
+        mode_targets: dict[str, dict[str, int]] = {}
+        for raw_item in items:
+            if not isinstance(raw_item, dict):
                 continue
-            apply_runtime_settings = getattr(runner, "apply_runtime_settings", None)
-            if callable(apply_runtime_settings):
-                apply_runtime_settings(
-                    mode_setting=mode_setting,
-                    item_pacing=self._item_pacing_settings.get(mode_setting.mode_type),
-                )
+            mode_type = str(raw_item.get("mode_type") or "").strip()
+            query_item_id = str(raw_item.get("query_item_id") or "").strip()
+            if not mode_type or not query_item_id:
+                continue
+            mode_targets.setdefault(mode_type, {})[query_item_id] = max(int(raw_item.get("target_actual_count", 0)), 0)
+
+        applied_modes: set[str] = set()
+        for runner in self._mode_runners:
+            mode_type = str(getattr(runner, "mode_type", "") or "")
+            if not mode_type or mode_type not in mode_targets:
+                continue
+            apply_targets = getattr(runner, "apply_manual_allocation_targets", None)
+            if not callable(apply_targets):
+                continue
+            apply_targets(target_actual_counts=mode_targets[mode_type])
+            applied_modes.add(mode_type)
+
+        missing_modes = [mode_type for mode_type in mode_targets if mode_type not in applied_modes]
+        if missing_modes:
+            raise RuntimeError(f"manual allocation mode not refreshed: {','.join(missing_modes)}")
+
+    def apply_query_settings(self, *, config: QueryConfig) -> None:
+        self._config = config
+        mode_by_type = {
+            mode.mode_type: mode
+            for mode in config.mode_settings
+        }
+        for runner in self._mode_runners:
+            mode_type = str(getattr(runner, "mode_type", "") or "")
+            mode_setting = mode_by_type.get(mode_type)
+            if mode_setting is None:
+                continue
+            apply_mode_setting = getattr(runner, "apply_mode_setting", None)
+            if callable(apply_mode_setting):
+                apply_mode_setting(mode_setting)
 
     def _run_background_loop(self) -> None:
         loop = asyncio.new_event_loop()
@@ -233,6 +246,7 @@ class QueryTaskRuntime:
         runtime_account_provider=None,
         hit_sink=None,
         event_sink=None,
+        stats_sink=None,
     ) -> ModeRunner:
         return ModeRunner(
             mode_setting,
@@ -244,26 +258,12 @@ class QueryTaskRuntime:
             runtime_account_provider=runtime_account_provider,
             hit_sink=hit_sink,
             event_sink=event_sink,
+            stats_sink=stats_sink,
         )
 
     @staticmethod
-    def _build_default_query_item_scheduler(
-        query_items: list[object],
-        *,
-        item_pacing=None,
-    ) -> QueryItemScheduler:
-        return QueryItemScheduler(list(query_items), item_pacing=item_pacing)
-
-    @staticmethod
-    def _build_query_item_scheduler(factory, query_items: list[object], *, item_pacing=None):
-        kwargs = {}
-        if item_pacing is not None and QueryTaskRuntime._factory_accepts_parameter(
-            factory,
-            "item_pacing",
-            allow_var_keyword=False,
-        ):
-            kwargs["item_pacing"] = item_pacing
-        return factory(query_items, **kwargs)
+    def _build_default_query_item_scheduler(query_items: list[object]) -> QueryItemScheduler:
+        return QueryItemScheduler(list(query_items))
 
     @staticmethod
     def _build_mode_runner(
@@ -278,6 +278,7 @@ class QueryTaskRuntime:
         runtime_account_provider,
         hit_sink,
         event_sink,
+        stats_sink,
     ):
         kwargs = {"query_items": query_items}
         if query_item_scheduler is not None and QueryTaskRuntime._factory_accepts_parameter(factory, "query_item_scheduler"):
@@ -304,7 +305,31 @@ class QueryTaskRuntime:
             kwargs["hit_sink"] = hit_sink
         if event_sink is not None and QueryTaskRuntime._factory_accepts_parameter(factory, "event_sink"):
             kwargs["event_sink"] = event_sink
+        if stats_sink is not None and QueryTaskRuntime._factory_accepts_parameter(factory, "stats_sink"):
+            kwargs["stats_sink"] = stats_sink
         return factory(mode_setting, accounts, **kwargs)
+
+    @staticmethod
+    def _start_mode_runner(start, *, preserve_allocation_state: bool) -> None:
+        try:
+            parameters = signature(start).parameters.values()
+        except (TypeError, ValueError):
+            start()
+            return
+
+        accepts_preserve_flag = False
+        for parameter in parameters:
+            if parameter.kind == Parameter.VAR_KEYWORD:
+                accepts_preserve_flag = True
+                break
+            if parameter.name == "preserve_allocation_state":
+                accepts_preserve_flag = True
+                break
+
+        if accepts_preserve_flag:
+            start(preserve_allocation_state=preserve_allocation_state)
+            return
+        start()
 
     @staticmethod
     def _factory_accepts_parameter(factory, parameter_name: str, *, allow_var_keyword: bool = True) -> bool:
@@ -387,5 +412,6 @@ class QueryTaskRuntime:
                     "actual_dedicated_count": int(raw_row.get("actual_dedicated_count", 0)),
                     "status": str(raw_row.get("status") or ""),
                     "status_message": str(raw_row.get("status_message") or ""),
+                    "shared_available_count": int(raw_row.get("shared_available_count", 0)),
                 }
         return ordered_rows

@@ -1,6 +1,12 @@
+import path from "node:path";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { buildPythonLaunchArgs, startPythonBackend } from "../../python_backend.js";
+import {
+  buildPythonLaunchArgs,
+  resolvePythonExecutable,
+  startPythonBackend,
+} from "../../python_backend.js";
 
 describe("python backend manager", () => {
   afterEach(() => {
@@ -18,6 +24,19 @@ describe("python backend manager", () => {
       "-c",
       "from pathlib import Path; from app_backend.main import main; main(db_path=Path(r'C:/demo/project/data/app.db'), host='127.0.0.1', port=8133)",
     ]);
+  });
+
+  it("falls back to an ancestor virtualenv when the worktree does not contain one", () => {
+    const projectRoot = path.join("C:", "demo", "project", ".worktrees", "stats-ui");
+    const expectedPython = path.join("C:", "demo", "project", ".venv", "Scripts", "python.exe");
+    const existsSync = vi.fn((targetPath) => targetPath === expectedPython);
+
+    const pythonExecutable = resolvePythonExecutable(projectRoot, {
+      existsSync,
+      platform: "win32",
+    });
+
+    expect(pythonExecutable).toBe(expectedPython);
   });
 
   it("starts python and resolves once health check passes", async () => {

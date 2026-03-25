@@ -6,6 +6,15 @@ from pydantic import BaseModel
 class PurchaseRuntimeStartRequest(BaseModel):
     config_id: str
 
+
+class PurchaseRuntimeUiPreferencesRequest(BaseModel):
+    selected_config_id: str | None = None
+
+
+class PurchaseRuntimeUiPreferencesResponse(BaseModel):
+    selected_config_id: str | None = None
+    updated_at: str | None = None
+
 class PurchaseRuntimeRecentEventResponse(BaseModel):
     class ProductResponse(BaseModel):
         productId: str
@@ -60,6 +69,7 @@ class PurchaseRuntimeItemModeResponse(BaseModel):
     actual_dedicated_count: int
     status: str
     status_message: str
+    shared_available_count: int = 0
 
 
 class PurchaseRuntimeItemRowResponse(BaseModel):

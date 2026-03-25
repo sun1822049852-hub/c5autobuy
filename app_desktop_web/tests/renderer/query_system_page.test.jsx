@@ -196,7 +196,7 @@ describe("query system page", () => {
     expect(currentConfigSection).not.toBeNull();
     expect(within(currentConfigSection).getByText("已停止")).toBeInTheDocument();
     expect(within(currentConfigSection).getByText("未运行")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "保存当前配置" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "已保存" })).toBeInTheDocument();
     expect(screen.getByText("new_api 2")).toBeInTheDocument();
     expect(screen.getByText("token 3")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "添加商品" })).toBeInTheDocument();

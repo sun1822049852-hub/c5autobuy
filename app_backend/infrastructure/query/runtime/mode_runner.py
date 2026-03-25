@@ -4,15 +4,19 @@ import asyncio
 import inspect
 import random
 from datetime import datetime
+from types import SimpleNamespace
 from typing import Any
 
 from app_backend.domain.models.query_config import QueryItem, QueryModeSetting
-from app_backend.domain.models.runtime_settings import QueryItemPacingSetting
 
 from .account_query_worker import AccountQueryWorker
 from .query_mode_allocator import QueryModeAllocator
 from .query_item_scheduler import QueryItemScheduler
 from .runtime_events import QueryExecutionEvent
+from app_backend.infrastructure.stats.runtime.stats_events import (
+    QueryExecutionStatsEvent,
+    QueryHitStatsEvent,
+)
 from .window_scheduler import WindowScheduler
 
 
@@ -34,6 +38,7 @@ class ModeRunner:
         random_provider=None,
         hit_sink=None,
         event_sink=None,
+        stats_sink=None,
     ) -> None:
         self._mode_setting = mode_setting
         self._accounts = list(accounts)
@@ -46,6 +51,7 @@ class ModeRunner:
         self._runtime_account_provider = runtime_account_provider
         self._hit_sink = hit_sink
         self._event_sink = event_sink
+        self._stats_sink = stats_sink
         self._query_item_scheduler = query_item_scheduler or QueryItemScheduler(self._query_items)
         self._query_mode_allocator = QueryModeAllocator(
             mode_setting.mode_type,
@@ -68,9 +74,8 @@ class ModeRunner:
         self._recent_events: list[dict[str, object]] = []
         self._worker_cooldown_until: dict[str, float | None] = {}
         self._item_query_counts: dict[str, int] = {}
-        self._background_hit_tasks: set[asyncio.Task[object]] = set()
 
-    def start(self) -> None:
+    def start(self, *, preserve_allocation_state: bool = False) -> None:
         self._started = True
         self._has_run_cycle = False
         self._query_count = 0
@@ -82,18 +87,21 @@ class ModeRunner:
             str(query_item.query_item_id): 0
             for query_item in self._query_items
         }
-        self._cancel_background_hit_tasks()
-        self._query_item_scheduler.reset()
-        self._query_mode_allocator.reset()
+        if not preserve_allocation_state:
+            self._query_item_scheduler.reset()
+            self._query_mode_allocator.reset()
         self._workers = [
             self._worker_factory(self._mode_setting.mode_type, account)
             for account in self._eligible_accounts()
         ]
 
+    @property
+    def mode_type(self) -> str:
+        return str(self._mode_setting.mode_type)
+
     def stop(self) -> None:
         self._started = False
         self._has_run_cycle = False
-        self._cancel_background_hit_tasks()
         self._workers = []
 
     def apply_query_item_runtime(self, query_item: QueryItem) -> bool:
@@ -111,15 +119,8 @@ class ModeRunner:
             applied = bool(apply_runtime(query_item)) or applied
         return applied
 
-    def apply_runtime_settings(
-        self,
-        *,
-        mode_setting: QueryModeSetting,
-        item_pacing: QueryItemPacingSetting | None = None,
-    ) -> None:
+    def apply_mode_setting(self, mode_setting: QueryModeSetting) -> None:
         self._mode_setting = mode_setting
-        if hasattr(self._query_item_scheduler, "apply_pacing_settings"):
-            self._query_item_scheduler.apply_pacing_settings(item_pacing)
         self._window_scheduler = WindowScheduler(
             window_enabled=bool(mode_setting.window_enabled),
             start_hour=mode_setting.start_hour,
@@ -127,11 +128,16 @@ class ModeRunner:
             end_hour=mode_setting.end_hour,
             end_minute=mode_setting.end_minute,
         )
-        if self._started:
-            self._workers = [
-                self._worker_factory(self._mode_setting.mode_type, account)
-                for account in self._eligible_accounts()
-            ]
+        apply_mode_setting = getattr(self._query_item_scheduler, "apply_mode_setting", None)
+        if callable(apply_mode_setting):
+            apply_mode_setting(mode_setting)
+
+    def apply_manual_allocation_targets(self, *, target_actual_counts: dict[str, int]) -> None:
+        allocation_workers = self._allocation_workers()
+        self._query_mode_allocator.apply_target_actual_counts(
+            target_actual_counts=target_actual_counts,
+            active_workers=allocation_workers,
+        )
 
     async def cleanup(self) -> None:
         for worker in self._workers:
@@ -194,7 +200,8 @@ class ModeRunner:
         if enabled and self._mode_setting.window_enabled:
             next_window_start = window_state.next_window_start.isoformat(timespec="seconds")
             next_window_end = window_state.next_window_end.isoformat(timespec="seconds")
-        item_rows = self._query_mode_allocator.snapshot(active_workers=self._active_workers()).get("item_rows", [])
+        allocation_snapshot = self._query_mode_allocator.snapshot(active_workers=self._allocation_workers())
+        item_rows = allocation_snapshot.get("item_rows", [])
         for row in item_rows:
             if not isinstance(row, dict):
                 continue
@@ -212,6 +219,8 @@ class ModeRunner:
             "query_count": self._query_count,
             "found_count": self._found_count,
             "last_error": last_error,
+            "shared_available_count": int(allocation_snapshot.get("shared_available_count", 0)),
+            "shared_candidate_count": int(allocation_snapshot.get("shared_candidate_count", 0)),
             "group_rows": self._build_group_rows(worker_snapshots, in_window=bool(enabled and window_state.in_window)),
             "item_rows": item_rows,
             "recent_events": list(self._recent_events),
@@ -234,6 +243,15 @@ class ModeRunner:
             if snapshot.get("active"):
                 active_workers.append(worker)
         return active_workers
+
+    def _allocation_workers(self) -> list[object]:
+        active_workers = self._active_workers()
+        if active_workers:
+            return active_workers
+        return [
+            SimpleNamespace(account=account)
+            for account in self._eligible_accounts()
+        ]
 
     def _build_default_worker(self, mode_type: str, account: object) -> AccountQueryWorker:
         runtime_account = None
@@ -391,7 +409,7 @@ class ModeRunner:
 
         result = self._hit_sink(self._serialize_event(event))
         if inspect.isawaitable(result):
-            self._track_background_hit_task(result)
+            await result
 
     async def _forward_event(self, event: QueryExecutionEvent) -> None:
         if self._event_sink is None:
@@ -400,6 +418,21 @@ class ModeRunner:
         result = self._event_sink(self._serialize_event(event))
         if inspect.isawaitable(result):
             await result
+
+    async def _forward_stats(self, event: QueryExecutionEvent) -> None:
+        if self._stats_sink is None:
+            return
+
+        try:
+            execution_result = self._stats_sink(self._build_query_execution_stats_event(event))
+            if inspect.isawaitable(execution_result):
+                await execution_result
+            if int(getattr(event, "match_count", 0)) > 0:
+                hit_result = self._stats_sink(self._build_query_hit_stats_event(event))
+                if inspect.isawaitable(hit_result):
+                    await hit_result
+        except Exception:
+            return
 
     async def _handle_event(self, event: QueryExecutionEvent) -> None:
         self._query_count += 1
@@ -410,7 +443,60 @@ class ModeRunner:
             self._item_query_counts[item_id] = self._item_query_counts.get(item_id, 0) + 1
         self._record_event(event)
         await self._forward_event(event)
+        await self._forward_stats(event)
         await self._forward_hit(event)
+
+    @staticmethod
+    def _build_rule_fingerprint(event: QueryExecutionEvent) -> str:
+        detail_min_wear = getattr(event, "detail_min_wear", None)
+        detail_max_wear = getattr(event, "detail_max_wear", None)
+        max_price = getattr(event, "max_price", None)
+        return "|".join(
+            [
+                "" if detail_min_wear is None else str(detail_min_wear),
+                "" if detail_max_wear is None else str(detail_max_wear),
+                "" if max_price is None else str(max_price),
+            ]
+        )
+
+    def _build_query_execution_stats_event(self, event: QueryExecutionEvent) -> QueryExecutionStatsEvent:
+        return QueryExecutionStatsEvent(
+            timestamp=str(event.timestamp),
+            query_config_id=getattr(event, "query_config_id", None),
+            query_item_id=str(getattr(event, "query_item_id", "") or ""),
+            external_item_id=str(getattr(event, "external_item_id", "") or ""),
+            rule_fingerprint=self._build_rule_fingerprint(event),
+            detail_min_wear=getattr(event, "detail_min_wear", None),
+            detail_max_wear=getattr(event, "detail_max_wear", None),
+            max_price=getattr(event, "max_price", None),
+            mode_type=str(getattr(event, "mode_type", "") or ""),
+            account_id=str(getattr(event, "account_id", "") or ""),
+            account_display_name=getattr(event, "account_display_name", None),
+            item_name=getattr(event, "query_item_name", None),
+            product_url=getattr(event, "product_url", None),
+            latency_ms=float(getattr(event, "latency_ms", 0) or 0),
+            success=not bool(getattr(event, "error", None)),
+            error=getattr(event, "error", None),
+        )
+
+    def _build_query_hit_stats_event(self, event: QueryExecutionEvent) -> QueryHitStatsEvent:
+        return QueryHitStatsEvent(
+            timestamp=str(event.timestamp),
+            runtime_session_id=getattr(event, "runtime_session_id", None),
+            query_config_id=getattr(event, "query_config_id", None),
+            query_item_id=str(getattr(event, "query_item_id", "") or ""),
+            external_item_id=str(getattr(event, "external_item_id", "") or ""),
+            rule_fingerprint=self._build_rule_fingerprint(event),
+            detail_min_wear=getattr(event, "detail_min_wear", None),
+            detail_max_wear=getattr(event, "detail_max_wear", None),
+            max_price=getattr(event, "max_price", None),
+            mode_type=str(getattr(event, "mode_type", "") or ""),
+            account_id=str(getattr(event, "account_id", "") or ""),
+            account_display_name=getattr(event, "account_display_name", None),
+            item_name=getattr(event, "query_item_name", None),
+            product_url=getattr(event, "product_url", None),
+            matched_count=int(getattr(event, "match_count", 0) or 0),
+        )
 
     def _build_group_rows(self, worker_snapshots: list[dict[str, object]], *, in_window: bool) -> list[dict[str, object]]:
         rows: list[dict[str, object]] = []
@@ -469,34 +555,15 @@ class ModeRunner:
             "query_item_name": event.query_item_name,
             "message": event.message,
             "match_count": int(event.match_count),
-            "product_list": event.product_list,
+            "product_list": list(event.product_list),
             "total_price": event.total_price,
             "total_wear_sum": event.total_wear_sum,
+            "detail_min_wear": getattr(event, "detail_min_wear", None),
+            "detail_max_wear": getattr(event, "detail_max_wear", None),
+            "max_price": getattr(event, "max_price", None),
             "latency_ms": event.latency_ms,
             "error": event.error,
         }
-
-    def _track_background_hit_task(self, result) -> None:
-        task = asyncio.create_task(result)
-        self._background_hit_tasks.add(task)
-        task.add_done_callback(self._handle_background_hit_task_done)
-
-    def _handle_background_hit_task_done(self, task: asyncio.Task[object]) -> None:
-        self._background_hit_tasks.discard(task)
-        try:
-            task.result()
-        except asyncio.CancelledError:
-            return
-        except Exception as exc:  # pragma: no cover - defensive background sink guard
-            self._last_error = str(exc)
-
-    def _cancel_background_hit_tasks(self) -> None:
-        if not self._background_hit_tasks:
-            return
-        for task in list(self._background_hit_tasks):
-            if not task.done():
-                task.cancel()
-        self._background_hit_tasks.clear()
 
     @staticmethod
     def _to_timestamp(value: datetime | float | int) -> float:

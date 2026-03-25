@@ -1,3 +1,5 @@
+import { useEffect, useRef } from "react";
+
 import { QueryConfigCreateDialog } from "./components/query_config_create_dialog.jsx";
 import { QueryConfigDeleteDialog } from "./components/query_config_delete_dialog.jsx";
 import { QueryConfigNav } from "./components/query_config_nav.jsx";
@@ -8,7 +10,7 @@ import { QueryWorkbenchHeader } from "./components/query_workbench_header.jsx";
 import { useQuerySystemPage } from "./hooks/use_query_system_page.js";
 
 
-export function QuerySystemPage({ bootstrapConfig, client }) {
+export function QuerySystemPage({ bootstrapConfig, client, onLeaveStateChange }) {
   const {
     addDraftItem,
     capacityModes,
@@ -46,7 +48,8 @@ export function QuerySystemPage({ bootstrapConfig, client }) {
     openEditItemDialog,
     runtimeMessage,
     saveBarDisabled,
-    saveBarMessage,
+    saveBarError,
+    saveBarLabel,
     saveConfig,
     selectConfig,
     submitCreateConfig,
@@ -59,6 +62,22 @@ export function QuerySystemPage({ bootstrapConfig, client }) {
     toggleConfigDeleteMode,
     toggleItemDeleteMode,
   } = useQuerySystemPage({ client });
+  const saveConfigRef = useRef(saveConfig);
+
+  saveConfigRef.current = saveConfig;
+
+  useEffect(() => {
+    onLeaveStateChange?.({
+      canPromptOnLeave: Boolean(currentConfig) && hasUnsavedChanges && !saveBarError,
+      requestSave() {
+        return saveConfigRef.current();
+      },
+    });
+
+    return () => {
+      onLeaveStateChange?.(null);
+    };
+  }, [currentConfig, hasUnsavedChanges, onLeaveStateChange, saveBarError]);
 
   return (
     <section className="query-system-page">
@@ -89,7 +108,8 @@ export function QuerySystemPage({ bootstrapConfig, client }) {
             onSave={saveConfig}
             runtimeMessage={runtimeMessage}
             saveDisabled={saveBarDisabled}
-            saveMessage={saveBarMessage}
+            saveError={saveBarError}
+            saveLabel={saveBarLabel}
           />
 
           <div className="query-system-page__editor-grid">

@@ -431,7 +431,9 @@ describe("account center editing flows", () => {
         }),
       ]),
     );
-    expect(screen.getByText("已添加账号：账号 D")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^日志 \d+$/ }));
+    const logDialog = await screen.findByRole("dialog", { name: "日志" });
+    expect(within(logDialog).getByText("已添加账号：账号 D")).toBeInTheDocument();
   });
 
   it("creates an account and immediately starts login from the create dialog", async () => {
@@ -471,8 +473,10 @@ describe("account center editing flows", () => {
       );
     });
 
-    expect(await screen.findByText("登录任务已完成：账号 D")).toBeInTheDocument();
-    expect(await screen.findByText("steam-auto-a-4")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^日志 \d+$/ }));
+    const logDialog = await screen.findByRole("dialog", { name: "日志" });
+    expect(await within(logDialog).findByText("登录任务已完成：账号 D")).toBeInTheDocument();
+    expect(await within(logDialog).findByText("steam-auto-a-4")).toBeInTheDocument();
   });
 
   it("updates remark and api key with modal editors", async () => {
@@ -514,7 +518,9 @@ describe("account center editing flows", () => {
       );
     });
     expect(screen.queryByRole("heading", { name: "登录配置" })).not.toBeInTheDocument();
-    expect(screen.getByText("已更新 API Key：账号 B")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^日志 \d+$/ }));
+    const logDialog = await screen.findByRole("dialog", { name: "日志" });
+    expect(within(logDialog).getByText("已更新 API Key：账号 B")).toBeInTheDocument();
   });
 
   it("opens login drawer after proxy change and opens purchase drawer from purchase status", async () => {
@@ -605,7 +611,9 @@ describe("account center editing flows", () => {
     });
     const purchaseConfigCall = harness.calls.find((call) => call.pathname === "/accounts/a-1/purchase-config");
     expect(purchaseConfigCall?.body).not.toHaveProperty("disabled");
-    expect(screen.getByText("已更新购买配置：账号 A")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^日志 \d+$/ }));
+    const logDialog = await screen.findByRole("dialog", { name: "日志" });
+    expect(within(logDialog).getByText("已更新购买配置：账号 A")).toBeInTheDocument();
   });
 
   it("deletes an account from the context menu after confirmation", async () => {

@@ -2,7 +2,7 @@ import { getDesktopBootstrapConfig } from "../desktop/bridge.js";
 import { createHttpClient } from "./http.js";
 
 
-const TERMINAL_TASK_STATES = new Set(["succeeded", "failed", "cancelled", "conflict"]);
+const TERMINAL_TASK_STATES = new Set(["succeeded", "success", "failed", "cancelled", "conflict"]);
 
 
 function buildWebSocketUrl(apiBaseUrl, taskId) {
@@ -16,6 +16,25 @@ function buildWebSocketUrl(apiBaseUrl, taskId) {
   } catch {
     return null;
   }
+}
+
+
+function buildStatsQueryString({ rangeMode, date, startDate, endDate } = {}) {
+  const params = new URLSearchParams();
+  if (rangeMode) {
+    params.set("range_mode", rangeMode);
+  }
+  if (date) {
+    params.set("date", date);
+  }
+  if (startDate) {
+    params.set("start_date", startDate);
+  }
+  if (endDate) {
+    params.set("end_date", endDate);
+  }
+  const queryString = params.toString();
+  return queryString ? `?${queryString}` : "";
 }
 
 
@@ -127,6 +146,14 @@ export function createAccountCenterClient({
         method: "GET",
       });
     },
+    async getQuerySettings() {
+      return http.getJson("/query-settings", {
+        method: "GET",
+      });
+    },
+    async updateQuerySettings(payload) {
+      return http.putJson("/query-settings", payload);
+    },
     async getQueryRuntimeStatus() {
       return http.getJson("/query-runtime/status", {
         method: "GET",
@@ -134,6 +161,26 @@ export function createAccountCenterClient({
     },
     async getPurchaseRuntimeStatus() {
       return http.getJson("/purchase-runtime/status", {
+        method: "GET",
+      });
+    },
+    async getPurchaseUiPreferences() {
+      return http.getJson("/purchase-runtime/ui-preferences", {
+        method: "GET",
+      });
+    },
+    async updatePurchaseUiPreferences(selectedConfigId) {
+      return http.putJson("/purchase-runtime/ui-preferences", {
+        selected_config_id: selectedConfigId ?? null,
+      });
+    },
+    async getQueryItemStats(params = {}) {
+      return http.getJson(`/stats/query-items${buildStatsQueryString(params)}`, {
+        method: "GET",
+      });
+    },
+    async getAccountCapabilityStats(params = {}) {
+      return http.getJson(`/stats/account-capability${buildStatsQueryString(params)}`, {
         method: "GET",
       });
     },
@@ -170,6 +217,9 @@ export function createAccountCenterClient({
     },
     async applyQueryItemRuntime(configId, queryItemId) {
       return http.postJson(`/query-configs/${configId}/items/${queryItemId}/apply-runtime`, {});
+    },
+    async submitQueryRuntimeManualAllocations(configId, payload) {
+      return http.putJson(`/query-runtime/configs/${configId}/manual-assignments`, payload);
     },
     async parseQueryItemUrl(productUrl) {
       return http.postJson("/query-items/parse-url", {

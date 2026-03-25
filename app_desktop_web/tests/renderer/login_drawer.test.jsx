@@ -219,7 +219,7 @@ function createFetchHarness() {
 
 
 describe("login drawer", () => {
-  it("starts login, streams task progress, updates status strip and refreshes account rows", async () => {
+  it("starts login, streams task progress, updates account logs and refreshes account rows", async () => {
     const harness = createFetchHarness();
     installDesktopApp(harness.fetchImpl);
     const user = userEvent.setup();
@@ -251,8 +251,147 @@ describe("login drawer", () => {
     });
 
     expect(await within(drawer).findByText("登录完成")).toBeInTheDocument();
-    expect(await screen.findByText("登录任务已完成：账号 B")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^日志 \d+$/ }));
+    const logDialog = await screen.findByRole("dialog", { name: "日志" });
+    expect(await within(logDialog).findByText("登录任务已完成：账号 B")).toBeInTheDocument();
+    expect(within(logDialog).getByText("状态：succeeded")).toBeInTheDocument();
+    expect(await within(logDialog).findByText("steam-auto")).toBeInTheDocument();
+  });
+
+  it("keeps raw http error details in logs when login start returns an unhandled string", async () => {
+    installDesktopApp(vi.fn(async (input, options = {}) => {
+      const url = new URL(input);
+      const method = String(options.method ?? "GET").toUpperCase();
+
+      if (url.pathname === "/account-center/accounts" && method === "GET") {
+        return jsonResponse(buildRows());
+      }
+
+      if (url.pathname === "/accounts/a-2/login" && method === "POST") {
+        return {
+          ok: false,
+          status: 401,
+          text: async () => "not login",
+        };
+      }
+
+      throw new Error(`Unhandled request: ${method} ${url.pathname}`);
+    }));
+
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByText("账号 B");
+    await user.click(screen.getByRole("button", { name: "配置购买状态 账号 B" }));
+
+    const drawer = await screen.findByRole("complementary", { name: "登录配置" });
+    await user.click(within(drawer).getByRole("button", { name: "发起登录" }));
+
+    await user.click(screen.getByRole("button", { name: /^日志 \d+$/ }));
+    const logDialog = await screen.findByRole("dialog", { name: "日志" });
+    expect(await within(logDialog).findByText("发起登录失败：not login")).toBeInTheDocument();
+    expect(within(logDialog).getByText("HTTP 401")).toBeInTheDocument();
+    expect(within(logDialog).getByText("POST /accounts/a-2/login")).toBeInTheDocument();
+    expect(within(logDialog).getByText("原始返回：not login")).toBeInTheDocument();
+  });
+
+  it("treats success as a terminal alias and still refreshes the account row", async () => {
+    let taskPollCount = 0;
+    let accountListCallCount = 0;
+    let rows = buildRows();
+
+    installDesktopApp(vi.fn(async (input, options = {}) => {
+      const url = new URL(input);
+      const method = String(options.method ?? "GET").toUpperCase();
+
+      if (url.pathname === "/account-center/accounts" && method === "GET") {
+        accountListCallCount += 1;
+        return jsonResponse(rows);
+      }
+
+      if (url.pathname === "/accounts/a-2/login" && method === "POST") {
+        return jsonResponse({
+          task_id: "task-login-1",
+          task_type: "login",
+          state: "pending",
+          created_at: "2026-03-18T12:00:00",
+          updated_at: "2026-03-18T12:00:00",
+          events: [
+            {
+              state: "pending",
+              timestamp: "2026-03-18T12:00:00",
+              message: "任务已创建",
+              payload: null,
+            },
+          ],
+          result: null,
+          error: null,
+          pending_conflict: null,
+        }, 202);
+      }
+
+      if (url.pathname === "/tasks/task-login-1" && method === "GET") {
+        taskPollCount += 1;
+        rows = rows.map((row) => (
+          row.account_id === "a-2"
+            ? {
+              ...row,
+              api_key_present: true,
+              api_key: "api-b",
+              purchase_status_code: "selected_warehouse",
+              purchase_status_text: "steam-auto",
+              selected_steam_id: "steam-auto",
+              selected_warehouse_text: "steam-auto",
+            }
+            : row
+        ));
+
+        return jsonResponse({
+          task_id: "task-login-1",
+          task_type: "login",
+          state: "success",
+          created_at: "2026-03-18T12:00:00",
+          updated_at: "2026-03-18T12:00:02",
+          events: [
+            {
+              state: "pending",
+              timestamp: "2026-03-18T12:00:00",
+              message: "任务已创建",
+              payload: null,
+            },
+            {
+              state: "success",
+              timestamp: "2026-03-18T12:00:02",
+              message: "登录完成",
+              payload: {
+                selected_steam_id: "steam-auto",
+              },
+            },
+          ],
+          result: {
+            selected_steam_id: "steam-auto",
+          },
+          error: null,
+          pending_conflict: null,
+        });
+      }
+
+      throw new Error(`Unhandled request: ${method} ${url.pathname}`);
+    }));
+
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByText("账号 B");
+    await user.click(screen.getByRole("button", { name: "配置购买状态 账号 B" }));
+
+    const drawer = await screen.findByRole("complementary", { name: "登录配置" });
+    await user.click(within(drawer).getByRole("button", { name: "发起登录" }));
+
+    expect(await within(drawer).findByText("登录完成")).toBeInTheDocument();
     expect(await screen.findByText("steam-auto")).toBeInTheDocument();
+    expect(taskPollCount).toBe(1);
+    expect(accountListCallCount).toBeGreaterThanOrEqual(2);
   });
 
   it("stays closed when the user dismisses it while terminal refresh is still in flight", async () => {

@@ -1,13 +1,16 @@
 export function PurchaseRuntimeActions({
   actionLabel,
+  isSubmitDisabled,
   isActionDisabled,
   isPending,
+  isSubmitPending,
   onAction,
   onOpenAccountDetails,
   onOpenRecentEvents,
+  onSubmitChanges,
 }) {
   return (
-    <section aria-label="购买运行动作" className="purchase-runtime-actions">
+    <section aria-label="扫货运行动作" className="purchase-runtime-actions">
       <div className="purchase-runtime-actions__surface">
         <div className="purchase-runtime-actions__buttons">
           <button
@@ -28,6 +31,17 @@ export function PurchaseRuntimeActions({
             }}
           >
             查看账号详情
+          </button>
+
+          <button
+            className="ghost-button purchase-runtime-actions__button purchase-runtime-actions__button--secondary"
+            disabled={isSubmitDisabled}
+            type="button"
+            onClick={() => {
+              onSubmitChanges?.();
+            }}
+          >
+            {isSubmitPending ? "提交中..." : "提交更改"}
           </button>
 
           <button

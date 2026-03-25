@@ -128,7 +128,46 @@ async def test_query_mode_allocator_degrades_zero_dedicated_item_into_shared_poo
         for row in recovered_snapshot["item_rows"]
     }
 
-    assert recovered_rows["item-1"]["status"] == "dedicated"
-    assert recovered_rows["item-1"]["status_message"] == "专属中 2/2"
-    assert recovered_rows["item-1"]["actual_dedicated_count"] == 2
-    assert recovered_rows["item-2"]["status"] == "unavailable"
+    assert recovered_rows["item-1"]["status"] == "shared"
+    assert recovered_rows["item-1"]["status_message"] == "共享中"
+    assert recovered_rows["item-1"]["actual_dedicated_count"] == 0
+    assert recovered_rows["item-2"]["status"] == "shared"
+
+
+async def test_query_mode_allocator_applies_manual_actual_count_targets_by_releasing_before_reassigning():
+    from app_backend.infrastructure.query.runtime.query_item_scheduler import QueryItemScheduler
+    from app_backend.infrastructure.query.runtime.query_mode_allocator import QueryModeAllocator
+
+    first_item = build_item("item-1", target_new_api=2)
+    second_item = build_item("item-2", target_new_api=0)
+    workers = [FakeWorker("a1"), FakeWorker("a2")]
+    allocator = QueryModeAllocator(
+        QueryMode.NEW_API,
+        [first_item, second_item],
+        query_item_scheduler=QueryItemScheduler(
+            [first_item, second_item],
+            min_cooldown_seconds=0.1,
+        ),
+    )
+
+    initial_snapshot = allocator.snapshot(active_workers=workers)
+    allocator.apply_target_actual_counts(
+        target_actual_counts={
+            "item-1": 1,
+            "item-2": 1,
+        },
+        active_workers=workers,
+    )
+    adjusted_snapshot = allocator.snapshot(active_workers=workers)
+    adjusted_rows = {
+        row["query_item_id"]: row
+        for row in adjusted_snapshot["item_rows"]
+    }
+
+    assert initial_snapshot["item_rows"][0]["actual_dedicated_count"] == 2
+    assert adjusted_rows["item-1"]["actual_dedicated_count"] == 1
+    assert adjusted_rows["item-1"]["status"] == "dedicated"
+    assert adjusted_rows["item-2"]["actual_dedicated_count"] == 1
+    assert adjusted_rows["item-2"]["status"] == "dedicated"
+    assert adjusted_rows["item-1"]["shared_available_count"] == 0
+    assert adjusted_rows["item-2"]["shared_available_count"] == 0

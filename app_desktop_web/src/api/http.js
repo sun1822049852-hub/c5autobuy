@@ -9,6 +9,16 @@ function buildUrl(baseUrl, path) {
 }
 
 
+function buildHttpError({ message, method, path, status }) {
+  const error = new Error(message || `HTTP ${status || "unknown"}`);
+  error.method = method;
+  error.path = path;
+  error.responseText = message || "";
+  error.status = status;
+  return error;
+}
+
+
 export function createHttpClient({ baseUrl, fetchImpl } = {}) {
   const resolvedFetch = fetchImpl ?? globalThis.fetch;
 
@@ -30,7 +40,12 @@ export function createHttpClient({ baseUrl, fetchImpl } = {}) {
       const message = typeof response.text === "function"
         ? await response.text()
         : `HTTP ${response.status}`;
-      throw new Error(message || `HTTP ${response.status}`);
+      throw buildHttpError({
+        message: message || `HTTP ${response.status}`,
+        method: String(options.method ?? "GET").toUpperCase(),
+        path,
+        status: response.status,
+      });
     }
 
     return response;
@@ -57,6 +72,18 @@ export function createHttpClient({ baseUrl, fetchImpl } = {}) {
       const response = await request(path, {
         ...options,
         method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          ...options.headers,
+        },
+        body: JSON.stringify(payload),
+      });
+      return response.json();
+    },
+    async putJson(path, payload, options = {}) {
+      const response = await request(path, {
+        ...options,
+        method: "PUT",
         headers: {
           "Content-Type": "application/json",
           ...options.headers,

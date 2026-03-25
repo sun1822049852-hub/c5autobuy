@@ -1,8 +1,19 @@
-function getSaveToneClass(saveMessage) {
-  if (String(saveMessage || "").includes("失败")) {
+function getSaveButtonToneClass({
+  currentConfig,
+  hasUnsavedChanges,
+  isSaving,
+  saveError,
+}) {
+  if (saveError) {
     return "is-danger";
   }
-  if (String(saveMessage || "").includes("未保存")) {
+  if (!currentConfig) {
+    return "is-idle";
+  }
+  if (isSaving) {
+    return "is-saving";
+  }
+  if (hasUnsavedChanges) {
     return "is-warn";
   }
   return "is-success";
@@ -13,12 +24,14 @@ export function QueryWorkbenchHeader({
   capacityModes,
   currentConfig,
   currentStatusText,
+  hasUnsavedChanges,
   isLoading,
   isSaving,
   onSave,
   runtimeMessage,
   saveDisabled,
-  saveMessage,
+  saveError,
+  saveLabel,
 }) {
   return (
     <section className="query-workbench-header">
@@ -42,18 +55,25 @@ export function QueryWorkbenchHeader({
         </div>
 
         <button
-          className="ghost-button query-workbench-header__save-button"
+          className={`ghost-button query-workbench-header__save-button ${getSaveButtonToneClass({
+            currentConfig,
+            hasUnsavedChanges,
+            isSaving,
+            saveError,
+          })}`.trim()}
           type="button"
           disabled={saveDisabled}
           onClick={onSave}
         >
-          {isSaving ? "保存中..." : "保存当前配置"}
+          {saveLabel}
         </button>
       </div>
 
-      <div className="query-workbench-header__footer">
-        <div className={`query-workbench-header__save-message ${getSaveToneClass(saveMessage)}`.trim()}>{saveMessage}</div>
-      </div>
+      {saveError ? (
+        <div className="query-workbench-header__footer">
+          <div className="query-workbench-header__save-message is-danger">{saveError}</div>
+        </div>
+      ) : null}
     </section>
   );
 }

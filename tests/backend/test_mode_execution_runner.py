@@ -15,6 +15,8 @@ def build_mode(
     start_minute: int = 0,
     end_hour: int = 0,
     end_minute: int = 0,
+    item_min_cooldown_seconds: float = 0.5,
+    item_min_cooldown_strategy: str = "divide_by_assigned_count",
 ) -> QueryModeSetting:
     return QueryModeSetting(
         mode_setting_id=f"{mode_type}-1",
@@ -31,6 +33,8 @@ def build_mode(
         random_delay_enabled=False,
         random_delay_min=0.0,
         random_delay_max=0.0,
+        item_min_cooldown_seconds=item_min_cooldown_seconds,
+        item_min_cooldown_strategy=item_min_cooldown_strategy,
         created_at="2026-03-16T10:00:00",
         updated_at="2026-03-16T10:00:00",
     )
@@ -383,6 +387,54 @@ async def test_mode_runner_keeps_dedicated_item_exclusive_when_no_shared_worker_
     ]
 
 
+def test_mode_runner_preserves_dedicated_bindings_on_restart_when_requested():
+    from app_backend.domain.enums.query_modes import QueryMode
+    from app_backend.domain.models.query_config import QueryItemModeAllocation
+    from app_backend.infrastructure.query.runtime.mode_runner import ModeRunner
+
+    class FakeWorker:
+        def __init__(self, account: Account) -> None:
+            self.account = account
+
+        def snapshot(self) -> dict[str, object]:
+            return {
+                "account_id": self.account.account_id,
+                "active": True,
+                "eligible": True,
+                "disabled_reason": None,
+                "last_query_at": None,
+                "last_success_at": None,
+                "last_error": None,
+            }
+
+    dedicated_item = build_item("1380979899390261111")
+    dedicated_item.mode_allocations = [
+        QueryItemModeAllocation(
+            mode_type=mode_type,
+            target_dedicated_count=(1 if mode_type == QueryMode.NEW_API else 0),
+        )
+        for mode_type in QueryMode.ALL
+    ]
+    shared_item = build_item("1380979899390262222")
+
+    runner = ModeRunner(
+        build_mode("new_api"),
+        [build_account("a1", api_key="api-1")],
+        query_items=[dedicated_item, shared_item],
+        worker_factory=lambda mode_type, account: FakeWorker(account),
+    )
+
+    runner.start()
+    first_snapshot = runner.snapshot()
+    runner.stop()
+    runner.start(preserve_allocation_state=True)
+    second_snapshot = runner.snapshot()
+
+    assert first_snapshot["item_rows"][0]["actual_dedicated_count"] == 1
+    assert second_snapshot["item_rows"][0]["actual_dedicated_count"] == 1
+    assert second_snapshot["item_rows"][1]["actual_dedicated_count"] == 0
+
+
 async def test_mode_runner_run_loop_executes_cycle_and_stops_on_signal():
     import asyncio
 
@@ -640,6 +692,37 @@ async def test_mode_runner_keeps_recent_hit_and_error_events():
     assert snapshot["recent_events"][1]["query_item_name"] == "商品-1380979899390261111"
 
 
+def test_mode_runner_apply_mode_setting_forwards_item_cooldown_strategy_to_scheduler():
+    from app_backend.infrastructure.query.runtime.mode_runner import ModeRunner
+
+    applied = []
+
+    class FakeScheduler:
+        def reset(self) -> None:
+            return
+
+        def apply_mode_setting(self, mode_setting: QueryModeSetting) -> None:
+            applied.append(
+                (
+                    mode_setting.item_min_cooldown_seconds,
+                    mode_setting.item_min_cooldown_strategy,
+                )
+            )
+
+    runner = ModeRunner(
+        build_mode("new_api", item_min_cooldown_seconds=0.5, item_min_cooldown_strategy="divide_by_assigned_count"),
+        [build_account("a1", api_key="api-1")],
+        query_items=[build_item("1380979899390261111")],
+        query_item_scheduler=FakeScheduler(),
+    )
+
+    runner.apply_mode_setting(
+        build_mode("new_api", item_min_cooldown_seconds=0.9, item_min_cooldown_strategy="fixed")
+    )
+
+    assert applied == [(0.9, "fixed")]
+
+
 async def test_mode_runner_adds_rate_limit_increment_into_cycle_cooldown(monkeypatch):
     import asyncio
 
@@ -766,10 +849,13 @@ async def test_mode_runner_forwards_not_login_event_to_event_sink():
             "query_item_name": "商品-1380979899390261111",
             "message": "Not login",
             "match_count": 0,
-            "product_list": [],
-            "total_price": None,
-            "total_wear_sum": None,
-            "latency_ms": 9.0,
-            "error": "Not login",
-        }
-    ]
+                "product_list": [],
+                "total_price": None,
+                "total_wear_sum": None,
+                "detail_min_wear": None,
+                "detail_max_wear": None,
+                "max_price": None,
+                "latency_ms": 9.0,
+                "error": "Not login",
+            }
+        ]

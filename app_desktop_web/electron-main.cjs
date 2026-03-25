@@ -6,7 +6,6 @@ const { app, BrowserWindow, ipcMain } = require("electron");
 
 const projectRoot = path.resolve(__dirname, "..");
 const rendererEntryPath = path.join(__dirname, "dist", "index.html");
-const pythonExecutable = path.join(projectRoot, ".venv", "Scripts", "python.exe");
 const dbPath = path.join(projectRoot, "data", "app.db");
 let mainWindow = null;
 let backend = null;
@@ -17,6 +16,7 @@ let bootstrapConfig = {
 let runtimeDependenciesPromise = null;
 let loadWindowState = null;
 let saveWindowState = null;
+let resolvePythonExecutable = null;
 let startPythonBackend = null;
 
 
@@ -27,6 +27,7 @@ async function ensureRuntimeDependencies() {
       import("./window_state.js"),
     ]).then(([pythonBackendModule, windowStateModule]) => {
       startPythonBackend = pythonBackendModule.startPythonBackend;
+      resolvePythonExecutable = pythonBackendModule.resolvePythonExecutable;
       loadWindowState = windowStateModule.loadWindowState;
       saveWindowState = windowStateModule.saveWindowState;
     });
@@ -104,6 +105,7 @@ async function bootstrapApplication() {
     await ensureRuntimeDependencies();
 
     const port = await findAvailablePort();
+    const pythonExecutable = resolvePythonExecutable(projectRoot);
     backend = await startPythonBackend({
       dbPath,
       pollIntervalMs: 250,
