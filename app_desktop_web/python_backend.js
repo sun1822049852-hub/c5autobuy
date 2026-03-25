@@ -45,10 +45,31 @@ export function resolvePythonExecutable(
 
 export function buildPythonLaunchArgs({ projectRoot, dbPath, port }) {
   void projectRoot;
+  const dbPathLiteral = JSON.stringify(String(dbPath));
+  const launchScript = [
+    "from pathlib import Path;",
+    "from app_backend.main import main;",
+    `main(db_path=Path(${dbPathLiteral}), host='127.0.0.1', port=${port})`,
+  ].join(" ");
   return [
     "-c",
-    `from pathlib import Path; from app_backend.main import main; main(db_path=Path(r'${dbPath}'), host='127.0.0.1', port=${port})`,
+    launchScript,
   ];
+}
+
+
+function buildBackendExitError({ code, signal, stderrOutput }) {
+  const details = [];
+  if (code !== null && code !== undefined) {
+    details.push(`exit code ${code}`);
+  }
+  if (signal) {
+    details.push(`signal ${signal}`);
+  }
+
+  const detailSuffix = details.length ? ` (${details.join(", ")})` : "";
+  const stderrSuffix = stderrOutput ? `: ${stderrOutput}` : "";
+  return new Error(`Python backend exited before becoming healthy${detailSuffix}${stderrSuffix}`);
 }
 
 
@@ -71,9 +92,28 @@ export async function startPythonBackend({
   });
   const baseUrl = `http://127.0.0.1:${port}`;
   const startedAt = Date.now();
+  const stderrChunks = [];
+  let earlyExitError = null;
+
+  child.stderr?.on?.("data", (chunk) => {
+    stderrChunks.push(Buffer.isBuffer(chunk) ? chunk.toString("utf-8") : String(chunk));
+  });
+  child.once?.("error", (error) => {
+    earlyExitError = error instanceof Error ? error : new Error(String(error));
+  });
+  child.once?.("exit", (code, signal) => {
+    earlyExitError = buildBackendExitError({
+      code,
+      signal,
+      stderrOutput: stderrChunks.join("").trim(),
+    });
+  });
 
   try {
     while (Date.now() - startedAt <= timeoutMs) {
+      if (earlyExitError) {
+        throw earlyExitError;
+      }
       try {
         const response = await fetchImpl(`${baseUrl}/health`);
         if (response?.ok) {
@@ -89,13 +129,21 @@ export async function startPythonBackend({
       } catch (_error) {
         // Ignore connection failures until timeout; health polling is the readiness gate.
       }
+      if (earlyExitError) {
+        throw earlyExitError;
+      }
       await sleep(pollIntervalMs);
     }
   } catch (error) {
-    child.kill();
+    if (error !== earlyExitError) {
+      child.kill();
+    }
     throw error;
   }
 
+  if (earlyExitError) {
+    throw earlyExitError;
+  }
   child.kill();
   throw new Error("等待本地后端启动超时");
 }

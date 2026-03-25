@@ -8,6 +8,14 @@ import {
   startPythonBackend,
 } from "../../python_backend.js";
 
+function buildExpectedLaunchScript(dbPath, port) {
+  return [
+    "from pathlib import Path;",
+    "from app_backend.main import main;",
+    `main(db_path=Path(${JSON.stringify(dbPath)}), host='127.0.0.1', port=${port})`,
+  ].join(" ");
+}
+
 describe("python backend manager", () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -22,7 +30,20 @@ describe("python backend manager", () => {
 
     expect(args).toEqual([
       "-c",
-      "from pathlib import Path; from app_backend.main import main; main(db_path=Path(r'C:/demo/project/data/app.db'), host='127.0.0.1', port=8133)",
+      buildExpectedLaunchScript("C:/demo/project/data/app.db", 8133),
+    ]);
+  });
+
+  it("escapes database paths that contain single quotes when building python launch args", () => {
+    const args = buildPythonLaunchArgs({
+      projectRoot: "C:/demo/project",
+      dbPath: "C:/demo/O'Brien/data/app.db",
+      port: 8133,
+    });
+
+    expect(args).toEqual([
+      "-c",
+      buildExpectedLaunchScript("C:/demo/O'Brien/data/app.db", 8133),
     ]);
   });
 
@@ -65,7 +86,7 @@ describe("python backend manager", () => {
       command: "C:/demo/project/.venv/Scripts/python.exe",
       args: [
         "-c",
-        "from pathlib import Path; from app_backend.main import main; main(db_path=Path(r'C:/demo/project/data/app.db'), host='127.0.0.1', port=8133)",
+        buildExpectedLaunchScript("C:/demo/project/data/app.db", 8133),
       ],
       cwd: "C:/demo/project",
     });
@@ -103,5 +124,44 @@ describe("python backend manager", () => {
 
     await rejection;
     expect(fakeChild.kill).toHaveBeenCalledWith();
+  });
+
+  it("surfaces an early python process exit before the health check times out", async () => {
+    vi.useFakeTimers();
+
+    const childListeners = new Map();
+    const stderrListeners = new Map();
+    const fakeChild = {
+      once: vi.fn((eventName, handler) => {
+        childListeners.set(eventName, handler);
+      }),
+      stderr: {
+        on: vi.fn((eventName, handler) => {
+          stderrListeners.set(eventName, handler);
+        }),
+      },
+      kill: vi.fn(),
+    };
+    const spawnProcess = vi.fn(() => fakeChild);
+    const fetchImpl = vi.fn().mockRejectedValue(new Error("connect ECONNREFUSED"));
+
+    const pending = startPythonBackend({
+      projectRoot: "C:/demo/project",
+      dbPath: "C:/demo/project/data/app.db",
+      portProvider: () => 9133,
+      pythonExecutable: "C:/demo/project/.venv/Scripts/python.exe",
+      spawnProcess,
+      fetchImpl,
+      pollIntervalMs: 10,
+      timeoutMs: 1000,
+    });
+    const rejection = expect(pending).rejects.toThrow("backend exploded");
+
+    stderrListeners.get("data")?.(Buffer.from("backend exploded"));
+    childListeners.get("exit")?.(2, null);
+    await vi.advanceTimersByTimeAsync(20);
+
+    await rejection;
+    expect(fakeChild.kill).not.toHaveBeenCalled();
   });
 });

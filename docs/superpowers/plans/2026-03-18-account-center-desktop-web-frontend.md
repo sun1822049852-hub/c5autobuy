@@ -16,7 +16,7 @@
 - Create: `app_desktop_web/package.json`
 - Create: `app_desktop_web/vite.config.js`
 - Create: `app_desktop_web/index.html`
-- Create: `app_desktop_web/electron-main.js`
+- Create: `app_desktop_web/electron-main.cjs`
 - Create: `app_desktop_web/electron-preload.js`
 - Create: `app_desktop_web/python_backend.js`
 - Create: `app_desktop_web/window_state.js`
@@ -132,7 +132,7 @@ Expected:
 - Create: `main_ui_account_center_desktop.js`
 - Create: `app_desktop_web/package.json`
 - Create: `app_desktop_web/vite.config.js`
-- Create: `app_desktop_web/electron-main.js`
+- Create: `app_desktop_web/electron-main.cjs`
 - Create: `app_desktop_web/electron-preload.js`
 - Create: `app_desktop_web/python_backend.js`
 - Create: `app_desktop_web/window_state.js`
@@ -145,7 +145,7 @@ Expected:
   - 轮询 `/health`
   - 向主进程返回 `baseUrl`
 - [ ] 在 `window_state.js` 中实现窗口尺寸与位置缓存
-- [ ] 在 `electron-main.js` 中实现：
+- [ ] 在 `electron-main.cjs` 中实现：
   - 程序启动
   - Python 后端拉起
   - 创建 BrowserWindow
