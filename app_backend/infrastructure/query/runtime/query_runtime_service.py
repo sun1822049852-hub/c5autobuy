@@ -587,6 +587,14 @@ class QueryRuntimeService:
                         else None
                     ),
                     "error": raw_event.get("error"),
+                    "status_code": (
+                        int(raw_event["status_code"])
+                        if raw_event.get("status_code") is not None
+                        else None
+                    ),
+                    "request_method": raw_event.get("request_method"),
+                    "request_path": raw_event.get("request_path"),
+                    "response_text": raw_event.get("response_text"),
                 }
             )
         return normalized

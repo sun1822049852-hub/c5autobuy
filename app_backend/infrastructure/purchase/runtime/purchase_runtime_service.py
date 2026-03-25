@@ -1306,6 +1306,7 @@ class _DefaultPurchaseRuntime:
                 batch,
                 status="auth_invalid",
                 message=outcome.error or "登录已失效",
+                debug_details=self._build_purchase_debug_details(outcome),
             )
         elif outcome.status == "no_inventory":
             stats_status = "paused_no_inventory"
@@ -1315,12 +1316,14 @@ class _DefaultPurchaseRuntime:
                 batch,
                 status="paused_no_inventory",
                 message=outcome.error or "没有可用仓库",
+                debug_details=self._build_purchase_debug_details(outcome),
             )
         else:
             self._push_event_from_batch(
                 batch,
                 status=str(outcome.status),
                 message=outcome.error or "购买失败",
+                debug_details=self._build_purchase_debug_details(outcome),
             )
 
         self._stats_aggregator.enqueue_outcome(
@@ -1714,7 +1717,24 @@ class _DefaultPurchaseRuntime:
         )
         del self._recent_events[self._RECENT_EVENT_LIMIT :]
 
-    def _push_event_from_batch(self, batch, *, status: str, message: str) -> None:
+    @staticmethod
+    def _build_purchase_debug_details(outcome) -> dict[str, object]:
+        return {
+            "status_code": getattr(outcome, "status_code", None),
+            "request_method": getattr(outcome, "request_method", None),
+            "request_path": getattr(outcome, "request_path", None),
+            "response_text": getattr(outcome, "response_text", None),
+        }
+
+    def _push_event_from_batch(
+        self,
+        batch,
+        *,
+        status: str,
+        message: str,
+        debug_details: dict[str, object] | None = None,
+    ) -> None:
+        details = debug_details or {}
         self._recent_events.insert(
             0,
             {
@@ -1731,6 +1751,10 @@ class _DefaultPurchaseRuntime:
                 "total_price": float(getattr(batch, "total_price", 0.0) or 0.0),
                 "total_wear_sum": getattr(batch, "total_wear_sum", None),
                 "source_mode_type": str(getattr(batch, "source_mode_type", "") or ""),
+                "status_code": details.get("status_code"),
+                "request_method": details.get("request_method"),
+                "request_path": details.get("request_path"),
+                "response_text": details.get("response_text"),
             },
         )
         del self._recent_events[self._RECENT_EVENT_LIMIT :]

@@ -63,3 +63,32 @@ def test_task_manager_lists_recent_tasks_in_descending_update_order_and_returns_
     current = manager.get_task(newer.task_id)
     assert current is not None
     assert [event.state for event in current.events] == ["pending", "succeeded"]
+
+
+def test_task_manager_set_error_keeps_failure_payload():
+    from app_backend.workers.manager.task_manager import TaskManager
+
+    manager = TaskManager()
+    task = manager.create_task(task_type="login")
+
+    manager.set_error(
+        task.task_id,
+        "浏览器关闭",
+        payload={
+            "status_code": 500,
+            "request_method": "POST",
+            "request_path": "/accounts/a-1/login",
+            "response_text": "browser crashed",
+        },
+    )
+
+    snapshot = manager.get_task(task.task_id)
+
+    assert snapshot is not None
+    assert snapshot.error == "浏览器关闭"
+    assert snapshot.events[-1].payload == {
+        "status_code": 500,
+        "request_method": "POST",
+        "request_path": "/accounts/a-1/login",
+        "response_text": "browser crashed",
+    }

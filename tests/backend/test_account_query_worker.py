@@ -119,6 +119,41 @@ async def test_account_worker_disables_account_on_403():
     assert snapshot["active"] is False
 
 
+async def test_account_worker_keeps_raw_debug_fields_on_failure_event():
+    from app_backend.infrastructure.query.runtime.account_query_worker import AccountQueryWorker
+    from app_backend.infrastructure.query.runtime.runtime_events import QueryExecutionResult
+
+    class FakeAdapter:
+        async def execute_query(self, *, mode_type, account, query_item):
+            return QueryExecutionResult(
+                success=False,
+                match_count=0,
+                product_list=[],
+                total_price=0.0,
+                total_wear_sum=0.0,
+                error="token invalid",
+                latency_ms=10.0,
+                status_code=401,
+                request_method="GET",
+                request_path="/openapi/query",
+                response_text="not login",
+            )
+
+    worker = AccountQueryWorker(
+        mode_type="token",
+        account=build_account("a1", cookie_raw="NC5_accessToken=t; NC5_deviceId=d"),
+        scanner_adapter=FakeAdapter(),
+    )
+
+    event = await worker.run_once(build_item())
+
+    assert event is not None
+    assert event.status_code == 401
+    assert event.request_method == "GET"
+    assert event.request_path == "/openapi/query"
+    assert event.response_text == "not login"
+
+
 async def test_account_worker_adds_rate_limit_increment_on_429_without_disabling_worker():
     from app_backend.infrastructure.query.runtime.account_query_worker import AccountQueryWorker
     from app_backend.infrastructure.query.runtime.runtime_events import QueryExecutionResult

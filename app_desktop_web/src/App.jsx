@@ -114,14 +114,6 @@ export function App() {
     <>
       <AppShell
         activeItem={activeItem}
-        diagnosticsPanel={(
-          <DiagnosticsPanel
-            error={diagnostics.error}
-            isLoading={diagnostics.isLoading}
-            isRefreshing={diagnostics.isRefreshing}
-            snapshot={diagnostics.snapshot}
-          />
-        )}
         onSelect={handleSelectItem}
       >
         {activeItem === "query-system" ? (
@@ -145,6 +137,13 @@ export function App() {
             bootstrapConfig={bootstrapConfig}
             client={client}
             onLeaveStateChange={handlePurchaseSystemLeaveStateChange}
+          />
+        ) : activeItem === "diagnostics" ? (
+          <DiagnosticsPanel
+            error={diagnostics.error}
+            isLoading={diagnostics.isLoading}
+            isRefreshing={diagnostics.isRefreshing}
+            snapshot={diagnostics.snapshot}
           />
         ) : (
           <AccountCenterPage

@@ -36,6 +36,8 @@ class PurchaseExecutionGateway:
             return PurchaseExecutionResult.auth_invalid(
                 "Not login",
                 submitted_count=submitted_count,
+                request_method="POST",
+                request_path=f"/{self.ORDER_API_PATH}",
             )
 
         if not item_id or not product_url:
@@ -44,6 +46,8 @@ class PurchaseExecutionGateway:
                 purchased_count=0,
                 submitted_count=submitted_count,
                 error="Missing external_item_id or product_url",
+                request_method="POST",
+                request_path=f"/{self.ORDER_API_PATH}",
             )
 
         if not product_list:
@@ -52,10 +56,12 @@ class PurchaseExecutionGateway:
                 purchased_count=0,
                 submitted_count=0,
                 error="Missing product_list",
+                request_method="POST",
+                request_path=f"/{self.ORDER_API_PATH}",
             )
 
         create_started_at = time.perf_counter()
-        order_success, order_id, order_error = await self.create_order(
+        order_success, order_id, order_error, order_debug_details = await self.create_order(
             runtime_account=runtime_account,
             item_id=item_id,
             total_price=float(getattr(batch, "total_price", 0.0) or 0.0),
@@ -70,10 +76,11 @@ class PurchaseExecutionGateway:
                 order_error,
                 submitted_count=submitted_count,
                 create_order_latency_ms=create_order_latency_ms,
+                debug_details=order_debug_details,
             )
 
         submit_started_at = time.perf_counter()
-        payment_success, success_count, payment_error = await self.process_payment(
+        payment_success, success_count, payment_error, payment_debug_details = await self.process_payment(
             runtime_account=runtime_account,
             order_id=str(order_id),
             pay_amount=float(getattr(batch, "total_price", 0.0) or 0.0),
@@ -88,6 +95,7 @@ class PurchaseExecutionGateway:
                 submitted_count=submitted_count,
                 create_order_latency_ms=create_order_latency_ms,
                 submit_order_latency_ms=submit_order_latency_ms,
+                debug_details=payment_debug_details,
             )
 
         purchased_count = int(success_count or 0)
@@ -116,7 +124,7 @@ class PurchaseExecutionGateway:
         selected_steam_id: str,
         product_list: list[dict[str, Any]],
         product_url: str,
-    ) -> tuple[bool, str | None, str | None]:
+    ) -> tuple[bool, str | None, str | None, dict[str, object]]:
         request_body = self.build_order_request_body(
             item_id=item_id,
             total_price=total_price,
@@ -132,10 +140,16 @@ class PurchaseExecutionGateway:
                 referer_url=product_url,
             )
         except RuntimeError as exc:
-            return False, None, str(exc)
+            return False, None, str(exc), {
+                "request_method": "POST",
+                "request_path": f"/{self.ORDER_API_PATH}",
+            }
 
         if headers is None:
-            return False, None, "构建请求头失败"
+            return False, None, "构建请求头失败", {
+                "request_method": "POST",
+                "request_path": f"/{self.ORDER_API_PATH}",
+            }
 
         session = await runtime_account.get_global_session()
         try:
@@ -145,11 +159,17 @@ class PurchaseExecutionGateway:
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=self.ORDER_TIMEOUT_SECONDS),
             ) as response:
-                return self.parse_order_response(await response.text())
+                return self.parse_order_response(await response.text(), status_code=response.status)
         except asyncio.TimeoutError:
-            return False, None, "订单创建请求超时"
+            return False, None, "订单创建请求超时", {
+                "request_method": "POST",
+                "request_path": f"/{self.ORDER_API_PATH}",
+            }
         except Exception as exc:
-            return False, None, f"订单创建请求失败: {exc}"
+            return False, None, f"订单创建请求失败: {exc}", {
+                "request_method": "POST",
+                "request_path": f"/{self.ORDER_API_PATH}",
+            }
 
     async def process_payment(
         self,
@@ -159,7 +179,7 @@ class PurchaseExecutionGateway:
         pay_amount: float,
         selected_steam_id: str,
         product_url: str,
-    ) -> tuple[bool, int, str | None]:
+    ) -> tuple[bool, int, str | None, dict[str, object]]:
         request_body = self.build_payment_request_body(
             order_id=order_id,
             pay_amount=pay_amount,
@@ -174,10 +194,16 @@ class PurchaseExecutionGateway:
                 referer_url=product_url,
             )
         except RuntimeError as exc:
-            return False, 0, str(exc)
+            return False, 0, str(exc), {
+                "request_method": "POST",
+                "request_path": f"/{self.PAY_API_PATH}",
+            }
 
         if headers is None:
-            return False, 0, "构建请求头失败"
+            return False, 0, "构建请求头失败", {
+                "request_method": "POST",
+                "request_path": f"/{self.PAY_API_PATH}",
+            }
 
         session = await runtime_account.get_global_session()
         try:
@@ -187,11 +213,17 @@ class PurchaseExecutionGateway:
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=self.PAY_TIMEOUT_SECONDS),
             ) as response:
-                return self.parse_payment_response(await response.text())
+                return self.parse_payment_response(await response.text(), status_code=response.status)
         except asyncio.TimeoutError:
-            return False, 0, "请求超时"
+            return False, 0, "请求超时", {
+                "request_method": "POST",
+                "request_path": f"/{self.PAY_API_PATH}",
+            }
         except Exception as exc:
-            return False, 0, f"请求失败: {exc}"
+            return False, 0, f"请求失败: {exc}", {
+                "request_method": "POST",
+                "request_path": f"/{self.PAY_API_PATH}",
+            }
 
     @staticmethod
     def build_order_request_body(
@@ -227,38 +259,83 @@ class PurchaseExecutionGateway:
         }
 
     @classmethod
-    def parse_order_response(cls, response_text: str) -> tuple[bool, str | None, str | None]:
+    def parse_order_response(
+        cls,
+        response_text: str,
+        *,
+        status_code: int | None = None,
+    ) -> tuple[bool, str | None, str | None, dict[str, object]]:
         try:
             response_data = json.loads(response_text)
         except json.JSONDecodeError:
-            return False, None, "响应不是有效的JSON格式"
+            return False, None, "响应不是有效的JSON格式", {
+                "status_code": status_code,
+                "request_method": "POST",
+                "request_path": f"/{cls.ORDER_API_PATH}",
+                "response_text": response_text,
+            }
         except Exception as exc:
-            return False, None, f"解析响应失败: {exc}"
+            return False, None, f"解析响应失败: {exc}", {
+                "status_code": status_code,
+                "request_method": "POST",
+                "request_path": f"/{cls.ORDER_API_PATH}",
+                "response_text": response_text,
+            }
 
         if not response_data.get("success", False):
             error_msg = response_data.get("errorMsg", "未知错误")
-            return False, None, f"创建订单失败: {error_msg}"
+            return False, None, f"创建订单失败: {error_msg}", {
+                "status_code": status_code,
+                "request_method": "POST",
+                "request_path": f"/{cls.ORDER_API_PATH}",
+                "response_text": response_text,
+            }
 
         order_id = response_data.get("data")
         if not order_id:
-            return False, None, "响应中没有订单号"
-        return True, str(order_id), None
+            return False, None, "响应中没有订单号", {
+                "status_code": status_code,
+                "request_method": "POST",
+                "request_path": f"/{cls.ORDER_API_PATH}",
+                "response_text": response_text,
+            }
+        return True, str(order_id), None, {}
 
     @classmethod
-    def parse_payment_response(cls, response_text: str) -> tuple[bool, int, str | None]:
+    def parse_payment_response(
+        cls,
+        response_text: str,
+        *,
+        status_code: int | None = None,
+    ) -> tuple[bool, int, str | None, dict[str, object]]:
         try:
             response_data = json.loads(response_text)
         except json.JSONDecodeError:
-            return False, 0, "响应不是有效的JSON格式"
+            return False, 0, "响应不是有效的JSON格式", {
+                "status_code": status_code,
+                "request_method": "POST",
+                "request_path": f"/{cls.PAY_API_PATH}",
+                "response_text": response_text,
+            }
         except Exception as exc:
-            return False, 0, f"解析响应失败: {exc}"
+            return False, 0, f"解析响应失败: {exc}", {
+                "status_code": status_code,
+                "request_method": "POST",
+                "request_path": f"/{cls.PAY_API_PATH}",
+                "response_text": response_text,
+            }
 
         if not response_data.get("success", False):
             error_msg = response_data.get("errorMsg", "未知错误")
-            return False, 0, f"支付失败: {error_msg}"
+            return False, 0, f"支付失败: {error_msg}", {
+                "status_code": status_code,
+                "request_method": "POST",
+                "request_path": f"/{cls.PAY_API_PATH}",
+                "response_text": response_text,
+            }
 
         data = response_data.get("data") or {}
-        return True, int(data.get("successCount", 0) or 0), None
+        return True, int(data.get("successCount", 0) or 0), None, {}
 
     def _build_headers(
         self,
@@ -328,13 +405,19 @@ class PurchaseExecutionGateway:
         submitted_count: int,
         create_order_latency_ms: float | None = None,
         submit_order_latency_ms: float | None = None,
+        debug_details: dict[str, object] | None = None,
     ) -> PurchaseExecutionResult:
+        details = debug_details or {}
         if PurchaseExecutionGateway._is_auth_invalid(error):
             return PurchaseExecutionResult.auth_invalid(
                 error or "Not login",
                 submitted_count=submitted_count,
                 create_order_latency_ms=create_order_latency_ms,
                 submit_order_latency_ms=submit_order_latency_ms,
+                status_code=details.get("status_code"),
+                request_method=details.get("request_method"),
+                request_path=details.get("request_path"),
+                response_text=details.get("response_text"),
             )
         return PurchaseExecutionResult(
             status=status,
@@ -343,6 +426,10 @@ class PurchaseExecutionGateway:
             error=error,
             create_order_latency_ms=create_order_latency_ms,
             submit_order_latency_ms=submit_order_latency_ms,
+            status_code=details.get("status_code"),
+            request_method=details.get("request_method"),
+            request_path=details.get("request_path"),
+            response_text=details.get("response_text"),
         )
 
     @staticmethod

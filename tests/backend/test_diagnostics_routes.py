@@ -255,3 +255,48 @@ async def test_sidebar_diagnostics_prioritizes_abnormal_rows_and_caps_recent_his
     assert len(payload["login_tasks"]["recent_tasks"]) == 12
     assert all(len(task["events"]) == 3 for task in payload["login_tasks"]["recent_tasks"])
     assert payload["login_tasks"]["failed_count"] >= 1
+
+
+async def test_sidebar_diagnostics_exposes_raw_debug_fields_for_query_purchase_and_login(client, app):
+    query_status = _build_query_status(recent_event_count=1, abnormal_row_count=1)
+    query_status["recent_events"][0]["status_code"] = 401
+    query_status["recent_events"][0]["request_method"] = "GET"
+    query_status["recent_events"][0]["request_path"] = "/openapi/query"
+    query_status["recent_events"][0]["response_text"] = "not login"
+
+    purchase_status = _build_purchase_status(recent_event_count=1, abnormal_account_count=1)
+    purchase_status["recent_events"][0]["status_code"] = 409
+    purchase_status["recent_events"][0]["request_method"] = "POST"
+    purchase_status["recent_events"][0]["request_path"] = "/purchase/orders"
+    purchase_status["recent_events"][0]["response_text"] = "{\"error\":\"sold out\"}"
+
+    app.state.query_runtime_service = FakeQueryRuntimeService(query_status)
+    app.state.purchase_runtime_service = FakePurchaseRuntimeService(purchase_status)
+
+    task = app.state.task_manager.create_task(task_type="login", message="创建任务")
+    app.state.task_manager.set_state(
+        task.task_id,
+        "failed",
+        message="浏览器关闭",
+        payload={
+            "status_code": 500,
+            "request_method": "POST",
+            "request_path": "/accounts/a-1/login",
+            "response_text": "browser crashed",
+        },
+    )
+
+    response = await client.get("/diagnostics/sidebar")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["query"]["recent_events"][0]["status_code"] == 401
+    assert payload["query"]["recent_events"][0]["request_method"] == "GET"
+    assert payload["query"]["recent_events"][0]["request_path"] == "/openapi/query"
+    assert payload["query"]["recent_events"][0]["response_text"] == "not login"
+    assert payload["purchase"]["recent_events"][0]["status_code"] == 409
+    assert payload["purchase"]["recent_events"][0]["request_method"] == "POST"
+    assert payload["purchase"]["recent_events"][0]["request_path"] == "/purchase/orders"
+    assert payload["purchase"]["recent_events"][0]["response_text"] == "{\"error\":\"sold out\"}"
+    assert payload["login_tasks"]["recent_tasks"][0]["events"][-1]["payload"]["status_code"] == 500
+    assert payload["login_tasks"]["recent_tasks"][0]["events"][-1]["payload"]["request_path"] == "/accounts/a-1/login"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import datetime
 
 from app_backend.application.use_cases.get_purchase_runtime_status import GetPurchaseRuntimeStatusUseCase
@@ -159,6 +160,10 @@ class GetSidebarDiagnosticsUseCase:
                         "total_wear_sum": self._coerce_optional_float(raw_event.get("total_wear_sum")),
                         "latency_ms": self._coerce_optional_float(raw_event.get("latency_ms")),
                         "error": self._coerce_optional_str(raw_event.get("error")),
+                        "status_code": self._coerce_optional_int(raw_event.get("status_code")),
+                        "request_method": self._coerce_optional_str(raw_event.get("request_method")),
+                        "request_path": self._coerce_optional_str(raw_event.get("request_path")),
+                        "response_text": self._coerce_optional_str(raw_event.get("response_text")),
                     }
                 )
 
@@ -242,6 +247,10 @@ class GetSidebarDiagnosticsUseCase:
                         "source_mode_type": str(raw_event.get("source_mode_type") or ""),
                         "total_price": self._coerce_optional_float(raw_event.get("total_price")),
                         "total_wear_sum": self._coerce_optional_float(raw_event.get("total_wear_sum")),
+                        "status_code": self._coerce_optional_int(raw_event.get("status_code")),
+                        "request_method": self._coerce_optional_str(raw_event.get("request_method")),
+                        "request_path": self._coerce_optional_str(raw_event.get("request_path")),
+                        "response_text": self._coerce_optional_str(raw_event.get("response_text")),
                     }
                 )
 
@@ -285,6 +294,7 @@ class GetSidebarDiagnosticsUseCase:
                     "state": event.state,
                     "timestamp": event.timestamp,
                     "message": event.message,
+                    "payload": deepcopy(event.payload) if isinstance(event.payload, dict) else None,
                 }
                 for event in list(getattr(task, "events", []) or [])[-self._LOGIN_EVENT_LIMIT :]
             ]
@@ -307,6 +317,8 @@ class GetSidebarDiagnosticsUseCase:
                     "started_at": task.created_at,
                     "updated_at": task.updated_at,
                     "last_message": self._extract_last_task_message(task),
+                    "result": result or None,
+                    "error": self._coerce_optional_str(getattr(task, "error", None)),
                     "pending_conflict": pending_conflict,
                     "events": event_rows,
                 }

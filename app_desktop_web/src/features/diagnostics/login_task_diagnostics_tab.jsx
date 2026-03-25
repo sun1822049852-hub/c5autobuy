@@ -1,3 +1,4 @@
+import { getEventDetailLines } from "../../shared/feedback_details.js";
 import { DiagnosticsSummary } from "./diagnostics_summary.jsx";
 
 
@@ -30,6 +31,18 @@ export function LoginTaskDiagnosticsTab({ snapshot }) {
                     <div key={`${task.task_id}-${event.timestamp}-${event.state}`} className="diagnostics-timeline__item">
                       <span className="diagnostics-timeline__state">{event.state}</span>
                       <span className="diagnostics-timeline__message">{event.message || event.timestamp}</span>
+                      {getEventDetailLines(event).length ? (
+                        <div className="diagnostics-timeline__details">
+                          {getEventDetailLines(event).map((line, detailIndex) => (
+                            <div
+                              key={`${task.task_id}-${event.timestamp}-${line}-${detailIndex}`}
+                              className="diagnostics-timeline__detail"
+                            >
+                              {line}
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
                     </div>
                   ))}
                 </div>

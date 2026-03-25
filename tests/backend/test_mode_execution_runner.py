@@ -855,7 +855,11 @@ async def test_mode_runner_forwards_not_login_event_to_event_sink():
                 "detail_min_wear": None,
                 "detail_max_wear": None,
                 "max_price": None,
-                "latency_ms": 9.0,
-                "error": "Not login",
+            "latency_ms": 9.0,
+            "error": "Not login",
+            "status_code": None,
+            "request_method": None,
+            "request_path": None,
+            "response_text": None,
             }
         ]

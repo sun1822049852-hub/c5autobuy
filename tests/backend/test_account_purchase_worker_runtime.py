@@ -101,6 +101,35 @@ def test_account_purchase_worker_marks_auth_invalid_without_inventory_refresh():
     assert outcome.requires_remote_refresh is False
 
 
+def test_account_purchase_worker_preserves_gateway_debug_fields_on_failure():
+    inventory_state = build_inventory_state()
+    gateway = SpyGateway(
+        PurchaseExecutionResult(
+            status="payment_failed",
+            purchased_count=0,
+            submitted_count=1,
+            error="库存不足",
+            status_code=409,
+            request_method="POST",
+            request_path="/purchase/orders",
+            response_text="{\"error\":\"sold out\"}",
+        )
+    )
+    worker = AccountPurchaseWorker(
+        account=build_account(),
+        inventory_state=inventory_state,
+        execution_gateway=gateway,
+    )
+
+    outcome = asyncio.run(worker.process(build_batch()))
+
+    assert outcome.status == "payment_failed"
+    assert outcome.status_code == 409
+    assert outcome.request_method == "POST"
+    assert outcome.request_path == "/purchase/orders"
+    assert outcome.response_text == "{\"error\":\"sold out\"}"
+
+
 def test_account_purchase_worker_passes_selected_steam_id_to_execution_gateway():
     inventory_state = build_inventory_state()
     gateway = SpyGateway(PurchaseExecutionResult.success(purchased_count=1))

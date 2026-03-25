@@ -1,3 +1,6 @@
+import { getEventDetailLines } from "../../shared/feedback_details.js";
+
+
 export function DiagnosticsEventList({
   emptyText = "暂无事件",
   rows = [],
@@ -28,6 +31,18 @@ export function DiagnosticsEventList({
                   row.error,
                 ].filter(Boolean).join(" · ")}
               </div>
+              {getEventDetailLines(row).length ? (
+                <div className="diagnostics-event-list__details">
+                  {getEventDetailLines(row).map((line, detailIndex) => (
+                    <div
+                      key={`${line}-${detailIndex}`}
+                      className="diagnostics-event-list__detail"
+                    >
+                      {line}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
             </article>
           ))}
         </div>

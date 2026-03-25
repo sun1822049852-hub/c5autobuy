@@ -85,18 +85,54 @@ class FastApiQueryExecutor:
                 status = response.status
                 text = await response.text()
         except asyncio.TimeoutError:
-            return self._build_failure_result("请求超时 (8秒)", started_at=started_at)
+            return self._build_failure_result(
+                "请求超时 (8秒)",
+                started_at=started_at,
+                request_method="POST",
+                request_path="/merchant/market/v2/products/list",
+            )
         except Exception as exc:
             if aiohttp is not None and isinstance(exc, aiohttp.ClientError):
-                return self._build_failure_result(f"网络错误: {exc}", started_at=started_at)
-            return self._build_failure_result(f"请求失败: {exc}", started_at=started_at)
+                return self._build_failure_result(
+                    f"网络错误: {exc}",
+                    started_at=started_at,
+                    request_method="POST",
+                    request_path="/merchant/market/v2/products/list",
+                )
+            return self._build_failure_result(
+                f"请求失败: {exc}",
+                started_at=started_at,
+                request_method="POST",
+                request_path="/merchant/market/v2/products/list",
+            )
 
         if status == 429:
-            return self._build_failure_result("HTTP 429 Too Many Requests", started_at=started_at)
+            return self._build_failure_result(
+                "HTTP 429 Too Many Requests",
+                started_at=started_at,
+                status_code=status,
+                request_method="POST",
+                request_path="/merchant/market/v2/products/list",
+                response_text=text,
+            )
         if status == 403:
-            return self._build_failure_result("HTTP 403 请求失败 (可能IP未加入白名单)", started_at=started_at)
+            return self._build_failure_result(
+                "HTTP 403 请求失败 (可能IP未加入白名单)",
+                started_at=started_at,
+                status_code=status,
+                request_method="POST",
+                request_path="/merchant/market/v2/products/list",
+                response_text=text,
+            )
         if status != 200:
-            return self._build_failure_result(f"HTTP {status} 请求失败", started_at=started_at)
+            return self._build_failure_result(
+                f"HTTP {status} 请求失败",
+                started_at=started_at,
+                status_code=status,
+                request_method="POST",
+                request_path="/merchant/market/v2/products/list",
+                response_text=text,
+            )
 
         success, match_count, product_list, total_price, total_wear_sum, error = self._parse_response(
             text,
@@ -110,6 +146,10 @@ class FastApiQueryExecutor:
             total_wear_sum=total_wear_sum,
             error=error,
             latency_ms=(time.perf_counter() - started_at) * 1000,
+            status_code=None if success else status,
+            request_method="POST",
+            request_path="/merchant/market/v2/products/list",
+            response_text=None if success else text,
         )
 
     @staticmethod
@@ -119,7 +159,15 @@ class FastApiQueryExecutor:
         return aiohttp.ClientTimeout(total=8)
 
     @staticmethod
-    def _build_failure_result(error: str, *, started_at: float) -> QueryExecutionResult:
+    def _build_failure_result(
+        error: str,
+        *,
+        started_at: float,
+        status_code: int | None = None,
+        request_method: str | None = None,
+        request_path: str | None = None,
+        response_text: str | None = None,
+    ) -> QueryExecutionResult:
         return QueryExecutionResult(
             success=False,
             match_count=0,
@@ -128,6 +176,10 @@ class FastApiQueryExecutor:
             total_wear_sum=0.0,
             error=error,
             latency_ms=(time.perf_counter() - started_at) * 1000,
+            status_code=status_code,
+            request_method=request_method,
+            request_path=request_path,
+            response_text=response_text,
         )
 
     def _parse_response(

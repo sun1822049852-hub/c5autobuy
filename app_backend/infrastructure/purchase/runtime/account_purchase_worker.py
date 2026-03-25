@@ -54,6 +54,10 @@ class AccountPurchaseWorker:
                 create_order_latency_ms=getattr(result, "create_order_latency_ms", None),
                 submit_order_latency_ms=getattr(result, "submit_order_latency_ms", None),
                 error=result.error,
+                status_code=getattr(result, "status_code", None),
+                request_method=getattr(result, "request_method", None),
+                request_path=getattr(result, "request_path", None),
+                response_text=getattr(result, "response_text", None),
             )
 
         if result.status == "success":
@@ -86,6 +90,10 @@ class AccountPurchaseWorker:
             create_order_latency_ms=getattr(result, "create_order_latency_ms", None),
             submit_order_latency_ms=getattr(result, "submit_order_latency_ms", None),
             error=result.error,
+            status_code=getattr(result, "status_code", None),
+            request_method=getattr(result, "request_method", None),
+            request_path=getattr(result, "request_path", None),
+            response_text=getattr(result, "response_text", None),
         )
 
     @staticmethod

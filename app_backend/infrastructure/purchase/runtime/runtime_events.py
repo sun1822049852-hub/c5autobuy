@@ -29,6 +29,10 @@ class PurchaseExecutionResult:
     error: str | None = None
     create_order_latency_ms: float | None = None
     submit_order_latency_ms: float | None = None
+    status_code: int | None = None
+    request_method: str | None = None
+    request_path: str | None = None
+    response_text: str | None = None
 
     @classmethod
     def success(
@@ -38,6 +42,10 @@ class PurchaseExecutionResult:
         submitted_count: int = 0,
         create_order_latency_ms: float | None = None,
         submit_order_latency_ms: float | None = None,
+        status_code: int | None = None,
+        request_method: str | None = None,
+        request_path: str | None = None,
+        response_text: str | None = None,
     ) -> "PurchaseExecutionResult":
         return cls(
             status="success",
@@ -46,6 +54,10 @@ class PurchaseExecutionResult:
             error=None,
             create_order_latency_ms=create_order_latency_ms,
             submit_order_latency_ms=submit_order_latency_ms,
+            status_code=status_code,
+            request_method=request_method,
+            request_path=request_path,
+            response_text=response_text,
         )
 
     @classmethod
@@ -56,6 +68,10 @@ class PurchaseExecutionResult:
         submitted_count: int = 0,
         create_order_latency_ms: float | None = None,
         submit_order_latency_ms: float | None = None,
+        status_code: int | None = None,
+        request_method: str | None = None,
+        request_path: str | None = None,
+        response_text: str | None = None,
     ) -> "PurchaseExecutionResult":
         return cls(
             status="auth_invalid",
@@ -64,6 +80,10 @@ class PurchaseExecutionResult:
             error=error,
             create_order_latency_ms=create_order_latency_ms,
             submit_order_latency_ms=submit_order_latency_ms,
+            status_code=status_code,
+            request_method=request_method,
+            request_path=request_path,
+            response_text=response_text,
         )
 
 
@@ -98,3 +118,7 @@ class PurchaseWorkerOutcome:
     create_order_latency_ms: float | None = None
     submit_order_latency_ms: float | None = None
     error: str | None = None
+    status_code: int | None = None
+    request_method: str | None = None
+    request_path: str | None = None
+    response_text: str | None = None

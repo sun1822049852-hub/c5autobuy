@@ -106,6 +106,7 @@ class TaskManager:
         *,
         state: str | None = None,
         message: str | None = None,
+        payload: dict[str, Any] | None = None,
     ) -> TaskSnapshot:
         with self._lock:
             snapshot = self._require_task(task_id)
@@ -117,6 +118,7 @@ class TaskManager:
                         state=state,
                         timestamp=snapshot.updated_at,
                         message=message,
+                        payload=deepcopy(payload),
                     )
                 )
             else:
@@ -136,6 +138,7 @@ class TaskManager:
         *,
         state: str = "failed",
         message: str | None = None,
+        payload: dict[str, Any] | None = None,
     ) -> TaskSnapshot:
         with self._lock:
             snapshot = self._require_task(task_id)
@@ -147,6 +150,7 @@ class TaskManager:
                     state=state,
                     timestamp=snapshot.updated_at,
                     message=message or error,
+                    payload=deepcopy(payload),
                 )
             )
             self._task_revisions[task_id] = self._next_revision()

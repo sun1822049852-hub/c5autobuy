@@ -13,6 +13,10 @@ class QueryExecutionResult:
     total_wear_sum: float = 0.0
     error: str | None = None
     latency_ms: float | None = None
+    status_code: int | None = None
+    request_method: str | None = None
+    request_path: str | None = None
+    response_text: str | None = None
 
 
 @dataclass(slots=True)
@@ -38,3 +42,7 @@ class QueryExecutionEvent:
     max_price: float | None = None
     latency_ms: float | None = None
     error: str | None = None
+    status_code: int | None = None
+    request_method: str | None = None
+    request_path: str | None = None
+    response_text: str | None = None

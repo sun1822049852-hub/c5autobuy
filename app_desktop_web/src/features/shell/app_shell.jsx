@@ -26,10 +26,15 @@ const NAV_ITEMS = [
     label: "账号能力统计",
     tag: "Live",
   },
+  {
+    id: "diagnostics",
+    label: "通用诊断",
+    tag: "Live",
+  },
 ];
 
 
-export function AppShell({ activeItem, children, diagnosticsPanel, onSelect }) {
+export function AppShell({ activeItem, children, onSelect }) {
   return (
     <div className="app-shell">
       <aside className="app-shell__sidebar" aria-label="主导航">
@@ -61,9 +66,6 @@ export function AppShell({ activeItem, children, diagnosticsPanel, onSelect }) {
           ))}
         </nav>
       </aside>
-      <div className="app-shell__diagnostics">
-        {diagnosticsPanel}
-      </div>
       <main className="app-shell__content">{children}</main>
     </div>
   );

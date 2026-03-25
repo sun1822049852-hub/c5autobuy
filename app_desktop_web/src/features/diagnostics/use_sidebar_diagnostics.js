@@ -3,6 +3,9 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 const FOREGROUND_POLL_MS = 1500;
 const BACKGROUND_POLL_MS = 5000;
+const MAX_RETAINED_EVENT_ROWS = 80;
+const MAX_RETAINED_ACCOUNT_ROWS = 40;
+const MAX_RETAINED_LOGIN_TASKS = 40;
 
 
 function isObject(value) {
@@ -25,6 +28,249 @@ function toErrorMessage(error) {
     return error.message;
   }
   return "诊断数据加载失败";
+}
+
+
+function asArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+
+function normalizeText(value) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  return String(value).trim();
+}
+
+
+function hasRawDetails(row) {
+  return Boolean(
+    row?.status_code
+    || row?.http_status
+    || row?.response_status
+    || row?.request_method
+    || row?.request_path
+    || row?.path
+    || row?.response_text
+    || row?.raw_response
+    || row?.response_body
+    || row?.payload
+    || row?.result
+    || row?.error
+    || row?.error_message,
+  );
+}
+
+
+function isErrorLike(value) {
+  const normalized = normalizeText(value).toLowerCase();
+  return normalized === "error"
+    || normalized === "failed"
+    || normalized === "failure"
+    || normalized === "conflict"
+    || normalized === "cancelled";
+}
+
+
+function isRetainableEvent(row) {
+  return isErrorLike(row?.level || row?.status || row?.state)
+    || Boolean(normalizeText(row?.error || row?.error_message))
+    || hasRawDetails(row);
+}
+
+
+function isRetainableAccountRow(row) {
+  return Boolean(normalizeText(row?.last_error || row?.disabled_reason));
+}
+
+
+function isRetainableLoginTask(task) {
+  return isErrorLike(task?.state)
+    || Boolean(normalizeText(task?.error))
+    || asArray(task?.events).some((event) => isRetainableEvent(event));
+}
+
+
+function getRowTime(row) {
+  return normalizeText(
+    row?.timestamp
+    || row?.occurred_at
+    || row?.updated_at
+    || row?.started_at
+    || row?.last_seen_at,
+  );
+}
+
+
+function compareRowsByTimeDesc(left, right) {
+  const leftTime = getRowTime(left);
+  const rightTime = getRowTime(right);
+
+  if (leftTime === rightTime) {
+    return 0;
+  }
+  return leftTime < rightTime ? 1 : -1;
+}
+
+
+function buildEventSignature(row) {
+  return [
+    getRowTime(row),
+    normalizeText(row?.level || row?.status || row?.state),
+    normalizeText(row?.account_id),
+    normalizeText(row?.account_display_name),
+    normalizeText(row?.query_item_id || row?.query_item_name),
+    normalizeText(row?.message || row?.last_message),
+    normalizeText(row?.error || row?.error_message),
+    normalizeText(row?.status_code || row?.http_status || row?.response_status),
+    normalizeText(row?.request_method || row?.method),
+    normalizeText(row?.request_path || row?.path || row?.url_path),
+    normalizeText(row?.response_text || row?.raw_response || row?.response_body),
+  ].join("|");
+}
+
+
+function buildAccountRowSignature(row) {
+  return [
+    normalizeText(row?.account_id),
+    normalizeText(row?.display_name),
+    normalizeText(row?.mode_type || row?.purchase_pool_state),
+    normalizeText(row?.last_error || row?.disabled_reason),
+  ].join("|");
+}
+
+
+function buildTaskSignature(task) {
+  return normalizeText(task?.task_id)
+    || [
+      normalizeText(task?.account_id),
+      normalizeText(task?.started_at),
+      normalizeText(task?.state),
+    ].join("|");
+}
+
+
+function mergeUniqueRows(previousRows, nextRows, { getKey, shouldRetain, maxRows }) {
+  const rowsByKey = new Map();
+
+  for (const row of asArray(previousRows)) {
+    if (!shouldRetain(row)) {
+      continue;
+    }
+    const key = getKey(row);
+    if (key) {
+      rowsByKey.set(key, row);
+    }
+  }
+
+  for (const row of asArray(nextRows)) {
+    const key = getKey(row);
+    if (!key) {
+      continue;
+    }
+    const current = rowsByKey.get(key);
+    rowsByKey.set(key, current ? { ...current, ...row } : row);
+  }
+
+  return Array.from(rowsByKey.values())
+    .sort(compareRowsByTimeDesc)
+    .slice(0, maxRows);
+}
+
+
+function mergeLoginTask(previousTask, nextTask) {
+  return {
+    ...previousTask,
+    ...nextTask,
+    error: nextTask.error || previousTask.error,
+    last_message: nextTask.last_message || previousTask.last_message,
+    events: mergeUniqueRows(previousTask.events, nextTask.events, {
+      getKey: buildEventSignature,
+      maxRows: MAX_RETAINED_EVENT_ROWS,
+      shouldRetain: isRetainableEvent,
+    }),
+  };
+}
+
+
+function mergeLoginTasks(previousTasks, nextTasks) {
+  const tasksById = new Map();
+
+  for (const task of asArray(previousTasks)) {
+    if (!isRetainableLoginTask(task)) {
+      continue;
+    }
+    const key = buildTaskSignature(task);
+    if (key) {
+      tasksById.set(key, task);
+    }
+  }
+
+  for (const task of asArray(nextTasks)) {
+    const key = buildTaskSignature(task);
+    if (!key) {
+      continue;
+    }
+    const previousTask = tasksById.get(key);
+    tasksById.set(key, previousTask ? mergeLoginTask(previousTask, task) : task);
+  }
+
+  return Array.from(tasksById.values())
+    .sort(compareRowsByTimeDesc)
+    .slice(0, MAX_RETAINED_LOGIN_TASKS);
+}
+
+
+function retainErrorText(nextValue, previousValue) {
+  return normalizeText(nextValue) || normalizeText(previousValue) || "";
+}
+
+
+function mergeDiagnosticsSnapshot(previousSnapshot, nextSnapshot) {
+  if (!previousSnapshot) {
+    return nextSnapshot;
+  }
+
+  return {
+    ...nextSnapshot,
+    summary: {
+      ...nextSnapshot.summary,
+      last_error: retainErrorText(nextSnapshot.summary.last_error, previousSnapshot.summary?.last_error),
+    },
+    query: {
+      ...nextSnapshot.query,
+      last_error: retainErrorText(nextSnapshot.query.last_error, previousSnapshot.query?.last_error),
+      account_rows: mergeUniqueRows(previousSnapshot.query?.account_rows, nextSnapshot.query.account_rows, {
+        getKey: buildAccountRowSignature,
+        maxRows: MAX_RETAINED_ACCOUNT_ROWS,
+        shouldRetain: isRetainableAccountRow,
+      }),
+      recent_events: mergeUniqueRows(previousSnapshot.query?.recent_events, nextSnapshot.query.recent_events, {
+        getKey: buildEventSignature,
+        maxRows: MAX_RETAINED_EVENT_ROWS,
+        shouldRetain: isRetainableEvent,
+      }),
+    },
+    purchase: {
+      ...nextSnapshot.purchase,
+      last_error: retainErrorText(nextSnapshot.purchase.last_error, previousSnapshot.purchase?.last_error),
+      account_rows: mergeUniqueRows(previousSnapshot.purchase?.account_rows, nextSnapshot.purchase.account_rows, {
+        getKey: buildAccountRowSignature,
+        maxRows: MAX_RETAINED_ACCOUNT_ROWS,
+        shouldRetain: isRetainableAccountRow,
+      }),
+      recent_events: mergeUniqueRows(previousSnapshot.purchase?.recent_events, nextSnapshot.purchase.recent_events, {
+        getKey: buildEventSignature,
+        maxRows: MAX_RETAINED_EVENT_ROWS,
+        shouldRetain: isRetainableEvent,
+      }),
+    },
+    login_tasks: {
+      ...nextSnapshot.login_tasks,
+      recent_tasks: mergeLoginTasks(previousSnapshot.login_tasks?.recent_tasks, nextSnapshot.login_tasks.recent_tasks),
+    },
+  };
 }
 
 
@@ -55,12 +301,12 @@ export function useSidebarDiagnostics(client) {
       if (!isSidebarDiagnosticsSnapshot(nextSnapshot)) {
         throw new Error("诊断数据格式错误");
       }
-      setState({
+      setState((current) => ({
         error: "",
         isLoading: false,
         isRefreshing: false,
-        snapshot: nextSnapshot,
-      });
+        snapshot: mergeDiagnosticsSnapshot(current.snapshot, nextSnapshot),
+      }));
     } catch (error) {
       setState((current) => ({
         ...current,

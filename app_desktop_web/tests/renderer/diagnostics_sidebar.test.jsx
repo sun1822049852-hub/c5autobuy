@@ -2,7 +2,7 @@
 
 import "@testing-library/jest-dom/vitest";
 
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -76,6 +76,10 @@ function buildDiagnosticsSnapshot() {
           total_wear_sum: 0.1,
           latency_ms: 88,
           error: "token invalid",
+          status_code: 401,
+          request_method: "GET",
+          request_path: "/openapi/query",
+          response_text: "not login",
         },
       ],
     },
@@ -107,6 +111,10 @@ function buildDiagnosticsSnapshot() {
           source_mode_type: "token",
           total_price: 123.45,
           total_wear_sum: 0.1,
+          status_code: 409,
+          request_method: "POST",
+          request_path: "/purchase/orders",
+          response_text: "{\"error\":\"sold out\"}",
         },
       ],
     },
@@ -152,10 +160,21 @@ function buildDiagnosticsSnapshot() {
           started_at: "2026-03-25T19:58:00",
           updated_at: "2026-03-25T19:58:30",
           last_message: "浏览器关闭",
+          error: "浏览器关闭",
           pending_conflict: null,
           events: [
             { state: "pending", timestamp: "2026-03-25T19:58:00", message: "创建任务" },
-            { state: "failed", timestamp: "2026-03-25T19:58:30", message: "浏览器关闭" },
+            {
+              state: "failed",
+              timestamp: "2026-03-25T19:58:30",
+              message: "浏览器关闭",
+              payload: {
+                status_code: 500,
+                request_method: "POST",
+                request_path: "/accounts/a-3/login",
+                response_text: "browser crashed",
+              },
+            },
           ],
         },
       ],
@@ -178,8 +197,26 @@ function installDesktopApp(fetchImpl) {
 }
 
 
-function createFetchHarness() {
-  const diagnosticsSnapshot = buildDiagnosticsSnapshot();
+function createFetchHarness({ snapshots } = {}) {
+  const diagnosticsSnapshots = (snapshots?.length ? snapshots : [buildDiagnosticsSnapshot()]).map((snapshot) => ({
+    ...snapshot,
+    query: {
+      ...snapshot.query,
+      recent_events: [...(snapshot.query?.recent_events || [])],
+      account_rows: [...(snapshot.query?.account_rows || [])],
+      mode_rows: [...(snapshot.query?.mode_rows || [])],
+    },
+    purchase: {
+      ...snapshot.purchase,
+      recent_events: [...(snapshot.purchase?.recent_events || [])],
+      account_rows: [...(snapshot.purchase?.account_rows || [])],
+    },
+    login_tasks: {
+      ...snapshot.login_tasks,
+      recent_tasks: [...(snapshot.login_tasks?.recent_tasks || [])],
+    },
+  }));
+  let diagnosticsCallCount = 0;
   return vi.fn(async (input) => {
     const url = new URL(input);
 
@@ -191,9 +228,11 @@ function createFetchHarness() {
     }
 
     if (url.pathname === "/diagnostics/sidebar") {
+      const snapshot = diagnosticsSnapshots[Math.min(diagnosticsCallCount, diagnosticsSnapshots.length - 1)];
+      diagnosticsCallCount += 1;
       return {
         ok: true,
-        json: async () => diagnosticsSnapshot,
+        json: async () => snapshot,
       };
     }
 
@@ -202,14 +241,22 @@ function createFetchHarness() {
 }
 
 
-describe("diagnostics sidebar", () => {
-  it("renders the diagnostics panel in the shell and shows query diagnostics by default", async () => {
+describe("diagnostics page", () => {
+  it("moves diagnostics into a dedicated page instead of rendering a persistent shell sidebar", async () => {
     installDesktopApp(createFetchHarness());
+    const user = userEvent.setup();
 
     render(<App />);
 
+    expect(await screen.findByRole("button", { name: "通用诊断" })).toBeInTheDocument();
+    expect(screen.queryByRole("complementary", { name: "通用诊断面板" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "账号中心" })).toHaveClass("is-active");
+
+    await user.click(screen.getByRole("button", { name: "通用诊断" }));
+
     const panel = await screen.findByRole("complementary", { name: "通用诊断面板" });
     expect(panel).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "通用诊断" })).toHaveClass("is-active");
     expect(within(panel).getAllByText("查询配置A")).toHaveLength(2);
     expect(within(panel).getByRole("tab", { name: "查询" })).toBeInTheDocument();
     expect(within(panel).getByRole("tab", { name: "购买" })).toBeInTheDocument();
@@ -221,27 +268,38 @@ describe("diagnostics sidebar", () => {
     expect(within(panel).getAllByText("token invalid").length).toBeGreaterThan(0);
   });
 
-  it("switches between purchase and login diagnostics tabs without leaving the current page", async () => {
-    installDesktopApp(createFetchHarness());
-    const user = userEvent.setup();
+  it("keeps showing captured error logs and raw detail lines even after later snapshots no longer include them", async () => {
+    const initialSnapshot = buildDiagnosticsSnapshot();
+    const laterSnapshot = buildDiagnosticsSnapshot();
+    laterSnapshot.summary.last_error = "";
+    laterSnapshot.query.last_error = "";
+    laterSnapshot.query.account_rows = [];
+    laterSnapshot.query.recent_events = [];
+    installDesktopApp(createFetchHarness({
+      snapshots: [initialSnapshot, laterSnapshot],
+    }));
 
-    render(<App />);
+    vi.useFakeTimers();
 
-    const panel = await screen.findByRole("complementary", { name: "通用诊断面板" });
-    await user.click(within(panel).getByRole("tab", { name: "购买" }));
+    try {
+      render(<App />);
 
-    await waitFor(() => {
-      expect(within(panel).getByText("异常购买账号-1")).toBeInTheDocument();
-    });
-    expect(within(panel).getByText("购买事件-1")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "账号中心" })).toBeInTheDocument();
 
-    await user.click(within(panel).getByRole("tab", { name: "登录任务" }));
+      await act(async () => {
+        vi.advanceTimersByTime(1600);
+        await Promise.resolve();
+      });
 
-    await waitFor(() => {
-      expect(within(panel).getAllByText("等待扫码").length).toBeGreaterThan(0);
-    });
-    expect(within(panel).getAllByText("账号冲突").length).toBeGreaterThan(0);
-    expect(within(panel).getAllByText("浏览器关闭").length).toBeGreaterThan(0);
-    expect(screen.getByRole("button", { name: "账号中心" })).toHaveClass("is-active");
+      fireEvent.click(screen.getByRole("button", { name: "通用诊断" }));
+      const panel = screen.getByRole("complementary", { name: "通用诊断面板" });
+
+      expect(within(panel).getByText("查询事件-1")).toBeInTheDocument();
+      expect(within(panel).getByText("HTTP 401")).toBeInTheDocument();
+      expect(within(panel).getByText("GET /openapi/query")).toBeInTheDocument();
+      expect(within(panel).getByText("原始返回：not login")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

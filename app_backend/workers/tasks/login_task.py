@@ -8,6 +8,32 @@ from app_backend.application.services.post_token_inventory_refresh import (
 from app_backend.domain.enums.account_states import PurchaseCapabilityState, PurchasePoolState
 
 
+def _build_error_payload(error: Exception) -> dict[str, object] | None:
+    payload: dict[str, object] = {}
+
+    status_code = getattr(error, "status_code", None) or getattr(error, "status", None)
+    if status_code is not None:
+        payload["status_code"] = status_code
+
+    request_method = getattr(error, "request_method", None) or getattr(error, "method", None)
+    if request_method:
+        payload["request_method"] = request_method
+
+    request_path = getattr(error, "request_path", None) or getattr(error, "path", None)
+    if request_path:
+        payload["request_path"] = request_path
+
+    response_text = getattr(error, "response_text", None) or getattr(error, "responseText", None)
+    if response_text:
+        payload["response_text"] = str(response_text)
+
+    details = getattr(error, "details", None)
+    if isinstance(details, dict):
+        payload.update(details)
+
+    return payload or None
+
+
 async def run_login_task(
     *,
     task_id: str,
@@ -91,4 +117,4 @@ async def run_login_task(
             last_error=str(exc),
             updated_at=datetime.now().isoformat(timespec="seconds"),
         )
-        task_manager.set_error(task_id, str(exc))
+        task_manager.set_error(task_id, str(exc), payload=_build_error_payload(exc))

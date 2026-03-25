@@ -48,6 +48,10 @@ class SidebarQueryRecentEventResponse(BaseModel):
     total_wear_sum: float | None = None
     latency_ms: float | None = None
     error: str | None = None
+    status_code: int | None = None
+    request_method: str | None = None
+    request_path: str | None = None
+    response_text: str | None = None
 
 
 class SidebarQueryDiagnosticsResponse(BaseModel):
@@ -83,6 +87,10 @@ class SidebarPurchaseRecentEventResponse(BaseModel):
     source_mode_type: str
     total_price: float | None = None
     total_wear_sum: float | None = None
+    status_code: int | None = None
+    request_method: str | None = None
+    request_path: str | None = None
+    response_text: str | None = None
 
 
 class SidebarPurchaseDiagnosticsResponse(BaseModel):
@@ -100,6 +108,7 @@ class SidebarLoginTaskEventResponse(BaseModel):
     state: str
     timestamp: str
     message: str | None = None
+    payload: dict[str, object] | None = None
 
 
 class SidebarLoginTaskRowResponse(BaseModel):
@@ -110,6 +119,8 @@ class SidebarLoginTaskRowResponse(BaseModel):
     started_at: str
     updated_at: str
     last_message: str | None = None
+    result: dict[str, object] | None = None
+    error: str | None = None
     pending_conflict: dict[str, object] | None = None
     events: list[SidebarLoginTaskEventResponse]
 

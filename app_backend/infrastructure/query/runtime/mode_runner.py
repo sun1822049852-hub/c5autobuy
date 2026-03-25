@@ -563,6 +563,10 @@ class ModeRunner:
             "max_price": getattr(event, "max_price", None),
             "latency_ms": event.latency_ms,
             "error": event.error,
+            "status_code": getattr(event, "status_code", None),
+            "request_method": getattr(event, "request_method", None),
+            "request_path": getattr(event, "request_path", None),
+            "response_text": getattr(event, "response_text", None),
         }
 
     @staticmethod

@@ -76,6 +76,10 @@ class AccountQueryWorker:
             max_price=query_item.max_price,
             latency_ms=result.latency_ms,
             error=result.error,
+            status_code=result.status_code,
+            request_method=result.request_method,
+            request_path=result.request_path,
+            response_text=result.response_text,
         )
 
     def snapshot(self) -> dict[str, object]:
