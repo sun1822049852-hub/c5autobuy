@@ -164,6 +164,11 @@ export function createAccountCenterClient({
         method: "GET",
       });
     },
+    async getSidebarDiagnostics() {
+      return http.getJson("/diagnostics/sidebar", {
+        method: "GET",
+      });
+    },
     async getPurchaseUiPreferences() {
       return http.getJson("/purchase-runtime/ui-preferences", {
         method: "GET",

@@ -1377,7 +1377,10 @@ def test_purchase_runtime_service_rechecks_remote_inventory_when_purchase_exhaus
         }
     )
 
-    assert wait_until(lambda: service.get_status()["total_purchased_count"] == 10)
+    assert wait_until(
+        lambda: refresh_gateway.calls == [{"account_id": "a1"}]
+        and service.get_status()["accounts"][0]["selected_steam_id"] == "steam-remote-1"
+    )
     snapshot = service.get_status()
     assert refresh_gateway.calls == [{"account_id": "a1"}]
     assert snapshot["total_purchased_count"] == 10
@@ -1443,7 +1446,11 @@ def test_purchase_runtime_service_pauses_account_when_remote_inventory_recheck_c
         }
     )
 
-    assert wait_until(lambda: service.get_status()["accounts"][0]["purchase_pool_state"] == "paused_no_inventory")
+    assert wait_until(
+        lambda: refresh_gateway.calls == [{"account_id": "a1"}]
+        and service.get_status()["accounts"][0]["purchase_pool_state"] == "paused_no_inventory"
+        and service.get_status()["accounts"][0]["selected_steam_id"] is None
+    )
     snapshot = service.get_status()
     assert refresh_gateway.calls == [{"account_id": "a1"}]
     assert snapshot["total_purchased_count"] == 10

@@ -29,7 +29,7 @@ const NAV_ITEMS = [
 ];
 
 
-export function AppShell({ activeItem, children, onSelect }) {
+export function AppShell({ activeItem, children, diagnosticsPanel, onSelect }) {
   return (
     <div className="app-shell">
       <aside className="app-shell__sidebar" aria-label="主导航">
@@ -61,6 +61,9 @@ export function AppShell({ activeItem, children, onSelect }) {
           ))}
         </nav>
       </aside>
+      <div className="app-shell__diagnostics">
+        {diagnosticsPanel}
+      </div>
       <main className="app-shell__content">{children}</main>
     </div>
   );

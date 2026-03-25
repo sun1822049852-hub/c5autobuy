@@ -4,6 +4,8 @@ import { createAccountCenterClient } from "./api/account_center_client.js";
 import { getDesktopBootstrapConfig } from "./desktop/bridge.js";
 import { AccountCapabilityStatsPage } from "./features/account-capability-stats/account_capability_stats_page.jsx";
 import { AccountCenterPage } from "./features/account-center/account_center_page.jsx";
+import { DiagnosticsPanel } from "./features/diagnostics/diagnostics_panel.jsx";
+import { useSidebarDiagnostics } from "./features/diagnostics/use_sidebar_diagnostics.js";
 import { PurchaseSystemPage } from "./features/purchase-system/purchase_system_page.jsx";
 import { QueryStatsPage } from "./features/query-stats/query_stats_page.jsx";
 import { QuerySystemPage } from "./features/query-system/query_system_page.jsx";
@@ -39,6 +41,7 @@ export function App() {
     apiBaseUrl: bootstrapConfig.apiBaseUrl,
     pollIntervalMs: 25,
   }));
+  const diagnostics = useSidebarDiagnostics(client);
 
   const handleQuerySystemLeaveStateChange = useCallback((nextState) => {
     setQuerySystemLeaveState(nextState || EMPTY_QUERY_SYSTEM_LEAVE_STATE);
@@ -109,7 +112,18 @@ export function App() {
 
   return (
     <>
-      <AppShell activeItem={activeItem} onSelect={handleSelectItem}>
+      <AppShell
+        activeItem={activeItem}
+        diagnosticsPanel={(
+          <DiagnosticsPanel
+            error={diagnostics.error}
+            isLoading={diagnostics.isLoading}
+            isRefreshing={diagnostics.isRefreshing}
+            snapshot={diagnostics.snapshot}
+          />
+        )}
+        onSelect={handleSelectItem}
+      >
         {activeItem === "query-system" ? (
           <QuerySystemPage
             bootstrapConfig={bootstrapConfig}

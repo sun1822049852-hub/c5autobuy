@@ -40,3 +40,26 @@ async def test_task_route_reads_current_state_over_http(app, client):
         "pending",
         "waiting_for_scan",
     ]
+
+
+def test_task_manager_lists_recent_tasks_in_descending_update_order_and_returns_copies():
+    from app_backend.workers.manager.task_manager import TaskManager
+
+    manager = TaskManager()
+    older = manager.create_task(task_type="login", message="older")
+    newer = manager.create_task(task_type="login", message="newer")
+    other_type = manager.create_task(task_type="inventory", message="inventory")
+
+    manager.set_state(older.task_id, "waiting_for_scan")
+    manager.set_state(newer.task_id, "succeeded")
+    manager.set_state(other_type.task_id, "running")
+
+    recent = manager.list_recent_tasks(task_type="login", limit=2)
+
+    assert [task.task_id for task in recent] == [newer.task_id, older.task_id]
+
+    # Returned snapshots must be detached copies so diagnostics reads cannot mutate manager state.
+    recent[0].events.append(type(recent[0].events[0])(state="fake", timestamp="x"))
+    current = manager.get_task(newer.task_id)
+    assert current is not None
+    assert [event.state for event in current.events] == ["pending", "succeeded"]

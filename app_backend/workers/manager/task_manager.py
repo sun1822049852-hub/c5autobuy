@@ -38,8 +38,10 @@ class TaskSnapshot:
 class TaskManager:
     def __init__(self) -> None:
         self._tasks: dict[str, TaskSnapshot] = {}
+        self._task_revisions: dict[str, int] = {}
         self._subscribers: dict[str, list[asyncio.Queue[TaskSnapshot]]] = defaultdict(list)
         self._lock = Lock()
+        self._revision = 0
 
     def create_task(
         self,
@@ -67,6 +69,7 @@ class TaskManager:
 
         with self._lock:
             self._tasks[task_id] = snapshot
+            self._task_revisions[task_id] = self._next_revision()
 
         self._publish(task_id)
         return self.get_task(task_id)  # type: ignore[return-value]
@@ -91,6 +94,7 @@ class TaskManager:
                     payload=deepcopy(payload),
                 )
             )
+            self._task_revisions[task_id] = self._next_revision()
 
         self._publish(task_id)
         return self.get_task(task_id)  # type: ignore[return-value]
@@ -120,6 +124,7 @@ class TaskManager:
 
             snapshot.result = deepcopy(result)
             snapshot.error = None
+            self._task_revisions[task_id] = self._next_revision()
 
         self._publish(task_id)
         return self.get_task(task_id)  # type: ignore[return-value]
@@ -144,6 +149,7 @@ class TaskManager:
                     message=message or error,
                 )
             )
+            self._task_revisions[task_id] = self._next_revision()
 
         self._publish(task_id)
         return self.get_task(task_id)  # type: ignore[return-value]
@@ -168,6 +174,7 @@ class TaskManager:
                     payload=deepcopy(pending_conflict),
                 )
             )
+            self._task_revisions[task_id] = self._next_revision()
 
         self._publish(task_id)
         return self.get_task(task_id)  # type: ignore[return-value]
@@ -177,6 +184,7 @@ class TaskManager:
             snapshot = self._require_task(task_id)
             snapshot.pending_conflict = None
             snapshot.updated_at = _now()
+            self._task_revisions[task_id] = self._next_revision()
 
         self._publish(task_id)
         return self.get_task(task_id)  # type: ignore[return-value]
@@ -187,6 +195,21 @@ class TaskManager:
             if snapshot is None:
                 return None
             return deepcopy(snapshot)
+
+    def list_recent_tasks(self, *, task_type: str | None = None, limit: int = 10) -> list[TaskSnapshot]:
+        with self._lock:
+            snapshots = [
+                (deepcopy(snapshot), self._task_revisions.get(task_id, 0))
+                for snapshot in self._tasks.values()
+                for task_id in [snapshot.task_id]
+                if task_type is None or snapshot.task_type == task_type
+            ]
+
+        snapshots.sort(
+            key=lambda item: (item[1], item[0].updated_at, item[0].created_at),
+            reverse=True,
+        )
+        return [snapshot for snapshot, _revision in snapshots[: max(int(limit), 0)]]
 
     def subscribe(self, task_id: str) -> asyncio.Queue[TaskSnapshot]:
         queue: asyncio.Queue[TaskSnapshot] = asyncio.Queue()
@@ -230,4 +253,8 @@ class TaskManager:
         if snapshot is None:
             raise KeyError(task_id)
         return snapshot
+
+    def _next_revision(self) -> int:
+        self._revision += 1
+        return self._revision
 

@@ -69,7 +69,7 @@ textarea,
 
 .app-shell {
   display: grid;
-  grid-template-columns: 248px minmax(0, 1fr);
+  grid-template-columns: 248px 360px minmax(0, 1fr);
   min-height: 100vh;
   padding: 16px;
   gap: 16px;
@@ -162,6 +162,175 @@ textarea,
 
 .app-shell__content {
   min-width: 0;
+}
+
+.app-shell__diagnostics {
+  min-width: 0;
+}
+
+.diagnostics-panel {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: 12px;
+  height: calc(100vh - 32px);
+  padding: 16px;
+  border: 1px solid var(--line-soft);
+  border-radius: 24px;
+  background: linear-gradient(180deg, rgba(23, 27, 33, 0.95), rgba(15, 18, 22, 0.95));
+  box-shadow: var(--shadow-panel);
+  overflow: hidden;
+}
+
+.diagnostics-panel__header,
+.diagnostics-section__header,
+.diagnostics-row__top,
+.diagnostics-event-list__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.diagnostics-panel__eyebrow {
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--accent-strong);
+}
+
+.diagnostics-panel__title,
+.diagnostics-section__title {
+  margin: 0;
+}
+
+.diagnostics-panel__title {
+  font-size: 20px;
+}
+
+.diagnostics-panel__status,
+.diagnostics-row__meta,
+.diagnostics-event-list__meta,
+.diagnostics-timeline__message,
+.diagnostics-empty {
+  color: var(--text-soft);
+}
+
+.diagnostics-panel__status,
+.diagnostics-row__meta,
+.diagnostics-event-list__meta,
+.diagnostics-timeline__message,
+.diagnostics-event-list__time,
+.diagnostics-event-list__status,
+.diagnostics-summary__label,
+.diagnostics-summary__hint {
+  font-size: 12px;
+}
+
+.diagnostics-panel__body,
+.diagnostics-tab {
+  min-height: 0;
+}
+
+.diagnostics-tab {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+
+.diagnostics-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.diagnostics-summary__card,
+.diagnostics-row,
+.diagnostics-event-list__item {
+  border: 1px solid var(--line-soft);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.diagnostics-summary__card {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+}
+
+.diagnostics-summary__card.is-danger,
+.diagnostics-row.is-danger {
+  border-color: rgba(255, 122, 122, 0.24);
+  background: rgba(255, 122, 122, 0.08);
+}
+
+.diagnostics-summary__card.is-muted {
+  opacity: 0.88;
+}
+
+.diagnostics-summary__value {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.diagnostics-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.diagnostics-tabs__button {
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: 14px;
+  color: var(--text-main);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.diagnostics-tabs__button.is-active {
+  border-color: rgba(220, 164, 76, 0.45);
+  background: linear-gradient(135deg, rgba(220, 164, 76, 0.16), rgba(220, 164, 76, 0.04));
+}
+
+.diagnostics-section {
+  display: grid;
+  gap: 8px;
+}
+
+.diagnostics-row-list,
+.diagnostics-event-list,
+.diagnostics-timeline {
+  display: grid;
+  gap: 8px;
+}
+
+.diagnostics-row,
+.diagnostics-event-list__item {
+  padding: 12px;
+}
+
+.diagnostics-row__error,
+.diagnostics-panel__error {
+  color: var(--danger);
+}
+
+.diagnostics-event-list__message {
+  margin-top: 6px;
+  font-weight: 700;
+}
+
+.diagnostics-timeline__item {
+  display: grid;
+  gap: 2px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.diagnostics-timeline__state {
+  font-size: 11px;
+  color: var(--accent-strong);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .account-page {
@@ -2662,7 +2831,9 @@ textarea,
   .purchase-system-page__layout,
   .query-system-page__layout,
   .overview-grid,
-  .status-strip {
+  .status-strip,
+  .diagnostics-summary,
+  .diagnostics-tabs {
     grid-template-columns: 1fr;
   }
 
@@ -2713,7 +2884,9 @@ textarea,
   .purchase-runtime-header,
   .stats-toolbar,
   .overview-grid,
-  .status-strip {
+  .status-strip,
+  .diagnostics-summary,
+  .diagnostics-tabs {
     grid-template-columns: 1fr;
   }
 

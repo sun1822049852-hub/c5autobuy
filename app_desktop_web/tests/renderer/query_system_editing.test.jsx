@@ -444,132 +444,141 @@ describe("query system editing", () => {
     const harness = createFetchHarness({ saveDelayMs: 40 });
     installDesktopApp(harness.fetchImpl);
     const user = userEvent.setup();
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    await openQuerySystem(user);
+    try {
+      await openQuerySystem(user);
 
-    const itemOne = await screen.findByRole("region", { name: "商品 AK-47 | Redline" });
-    await user.click(within(itemOne).getByRole("button", { name: "修改价格 AK-47 | Redline" }));
-    const editorOne = await screen.findByRole("dialog", { name: "编辑商品" });
+      const itemOne = await screen.findByRole("region", { name: "商品 AK-47 | Redline" });
+      await user.click(within(itemOne).getByRole("button", { name: "修改价格 AK-47 | Redline" }));
+      const editorOne = await screen.findByRole("dialog", { name: "编辑商品" });
 
-    const minWearInput = within(editorOne).getByLabelText("配置最小磨损");
-    await user.clear(minWearInput);
-    await user.type(minWearInput, "0.12");
+      const minWearInput = within(editorOne).getByLabelText("配置最小磨损");
+      await user.clear(minWearInput);
+      await user.type(minWearInput, "0.12");
 
-    const maxPriceInput = within(editorOne).getByLabelText("最高价格");
-    await user.clear(maxPriceInput);
-    await user.type(maxPriceInput, "188");
-    await user.click(within(editorOne).getByLabelText("手动暂停"));
-    await user.click(within(editorOne).getByRole("button", { name: "应用修改" }));
+      const maxPriceInput = within(editorOne).getByLabelText("最高价格");
+      await user.clear(maxPriceInput);
+      await user.type(maxPriceInput, "188");
+      await user.click(within(editorOne).getByLabelText("手动暂停"));
+      await user.click(within(editorOne).getByRole("button", { name: "应用修改" }));
 
-    await user.click(screen.getByRole("button", { name: "添加商品" }));
-    const createPanel = await screen.findByRole("dialog", { name: "添加商品" });
+      await user.click(screen.getByRole("button", { name: "添加商品" }));
+      const createPanel = await screen.findByRole("dialog", { name: "添加商品" });
 
-    await user.type(
-      within(createPanel).getByLabelText("商品链接"),
-      "https://www.c5game.com/csgo/730/asset/1380979899390267000",
-    );
+      await user.type(
+        within(createPanel).getByLabelText("商品链接"),
+        "https://www.c5game.com/csgo/730/asset/1380979899390267000",
+      );
 
-    expect(
-      harness.calls.some(
-        (call) => call.method === "POST" && call.pathname === "/query-items/parse-url",
-      ),
-    ).toBe(false);
-    expect(
-      harness.calls.some(
-        (call) => call.method === "POST" && call.pathname === "/query-items/fetch-detail",
-      ),
-    ).toBe(false);
+      expect(
+        harness.calls.some(
+          (call) => call.method === "POST" && call.pathname === "/query-items/parse-url",
+        ),
+      ).toBe(false);
+      expect(
+        harness.calls.some(
+          (call) => call.method === "POST" && call.pathname === "/query-items/fetch-detail",
+        ),
+      ).toBe(false);
 
-    await user.click(within(createPanel).getByRole("button", { name: "查找商品信息" }));
+      await user.click(within(createPanel).getByRole("button", { name: "查找商品信息" }));
 
-    await waitFor(() => {
-      expect(within(createPanel).getByLabelText("商品名称")).toHaveValue("M4A1-S | Printstream");
-    });
+      await waitFor(() => {
+        expect(within(createPanel).getByLabelText("商品名称")).toHaveValue("M4A1-S | Printstream");
+      });
 
-    expect(within(createPanel).getByText("天然磨损范围 0.02 ~ 0.8")).toBeInTheDocument();
-    expect(within(createPanel).getByLabelText("配置最小磨损")).toHaveValue(0.02);
-    expect(within(createPanel).getByLabelText("new_api 专属目标")).toHaveValue(0);
-    expect(within(createPanel).getByLabelText("fast_api 专属目标")).toHaveValue(0);
-    expect(within(createPanel).getByLabelText("token 专属目标")).toHaveValue(0);
+      expect(within(createPanel).getByText("天然磨损范围 0.02 ~ 0.8")).toBeInTheDocument();
+      expect(within(createPanel).getByLabelText("配置最小磨损")).toHaveValue(0.02);
+      expect(within(createPanel).getByLabelText("new_api 专属目标")).toHaveValue(0);
+      expect(within(createPanel).getByLabelText("fast_api 专属目标")).toHaveValue(0);
+      expect(within(createPanel).getByLabelText("token 专属目标")).toHaveValue(0);
 
-    const panelMaxWear = within(createPanel).getByLabelText("配置最大磨损");
-    await user.clear(panelMaxWear);
-    await user.type(panelMaxWear, "0.18");
+      const panelMaxWear = within(createPanel).getByLabelText("配置最大磨损");
+      await user.clear(panelMaxWear);
+      await user.type(panelMaxWear, "0.18");
 
-    const panelMaxPrice = within(createPanel).getByLabelText("最高价格");
-    await user.clear(panelMaxPrice);
-    await user.type(panelMaxPrice, "888");
+      const panelMaxPrice = within(createPanel).getByLabelText("最高价格");
+      await user.clear(panelMaxPrice);
+      await user.type(panelMaxPrice, "888");
 
-    const tokenAllocation = within(createPanel).getByLabelText("token 专属目标");
-    await user.clear(tokenAllocation);
-    await user.type(tokenAllocation, "2");
+      const tokenAllocation = within(createPanel).getByLabelText("token 专属目标");
+      await user.clear(tokenAllocation);
+      await user.type(tokenAllocation, "2");
 
-    await user.click(within(createPanel).getByRole("button", { name: "加入当前配置" }));
+      await user.click(within(createPanel).getByRole("button", { name: "加入当前配置" }));
 
-    expect(await screen.findByRole("region", { name: "商品 M4A1-S | Printstream" })).toBeInTheDocument();
+      expect(await screen.findByRole("region", { name: "商品 M4A1-S | Printstream" })).toBeInTheDocument();
 
-    expect(screen.getByRole("button", { name: "保存到当前配置" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "保存到当前配置" })).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "保存到当前配置" }));
+      await user.click(screen.getByRole("button", { name: "保存到当前配置" }));
 
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: "保存中..." })).toBeInTheDocument();
-    });
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "保存中..." })).toBeInTheDocument();
+      });
 
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: "已保存" })).toBeInTheDocument();
-    });
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "已保存" })).toBeInTheDocument();
+      });
 
-    expect(harness.calls).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          body: {
-            product_url: "https://www.c5game.com/csgo/730/asset/1380979899390267000",
-          },
-          method: "POST",
-          pathname: "/query-items/parse-url",
-        }),
-        expect.objectContaining({
-          body: {
-            external_item_id: "1380979899390267000",
-            product_url: "https://www.c5game.com/csgo/730/asset/1380979899390267000",
-          },
-          method: "POST",
-          pathname: "/query-items/fetch-detail",
-        }),
-        expect.objectContaining({
-          body: {
-            detail_min_wear: 0.12,
-            manual_paused: true,
-            max_price: 188,
-            detail_max_wear: 0.25,
-            mode_allocations: {
-              fast_api: 0,
-              new_api: 1,
-              token: 0,
+      expect(harness.calls).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            body: {
+              product_url: "https://www.c5game.com/csgo/730/asset/1380979899390267000",
             },
-          },
-          method: "PATCH",
-          pathname: "/query-configs/cfg-1/items/item-1",
-        }),
-        expect.objectContaining({
-          body: {
-            detail_min_wear: 0.02,
-            manual_paused: false,
-            max_price: 888,
-            detail_max_wear: 0.18,
-            mode_allocations: {
-              fast_api: 0,
-              new_api: 0,
-              token: 2,
+            method: "POST",
+            pathname: "/query-items/parse-url",
+          }),
+          expect.objectContaining({
+            body: {
+              external_item_id: "1380979899390267000",
+              product_url: "https://www.c5game.com/csgo/730/asset/1380979899390267000",
             },
-            product_url: "https://www.c5game.com/csgo/730/asset/1380979899390267000",
-          },
-          method: "POST",
-          pathname: "/query-configs/cfg-1/items",
-        }),
-      ]),
-    );
+            method: "POST",
+            pathname: "/query-items/fetch-detail",
+          }),
+          expect.objectContaining({
+            body: {
+              detail_min_wear: 0.12,
+              manual_paused: true,
+              max_price: 188,
+              detail_max_wear: 0.25,
+              mode_allocations: {
+                fast_api: 0,
+                new_api: 1,
+                token: 0,
+              },
+            },
+            method: "PATCH",
+            pathname: "/query-configs/cfg-1/items/item-1",
+          }),
+          expect.objectContaining({
+            body: {
+              detail_min_wear: 0.02,
+              manual_paused: false,
+              max_price: 888,
+              detail_max_wear: 0.18,
+              mode_allocations: {
+                fast_api: 0,
+                new_api: 0,
+                token: 2,
+              },
+              product_url: "https://www.c5game.com/csgo/730/asset/1380979899390267000",
+            },
+            method: "POST",
+            pathname: "/query-configs/cfg-1/items",
+          }),
+        ]),
+      );
+
+      expect(
+        consoleErrorSpy.mock.calls.some(([message]) => String(message).includes("Maximum update depth exceeded")),
+      ).toBe(false);
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
   });
 
   it("blocks save when dedicated allocations exceed the available capacity", async () => {

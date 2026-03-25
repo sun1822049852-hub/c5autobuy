@@ -8,6 +8,7 @@ import uvicorn
 
 from app_backend.api.routes import account_center as account_center_routes
 from app_backend.api.routes import accounts as account_routes
+from app_backend.api.routes import diagnostics as diagnostics_routes
 from app_backend.api.routes import purchase_runtime as purchase_runtime_routes
 from app_backend.api.routes import query_configs as query_config_routes
 from app_backend.api.routes import query_settings as query_settings_routes
@@ -105,6 +106,7 @@ def create_app(db_path: Path | None = None) -> FastAPI:
 
     app.include_router(account_center_routes.router)
     app.include_router(account_routes.router)
+    app.include_router(diagnostics_routes.router)
     app.include_router(purchase_runtime_routes.router)
     app.include_router(query_config_routes.router)
     app.include_router(query_settings_routes.router)
