@@ -5,6 +5,28 @@ function getDisplayName(row) {
 }
 
 
+function getApiKeyTone(row) {
+  if (row.api_key_status_code === "ip_invalid") {
+    return "is-danger";
+  }
+
+  if (row.api_key_status_code === "active" || (row.api_key_status_code == null && row.api_key_present)) {
+    return "is-good";
+  }
+
+  return "is-muted";
+}
+
+
+function getApiKeyDisplay(row) {
+  if (row.api_key_status_text) {
+    return row.api_key_status_text;
+  }
+
+  return row.api_key_present ? "有" : "无";
+}
+
+
 function getStatusTone(code) {
   if (code === "selected_warehouse") {
     return "is-good";
@@ -99,8 +121,8 @@ function renderBody({
             type="button"
             onClick={() => onApiKeyClick?.(row)}
           >
-            <span className={`account-table__pill${row.api_key_present ? " is-good" : " is-muted"}`}>
-              {row.api_key_present ? "有" : "无"}
+            <span className={`account-table__pill ${getApiKeyTone(row)}`}>
+              {getApiKeyDisplay(row)}
             </span>
           </button>
         </td>

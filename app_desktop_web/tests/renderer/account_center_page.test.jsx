@@ -31,6 +31,8 @@ function accountRows() {
       c5_nick_name: "Nick A",
       default_name: "默认 A",
       api_key_present: true,
+      api_key_status_code: "active",
+      api_key_status_text: "有",
       api_key: "api-a",
       proxy_display: "直连",
       purchase_status_code: "selected_warehouse",
@@ -43,6 +45,8 @@ function accountRows() {
       c5_nick_name: "Nick B",
       default_name: "默认 B",
       api_key_present: false,
+      api_key_status_code: "missing",
+      api_key_status_text: "无",
       api_key: null,
       proxy_display: "http://127.0.0.1:9000",
       purchase_status_code: "not_logged_in",
@@ -55,6 +59,8 @@ function accountRows() {
       c5_nick_name: "Nick C",
       default_name: "默认 C",
       api_key_present: true,
+      api_key_status_code: "ip_invalid",
+      api_key_status_text: "IP失效",
       api_key: "api-c",
       proxy_display: "socks5://127.0.0.1:9900",
       purchase_status_code: "inventory_full",
@@ -104,6 +110,7 @@ describe("account center page", () => {
     expect(screen.getByText("账号 A")).toBeInTheDocument();
     expect(screen.getByText("账号 B")).toBeInTheDocument();
     expect(screen.getByText("账号 C")).toBeInTheDocument();
+    expect(screen.getByText("IP失效")).toBeInTheDocument();
 
     const toolbar = screen.getByRole("searchbox", { name: "搜索账号" }).closest(".account-page__toolbar");
     expect(toolbar).toHaveClass("account-page__toolbar--compact");

@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from inspect import Parameter, signature
 
 from app_backend.domain.enums.account_states import PurchaseCapabilityState, PurchasePoolState
+from app_backend.infrastructure.query.runtime.api_key_status import build_api_key_status
 from app_backend.infrastructure.purchase.runtime.account_purchase_worker import AccountPurchaseWorker
 from app_backend.infrastructure.purchase.runtime.inventory_state import InventoryState
 from app_backend.infrastructure.purchase.runtime.purchase_hit_inbox import PurchaseHitInbox
@@ -523,6 +524,10 @@ class PurchaseRuntimeService:
         )
         proxy_url = getattr(account, "proxy_url", None) or None
         api_key = getattr(account, "api_key", None) or None
+        api_key_status_code, api_key_status_text = build_api_key_status(
+            api_key=api_key,
+            last_error=getattr(account, "last_error", None),
+        )
         purchase_disabled = bool(getattr(account, "purchase_disabled", False))
         return {
             "account_id": account_id,
@@ -531,6 +536,8 @@ class PurchaseRuntimeService:
             "c5_nick_name": getattr(account, "c5_nick_name", None),
             "default_name": str(getattr(account, "default_name", "") or ""),
             "api_key_present": bool(api_key),
+            "api_key_status_code": api_key_status_code,
+            "api_key_status_text": api_key_status_text,
             "api_key": api_key,
             "proxy_mode": str(getattr(account, "proxy_mode", "") or "direct"),
             "proxy_url": proxy_url,

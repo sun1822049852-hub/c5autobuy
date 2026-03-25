@@ -256,6 +256,47 @@ async def test_account_worker_disables_account_on_not_login():
     assert snapshot["active"] is False
 
 
+async def test_account_worker_disables_account_on_ip_whitelist_error():
+    from app_backend.infrastructure.query.runtime.account_query_worker import AccountQueryWorker
+    from app_backend.infrastructure.query.runtime.runtime_events import QueryExecutionResult
+
+    error = "API请求失败: 未设置ip白名单或ip不在白名单中, 当前请求ip 39.71.213.149 (代码: 499103)"
+
+    class FakeAdapter:
+        async def execute_query(self, *, mode_type, account, query_item):
+            return QueryExecutionResult(
+                success=False,
+                match_count=0,
+                product_list=[],
+                total_price=0.0,
+                total_wear_sum=0.0,
+                error=error,
+                latency_ms=10.0,
+                status_code=200,
+                request_method="POST",
+                request_path="/merchant/market/v2/products/list",
+                response_text=(
+                    '{"success":false,"data":null,"errorCode":499103,'
+                    '"errorMsg":"未设置ip白名单或ip不在白名单中, 当前请求ip 39.71.213.149",'
+                    '"errorData":null,"errorCodeStr":null}'
+                ),
+            )
+
+    worker = AccountQueryWorker(
+        mode_type="fast_api",
+        account=build_account("a1", api_key="api-1"),
+        scanner_adapter=FakeAdapter(),
+    )
+
+    event = await worker.run_once(build_item())
+    snapshot = worker.snapshot()
+
+    assert event is not None
+    assert event.error == error
+    assert snapshot["disabled_reason"] == error
+    assert snapshot["active"] is False
+
+
 async def test_account_worker_reuses_runtime_account_adapter_across_runs():
     from app_backend.infrastructure.query.runtime.account_query_worker import AccountQueryWorker
     from app_backend.infrastructure.query.runtime.runtime_account_adapter import RuntimeAccountAdapter

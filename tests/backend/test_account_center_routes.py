@@ -104,6 +104,8 @@ async def test_account_center_accounts_route_renders_purchase_status_priority(cl
             "c5_nick_name": None,
             "default_name": "默认-not-login",
             "api_key_present": False,
+            "api_key_status_code": "missing",
+            "api_key_status_text": "无",
             "api_key": None,
             "proxy_mode": "custom",
             "proxy_url": "http://127.0.0.1:9009",
@@ -123,6 +125,8 @@ async def test_account_center_accounts_route_renders_purchase_status_priority(cl
             "c5_nick_name": "平台禁用号",
             "default_name": "默认-disabled",
             "api_key_present": True,
+            "api_key_status_code": "active",
+            "api_key_status_text": "有",
             "api_key": "api-disabled",
             "proxy_mode": "custom",
             "proxy_url": "http://127.0.0.1:9008",
@@ -142,6 +146,8 @@ async def test_account_center_accounts_route_renders_purchase_status_priority(cl
             "c5_nick_name": None,
             "default_name": "默认-full",
             "api_key_present": False,
+            "api_key_status_code": "missing",
+            "api_key_status_text": "无",
             "api_key": None,
             "proxy_mode": "custom",
             "proxy_url": "http://127.0.0.1:9004",
@@ -161,6 +167,8 @@ async def test_account_center_accounts_route_renders_purchase_status_priority(cl
             "c5_nick_name": "平台可买号",
             "default_name": "默认-ready",
             "api_key_present": True,
+            "api_key_status_code": "active",
+            "api_key_status_text": "有",
             "api_key": "api-ready",
             "proxy_mode": "custom",
             "proxy_url": "http://127.0.0.1:9005",
@@ -173,6 +181,44 @@ async def test_account_center_accounts_route_renders_purchase_status_priority(cl
             "purchase_status_code": "selected_warehouse",
             "purchase_status_text": "可买主仓",
         },
+    ]
+
+
+async def test_account_center_accounts_route_marks_ip_invalid_api_key(client, app):
+    account = _build_account(
+        "ip-invalid",
+        remark_name="白名单失效账号",
+        api_key="api-ip-invalid",
+    )
+    account.last_error = "API请求失败: 未设置ip白名单或ip不在白名单中, 当前请求ip 39.71.213.149 (代码: 499103)"
+    app.state.account_repository.create_account(account)
+
+    response = await client.get("/account-center/accounts")
+
+    assert response.status_code == 200
+    rows = response.json()
+    assert rows == [
+        {
+            "account_id": "ip-invalid",
+            "display_name": "白名单失效账号",
+            "remark_name": "白名单失效账号",
+            "c5_nick_name": None,
+            "default_name": "默认-ip-invalid",
+            "api_key_present": True,
+            "api_key_status_code": "ip_invalid",
+            "api_key_status_text": "IP失效",
+            "api_key": "api-ip-invalid",
+            "proxy_mode": "custom",
+            "proxy_url": "http://127.0.0.1:9010",
+            "proxy_display": "http://127.0.0.1:9010",
+            "purchase_capability_state": "bound",
+            "purchase_pool_state": "not_connected",
+            "purchase_disabled": False,
+            "selected_steam_id": None,
+            "selected_warehouse_text": None,
+            "purchase_status_code": "inventory_full",
+            "purchase_status_text": "库存已满",
+        }
     ]
 
 

@@ -6,6 +6,7 @@ from typing import Any
 
 from app_backend.domain.models.query_config import QueryItem
 
+from .api_key_status import is_api_key_ip_invalid_error, is_api_query_mode
 from .query_executor_router import QueryExecutorRouter
 from .runtime_account_adapter import RuntimeAccountAdapter
 from .runtime_events import QueryExecutionEvent, QueryExecutionResult
@@ -119,6 +120,14 @@ class AccountQueryWorker:
             return
 
         if error == "Not login" or "HTTP 403" in error:
+            self._disabled_reason = error or "query disabled"
+            return
+
+        if is_api_query_mode(self._mode_type) and is_api_key_ip_invalid_error(
+            error=error,
+            response_text=result.response_text,
+            status_code=result.status_code,
+        ):
             self._disabled_reason = error or "query disabled"
 
     def _is_active(self) -> bool:

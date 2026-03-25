@@ -2021,3 +2021,138 @@ def test_runtime_service_propagates_not_login_event_to_account_repository_and_pu
     assert purchase_service.mark_auth_invalid_calls == [
         {"account_id": "a1", "error": "Not login"}
     ]
+
+
+def test_runtime_service_marks_account_api_key_ip_invalid_on_whitelist_error():
+    from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
+
+    repository = FakeQueryConfigRepository(build_config("cfg-1"))
+    account = build_account("a1", api_key="api-1")
+    account.purchase_capability_state = "bound"
+    account.purchase_pool_state = "not_connected"
+    account_repository = FakeAccountRepository([account])
+    purchase_service = FakePurchaseRuntimeService()
+    error = "API请求失败: 未设置ip白名单或ip不在白名单中, 当前请求ip 39.71.213.149 (代码: 499103)"
+    response_text = (
+        '{"success":false,"data":null,"errorCode":499103,'
+        '"errorMsg":"未设置ip白名单或ip不在白名单中, 当前请求ip 39.71.213.149",'
+        '"errorData":null,"errorCodeStr":null}'
+    )
+
+    class FakeRuntimeWithEventSink(FakeRuntime):
+        def __init__(self, config, accounts, *, event_sink=None) -> None:
+            super().__init__(config, accounts)
+            self._event_sink = event_sink
+
+        def start(self) -> None:
+            super().start()
+            if callable(self._event_sink):
+                self._event_sink(
+                    {
+                        "timestamp": "2026-03-25T19:26:51",
+                        "level": "error",
+                        "mode_type": "fast_api",
+                        "account_id": "a1",
+                        "account_display_name": "账号-a1",
+                        "query_item_id": "item-1",
+                        "query_item_name": "商品-1",
+                        "message": error,
+                        "match_count": 0,
+                        "product_list": [],
+                        "total_price": None,
+                        "total_wear_sum": None,
+                        "latency_ms": 9.0,
+                        "error": error,
+                        "status_code": 200,
+                        "request_method": "POST",
+                        "request_path": "/merchant/market/v2/products/list",
+                        "response_text": response_text,
+                    }
+                )
+
+    service = QueryRuntimeService(
+        query_config_repository=repository,
+        account_repository=account_repository,
+        runtime_factory=lambda config, accounts, event_sink=None: FakeRuntimeWithEventSink(
+            config,
+            accounts,
+            event_sink=event_sink,
+        ),
+        purchase_runtime_service=purchase_service,
+    )
+
+    started, message = service.start(config_id="cfg-1")
+
+    assert started is True
+    assert message == "查询任务已启动"
+    updated_account = account_repository.get_account("a1")
+    assert updated_account is not None
+    assert updated_account.purchase_capability_state == "bound"
+    assert updated_account.purchase_pool_state == "not_connected"
+    assert updated_account.last_error == error
+    assert purchase_service.mark_auth_invalid_calls == []
+
+
+def test_runtime_service_clears_api_key_ip_invalid_marker_after_successful_api_query():
+    from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
+
+    repository = FakeQueryConfigRepository(build_config("cfg-1"))
+    account = build_account("a1", api_key="api-1")
+    account.purchase_capability_state = "bound"
+    account.purchase_pool_state = "not_connected"
+    account.last_error = "API请求失败: 未设置ip白名单或ip不在白名单中, 当前请求ip 39.71.213.149 (代码: 499103)"
+    account_repository = FakeAccountRepository([account])
+    purchase_service = FakePurchaseRuntimeService()
+
+    class FakeRuntimeWithEventSink(FakeRuntime):
+        def __init__(self, config, accounts, *, event_sink=None) -> None:
+            super().__init__(config, accounts)
+            self._event_sink = event_sink
+
+        def start(self) -> None:
+            super().start()
+            if callable(self._event_sink):
+                self._event_sink(
+                    {
+                        "timestamp": "2026-03-25T19:28:00",
+                        "level": "info",
+                        "mode_type": "fast_api",
+                        "account_id": "a1",
+                        "account_display_name": "账号-a1",
+                        "query_item_id": "item-1",
+                        "query_item_name": "商品-1",
+                        "message": "query completed",
+                        "match_count": 1,
+                        "product_list": [{"productId": "p1"}],
+                        "total_price": 12.3,
+                        "total_wear_sum": 0.01,
+                        "latency_ms": 8.0,
+                        "error": None,
+                        "status_code": None,
+                        "request_method": "POST",
+                        "request_path": "/merchant/market/v2/products/list",
+                        "response_text": None,
+                    }
+                )
+
+    service = QueryRuntimeService(
+        query_config_repository=repository,
+        account_repository=account_repository,
+        runtime_factory=lambda config, accounts, event_sink=None: FakeRuntimeWithEventSink(
+            config,
+            accounts,
+            event_sink=event_sink,
+        ),
+        purchase_runtime_service=purchase_service,
+    )
+
+    started, message = service.start(config_id="cfg-1")
+
+    assert started is True
+    assert message == "查询任务已启动"
+    updated_account = account_repository.get_account("a1")
+    assert updated_account is not None
+    assert updated_account.last_error is None
+    assert updated_account.purchase_capability_state == "bound"
+    assert updated_account.purchase_pool_state == "not_connected"
+    assert purchase_service.mark_auth_invalid_calls == []
