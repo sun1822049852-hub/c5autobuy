@@ -19,6 +19,9 @@ function buildRows() {
       default_name: "默认 A",
       api_key_present: true,
       api_key: "api-a",
+      new_api_enabled: false,
+      fast_api_enabled: false,
+      token_enabled: true,
       proxy_mode: "direct",
       proxy_url: null,
       proxy_display: "直连",
@@ -36,6 +39,9 @@ function buildRows() {
       default_name: "默认 B",
       api_key_present: false,
       api_key: null,
+      new_api_enabled: true,
+      fast_api_enabled: true,
+      token_enabled: true,
       proxy_mode: "custom",
       proxy_url: "http://127.0.0.1:9000",
       proxy_display: "http://127.0.0.1:9000",
@@ -53,14 +59,17 @@ function buildRows() {
       default_name: "默认 C",
       api_key_present: true,
       api_key: "api-c",
+      new_api_enabled: true,
+      fast_api_enabled: true,
+      token_enabled: false,
       proxy_mode: "custom",
       proxy_url: "socks5://127.0.0.1:9900",
       proxy_display: "socks5://127.0.0.1:9900",
-      purchase_status_code: "inventory_full",
-      purchase_status_text: "库存已满",
+      purchase_status_code: "selected_warehouse",
+      purchase_status_text: "steam-3",
       purchase_disabled: false,
-      selected_steam_id: null,
-      selected_warehouse_text: null,
+      selected_steam_id: "steam-3",
+      selected_warehouse_text: "steam-3",
     },
   ];
 }
@@ -181,6 +190,9 @@ function createFetchHarness() {
         default_name: `默认 ${nextAccountId}`,
         api_key_present: Boolean(body.api_key),
         api_key: body.api_key,
+        new_api_enabled: true,
+        fast_api_enabled: true,
+        token_enabled: true,
         proxy_mode: body.proxy_mode,
         proxy_url: body.proxy_url,
         proxy_display: body.proxy_mode === "direct" ? "直连" : body.proxy_url,
@@ -375,6 +387,34 @@ function createFetchHarness() {
       return jsonResponse(rows.find((row) => row.account_id === accountId));
     }
 
+    const queryModesMatch = url.pathname.match(/^\/accounts\/([^/]+)\/query-modes$/);
+    if (queryModesMatch && method === "PATCH") {
+      const accountId = queryModesMatch[1];
+      rows = rows.map((row) => (
+        row.account_id === accountId
+          ? {
+            ...row,
+            new_api_enabled: Object.prototype.hasOwnProperty.call(body, "api_query_enabled")
+              ? body.api_query_enabled
+              : row.new_api_enabled,
+            fast_api_enabled: Object.prototype.hasOwnProperty.call(body, "api_query_enabled")
+              ? body.api_query_enabled
+              : row.fast_api_enabled,
+            token_enabled: Object.prototype.hasOwnProperty.call(body, "browser_query_enabled")
+              ? body.browser_query_enabled
+              : row.token_enabled,
+            api_query_disabled_reason: body.api_query_enabled === false
+              ? body.api_query_disabled_reason
+              : (body.api_query_enabled === true ? null : row.api_query_disabled_reason),
+            browser_query_disabled_reason: body.browser_query_enabled === false
+              ? body.browser_query_disabled_reason
+              : (body.browser_query_enabled === true ? null : row.browser_query_disabled_reason),
+          }
+          : row
+      ));
+      return jsonResponse(rows.find((row) => row.account_id === accountId));
+    }
+
     const deleteMatch = url.pathname.match(/^\/accounts\/([^/]+)$/);
     if (deleteMatch && method === "DELETE") {
       rows = rows.filter((row) => row.account_id !== deleteMatch[1]);
@@ -399,6 +439,7 @@ function createFetchHarness() {
 describe("account center editing flows", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    window.localStorage.clear();
   });
 
   it("creates a new account from the toolbar button and refreshes the list", async () => {
@@ -521,6 +562,112 @@ describe("account center editing flows", () => {
     await user.click(screen.getByRole("button", { name: /^日志 \d+$/ }));
     const logDialog = await screen.findByRole("dialog", { name: "日志" });
     expect(within(logDialog).getByText("已更新 API Key：账号 B")).toBeInTheDocument();
+  });
+
+  it("toggles api query through the dedicated query-modes payload", async () => {
+    const harness = createFetchHarness();
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await screen.findByText("账号 C");
+
+    await user.click(screen.getByRole("button", { name: "切换 API 查询 账号 A" }));
+
+    await waitFor(() => {
+      expect(harness.calls).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            body: {
+              api_query_enabled: true,
+            },
+            method: "PATCH",
+            pathname: "/accounts/a-1/query-modes",
+          }),
+        ]),
+      );
+    });
+  });
+
+  it("disables api query with a manual-disabled reason through the dedicated query-modes payload", async () => {
+    const harness = createFetchHarness();
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await screen.findByText("账号 C");
+
+    await user.click(screen.getByRole("button", { name: "切换 API 查询 账号 C" }));
+
+    await waitFor(() => {
+      expect(harness.calls).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            body: {
+              api_query_enabled: false,
+              api_query_disabled_reason: "manual_disabled",
+            },
+            method: "PATCH",
+            pathname: "/accounts/a-3/query-modes",
+          }),
+        ]),
+      );
+    });
+  });
+
+  it("toggles browser query through the dedicated query-modes payload", async () => {
+    const harness = createFetchHarness();
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await screen.findByText("账号 C");
+
+    await user.click(screen.getByRole("button", { name: "切换浏览器查询 账号 C" }));
+
+    await waitFor(() => {
+      expect(harness.calls).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            body: {
+              browser_query_enabled: true,
+            },
+            method: "PATCH",
+            pathname: "/accounts/a-3/query-modes",
+          }),
+        ]),
+      );
+    });
+  });
+
+  it("disables browser query with a manual-disabled reason through the dedicated query-modes payload", async () => {
+    const harness = createFetchHarness();
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await screen.findByText("账号 C");
+
+    await user.click(screen.getByRole("button", { name: "切换浏览器查询 账号 A" }));
+
+    await waitFor(() => {
+      expect(harness.calls).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            body: {
+              browser_query_enabled: false,
+              browser_query_disabled_reason: "manual_disabled",
+            },
+            method: "PATCH",
+            pathname: "/accounts/a-1/query-modes",
+          }),
+        ]),
+      );
+    });
   });
 
   it("opens login drawer after proxy change and opens purchase drawer from purchase status", async () => {

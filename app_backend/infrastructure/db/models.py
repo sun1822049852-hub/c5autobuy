@@ -29,6 +29,8 @@ class AccountRecord(Base):
     new_api_enabled: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     fast_api_enabled: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     token_enabled: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    api_query_disabled_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    browser_query_disabled_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class QueryConfigRecord(Base):

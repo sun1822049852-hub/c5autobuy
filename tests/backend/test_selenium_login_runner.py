@@ -52,6 +52,8 @@ class FakeDriver:
 
     def execute_cdp_cmd(self, cmd: str, payload: dict[str, object]):
         self.cdp_calls.append((cmd, payload))
+        if cmd == "Page.addScriptToEvaluateOnNewDocument":
+            return {"identifier": "mock-script-id"}
         return {}
 
     def get(self, url: str) -> None:
@@ -173,6 +175,44 @@ async def test_selenium_login_runner_returns_capture_after_browser_closed():
     assert "NC5_deviceId=170000000012300042" in result["cookie_raw"]
     assert states == ["waiting_for_scan", "captured_login_info", "waiting_for_browser_close"]
     assert driver.quit_called is True
+
+
+@pytest.mark.asyncio
+async def test_selenium_login_runner_removes_new_document_injection_before_waiting_for_browser_close():
+    from app_backend.infrastructure.selenium.selenium_login_runner import SeleniumLoginRunner
+
+    clock = FakeClock()
+    driver = FakeDriver(
+        current_urls=["https://www.c5game.com/user/user/"],
+        monitor_request_data=_build_monitor_payload(),
+    )
+    browser_alive_checks = 0
+
+    def browser_alive_checker(_driver) -> bool:
+        nonlocal browser_alive_checks
+        browser_alive_checks += 1
+        if browser_alive_checks == 1:
+            return True
+        assert (
+            "Page.removeScriptToEvaluateOnNewDocument",
+            {"identifier": "mock-script-id"},
+        ) in driver.cdp_calls
+        return False
+
+    runner = SeleniumLoginRunner(
+        browser_factory=lambda proxy_url: driver,
+        sleep_func=clock.sleep,
+        time_provider=clock.time,
+        now_ms_provider=lambda: 1700000000123,
+        random_int_provider=lambda _start, _end: 42,
+        browser_alive_checker=browser_alive_checker,
+        page_ready_wait_seconds=0,
+        post_success_wait_seconds=0,
+        login_poll_interval_seconds=0,
+        browser_close_poll_seconds=0,
+    )
+
+    await runner.run(proxy_url="direct")
 
 
 @pytest.mark.asyncio

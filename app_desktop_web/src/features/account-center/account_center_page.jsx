@@ -33,6 +33,8 @@ export function AccountCenterPage({ client }) {
     loadError,
     loginDrawerAccount,
     openApiKeyDialog,
+    toggleApiQueryMode,
+    toggleBrowserQueryMode,
     openContextMenu,
     openCreateDialog,
     openLogsModal,
@@ -127,7 +129,9 @@ export function AccountCenterPage({ client }) {
         <AccountTable
           isLoading={isLoading}
           loadError={loadError}
-          onApiKeyClick={openApiKeyDialog}
+          onApiKeyEdit={openApiKeyDialog}
+          onApiQueryToggle={toggleApiQueryMode}
+          onBrowserQueryToggle={toggleBrowserQueryMode}
           onNicknameClick={openNicknameDialog}
           onProxyClick={openProxyDialog}
           onPurchaseStatusClick={openPurchaseStatus}

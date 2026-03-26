@@ -5,25 +5,21 @@ function getDisplayName(row) {
 }
 
 
-function getApiKeyTone(row) {
-  if (row.api_key_status_code === "ip_invalid") {
-    return "is-danger";
+function getQueryTone(statusCode, reasonCode) {
+  if (statusCode === "enabled") {
+    return "is-good";
   }
 
-  if (row.api_key_status_code === "active" || (row.api_key_status_code == null && row.api_key_present)) {
-    return "is-good";
+  if (reasonCode === "ip_invalid" || reasonCode === "not_logged_in") {
+    return "is-danger";
   }
 
   return "is-muted";
 }
 
 
-function getApiKeyDisplay(row) {
-  if (row.api_key_status_text) {
-    return row.api_key_status_text;
-  }
-
-  return row.api_key_present ? "有" : "无";
+function getQueryStatusDisplay(row, prefix) {
+  return row[`${prefix}_status_text`] || "已禁用";
 }
 
 
@@ -57,6 +53,9 @@ function renderBody({
   isLoading,
   loadError,
   onApiKeyClick,
+  onApiKeyEdit,
+  onApiQueryToggle,
+  onBrowserQueryToggle,
   onNicknameClick,
   onProxyClick,
   onPurchaseStatusClick,
@@ -66,7 +65,7 @@ function renderBody({
   if (isLoading) {
     return (
       <tr>
-        <td className="account-table__empty" colSpan={4} style={NO_SELECT_STYLE}>正在加载账号列表...</td>
+        <td className="account-table__empty" colSpan={5} style={NO_SELECT_STYLE}>正在加载账号列表...</td>
       </tr>
     );
   }
@@ -74,7 +73,7 @@ function renderBody({
   if (loadError) {
     return (
       <tr>
-        <td className="account-table__empty" colSpan={4} style={NO_SELECT_STYLE}>加载失败：{loadError}</td>
+        <td className="account-table__empty" colSpan={5} style={NO_SELECT_STYLE}>加载失败：{loadError}</td>
       </tr>
     );
   }
@@ -82,7 +81,7 @@ function renderBody({
   if (!rows.length) {
     return (
       <tr>
-        <td className="account-table__empty" colSpan={4} style={NO_SELECT_STYLE}>没有符合条件的账号</td>
+        <td className="account-table__empty" colSpan={5} style={NO_SELECT_STYLE}>没有符合条件的账号</td>
       </tr>
     );
   }
@@ -115,15 +114,43 @@ function renderBody({
           </button>
         </td>
         <td>
+          <div className="account-table__query-stack">
+            <button
+              aria-label={`切换 API 查询 ${displayName}`}
+              className="account-table__action account-table__action--query"
+              type="button"
+              onClick={() => onApiQueryToggle?.(row)}
+            >
+              <span className={`account-table__pill ${getQueryTone(row.api_query_status_code, row.api_query_disable_reason_code)}`}>
+                {getQueryStatusDisplay(row, "api_query")}
+              </span>
+              {row.api_query_disable_reason_text ? (
+                <span className="account-table__query-reason">({row.api_query_disable_reason_text})</span>
+              ) : null}
+            </button>
+            <button
+              aria-label={`编辑 API Key ${displayName}`}
+              className="account-table__inline-link"
+              type="button"
+              onClick={() => (onApiKeyEdit ?? onApiKeyClick)?.(row)}
+            >
+              编辑 key
+            </button>
+          </div>
+        </td>
+        <td>
           <button
-            aria-label={`编辑 API Key ${displayName}`}
-            className="account-table__action"
+            aria-label={`切换浏览器查询 ${displayName}`}
+            className="account-table__action account-table__action--query"
             type="button"
-            onClick={() => onApiKeyClick?.(row)}
+            onClick={() => onBrowserQueryToggle?.(row)}
           >
-            <span className={`account-table__pill ${getApiKeyTone(row)}`}>
-              {getApiKeyDisplay(row)}
+            <span className={`account-table__pill ${getQueryTone(row.browser_query_status_code, row.browser_query_disable_reason_code)}`}>
+              {getQueryStatusDisplay(row, "browser_query")}
             </span>
+            {row.browser_query_disable_reason_text ? (
+              <span className="account-table__query-reason">({row.browser_query_disable_reason_text})</span>
+            ) : null}
           </button>
         </td>
         <td>
@@ -158,6 +185,9 @@ export function AccountTable({
   isLoading,
   loadError,
   onApiKeyClick,
+  onApiKeyEdit,
+  onApiQueryToggle,
+  onBrowserQueryToggle,
   onNicknameClick,
   onProxyClick,
   onPurchaseStatusClick,
@@ -169,7 +199,8 @@ export function AccountTable({
       <thead>
         <tr>
           <th scope="col" style={NO_SELECT_STYLE}>C5昵称</th>
-          <th scope="col" style={NO_SELECT_STYLE}>API Key</th>
+          <th scope="col" style={NO_SELECT_STYLE}>API 状态</th>
+          <th scope="col" style={NO_SELECT_STYLE}>浏览器查询</th>
           <th scope="col" style={NO_SELECT_STYLE}>购买状态</th>
           <th scope="col" style={NO_SELECT_STYLE}>代理</th>
         </tr>
@@ -179,6 +210,9 @@ export function AccountTable({
           isLoading,
           loadError,
           onApiKeyClick,
+          onApiKeyEdit,
+          onApiQueryToggle,
+          onBrowserQueryToggle,
           onNicknameClick,
           onProxyClick,
           onPurchaseStatusClick,

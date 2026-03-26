@@ -41,12 +41,17 @@ class AccountResponse(BaseModel):
     new_api_enabled: bool
     fast_api_enabled: bool
     token_enabled: bool
+    api_query_disabled_reason: str | None = None
+    browser_query_disabled_reason: str | None = None
 
 
 class AccountQueryModeUpdateRequest(BaseModel):
-    new_api_enabled: bool
-    fast_api_enabled: bool
-    token_enabled: bool
+    model_config = ConfigDict(extra="forbid")
+
+    api_query_enabled: bool | None = None
+    browser_query_enabled: bool | None = None
+    api_query_disabled_reason: str | None = None
+    browser_query_disabled_reason: str | None = None
 
 
 class LoginConflictResolveRequest(BaseModel):

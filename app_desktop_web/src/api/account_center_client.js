@@ -240,6 +240,9 @@ export function createAccountCenterClient({
     async updateAccount(accountId, payload) {
       return http.patchJson(`/accounts/${accountId}`, payload);
     },
+    async updateAccountQueryModes(accountId, payload) {
+      return http.patchJson(`/accounts/${accountId}/query-modes`, payload);
+    },
     async updateAccountPurchaseConfig(accountId, payload) {
       return http.patchJson(`/accounts/${accountId}/purchase-config`, payload);
     },

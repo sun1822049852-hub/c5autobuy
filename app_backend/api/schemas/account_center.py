@@ -10,8 +10,16 @@ class AccountCenterAccountResponse(BaseModel):
     c5_nick_name: str | None = None
     default_name: str
     api_key_present: bool
-    api_key_status_code: str
-    api_key_status_text: str
+    api_query_enabled: bool
+    api_query_status_code: str
+    api_query_status_text: str
+    api_query_disable_reason_code: str | None = None
+    api_query_disable_reason_text: str | None = None
+    browser_query_enabled: bool
+    browser_query_status_code: str
+    browser_query_status_text: str
+    browser_query_disable_reason_code: str | None = None
+    browser_query_disable_reason_text: str | None = None
     api_key: str | None = None
     proxy_mode: str
     proxy_url: str | None = None

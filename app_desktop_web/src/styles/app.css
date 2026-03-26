@@ -682,6 +682,36 @@ textarea,
   background: rgba(255, 122, 122, 0.08);
 }
 
+.account-table__action--query {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.account-table__query-stack {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.account-table__query-reason {
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.account-table__inline-link {
+  padding: 0;
+  border: 0;
+  color: var(--text-soft);
+  font-size: 12px;
+  background: transparent;
+}
+
+.account-table__inline-link:hover {
+  color: var(--accent-strong);
+}
+
 .account-table__empty {
   padding: 28px 12px;
   text-align: center;

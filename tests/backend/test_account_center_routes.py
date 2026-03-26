@@ -104,8 +104,16 @@ async def test_account_center_accounts_route_renders_purchase_status_priority(cl
             "c5_nick_name": None,
             "default_name": "默认-not-login",
             "api_key_present": False,
-            "api_key_status_code": "missing",
-            "api_key_status_text": "无",
+            "api_query_enabled": False,
+            "api_query_status_code": "disabled",
+            "api_query_status_text": "已禁用",
+            "api_query_disable_reason_code": "missing_api_key",
+            "api_query_disable_reason_text": "未配置",
+            "browser_query_enabled": False,
+            "browser_query_status_code": "disabled",
+            "browser_query_status_text": "已禁用",
+            "browser_query_disable_reason_code": "not_logged_in",
+            "browser_query_disable_reason_text": "未登录",
             "api_key": None,
             "proxy_mode": "custom",
             "proxy_url": "http://127.0.0.1:9009",
@@ -125,8 +133,16 @@ async def test_account_center_accounts_route_renders_purchase_status_priority(cl
             "c5_nick_name": "平台禁用号",
             "default_name": "默认-disabled",
             "api_key_present": True,
-            "api_key_status_code": "active",
-            "api_key_status_text": "有",
+            "api_query_enabled": True,
+            "api_query_status_code": "enabled",
+            "api_query_status_text": "已启用",
+            "api_query_disable_reason_code": None,
+            "api_query_disable_reason_text": None,
+            "browser_query_enabled": True,
+            "browser_query_status_code": "enabled",
+            "browser_query_status_text": "已启用",
+            "browser_query_disable_reason_code": None,
+            "browser_query_disable_reason_text": None,
             "api_key": "api-disabled",
             "proxy_mode": "custom",
             "proxy_url": "http://127.0.0.1:9008",
@@ -146,8 +162,16 @@ async def test_account_center_accounts_route_renders_purchase_status_priority(cl
             "c5_nick_name": None,
             "default_name": "默认-full",
             "api_key_present": False,
-            "api_key_status_code": "missing",
-            "api_key_status_text": "无",
+            "api_query_enabled": False,
+            "api_query_status_code": "disabled",
+            "api_query_status_text": "已禁用",
+            "api_query_disable_reason_code": "missing_api_key",
+            "api_query_disable_reason_text": "未配置",
+            "browser_query_enabled": True,
+            "browser_query_status_code": "enabled",
+            "browser_query_status_text": "已启用",
+            "browser_query_disable_reason_code": None,
+            "browser_query_disable_reason_text": None,
             "api_key": None,
             "proxy_mode": "custom",
             "proxy_url": "http://127.0.0.1:9004",
@@ -167,8 +191,16 @@ async def test_account_center_accounts_route_renders_purchase_status_priority(cl
             "c5_nick_name": "平台可买号",
             "default_name": "默认-ready",
             "api_key_present": True,
-            "api_key_status_code": "active",
-            "api_key_status_text": "有",
+            "api_query_enabled": True,
+            "api_query_status_code": "enabled",
+            "api_query_status_text": "已启用",
+            "api_query_disable_reason_code": None,
+            "api_query_disable_reason_text": None,
+            "browser_query_enabled": True,
+            "browser_query_status_code": "enabled",
+            "browser_query_status_text": "已启用",
+            "browser_query_disable_reason_code": None,
+            "browser_query_disable_reason_text": None,
             "api_key": "api-ready",
             "proxy_mode": "custom",
             "proxy_url": "http://127.0.0.1:9005",
@@ -191,6 +223,9 @@ async def test_account_center_accounts_route_marks_ip_invalid_api_key(client, ap
         api_key="api-ip-invalid",
     )
     account.last_error = "API请求失败: 未设置ip白名单或ip不在白名单中, 当前请求ip 39.71.213.149 (代码: 499103)"
+    account.new_api_enabled = False
+    account.fast_api_enabled = False
+    account.api_query_disabled_reason = "ip_invalid"
     app.state.account_repository.create_account(account)
 
     response = await client.get("/account-center/accounts")
@@ -205,12 +240,115 @@ async def test_account_center_accounts_route_marks_ip_invalid_api_key(client, ap
             "c5_nick_name": None,
             "default_name": "默认-ip-invalid",
             "api_key_present": True,
-            "api_key_status_code": "ip_invalid",
-            "api_key_status_text": "IP失效",
+            "api_query_enabled": False,
+            "api_query_status_code": "disabled",
+            "api_query_status_text": "已禁用",
+            "api_query_disable_reason_code": "ip_invalid",
+            "api_query_disable_reason_text": "IP失效",
+            "browser_query_enabled": True,
+            "browser_query_status_code": "enabled",
+            "browser_query_status_text": "已启用",
+            "browser_query_disable_reason_code": None,
+            "browser_query_disable_reason_text": None,
             "api_key": "api-ip-invalid",
             "proxy_mode": "custom",
             "proxy_url": "http://127.0.0.1:9010",
             "proxy_display": "http://127.0.0.1:9010",
+            "purchase_capability_state": "bound",
+            "purchase_pool_state": "not_connected",
+            "purchase_disabled": False,
+            "selected_steam_id": None,
+            "selected_warehouse_text": None,
+            "purchase_status_code": "inventory_full",
+            "purchase_status_text": "库存已满",
+        }
+    ]
+
+
+async def test_account_center_accounts_route_marks_manual_disabled_api_query(client, app):
+    account = _build_account(
+        "api-disabled",
+        remark_name="API禁用账号",
+        api_key="api-manual-disabled",
+    )
+    account.new_api_enabled = False
+    account.fast_api_enabled = False
+    account.api_query_disabled_reason = "manual_disabled"
+    app.state.account_repository.create_account(account)
+
+    response = await client.get("/account-center/accounts")
+
+    assert response.status_code == 200
+    rows = response.json()
+    assert rows == [
+        {
+            "account_id": "api-disabled",
+            "display_name": "API禁用账号",
+            "remark_name": "API禁用账号",
+            "c5_nick_name": None,
+            "default_name": "默认-api-disabled",
+            "api_key_present": True,
+            "api_query_enabled": False,
+            "api_query_status_code": "disabled",
+            "api_query_status_text": "已禁用",
+            "api_query_disable_reason_code": "manual_disabled",
+            "api_query_disable_reason_text": "手动禁用",
+            "browser_query_enabled": True,
+            "browser_query_status_code": "enabled",
+            "browser_query_status_text": "已启用",
+            "browser_query_disable_reason_code": None,
+            "browser_query_disable_reason_text": None,
+            "api_key": "api-manual-disabled",
+            "proxy_mode": "custom",
+            "proxy_url": "http://127.0.0.1:9012",
+            "proxy_display": "http://127.0.0.1:9012",
+            "purchase_capability_state": "bound",
+            "purchase_pool_state": "not_connected",
+            "purchase_disabled": False,
+            "selected_steam_id": None,
+            "selected_warehouse_text": None,
+            "purchase_status_code": "inventory_full",
+            "purchase_status_text": "库存已满",
+        }
+    ]
+
+
+async def test_account_center_accounts_route_marks_manual_disabled_browser_query(client, app):
+    account = _build_account(
+        "browser-disabled",
+        remark_name="浏览器禁用账号",
+        api_key="api-browser",
+    )
+    account.token_enabled = False
+    account.browser_query_disabled_reason = "manual_disabled"
+    app.state.account_repository.create_account(account)
+
+    response = await client.get("/account-center/accounts")
+
+    assert response.status_code == 200
+    rows = response.json()
+    assert rows == [
+        {
+            "account_id": "browser-disabled",
+            "display_name": "浏览器禁用账号",
+            "remark_name": "浏览器禁用账号",
+            "c5_nick_name": None,
+            "default_name": "默认-browser-disabled",
+            "api_key_present": True,
+            "api_query_enabled": True,
+            "api_query_status_code": "enabled",
+            "api_query_status_text": "已启用",
+            "api_query_disable_reason_code": None,
+            "api_query_disable_reason_text": None,
+            "browser_query_enabled": False,
+            "browser_query_status_code": "disabled",
+            "browser_query_status_text": "已禁用",
+            "browser_query_disable_reason_code": "manual_disabled",
+            "browser_query_disable_reason_text": "手动禁用",
+            "api_key": "api-browser",
+            "proxy_mode": "custom",
+            "proxy_url": "http://127.0.0.1:9016",
+            "proxy_display": "http://127.0.0.1:9016",
             "purchase_capability_state": "bound",
             "purchase_pool_state": "not_connected",
             "purchase_disabled": False,

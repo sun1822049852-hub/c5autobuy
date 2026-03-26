@@ -44,5 +44,7 @@ class CreateAccountUseCase:
             new_api_enabled=True,
             fast_api_enabled=True,
             token_enabled=True,
+            api_query_disabled_reason=None,
+            browser_query_disabled_reason=None,
         )
         return self._repository.create_account(account)

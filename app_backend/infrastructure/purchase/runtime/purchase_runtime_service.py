@@ -10,7 +10,10 @@ from datetime import datetime, timedelta
 from inspect import Parameter, signature
 
 from app_backend.domain.enums.account_states import PurchaseCapabilityState, PurchasePoolState
-from app_backend.infrastructure.query.runtime.api_key_status import build_api_key_status
+from app_backend.infrastructure.query.runtime.api_key_status import (
+    build_api_query_status,
+    build_browser_query_status,
+)
 from app_backend.infrastructure.purchase.runtime.account_purchase_worker import AccountPurchaseWorker
 from app_backend.infrastructure.purchase.runtime.inventory_state import InventoryState
 from app_backend.infrastructure.purchase.runtime.purchase_hit_inbox import PurchaseHitInbox
@@ -524,9 +527,31 @@ class PurchaseRuntimeService:
         )
         proxy_url = getattr(account, "proxy_url", None) or None
         api_key = getattr(account, "api_key", None) or None
-        api_key_status_code, api_key_status_text = build_api_key_status(
+        (
+            api_query_enabled,
+            api_query_status_code,
+            api_query_status_text,
+            api_query_disable_reason_code,
+            api_query_disable_reason_text,
+        ) = build_api_query_status(
             api_key=api_key,
+            new_api_enabled=bool(getattr(account, "new_api_enabled", False)),
+            fast_api_enabled=bool(getattr(account, "fast_api_enabled", False)),
+            api_query_disabled_reason=getattr(account, "api_query_disabled_reason", None),
+        )
+        (
+            browser_query_enabled,
+            browser_query_status_code,
+            browser_query_status_text,
+            browser_query_disable_reason_code,
+            browser_query_disable_reason_text,
+        ) = build_browser_query_status(
+            token_enabled=bool(getattr(account, "token_enabled", False)),
+            browser_query_disabled_reason=getattr(account, "browser_query_disabled_reason", None),
+            cookie_raw=getattr(account, "cookie_raw", None),
             last_error=getattr(account, "last_error", None),
+            purchase_capability_state=purchase_capability_state,
+            purchase_pool_state=purchase_pool_state,
         )
         purchase_disabled = bool(getattr(account, "purchase_disabled", False))
         return {
@@ -536,8 +561,16 @@ class PurchaseRuntimeService:
             "c5_nick_name": getattr(account, "c5_nick_name", None),
             "default_name": str(getattr(account, "default_name", "") or ""),
             "api_key_present": bool(api_key),
-            "api_key_status_code": api_key_status_code,
-            "api_key_status_text": api_key_status_text,
+            "api_query_enabled": api_query_enabled,
+            "api_query_status_code": api_query_status_code,
+            "api_query_status_text": api_query_status_text,
+            "api_query_disable_reason_code": api_query_disable_reason_code,
+            "api_query_disable_reason_text": api_query_disable_reason_text,
+            "browser_query_enabled": browser_query_enabled,
+            "browser_query_status_code": browser_query_status_code,
+            "browser_query_status_text": browser_query_status_text,
+            "browser_query_disable_reason_code": browser_query_disable_reason_code,
+            "browser_query_disable_reason_text": browser_query_disable_reason_text,
             "api_key": api_key,
             "proxy_mode": str(getattr(account, "proxy_mode", "") or "direct"),
             "proxy_url": proxy_url,

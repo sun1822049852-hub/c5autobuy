@@ -4,7 +4,7 @@ import "@testing-library/jest-dom/vitest";
 
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "../../src/App.jsx";
 
@@ -31,8 +31,16 @@ function accountRows() {
       c5_nick_name: "Nick A",
       default_name: "默认 A",
       api_key_present: true,
-      api_key_status_code: "active",
-      api_key_status_text: "有",
+      api_query_enabled: true,
+      api_query_status_code: "enabled",
+      api_query_status_text: "已启用",
+      api_query_disable_reason_code: null,
+      api_query_disable_reason_text: null,
+      browser_query_enabled: true,
+      browser_query_status_code: "enabled",
+      browser_query_status_text: "已启用",
+      browser_query_disable_reason_code: null,
+      browser_query_disable_reason_text: null,
       api_key: "api-a",
       proxy_display: "直连",
       purchase_status_code: "selected_warehouse",
@@ -45,8 +53,16 @@ function accountRows() {
       c5_nick_name: "Nick B",
       default_name: "默认 B",
       api_key_present: false,
-      api_key_status_code: "missing",
-      api_key_status_text: "无",
+      api_query_enabled: false,
+      api_query_status_code: "disabled",
+      api_query_status_text: "已禁用",
+      api_query_disable_reason_code: "missing_api_key",
+      api_query_disable_reason_text: "未配置",
+      browser_query_enabled: false,
+      browser_query_status_code: "disabled",
+      browser_query_status_text: "已禁用",
+      browser_query_disable_reason_code: "not_logged_in",
+      browser_query_disable_reason_text: "未登录",
       api_key: null,
       proxy_display: "http://127.0.0.1:9000",
       purchase_status_code: "not_logged_in",
@@ -59,8 +75,16 @@ function accountRows() {
       c5_nick_name: "Nick C",
       default_name: "默认 C",
       api_key_present: true,
-      api_key_status_code: "ip_invalid",
-      api_key_status_text: "IP失效",
+      api_query_enabled: false,
+      api_query_status_code: "disabled",
+      api_query_status_text: "已禁用",
+      api_query_disable_reason_code: "ip_invalid",
+      api_query_disable_reason_text: "IP失效",
+      browser_query_enabled: true,
+      browser_query_status_code: "enabled",
+      browser_query_status_text: "已启用",
+      browser_query_disable_reason_code: null,
+      browser_query_disable_reason_text: null,
       api_key: "api-c",
       proxy_display: "socks5://127.0.0.1:9900",
       purchase_status_code: "inventory_full",
@@ -68,6 +92,106 @@ function accountRows() {
     },
   ];
 }
+
+
+function queryModeRows() {
+  return [
+    {
+      account_id: "a-1",
+      display_name: "账号 A",
+      remark_name: "账号 A",
+      c5_nick_name: "Nick A",
+      default_name: "默认 A",
+      api_key_present: true,
+      api_query_enabled: true,
+      api_query_status_code: "enabled",
+      api_query_status_text: "已启用",
+      api_query_disable_reason_code: null,
+      api_query_disable_reason_text: null,
+      browser_query_enabled: true,
+      browser_query_status_code: "enabled",
+      browser_query_status_text: "已启用",
+      browser_query_disable_reason_code: null,
+      browser_query_disable_reason_text: null,
+      api_key: "api-a",
+      proxy_display: "直连",
+      purchase_status_code: "selected_warehouse",
+      purchase_status_text: "steam-1",
+    },
+    {
+      account_id: "a-2",
+      display_name: "账号 B",
+      remark_name: "账号 B",
+      c5_nick_name: "Nick B",
+      default_name: "默认 B",
+      api_key_present: false,
+      api_query_enabled: false,
+      api_query_status_code: "disabled",
+      api_query_status_text: "已禁用",
+      api_query_disable_reason_code: "missing_api_key",
+      api_query_disable_reason_text: "未配置",
+      browser_query_enabled: false,
+      browser_query_status_code: "disabled",
+      browser_query_status_text: "已禁用",
+      browser_query_disable_reason_code: "not_logged_in",
+      browser_query_disable_reason_text: "未登录",
+      api_key: null,
+      proxy_display: "http://127.0.0.1:9000",
+      purchase_status_code: "not_logged_in",
+      purchase_status_text: "未登录",
+    },
+    {
+      account_id: "a-3",
+      display_name: "账号 C",
+      remark_name: "账号 C",
+      c5_nick_name: "Nick C",
+      default_name: "默认 C",
+      api_key_present: true,
+      api_query_enabled: false,
+      api_query_status_code: "disabled",
+      api_query_status_text: "已禁用",
+      api_query_disable_reason_code: "ip_invalid",
+      api_query_disable_reason_text: "IP失效",
+      browser_query_enabled: true,
+      browser_query_status_code: "enabled",
+      browser_query_status_text: "已启用",
+      browser_query_disable_reason_code: null,
+      browser_query_disable_reason_text: null,
+      api_key: "api-c",
+      proxy_display: "socks5://127.0.0.1:9900",
+      purchase_status_code: "selected_warehouse",
+      purchase_status_text: "steam-3",
+    },
+    {
+      account_id: "a-4",
+      display_name: "账号 D",
+      remark_name: "账号 D",
+      c5_nick_name: "Nick D",
+      default_name: "默认 D",
+      api_key_present: true,
+      api_query_enabled: false,
+      api_query_status_code: "disabled",
+      api_query_status_text: "已禁用",
+      api_query_disable_reason_code: "manual_disabled",
+      api_query_disable_reason_text: "手动禁用",
+      browser_query_enabled: false,
+      browser_query_status_code: "disabled",
+      browser_query_status_text: "已禁用",
+      browser_query_disable_reason_code: "manual_disabled",
+      browser_query_disable_reason_text: "手动禁用",
+      api_key: "api-d",
+      proxy_display: "http://127.0.0.1:9010",
+      purchase_status_code: "selected_warehouse",
+      purchase_status_text: "steam-4",
+    },
+  ];
+}
+
+
+beforeEach(() => {
+  window.localStorage.clear();
+});
+
 describe("account center page", () => {
   it("renders shell navigation, overview cards, account table and log entry point", async () => {
     installDesktopApp(
@@ -98,7 +222,8 @@ describe("account center page", () => {
     expect(screen.getByRole("button", { name: "日志 3" })).toBeInTheDocument();
 
     expect(screen.getByRole("columnheader", { name: "C5昵称" })).toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: "API Key" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "API 状态" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "浏览器查询" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "购买状态" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "代理" })).toBeInTheDocument();
 
@@ -110,7 +235,7 @@ describe("account center page", () => {
     expect(screen.getByText("账号 A")).toBeInTheDocument();
     expect(screen.getByText("账号 B")).toBeInTheDocument();
     expect(screen.getByText("账号 C")).toBeInTheDocument();
-    expect(screen.getByText("IP失效")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "切换 API 查询 账号 C" })).toHaveTextContent("IP失效");
 
     const toolbar = screen.getByRole("searchbox", { name: "搜索账号" }).closest(".account-page__toolbar");
     expect(toolbar).toHaveClass("account-page__toolbar--compact");
@@ -150,6 +275,52 @@ describe("account center page", () => {
     expect(within(table).getByText("账号 B")).toBeInTheDocument();
     expect(within(table).queryByText("账号 A")).not.toBeInTheDocument();
     expect(within(table).queryByText("账号 C")).not.toBeInTheDocument();
+  });
+
+  it("renders api and browser query statuses while keeping the api key edit entry", async () => {
+    installDesktopApp(
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => queryModeRows(),
+      }),
+    );
+
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByRole("button", { name: "总账号 4" });
+    await user.click(screen.getByRole("button", { name: "总账号 4" }));
+    await waitFor(() => {
+      expect(screen.getByText("账号 D")).toBeInTheDocument();
+    });
+
+    expect(screen.getByRole("columnheader", { name: "API 状态" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "浏览器查询" })).toBeInTheDocument();
+
+    const enabledRow = screen.getByText("账号 A").closest("tr");
+    expect(enabledRow).not.toBeNull();
+    expect(within(enabledRow).getByRole("button", { name: "切换 API 查询 账号 A" })).toHaveTextContent("已启用");
+    expect(within(enabledRow).getByRole("button", { name: "切换浏览器查询 账号 A" })).toHaveTextContent("已启用");
+
+    const missingApiRow = screen.getByText("账号 B").closest("tr");
+    expect(missingApiRow).not.toBeNull();
+    expect(within(missingApiRow).getByRole("button", { name: "切换 API 查询 账号 B" })).toHaveTextContent("已禁用");
+    expect(within(missingApiRow).getByRole("button", { name: "切换 API 查询 账号 B" })).toHaveTextContent("未配置");
+    expect(within(missingApiRow).getByRole("button", { name: "切换浏览器查询 账号 B" })).toHaveTextContent("已禁用");
+    expect(within(missingApiRow).getByRole("button", { name: "切换浏览器查询 账号 B" })).toHaveTextContent("未登录");
+
+    const ipInvalidRow = screen.getByText("账号 C").closest("tr");
+    expect(ipInvalidRow).not.toBeNull();
+    expect(within(ipInvalidRow).getByRole("button", { name: "切换 API 查询 账号 C" })).toHaveTextContent("已禁用");
+    expect(within(ipInvalidRow).getByRole("button", { name: "切换 API 查询 账号 C" })).toHaveTextContent("IP失效");
+
+    const manualDisabledRow = screen.getByText("账号 D").closest("tr");
+    expect(manualDisabledRow).not.toBeNull();
+    expect(within(manualDisabledRow).getByRole("button", { name: "切换 API 查询 账号 D" })).toHaveTextContent("已禁用");
+    expect(within(manualDisabledRow).getByRole("button", { name: "切换 API 查询 账号 D" })).toHaveTextContent("手动禁用");
+    expect(within(manualDisabledRow).getByRole("button", { name: "切换浏览器查询 账号 D" })).toHaveTextContent("已禁用");
+    expect(within(manualDisabledRow).getByRole("button", { name: "切换浏览器查询 账号 D" })).toHaveTextContent("手动禁用");
+    expect(screen.getByRole("button", { name: "编辑 API Key 账号 D" })).toBeInTheDocument();
   });
 
   it("keeps chrome copy non-selectable while preserving input selection", async () => {

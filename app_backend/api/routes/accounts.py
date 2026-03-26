@@ -103,9 +103,10 @@ async def update_account_query_modes(
     try:
         account = use_case.execute(
             account_id=account_id,
-            new_api_enabled=payload.new_api_enabled,
-            fast_api_enabled=payload.fast_api_enabled,
-            token_enabled=payload.token_enabled,
+            api_query_enabled=payload.api_query_enabled,
+            browser_query_enabled=payload.browser_query_enabled,
+            api_query_disabled_reason=payload.api_query_disabled_reason,
+            browser_query_disabled_reason=payload.browser_query_disabled_reason,
         )
     except KeyError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found") from exc

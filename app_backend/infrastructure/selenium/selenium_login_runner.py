@@ -84,10 +84,11 @@ class SeleniumLoginRunner:
         session = browser if isinstance(browser, BrowserSession) else BrowserSession(driver=browser)
         driver = session.driver
         browser_closed_before_login = False
+        monitor_script_identifier: str | None = None
 
         try:
             self._activate_login_page(driver, session.login_handle)
-            self._setup_request_monitor(driver)
+            monitor_script_identifier = self._setup_request_monitor(driver)
             self._open_login_page_if_needed(driver, session.preloaded_url)
             if self._page_ready_wait_seconds > 0:
                 await self._sleep(self._page_ready_wait_seconds)
@@ -137,6 +138,7 @@ class SeleniumLoginRunner:
             if not cookie_raw:
                 raise RuntimeError("无法获取Cookie")
             cookie_raw = self._rewrite_device_id(cookie_raw)
+            self._remove_request_monitor(driver, monitor_script_identifier)
 
             await _safe_emit(callback, "captured_login_info")
             await _safe_emit(callback, "waiting_for_browser_close")
@@ -315,16 +317,34 @@ class SeleniumLoginRunner:
 })();
 """
 
-    def _setup_request_monitor(self, driver: Any) -> None:
+    def _setup_request_monitor(self, driver: Any) -> str | None:
         script = self._build_monitor_script()
+        identifier: str | None = None
         try:
-            driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {"source": script})
+            result = driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {"source": script})
+            if isinstance(result, dict):
+                raw_identifier = result.get("identifier")
+                if raw_identifier:
+                    identifier = str(raw_identifier)
         except Exception:
             pass
         try:
             driver.execute_script(script)
         except Exception:
             pass
+        return identifier
+
+    @staticmethod
+    def _remove_request_monitor(driver: Any, identifier: str | None) -> None:
+        if not identifier:
+            return
+        try:
+            driver.execute_cdp_cmd(
+                "Page.removeScriptToEvaluateOnNewDocument",
+                {"identifier": identifier},
+            )
+        except Exception:
+            return
 
     @staticmethod
     def _read_monitor_request_data(driver: Any) -> dict[str, Any] | None:

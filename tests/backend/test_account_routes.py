@@ -22,6 +22,8 @@ async def test_post_accounts_creates_account(client):
     assert payload["new_api_enabled"] is True
     assert payload["fast_api_enabled"] is True
     assert payload["token_enabled"] is True
+    assert payload["api_query_disabled_reason"] is None
+    assert payload["browser_query_disabled_reason"] is None
 
 
 async def test_post_accounts_treats_blank_custom_proxy_as_direct(client):
@@ -118,7 +120,7 @@ async def test_patch_account_normalizes_scheme_less_proxy_and_auth(client):
     assert payload["proxy_url"] == "http://user:pass@127.0.0.1:8080"
 
 
-async def test_patch_account_query_modes_updates_global_flags(client):
+async def test_patch_account_query_modes_updates_api_and_browser_flags(client):
     created = await client.post(
         "/accounts",
         json={
@@ -133,17 +135,49 @@ async def test_patch_account_query_modes_updates_global_flags(client):
     response = await client.patch(
         f"/accounts/{account_id}/query-modes",
         json={
-            "new_api_enabled": False,
-            "fast_api_enabled": True,
-            "token_enabled": False,
+            "api_query_enabled": False,
+            "api_query_disabled_reason": "manual_disabled",
+            "browser_query_enabled": False,
+            "browser_query_disabled_reason": "manual_disabled",
         },
     )
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["new_api_enabled"] is False
+    assert payload["fast_api_enabled"] is False
+    assert payload["token_enabled"] is False
+    assert payload["api_query_disabled_reason"] == "manual_disabled"
+    assert payload["browser_query_disabled_reason"] == "manual_disabled"
+
+
+async def test_patch_account_query_modes_supports_partial_browser_toggle(client):
+    created = await client.post(
+        "/accounts",
+        json={
+            "remark_name": "账号A",
+            "proxy_mode": "direct",
+            "proxy_url": None,
+            "api_key": "key-123",
+        },
+    )
+    account_id = created.json()["account_id"]
+
+    response = await client.patch(
+        f"/accounts/{account_id}/query-modes",
+        json={
+            "browser_query_enabled": False,
+            "browser_query_disabled_reason": "manual_disabled",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["new_api_enabled"] is True
     assert payload["fast_api_enabled"] is True
     assert payload["token_enabled"] is False
+    assert payload["api_query_disabled_reason"] is None
+    assert payload["browser_query_disabled_reason"] == "manual_disabled"
 
 
 async def test_clear_purchase_capability_keeps_api_key(client, app):

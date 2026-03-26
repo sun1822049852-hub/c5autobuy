@@ -47,6 +47,8 @@ class SqliteAccountRepository:
                 new_api_enabled=int(account.new_api_enabled),
                 fast_api_enabled=int(account.fast_api_enabled),
                 token_enabled=int(account.token_enabled),
+                api_query_disabled_reason=account.api_query_disabled_reason,
+                browser_query_disabled_reason=account.browser_query_disabled_reason,
             )
             session.add(row)
             session.commit()
@@ -116,4 +118,6 @@ class SqliteAccountRepository:
             new_api_enabled=bool(row.new_api_enabled),
             fast_api_enabled=bool(row.fast_api_enabled),
             token_enabled=bool(row.token_enabled),
+            api_query_disabled_reason=getattr(row, "api_query_disabled_reason", None),
+            browser_query_disabled_reason=getattr(row, "browser_query_disabled_reason", None),
         )

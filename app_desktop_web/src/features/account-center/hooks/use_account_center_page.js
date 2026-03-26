@@ -30,6 +30,14 @@ const INITIAL_LOG_ENTRIES = [
     meta: "备注、API Key、代理和购买配置改动都会留痕。",
   },
 ];
+const QUERY_STATUS_ENABLED = "enabled";
+const QUERY_STATUS_DISABLED = "disabled";
+const QUERY_REASON_TEXTS = {
+  ip_invalid: "IP失效",
+  manual_disabled: "手动禁用",
+  missing_api_key: "未配置",
+  not_logged_in: "未登录",
+};
 
 
 function getDisplayName(row) {
@@ -165,6 +173,77 @@ function buildLoginDrawerAccount(account) {
     display_name: getDisplayName(account),
     proxy_display: account.proxy_display || buildProxyDisplay(account.proxy_mode, account.proxy_url),
   };
+}
+
+
+function buildQueryStatus(enabled, reasonCode = null, reasonText = null) {
+  return {
+    enabled,
+    statusCode: enabled ? QUERY_STATUS_ENABLED : QUERY_STATUS_DISABLED,
+    statusText: enabled ? "已启用" : "已禁用",
+    reasonCode: enabled ? null : reasonCode,
+    reasonText: enabled ? null : (reasonText || QUERY_REASON_TEXTS[reasonCode] || ""),
+  };
+}
+
+
+function normalizeAccountCenterRow(row) {
+  const hasApiKey = Boolean(row.api_key_present || row.api_key);
+  const apiQueryEnabled = typeof row.api_query_enabled === "boolean"
+    ? row.api_query_enabled
+    : (
+      hasApiKey
+      && Boolean(row.new_api_enabled ?? true)
+      && Boolean(row.fast_api_enabled ?? true)
+      && row.api_key_status_code !== "ip_invalid"
+    );
+  const apiReasonCode = row.api_query_disable_reason_code
+    || row.api_query_disabled_reason
+    || (row.api_key_status_code === "ip_invalid" ? "ip_invalid" : null)
+    || (!hasApiKey ? "missing_api_key" : null)
+    || (apiQueryEnabled ? null : "manual_disabled");
+  const apiReasonText = row.api_query_disable_reason_text
+    || (row.api_key_status_code === "ip_invalid" ? row.api_key_status_text : null)
+    || QUERY_REASON_TEXTS[apiReasonCode]
+    || null;
+
+  const browserQueryEnabled = typeof row.browser_query_enabled === "boolean"
+    ? row.browser_query_enabled
+    : (Boolean(row.token_enabled ?? true) && row.purchase_status_code !== "not_logged_in");
+  const browserReasonCode = row.browser_query_disable_reason_code
+    || row.browser_query_disabled_reason
+    || ((!browserQueryEnabled && row.purchase_status_code === "not_logged_in") ? "not_logged_in" : null)
+    || (browserQueryEnabled ? null : "manual_disabled");
+  const browserReasonText = row.browser_query_disable_reason_text
+    || QUERY_REASON_TEXTS[browserReasonCode]
+    || null;
+
+  const apiStatus = hasApiKey && apiQueryEnabled
+    ? buildQueryStatus(true)
+    : buildQueryStatus(false, apiReasonCode, apiReasonText);
+  const browserStatus = browserQueryEnabled
+    ? buildQueryStatus(true)
+    : buildQueryStatus(false, browserReasonCode, browserReasonText);
+
+  return {
+    ...row,
+    api_key_present: hasApiKey,
+    api_query_enabled: apiStatus.enabled,
+    api_query_status_code: apiStatus.statusCode,
+    api_query_status_text: apiStatus.statusText,
+    api_query_disable_reason_code: apiStatus.reasonCode,
+    api_query_disable_reason_text: apiStatus.reasonText,
+    browser_query_enabled: browserStatus.enabled,
+    browser_query_status_code: browserStatus.statusCode,
+    browser_query_status_text: browserStatus.statusText,
+    browser_query_disable_reason_code: browserStatus.reasonCode,
+    browser_query_disable_reason_text: browserStatus.reasonText,
+  };
+}
+
+
+function normalizeAccountRows(rows) {
+  return Array.isArray(rows) ? rows.map(normalizeAccountCenterRow) : [];
 }
 
 
@@ -354,7 +433,7 @@ export function useAccountCenterPage({ client }) {
           return;
         }
 
-        setRows(nextRows);
+        setRows(normalizeAccountRows(nextRows));
       } catch (error) {
         if (!isMounted) {
           return;
@@ -396,8 +475,9 @@ export function useAccountCenterPage({ client }) {
 
     try {
       const nextRows = await client.listAccountCenterAccounts();
-      setRows(nextRows);
-      return nextRows;
+      const normalizedRows = normalizeAccountRows(nextRows);
+      setRows(normalizedRows);
+      return normalizedRows;
     } catch (error) {
       const message = toErrorMessage(error);
       setLoadError(message);
@@ -455,6 +535,84 @@ export function useAccountCenterPage({ client }) {
       appendErrorLog(`发起登录失败：${toErrorMessage(error)}`, getErrorMeta(error));
       return null;
     }
+  }
+
+  async function openPurchaseStatus(account) {
+    setContextMenu(null);
+
+    if (isNotLoggedIn(account)) {
+      setLoginDrawerAccount(buildLoginDrawerAccount(account));
+      return null;
+    }
+
+    setPurchaseDrawerState({
+      account,
+      detail: null,
+      isLoading: true,
+      isRefreshing: false,
+      open: true,
+    });
+
+    try {
+      const detail = await client.getPurchaseRuntimeInventoryDetail(account.account_id);
+      setPurchaseDrawerState({
+        account,
+        detail,
+        isLoading: false,
+        isRefreshing: false,
+        open: true,
+      });
+      return detail;
+    } catch (error) {
+      setPurchaseDrawerState({
+        account: null,
+        detail: null,
+        isLoading: false,
+        isRefreshing: false,
+        open: false,
+      });
+      appendErrorLog(`加载购买配置失败：${toErrorMessage(error)}`, getErrorMeta(error));
+      return null;
+    }
+  }
+
+  async function toggleApiQueryMode(account) {
+    setContextMenu(null);
+
+    if (account.api_query_disable_reason_code === "missing_api_key" && !account.api_key_present) {
+      setApiKeyDialogAccount(account);
+      return null;
+    }
+
+    const nextEnabled = !account.api_query_enabled;
+    return handleAction(async () => {
+      await client.updateAccountQueryModes(account.account_id, nextEnabled
+        ? { api_query_enabled: true }
+        : {
+          api_query_enabled: false,
+          api_query_disabled_reason: "manual_disabled",
+        });
+      await refreshAccounts();
+    }, `${nextEnabled ? "已启用" : "已禁用"} API 查询：${getDisplayName(account)}`);
+  }
+
+  async function toggleBrowserQueryMode(account) {
+    setContextMenu(null);
+
+    if (account.browser_query_disable_reason_code === "not_logged_in" && !account.browser_query_enabled) {
+      return openPurchaseStatus(account);
+    }
+
+    const nextEnabled = !account.browser_query_enabled;
+    return handleAction(async () => {
+      await client.updateAccountQueryModes(account.account_id, nextEnabled
+        ? { browser_query_enabled: true }
+        : {
+          browser_query_enabled: false,
+          browser_query_disabled_reason: "manual_disabled",
+        });
+      await refreshAccounts();
+    }, `${nextEnabled ? "已启用" : "已禁用"} 浏览器查询：${getDisplayName(account)}`);
   }
 
   return {
@@ -538,42 +696,7 @@ export function useAccountCenterPage({ client }) {
       setProxyDialogAccount(account);
       setContextMenu(null);
     },
-    openPurchaseStatus: async (account) => {
-      setContextMenu(null);
-
-      if (isNotLoggedIn(account)) {
-        setLoginDrawerAccount(buildLoginDrawerAccount(account));
-        return;
-      }
-
-      setPurchaseDrawerState({
-        account,
-        detail: null,
-        isLoading: true,
-        isRefreshing: false,
-        open: true,
-      });
-
-      try {
-        const detail = await client.getPurchaseRuntimeInventoryDetail(account.account_id);
-        setPurchaseDrawerState({
-          account,
-          detail,
-          isLoading: false,
-          isRefreshing: false,
-          open: true,
-        });
-      } catch (error) {
-        setPurchaseDrawerState({
-          account: null,
-          detail: null,
-          isLoading: false,
-          isRefreshing: false,
-          open: false,
-        });
-        appendErrorLog(`加载购买配置失败：${toErrorMessage(error)}`, getErrorMeta(error));
-      }
-    },
+    openPurchaseStatus,
     overviewCards,
     proxyDialogAccount,
     purchaseDrawerState,
@@ -592,6 +715,8 @@ export function useAccountCenterPage({ client }) {
         searchTerm: nextSearchTerm,
       }));
     },
+    toggleApiQueryMode,
+    toggleBrowserQueryMode,
     submitApiKey: async (payload) => {
       const account = apiKeyDialogAccount;
       if (!account) {

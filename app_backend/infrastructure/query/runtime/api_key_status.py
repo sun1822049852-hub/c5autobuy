@@ -3,23 +3,64 @@ from __future__ import annotations
 import json
 from typing import Any
 
-API_KEY_STATUS_ACTIVE = "active"
-API_KEY_STATUS_IP_INVALID = "ip_invalid"
-API_KEY_STATUS_MISSING = "missing"
+QUERY_STATUS_ENABLED = "enabled"
+QUERY_STATUS_DISABLED = "disabled"
 API_QUERY_MODES = frozenset({"fast_api", "new_api"})
 IP_WHITELIST_ERROR_CODE = 499103
+DISABLE_REASON_IP_INVALID = "ip_invalid"
+DISABLE_REASON_MANUAL_DISABLED = "manual_disabled"
+DISABLE_REASON_MISSING_API_KEY = "missing_api_key"
+DISABLE_REASON_NOT_LOGGED_IN = "not_logged_in"
+BOUND_PURCHASE_STATE = "bound"
+PAUSED_AUTH_INVALID_STATE = "paused_auth_invalid"
+NOT_LOGGED_IN_ERROR = "Not login"
+REASON_TEXTS = {
+    DISABLE_REASON_IP_INVALID: "IP失效",
+    DISABLE_REASON_MANUAL_DISABLED: "手动禁用",
+    DISABLE_REASON_MISSING_API_KEY: "未配置",
+    DISABLE_REASON_NOT_LOGGED_IN: "未登录",
+}
 
 
 def is_api_query_mode(mode_type: str | None) -> bool:
     return str(mode_type or "").strip() in API_QUERY_MODES
 
 
-def build_api_key_status(*, api_key: str | None, last_error: str | None) -> tuple[str, str]:
+def build_api_query_status(
+    *,
+    api_key: str | None,
+    new_api_enabled: bool,
+    fast_api_enabled: bool,
+    api_query_disabled_reason: str | None,
+) -> tuple[bool, str, str, str | None, str | None]:
     if not str(api_key or "").strip():
-        return API_KEY_STATUS_MISSING, "无"
-    if is_api_key_ip_invalid_marker(last_error):
-        return API_KEY_STATUS_IP_INVALID, "IP失效"
-    return API_KEY_STATUS_ACTIVE, "有"
+        return _build_disabled_status(DISABLE_REASON_MISSING_API_KEY)
+    if bool(new_api_enabled) and bool(fast_api_enabled):
+        return _build_enabled_status()
+    reason = _normalize_api_disabled_reason(api_query_disabled_reason) or DISABLE_REASON_MANUAL_DISABLED
+    return _build_disabled_status(reason)
+
+
+def build_browser_query_status(
+    *,
+    token_enabled: bool,
+    browser_query_disabled_reason: str | None,
+    cookie_raw: str | None,
+    last_error: str | None,
+    purchase_capability_state: str | None,
+    purchase_pool_state: str | None,
+) -> tuple[bool, str, str, str | None, str | None]:
+    if not bool(token_enabled):
+        reason = _normalize_browser_disabled_reason(browser_query_disabled_reason) or DISABLE_REASON_MANUAL_DISABLED
+        return _build_disabled_status(reason)
+    if _is_not_logged_in(
+        cookie_raw=cookie_raw,
+        last_error=last_error,
+        purchase_capability_state=purchase_capability_state,
+        purchase_pool_state=purchase_pool_state,
+    ):
+        return _build_disabled_status(DISABLE_REASON_NOT_LOGGED_IN)
+    return _build_enabled_status()
 
 
 def is_api_key_ip_invalid_marker(last_error: str | None) -> bool:
@@ -53,6 +94,55 @@ def is_api_key_ip_invalid_error(
         return True
 
     return False
+
+
+def has_access_token(cookie_raw: str | None) -> bool:
+    if not cookie_raw:
+        return False
+    for raw_part in cookie_raw.split(";"):
+        key, _, value = raw_part.strip().partition("=")
+        if key == "NC5_accessToken" and bool(value):
+            return True
+    return False
+
+
+def _build_enabled_status() -> tuple[bool, str, str, str | None, str | None]:
+    return True, QUERY_STATUS_ENABLED, "已启用", None, None
+
+
+def _build_disabled_status(reason_code: str) -> tuple[bool, str, str, str | None, str | None]:
+    return False, QUERY_STATUS_DISABLED, "已禁用", reason_code, REASON_TEXTS.get(reason_code, reason_code)
+
+
+def _normalize_api_disabled_reason(value: str | None) -> str | None:
+    text = str(value or "").strip()
+    if text in {DISABLE_REASON_IP_INVALID, DISABLE_REASON_MANUAL_DISABLED}:
+        return text
+    return None
+
+
+def _normalize_browser_disabled_reason(value: str | None) -> str | None:
+    text = str(value or "").strip()
+    if text == DISABLE_REASON_MANUAL_DISABLED:
+        return text
+    return None
+
+
+def _is_not_logged_in(
+    *,
+    cookie_raw: str | None,
+    last_error: str | None,
+    purchase_capability_state: str | None,
+    purchase_pool_state: str | None,
+) -> bool:
+    if str(last_error or "").strip() == NOT_LOGGED_IN_ERROR:
+        return True
+    capability_state = str(purchase_capability_state or "").strip()
+    if capability_state and capability_state != BOUND_PURCHASE_STATE:
+        return True
+    if str(purchase_pool_state or "").strip() == PAUSED_AUTH_INVALID_STATE:
+        return True
+    return not has_access_token(cookie_raw)
 
 
 def _contains_ip_whitelist_marker(text: str) -> bool:

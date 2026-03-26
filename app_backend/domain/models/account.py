@@ -25,6 +25,8 @@ class Account:
     new_api_enabled: bool = True
     fast_api_enabled: bool = True
     token_enabled: bool = True
+    api_query_disabled_reason: str | None = None
+    browser_query_disabled_reason: str | None = None
 
     @property
     def display_name(self) -> str:

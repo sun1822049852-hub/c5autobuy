@@ -102,6 +102,8 @@ def build_account(
     new_api_enabled: bool = True,
     fast_api_enabled: bool = True,
     token_enabled: bool = True,
+    api_query_disabled_reason: str | None = None,
+    browser_query_disabled_reason: str | None = None,
 ) -> object:
     return SimpleNamespace(
         account_id=account_id,
@@ -124,6 +126,8 @@ def build_account(
         new_api_enabled=new_api_enabled,
         fast_api_enabled=fast_api_enabled,
         token_enabled=token_enabled,
+        api_query_disabled_reason=api_query_disabled_reason,
+        browser_query_disabled_reason=browser_query_disabled_reason,
     )
 
 
@@ -169,8 +173,7 @@ class FakeAccountRepository:
         if account is None:
             raise KeyError(account_id)
         for key, value in changes.items():
-            if hasattr(account, key):
-                setattr(account, key, value)
+            setattr(account, key, value)
         return account
 
 
@@ -2089,17 +2092,23 @@ def test_runtime_service_marks_account_api_key_ip_invalid_on_whitelist_error():
     assert updated_account is not None
     assert updated_account.purchase_capability_state == "bound"
     assert updated_account.purchase_pool_state == "not_connected"
+    assert updated_account.new_api_enabled is False
+    assert updated_account.fast_api_enabled is False
+    assert updated_account.api_query_disabled_reason == "ip_invalid"
     assert updated_account.last_error == error
     assert purchase_service.mark_auth_invalid_calls == []
 
 
-def test_runtime_service_clears_api_key_ip_invalid_marker_after_successful_api_query():
+def test_runtime_service_does_not_clear_api_key_ip_invalid_marker_after_successful_api_query():
     from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
 
     repository = FakeQueryConfigRepository(build_config("cfg-1"))
     account = build_account("a1", api_key="api-1")
     account.purchase_capability_state = "bound"
     account.purchase_pool_state = "not_connected"
+    account.new_api_enabled = False
+    account.fast_api_enabled = False
+    account.api_query_disabled_reason = "ip_invalid"
     account.last_error = "API请求失败: 未设置ip白名单或ip不在白名单中, 当前请求ip 39.71.213.149 (代码: 499103)"
     account_repository = FakeAccountRepository([account])
     purchase_service = FakePurchaseRuntimeService()
@@ -2152,7 +2161,10 @@ def test_runtime_service_clears_api_key_ip_invalid_marker_after_successful_api_q
     assert message == "查询任务已启动"
     updated_account = account_repository.get_account("a1")
     assert updated_account is not None
-    assert updated_account.last_error is None
+    assert updated_account.new_api_enabled is False
+    assert updated_account.fast_api_enabled is False
+    assert updated_account.api_query_disabled_reason == "ip_invalid"
+    assert updated_account.last_error == "API请求失败: 未设置ip白名单或ip不在白名单中, 当前请求ip 39.71.213.149 (代码: 499103)"
     assert updated_account.purchase_capability_state == "bound"
     assert updated_account.purchase_pool_state == "not_connected"
     assert purchase_service.mark_auth_invalid_calls == []

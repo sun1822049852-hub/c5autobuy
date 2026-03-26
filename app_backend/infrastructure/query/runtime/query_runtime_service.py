@@ -13,8 +13,6 @@ from app_backend.domain.enums.query_modes import QueryMode
 from app_backend.domain.models.query_config import QueryConfig, QueryModeSetting
 from app_backend.infrastructure.query.runtime.api_key_status import (
     is_api_key_ip_invalid_error,
-    is_api_key_ip_invalid_marker,
-    is_api_query_mode,
 )
 from app_backend.infrastructure.query.runtime.runtime_account_adapter import RuntimeAccountAdapter
 from app_backend.infrastructure.query.runtime.query_task_runtime import QueryTaskRuntime
@@ -884,8 +882,6 @@ class QueryRuntimeService:
         ):
             self._mark_account_api_key_ip_invalid(account_id=account_id, error=error)
             return
-        if is_api_query_mode(str(event.get("mode_type") or "").strip()) and not error:
-            self._clear_account_api_key_ip_invalid_marker(account_id=account_id)
 
     def _mark_waiting_for_purchase_recovery(
         self,
@@ -1022,7 +1018,13 @@ class QueryRuntimeService:
             except Exception:
                 account = None
 
-        if account is not None and str(getattr(account, "last_error", "") or "") == error:
+        if (
+            account is not None
+            and str(getattr(account, "last_error", "") or "") == error
+            and not bool(getattr(account, "new_api_enabled", True))
+            and not bool(getattr(account, "fast_api_enabled", True))
+            and str(getattr(account, "api_query_disabled_reason", "") or "") == "ip_invalid"
+        ):
             return
 
         update_account = getattr(self._account_repository, "update_account", None)
@@ -1031,31 +1033,10 @@ class QueryRuntimeService:
         try:
             update_account(
                 account_id,
+                new_api_enabled=False,
+                fast_api_enabled=False,
+                api_query_disabled_reason="ip_invalid",
                 last_error=error,
-                updated_at=datetime.now().isoformat(timespec="seconds"),
-            )
-        except Exception:
-            return
-
-    def _clear_account_api_key_ip_invalid_marker(self, *, account_id: str) -> None:
-        account = None
-        get_account = getattr(self._account_repository, "get_account", None)
-        if callable(get_account):
-            try:
-                account = get_account(account_id)
-            except Exception:
-                account = None
-
-        if account is None or not is_api_key_ip_invalid_marker(getattr(account, "last_error", None)):
-            return
-
-        update_account = getattr(self._account_repository, "update_account", None)
-        if not callable(update_account):
-            return
-        try:
-            update_account(
-                account_id,
-                last_error=None,
                 updated_at=datetime.now().isoformat(timespec="seconds"),
             )
         except Exception:
