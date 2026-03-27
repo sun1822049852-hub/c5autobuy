@@ -46,6 +46,7 @@ class _FakeProcess:
 
     def terminate(self):
         self.terminated = True
+        self._poll_result = 0
 
     def wait(self, timeout=None):
         return 0
@@ -156,7 +157,7 @@ async def test_managed_edge_cdp_login_runner_delays_close_after_capture(monkeypa
         close_delay_seconds=600.0,
     )
     process = _FakeProcess()
-    sleep_calls: list[float] = []
+    wait_calls: list[float] = []
 
     monkeypatch.setattr(
         "app_backend.infrastructure.browser_runtime.login_adapter.subprocess.Popen",
@@ -180,8 +181,8 @@ async def test_managed_edge_cdp_login_runner_delays_close_after_capture(monkeypa
         },
     )
     monkeypatch.setattr(
-        "app_backend.infrastructure.browser_runtime.login_adapter.time.sleep",
-        lambda seconds: sleep_calls.append(seconds),
+        "app_backend.infrastructure.browser_runtime.login_adapter.ManagedEdgeCdpLoginRunner._wait_for_process_exit",
+        lambda self, process, timeout_seconds: wait_calls.append(timeout_seconds),
     )
 
     class _ImmediateThread:
@@ -195,7 +196,7 @@ async def test_managed_edge_cdp_login_runner_delays_close_after_capture(monkeypa
 
     await runner.run(proxy_url=None)
 
-    assert 600.0 in sleep_calls
+    assert wait_calls == [600.0]
     assert process.terminated is True
 
 
@@ -286,6 +287,7 @@ async def test_managed_edge_cdp_login_runner_uses_account_profile_store(monkeypa
         profile_store=profile_store,
         login_timeout_seconds=1.0,
         poll_interval_seconds=0.0,
+        close_delay_seconds=0.0,
     )
     process = _FakeProcess()
     captured_commands: list[list[str]] = []
@@ -312,9 +314,18 @@ async def test_managed_edge_cdp_login_runner_uses_account_profile_store(monkeypa
         },
     )
     monkeypatch.setattr(
-        "app_backend.infrastructure.browser_runtime.login_adapter.ManagedEdgeCdpLoginRunner._schedule_delayed_cleanup",
-        lambda self, process, session_root, cleanup_callbacks, remove_session_root=True: None,
+        "app_backend.infrastructure.browser_runtime.login_adapter.ManagedEdgeCdpLoginRunner._wait_for_process_exit",
+        lambda self, process, timeout_seconds: None,
     )
+
+    class _ImmediateThread:
+        def __init__(self, *, target, name=None, daemon=None):
+            self._target = target
+
+        def start(self):
+            self._target()
+
+    monkeypatch.setattr("app_backend.infrastructure.browser_runtime.login_adapter.threading.Thread", _ImmediateThread)
 
     payload = await runner.run(proxy_url=None, account_id="account-1")
 
@@ -324,4 +335,69 @@ async def test_managed_edge_cdp_login_runner_uses_account_profile_store(monkeypa
     assert profile_store.clone_calls == ["account-1"]
     assert profile_store.persist_calls == [("account-1", str(tmp_path / "browser-sessions" / "account-1"))]
     assert any(str(tmp_path / "browser-sessions" / "account-1") in item for item in captured_commands[0])
+
+
+async def test_managed_edge_cdp_login_runner_persists_profile_after_browser_exit(monkeypatch, tmp_path: Path):
+    from app_backend.infrastructure.browser_runtime.login_adapter import ManagedEdgeCdpLoginRunner
+
+    runtime = _DummyRuntime(tmp_path)
+    profile_store = _DummyProfileStore(tmp_path)
+    runner = ManagedEdgeCdpLoginRunner(
+        runtime=runtime,
+        profile_store=profile_store,
+        login_timeout_seconds=1.0,
+        poll_interval_seconds=0.0,
+        close_delay_seconds=0.0,
+    )
+    process = _FakeProcess()
+    persist_poll_results: list[int | None] = []
+
+    monkeypatch.setattr(
+        "app_backend.infrastructure.browser_runtime.login_adapter.subprocess.Popen",
+        lambda command: process,
+    )
+    monkeypatch.setattr(
+        "app_backend.infrastructure.browser_runtime.login_adapter.reserve_debug_port",
+        lambda: 9562,
+    )
+    monkeypatch.setattr(
+        "app_backend.infrastructure.browser_runtime.login_adapter.wait_for_debugger_port",
+        lambda port, process: None,
+    )
+    monkeypatch.setattr(
+        "app_backend.infrastructure.browser_runtime.login_adapter.read_attached_session",
+        lambda debugger_address: {
+            "c5_user_id": "10001",
+            "c5_nick_name": "纯净账号",
+            "cookie_raw": "NC5_accessToken=token-1; NC5_deviceId=device-1",
+            "target_url": "https://www.c5game.com/user/user/",
+        },
+    )
+
+    original_persist_session = profile_store.persist_session
+
+    def _persist_session(account_id: str, session_root: Path) -> Path:
+        persist_poll_results.append(process.poll())
+        return original_persist_session(account_id, session_root)
+
+    monkeypatch.setattr(profile_store, "persist_session", _persist_session)
+    monkeypatch.setattr(
+        "app_backend.infrastructure.browser_runtime.login_adapter.ManagedEdgeCdpLoginRunner._wait_for_process_exit",
+        lambda self, process, timeout_seconds: setattr(process, "_poll_result", 0),
+    )
+
+    class _ImmediateThread:
+        def __init__(self, *, target, name=None, daemon=None):
+            self._target = target
+
+        def start(self):
+            self._target()
+
+    monkeypatch.setattr("app_backend.infrastructure.browser_runtime.login_adapter.threading.Thread", _ImmediateThread)
+
+    payload = await runner.run(proxy_url=None, account_id="account-2")
+
+    assert payload["profile_root"] == str(tmp_path / "browser-profiles" / "account-2")
+    assert persist_poll_results == [0]
+    assert process.terminated is False
 
