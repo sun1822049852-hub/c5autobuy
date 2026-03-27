@@ -33,7 +33,7 @@ const INITIAL_LOG_ENTRIES = [
 const QUERY_STATUS_ENABLED = "enabled";
 const QUERY_STATUS_DISABLED = "disabled";
 const QUERY_REASON_TEXTS = {
-  ip_invalid: "IP失效",
+  ip_invalid: "IP 不在白名单内，请手动绑定",
   manual_disabled: "手动禁用",
   missing_api_key: "未配置",
   not_logged_in: "未登录",
@@ -50,12 +50,12 @@ function toErrorMessage(error) {
 }
 
 
-function buildProxyDisplay(proxyMode, proxyUrl) {
+function buildProxyDisplay(proxyMode, proxyUrl, publicIp = null) {
   if (proxyMode === "direct") {
-    return "直连";
+    return publicIp || "未获取IP";
   }
 
-  return proxyUrl || "未配置代理";
+  return proxyUrl || publicIp || "未配置代理";
 }
 
 
@@ -102,7 +102,9 @@ function matchesSearch(row, keyword) {
     row.c5_nick_name,
     row.default_name,
     row.purchase_status_text,
-    row.proxy_display,
+    row.browser_proxy_display,
+    row.api_proxy_display,
+    row.api_public_ip,
   ]
     .filter(Boolean)
     .join(" ")
@@ -154,14 +156,17 @@ function createLogEntry({ title, message, meta = "" }) {
 
 function buildAccountUpdatePayload(account, partialPayload) {
   const hasApiKey = Object.prototype.hasOwnProperty.call(partialPayload, "api_key");
-  const hasProxyUrl = Object.prototype.hasOwnProperty.call(partialPayload, "proxy_url");
+  const hasBrowserProxyUrl = Object.prototype.hasOwnProperty.call(partialPayload, "browser_proxy_url");
+  const hasApiProxyUrl = Object.prototype.hasOwnProperty.call(partialPayload, "api_proxy_url");
 
   return {
     remark_name: Object.prototype.hasOwnProperty.call(partialPayload, "remark_name")
       ? partialPayload.remark_name
       : account.remark_name ?? null,
-    proxy_mode: partialPayload.proxy_mode ?? account.proxy_mode ?? "direct",
-    proxy_url: hasProxyUrl ? partialPayload.proxy_url : account.proxy_url ?? null,
+    browser_proxy_mode: partialPayload.browser_proxy_mode ?? account.browser_proxy_mode ?? "direct",
+    browser_proxy_url: hasBrowserProxyUrl ? partialPayload.browser_proxy_url : account.browser_proxy_url ?? null,
+    api_proxy_mode: partialPayload.api_proxy_mode ?? account.api_proxy_mode ?? "direct",
+    api_proxy_url: hasApiProxyUrl ? partialPayload.api_proxy_url : account.api_proxy_url ?? null,
     api_key: hasApiKey ? partialPayload.api_key : account.api_key ?? null,
   };
 }
@@ -171,7 +176,8 @@ function buildLoginDrawerAccount(account) {
   return {
     ...account,
     display_name: getDisplayName(account),
-    proxy_display: account.proxy_display || buildProxyDisplay(account.proxy_mode, account.proxy_url),
+    browser_proxy_display: account.browser_proxy_display || buildProxyDisplay(account.browser_proxy_mode, account.browser_proxy_url, account.browser_public_ip),
+    api_proxy_display: account.api_proxy_display || buildProxyDisplay(account.api_proxy_mode, account.api_proxy_url, account.api_public_ip),
   };
 }
 
@@ -227,6 +233,8 @@ function normalizeAccountCenterRow(row) {
 
   return {
     ...row,
+    browser_proxy_display: row.browser_proxy_display || buildProxyDisplay(row.browser_proxy_mode, row.browser_proxy_url, row.browser_public_ip),
+    api_proxy_display: row.api_proxy_display || buildProxyDisplay(row.api_proxy_mode, row.api_proxy_url, row.api_public_ip),
     api_key_present: hasApiKey,
     api_query_enabled: apiStatus.enabled,
     api_query_status_code: apiStatus.statusCode,
@@ -244,6 +252,22 @@ function normalizeAccountCenterRow(row) {
 
 function normalizeAccountRows(rows) {
   return Array.isArray(rows) ? rows.map(normalizeAccountCenterRow) : [];
+}
+
+
+function upsertAccountRow(rows, nextRow) {
+  if (!nextRow) {
+    return rows;
+  }
+
+  const nextRows = Array.isArray(rows) ? [...rows] : [];
+  const rowIndex = nextRows.findIndex((row) => row.account_id === nextRow.account_id);
+  if (rowIndex >= 0) {
+    nextRows[rowIndex] = nextRow;
+    return nextRows;
+  }
+  nextRows.push(nextRow);
+  return nextRows;
 }
 
 
@@ -469,6 +493,44 @@ export function useAccountCenterPage({ client }) {
     matchesFilter(row, uiState.activeFilter) && matchesSearch(row, uiState.searchTerm)
   )), [rows, uiState.activeFilter, uiState.searchTerm]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function consumeAccountUpdates() {
+      const streamFactory = client.watchAccountUpdates;
+      if (typeof streamFactory !== "function") {
+        return;
+      }
+
+      try {
+        for await (const event of streamFactory.call(client)) {
+          if (cancelled) {
+            return;
+          }
+          const accountId = String(event?.account_id ?? "");
+          if (!accountId) {
+            continue;
+          }
+          const nextAccount = normalizeAccountCenterRow(await client.getAccount(accountId));
+          if (cancelled) {
+            return;
+          }
+          setRows((currentRows) => upsertAccountRow(currentRows, nextAccount));
+          if (loginDrawerAccountRef.current?.account_id === accountId) {
+            setLoginDrawerAccount(buildLoginDrawerAccount(nextAccount));
+          }
+        }
+      } catch {
+        // Ignore push channel errors; manual refresh and task flow remain available.
+      }
+    }
+
+    consumeAccountUpdates();
+    return () => {
+      cancelled = true;
+    };
+  }, [client]);
+
   async function refreshAccounts() {
     setIsLoading(true);
     setLoadError("");
@@ -688,6 +750,19 @@ export function useAccountCenterPage({ client }) {
       setCreateDialogOpen(true);
       setContextMenu(null);
     },
+    openAccountOpenApiBindingPage: async (account) => {
+      setContextMenu(null);
+      return handleAction(async () => {
+        await client.openAccountOpenApiBindingPage(account.account_id);
+      }, `已打开 API 绑定页：${getDisplayName(account)}`);
+    },
+    syncAccountOpenApi: async (account) => {
+      setContextMenu(null);
+      return handleAction(async () => {
+        await client.syncAccountOpenApi(account.account_id);
+        await refreshAccounts();
+      }, `已重新同步 API 白名单：${getDisplayName(account)}`);
+    },
     openNicknameDialog(account) {
       setRemarkDialogAccount(account);
       setContextMenu(null);
@@ -760,24 +835,17 @@ export function useAccountCenterPage({ client }) {
         return null;
       }
 
-      const proxyChanged = account.proxy_mode !== payload.proxy_mode
-        || (account.proxy_url ?? "") !== (payload.proxy_url ?? "");
+      const apiProxyChanged = account.api_proxy_mode !== payload.api_proxy_mode
+        || (account.api_proxy_url ?? "") !== (payload.api_proxy_url ?? "");
 
       return handleAction(async () => {
         await client.updateAccount(account.account_id, buildAccountUpdatePayload(account, payload));
-        setProxyDialogAccount(null);
-        const nextRows = await refreshAccounts();
-        const nextAccount = nextRows.find((row) => row.account_id === account.account_id);
-
-        if (proxyChanged) {
-          setLoginDrawerAccount(buildLoginDrawerAccount(nextAccount ?? {
-            ...account,
-            ...payload,
-            proxy_display: buildProxyDisplay(payload.proxy_mode, payload.proxy_url),
-          }));
-          appendLoginLog(`待为${getDisplayName(nextAccount ?? account)}重新登录`);
+        if (apiProxyChanged) {
+          await client.syncAccountOpenApi(account.account_id);
         }
-      }, `已更新代理：${getDisplayName(account)}`);
+        setProxyDialogAccount(null);
+        await refreshAccounts();
+      }, `${apiProxyChanged ? "已更新 API 代理并刷新白名单" : "已更新 API 代理"}：${getDisplayName(account)}`);
     },
     submitPurchaseConfig: async (payload) => {
       const account = purchaseDrawerState.account;

@@ -3,7 +3,11 @@ from __future__ import annotations
 import asyncio
 
 from app_backend.infrastructure.purchase.runtime.runtime_events import InventoryRefreshResult
-from app_backend.infrastructure.selenium.login_adapter import LoginCapture
+from app_backend.infrastructure.browser_runtime.login_adapter import LoginCapture
+from app_backend.infrastructure.browser_runtime.login_execution_result import (
+    CapturedLoginIdentity,
+    LoginExecutionResult,
+)
 
 
 async def _wait_for_task(client, task_id: str, target_state: str) -> dict:
@@ -56,8 +60,10 @@ async def test_login_task_binds_purchase_capability_and_persists_account(app, cl
         "/accounts",
         json={
             "remark_name": "待绑定账号",
-            "proxy_mode": "custom",
-            "proxy_url": "http://127.0.0.1:8899",
+            "browser_proxy_mode": "custom",
+            "browser_proxy_url": "http://127.0.0.1:8899",
+            "api_proxy_mode": "direct",
+            "api_proxy_url": None,
             "api_key": None,
         },
     )
@@ -82,11 +88,59 @@ async def test_login_task_binds_purchase_capability_and_persists_account(app, cl
 
     account_response = await client.get(f"/accounts/{account_id}")
     account_payload = account_response.json()
+    active_bundle = app.state.account_session_bundle_repository.get_active_bundle(account_id)
     assert account_payload["c5_user_id"] == "90001"
     assert account_payload["c5_nick_name"] == "扫码账号"
     assert account_payload["cookie_raw"] == "foo=bar"
     assert account_payload["purchase_capability_state"] == "bound"
     assert account_payload["purchase_pool_state"] == "not_connected"
+    assert active_bundle is not None
+    assert active_bundle.payload["cookie_raw"] == "foo=bar"
+    assert active_bundle.payload["c5_user_id"] == "90001"
+
+
+async def test_login_task_persists_profile_metadata_from_login_result(app, client):
+    class FakeLoginAdapter:
+        async def run_login(self, *, proxy_url: str | None, emit_state=None) -> LoginExecutionResult:
+            await emit_state("waiting_for_scan")
+            await emit_state("captured_login_info")
+            return LoginExecutionResult(
+                captured_login=CapturedLoginIdentity(
+                    c5_user_id="90009",
+                    c5_nick_name="多开账号",
+                    cookie_raw="NC5_accessToken=token-9; NC5_deviceId=device-9",
+                ),
+                session_payload={
+                    "profile_root": "C:/profiles/account-90009",
+                    "profile_directory": "Default",
+                    "profile_kind": "account",
+                },
+            )
+
+    app.state.login_adapter = FakeLoginAdapter()
+
+    create_response = await client.post(
+        "/accounts",
+        json={
+            "remark_name": "带 profile 账号",
+            "browser_proxy_mode": "direct",
+            "browser_proxy_url": None,
+            "api_proxy_mode": "direct",
+            "api_proxy_url": None,
+            "api_key": None,
+        },
+    )
+    account_id = create_response.json()["account_id"]
+
+    start_response = await client.post(f"/accounts/{account_id}/login")
+    task_payload = await _wait_for_task(client, start_response.json()["task_id"], "succeeded")
+
+    assert task_payload["state"] == "succeeded"
+    active_bundle = app.state.account_session_bundle_repository.get_active_bundle(account_id)
+    assert active_bundle is not None
+    assert active_bundle.payload["profile_root"] == "C:/profiles/account-90009"
+    assert active_bundle.payload["profile_directory"] == "Default"
+    assert active_bundle.payload["profile_kind"] == "account"
 
 
 async def test_login_task_refreshes_inventory_once_when_captured_cookie_contains_token(app, client):
@@ -115,8 +169,10 @@ async def test_login_task_refreshes_inventory_once_when_captured_cookie_contains
         "/accounts",
         json={
             "remark_name": "待绑定账号",
-            "proxy_mode": "direct",
-            "proxy_url": None,
+            "browser_proxy_mode": "direct",
+            "browser_proxy_url": None,
+            "api_proxy_mode": "direct",
+            "api_proxy_url": None,
             "api_key": None,
         },
     )
@@ -158,8 +214,10 @@ async def test_login_task_keeps_success_when_inventory_refresh_after_token_bindi
         "/accounts",
         json={
             "remark_name": "刷新失败也成功",
-            "proxy_mode": "direct",
-            "proxy_url": None,
+            "browser_proxy_mode": "direct",
+            "browser_proxy_url": None,
+            "api_proxy_mode": "direct",
+            "api_proxy_url": None,
             "api_key": None,
         },
     )
@@ -177,3 +235,4 @@ async def test_login_task_keeps_success_when_inventory_refresh_after_token_bindi
     ]
     account_response = await client.get(f"/accounts/{account_id}")
     assert account_response.json()["purchase_capability_state"] == "bound"
+

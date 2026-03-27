@@ -26,6 +26,77 @@ describe("account center client", () => {
     expect(rows).toEqual([{ account_id: "a-1", display_name: "账号 A" }]);
   });
 
+  it("loads a single account by id", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ account_id: "a-1", display_name: "账号 A" }),
+    });
+
+    const client = createAccountCenterClient({
+      apiBaseUrl: "http://127.0.0.1:8123",
+      fetchImpl,
+    });
+
+    const account = await client.getAccount("a-1");
+
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "http://127.0.0.1:8123/accounts/a-1",
+      expect.objectContaining({
+        method: "GET",
+      }),
+    );
+    expect(account).toEqual({ account_id: "a-1", display_name: "账号 A" });
+  });
+
+  it("streams account updates through websocket", async () => {
+    class FakeWebSocket {
+      static instances = [];
+
+      constructor(url) {
+        this.url = url;
+        this.onopen = null;
+        this.onmessage = null;
+        this.onerror = null;
+        this.onclose = null;
+        FakeWebSocket.instances.push(this);
+        queueMicrotask(() => this.onopen?.());
+      }
+
+      emit(payload) {
+        this.onmessage?.({ data: JSON.stringify(payload) });
+      }
+
+      close() {
+        this.onclose?.();
+      }
+    }
+
+    const client = createAccountCenterClient({
+      apiBaseUrl: "http://127.0.0.1:8123",
+      fetchImpl: vi.fn(),
+      WebSocketImpl: FakeWebSocket,
+    });
+
+    const iterator = client.watchAccountUpdates();
+    const nextPromise = iterator.next();
+    await Promise.resolve();
+    expect(FakeWebSocket.instances[0].url).toBe("ws://127.0.0.1:8123/ws/accounts/updates");
+    FakeWebSocket.instances[0].emit({
+      account_id: "a-1",
+      event: "write_account",
+      updated_at: "2026-03-27T20:00:00",
+      payload: { api_key: "api-1" },
+    });
+
+    const next = await nextPromise;
+    expect(next.value).toEqual({
+      account_id: "a-1",
+      event: "write_account",
+      updated_at: "2026-03-27T20:00:00",
+      payload: { api_key: "api-1" },
+    });
+  });
+
   it("loads and updates global query settings", async () => {
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce({
@@ -149,4 +220,5 @@ describe("account center client", () => {
       browser_query_disabled_reason: "manual_disabled",
     });
   });
+
 });

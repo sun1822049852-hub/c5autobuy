@@ -10,9 +10,10 @@ from app_backend.domain.enums.account_states import PurchaseCapabilityState, Pur
 
 
 class ResolveLoginConflictUseCase:
-    def __init__(self, repository, task_manager, purchase_runtime_service=None) -> None:
+    def __init__(self, repository, task_manager, bundle_repository, purchase_runtime_service=None) -> None:
         self._repository = repository
         self._task_manager = task_manager
+        self._bundle_repository = bundle_repository
         self._purchase_runtime_service = purchase_runtime_service
 
     def execute(
@@ -29,8 +30,12 @@ class ResolveLoginConflictUseCase:
         conflict = task.pending_conflict
         if not conflict or conflict.get("account_id") != account_id:
             raise ValueError("Task is not waiting for conflict resolution")
+        bundle_ref = conflict.get("bundle_ref") or {}
+        bundle_id = str(bundle_ref.get("bundle_id") or "")
 
         if action == "cancel":
+            if bundle_id:
+                self._bundle_repository.delete_bundle(bundle_id)
             self._task_manager.clear_pending_conflict(task_id)
             self._task_manager.set_result(
                 task_id,
@@ -46,12 +51,15 @@ class ResolveLoginConflictUseCase:
         self._task_manager.set_state(task_id, "saving_account")
 
         if action == "replace_with_new_account":
+            self._bundle_repository.delete_account_bundles(account_id)
             self._repository.delete_account(account_id)
 
         new_account = CreateAccountUseCase(self._repository).execute(
             remark_name=None,
-            proxy_mode="direct",
-            proxy_url=None,
+            browser_proxy_mode="direct",
+            browser_proxy_url=None,
+            api_proxy_mode="direct",
+            api_proxy_url=None,
             api_key=None,
         )
 
@@ -67,6 +75,8 @@ class ResolveLoginConflictUseCase:
             last_error=None,
             updated_at=now,
         )
+        if bundle_id:
+            self._bundle_repository.activate_bundle(bundle_id, account_id=bound_account.account_id)
         refresh_inventory_after_token_binding(
             account=bound_account,
             purchase_runtime_service=self._purchase_runtime_service,
@@ -79,6 +89,7 @@ class ResolveLoginConflictUseCase:
                 "account_id": bound_account.account_id,
                 "c5_user_id": bound_account.c5_user_id,
                 "action": action,
+                "bundle_id": bundle_id or None,
             },
             state="succeeded",
         )

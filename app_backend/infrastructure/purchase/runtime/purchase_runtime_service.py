@@ -525,7 +525,10 @@ class PurchaseRuntimeService:
             purchase_disabled=bool(getattr(account, "purchase_disabled", False)),
             selected_row=selected_row,
         )
-        proxy_url = getattr(account, "proxy_url", None) or None
+        browser_proxy_url = getattr(account, "browser_proxy_url", None) or None
+        api_proxy_url = getattr(account, "api_proxy_url", None) or None
+        browser_public_ip = getattr(account, "browser_public_ip", None)
+        api_public_ip = getattr(account, "api_public_ip", None)
         api_key = getattr(account, "api_key", None) or None
         (
             api_query_enabled,
@@ -538,6 +541,7 @@ class PurchaseRuntimeService:
             new_api_enabled=bool(getattr(account, "new_api_enabled", False)),
             fast_api_enabled=bool(getattr(account, "fast_api_enabled", False)),
             api_query_disabled_reason=getattr(account, "api_query_disabled_reason", None),
+            proxy_public_ip=getattr(account, "api_public_ip", None),
         )
         (
             browser_query_enabled,
@@ -572,9 +576,18 @@ class PurchaseRuntimeService:
             "browser_query_disable_reason_code": browser_query_disable_reason_code,
             "browser_query_disable_reason_text": browser_query_disable_reason_text,
             "api_key": api_key,
-            "proxy_mode": str(getattr(account, "proxy_mode", "") or "direct"),
-            "proxy_url": proxy_url,
-            "proxy_display": proxy_url or "直连",
+            "browser_proxy_mode": str(getattr(account, "browser_proxy_mode", "") or "direct"),
+            "browser_proxy_url": browser_proxy_url,
+            "browser_proxy_display": browser_proxy_url or browser_public_ip or "未获取IP",
+            "api_proxy_mode": str(getattr(account, "api_proxy_mode", "") or "direct"),
+            "api_proxy_url": api_proxy_url,
+            "api_proxy_display": api_proxy_url or api_public_ip or "未获取IP",
+            "proxy_mode": str(getattr(account, "api_proxy_mode", "") or "direct"),
+            "proxy_url": api_proxy_url,
+            "proxy_display": api_proxy_url or api_public_ip or "未获取IP",
+            "api_ip_allow_list": getattr(account, "api_ip_allow_list", None),
+            "browser_public_ip": browser_public_ip,
+            "api_public_ip": api_public_ip,
             "purchase_capability_state": purchase_capability_state,
             "purchase_pool_state": purchase_pool_state,
             "purchase_disabled": purchase_disabled,

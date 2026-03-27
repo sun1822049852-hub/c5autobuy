@@ -17,7 +17,9 @@ from app_backend.api.routes import query_runtime as query_runtime_routes
 from app_backend.api.routes import stats as stats_routes
 from app_backend.api.routes import tasks as task_routes
 from app_backend.api.websocket import tasks as task_websocket_routes
+from app_backend.api.websocket import accounts as account_websocket_routes
 from app_backend.infrastructure.db.base import build_engine, build_session_factory, create_schema
+from app_backend.infrastructure.events import AccountUpdateHub
 from app_backend.infrastructure.purchase.runtime.inventory_refresh_gateway import (
     InventoryRefreshGateway,
 )
@@ -25,6 +27,9 @@ from app_backend.infrastructure.purchase.runtime.purchase_runtime_service import
 from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
 from app_backend.infrastructure.repositories.account_inventory_snapshot_repository import (
     SqliteAccountInventorySnapshotRepository,
+)
+from app_backend.infrastructure.repositories.account_session_bundle_repository import (
+    SqliteAccountSessionBundleRepository,
 )
 from app_backend.infrastructure.repositories.account_repository import SqliteAccountRepository
 from app_backend.infrastructure.repositories.purchase_ui_preferences_repository import (
@@ -39,7 +44,20 @@ from app_backend.infrastructure.query.collectors.product_detail_collector import
 from app_backend.infrastructure.query.collectors.product_detail_fetcher import ProductDetailFetcher
 from app_backend.infrastructure.query.refresh.query_item_detail_refresh_service import QueryItemDetailRefreshService
 from app_backend.infrastructure.query.collectors.product_url_parser import ProductUrlParser
-from app_backend.infrastructure.selenium.login_adapter import SeleniumLoginAdapter
+from app_backend.infrastructure.browser_runtime.login_adapter import (
+    ManagedEdgeCdpLoginRunner,
+    BrowserLoginAdapter,
+)
+from app_backend.infrastructure.browser_runtime.account_browser_profile_store import (
+    AccountBrowserProfileStore,
+)
+from app_backend.infrastructure.browser_runtime.managed_browser_runtime import ManagedBrowserRuntime
+from app_backend.infrastructure.browser_runtime.open_api_binding_sync_service import (
+    OpenApiBindingSyncService,
+)
+from app_backend.infrastructure.browser_runtime.open_api_binding_page_launcher import (
+    OpenApiBindingPageLauncher,
+)
 from app_backend.workers.manager.task_manager import TaskManager
 
 
@@ -50,6 +68,13 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     create_schema(engine)
     session_factory = build_session_factory(engine)
     repository = SqliteAccountRepository(session_factory)
+    managed_browser_runtime = ManagedBrowserRuntime.from_environment(
+        default_root=database_path.parent / "app-private",
+    )
+    bundle_repository = SqliteAccountSessionBundleRepository(
+        session_factory,
+        storage_root=managed_browser_runtime.bundle_root,
+    )
     query_config_repository = SqliteQueryConfigRepository(session_factory)
     query_settings_repository = SqliteQuerySettingsRepository(session_factory)
     inventory_snapshot_repository = SqliteAccountInventorySnapshotRepository(session_factory)
@@ -57,21 +82,35 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     stats_repository = SqliteStatsRepository(session_factory)
     stats_pipeline = StatsPipeline(repository=stats_repository)
     stats_pipeline.start()
+    account_update_hub = AccountUpdateHub()
     purchase_runtime_service = PurchaseRuntimeService(
         account_repository=repository,
         inventory_snapshot_repository=inventory_snapshot_repository,
         inventory_refresh_gateway_factory=InventoryRefreshGateway,
         stats_sink=stats_pipeline.enqueue,
     )
+    open_api_binding_sync_service = OpenApiBindingSyncService(
+        account_repository=repository,
+        account_update_hub=account_update_hub,
+        poll_interval_seconds=1.0,
+        debug_log_path=database_path.parent / "runtime" / "open_api_binding_debug.runtime.jsonl",
+    )
     query_runtime_service = QueryRuntimeService(
         query_config_repository=query_config_repository,
         query_settings_repository=query_settings_repository,
         account_repository=repository,
         purchase_runtime_service=purchase_runtime_service,
+        open_api_binding_sync_service=open_api_binding_sync_service,
         stats_sink=stats_pipeline.enqueue,
     )
     task_manager = TaskManager()
-    login_adapter = SeleniumLoginAdapter()
+    account_browser_profile_store = AccountBrowserProfileStore(runtime=managed_browser_runtime)
+    login_adapter = BrowserLoginAdapter(
+        login_runner=ManagedEdgeCdpLoginRunner(
+            runtime=managed_browser_runtime,
+            profile_store=account_browser_profile_store,
+        ).run
+    )
     product_url_parser = ProductUrlParser()
     detail_account_selector = DetailAccountSelector(repository)
     product_detail_fetcher = ProductDetailFetcher(selector=detail_account_selector)
@@ -79,6 +118,11 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     query_item_detail_refresh_service = QueryItemDetailRefreshService(
         repository=query_config_repository,
         collector=product_detail_collector,
+    )
+    open_api_binding_page_launcher = OpenApiBindingPageLauncher(
+        runtime=managed_browser_runtime,
+        profile_store=account_browser_profile_store,
+        debug_log_path=database_path.parent / "runtime" / "open_api_binding_page_launcher.runtime.jsonl",
     )
 
     app = FastAPI(title="C5 Account Center Backend")
@@ -91,16 +135,22 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         allow_headers=["*"],
     )
     app.state.account_repository = repository
+    app.state.account_session_bundle_repository = bundle_repository
+    app.state.managed_browser_runtime = managed_browser_runtime
     app.state.query_config_repository = query_config_repository
     app.state.query_settings_repository = query_settings_repository
     app.state.purchase_ui_preferences_repository = purchase_ui_preferences_repository
     app.state.purchase_runtime_service = purchase_runtime_service
     app.state.query_runtime_service = query_runtime_service
     app.state.task_manager = task_manager
+    app.state.account_update_hub = account_update_hub
     app.state.login_adapter = login_adapter
+    app.state.account_browser_profile_store = account_browser_profile_store
     app.state.product_url_parser = product_url_parser
     app.state.product_detail_collector = product_detail_collector
     app.state.query_item_detail_refresh_service = query_item_detail_refresh_service
+    app.state.open_api_binding_sync_service = open_api_binding_sync_service
+    app.state.open_api_binding_page_launcher = open_api_binding_page_launcher
     app.state.stats_repository = stats_repository
     app.state.stats_pipeline = stats_pipeline
 
@@ -115,6 +165,7 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     app.include_router(stats_routes.router)
     app.include_router(task_routes.router)
     app.include_router(task_websocket_routes.router)
+    app.include_router(account_websocket_routes.router)
 
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -137,3 +188,4 @@ def main(*, db_path: Path | None = None, host: str = "127.0.0.1", port: int = 80
 
 if __name__ == "__main__":
     main()
+

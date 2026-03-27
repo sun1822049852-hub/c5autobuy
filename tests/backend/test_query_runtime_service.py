@@ -2168,3 +2168,86 @@ def test_runtime_service_does_not_clear_api_key_ip_invalid_marker_after_successf
     assert updated_account.purchase_capability_state == "bound"
     assert updated_account.purchase_pool_state == "not_connected"
     assert purchase_service.mark_auth_invalid_calls == []
+
+
+def test_runtime_service_runs_read_only_open_api_sync_after_ip_invalid():
+    from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
+
+    repository = FakeQueryConfigRepository(build_config("cfg-1"))
+    account = build_account("a1", api_key="api-1", cookie_raw="NC5_accessToken=token")
+    account.purchase_capability_state = "bound"
+    account.purchase_pool_state = "not_connected"
+    account_repository = FakeAccountRepository([account])
+    purchase_service = FakePurchaseRuntimeService()
+    error = "API请求失败: 未设置ip白名单或ip不在白名单中, 当前请求ip 39.71.213.149 (代码: 499103)"
+    response_text = (
+        '{"success":false,"data":null,"errorCode":499103,'
+        '"errorMsg":"未设置ip白名单或ip不在白名单中, 当前请求ip 39.71.213.149",'
+        '"errorData":null,"errorCodeStr":null}'
+    )
+    sync_calls: list[dict[str, object]] = []
+
+    class FakeOpenApiBindingSyncService:
+        def sync_account_now(self, account_id: str, *, final: bool = False, partner_payload_override=None):
+            sync_calls.append({"account_id": account_id, "final": final})
+            updated = account_repository.get_account(account_id)
+            if updated is not None:
+                updated.api_ip_allow_list = "39.71.213.149"
+                updated.api_public_ip = "39.71.213.149"
+            return {"matched": True, "updated": True}
+
+    class FakeRuntimeWithEventSink(FakeRuntime):
+        def __init__(self, config, accounts, *, event_sink=None) -> None:
+            super().__init__(config, accounts)
+            self._event_sink = event_sink
+
+        def start(self) -> None:
+            super().start()
+            if callable(self._event_sink):
+                self._event_sink(
+                    {
+                        "timestamp": "2026-03-25T19:26:51",
+                        "level": "error",
+                        "mode_type": "fast_api",
+                        "account_id": "a1",
+                        "account_display_name": "账号-a1",
+                        "query_item_id": "item-1",
+                        "query_item_name": "商品-1",
+                        "message": error,
+                        "match_count": 0,
+                        "product_list": [],
+                        "total_price": None,
+                        "total_wear_sum": None,
+                        "latency_ms": 9.0,
+                        "error": error,
+                        "status_code": 200,
+                        "request_method": "POST",
+                        "request_path": "/merchant/market/v2/products/list",
+                        "response_text": response_text,
+                    }
+                )
+
+    service = QueryRuntimeService(
+        query_config_repository=repository,
+        account_repository=account_repository,
+        runtime_factory=lambda config, accounts, event_sink=None: FakeRuntimeWithEventSink(
+            config,
+            accounts,
+            event_sink=event_sink,
+        ),
+        purchase_runtime_service=purchase_service,
+        open_api_binding_sync_service=FakeOpenApiBindingSyncService(),
+    )
+
+    started, message = service.start(config_id="cfg-1")
+
+    assert started is True
+    assert message == "查询任务已启动"
+    updated_account = account_repository.get_account("a1")
+    assert updated_account is not None
+    assert updated_account.api_query_disabled_reason == "ip_invalid"
+    assert updated_account.new_api_enabled is False
+    assert updated_account.fast_api_enabled is False
+    assert updated_account.api_ip_allow_list == "39.71.213.149"
+    assert updated_account.api_public_ip == "39.71.213.149"
+    assert sync_calls == [{"account_id": "a1", "final": False}]

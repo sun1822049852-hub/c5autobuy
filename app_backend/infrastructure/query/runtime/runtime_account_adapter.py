@@ -40,11 +40,11 @@ class RuntimeAccountAdapter:
         self.current_user_id = str(getattr(account, "account_id"))
         self.current_account_name = getattr(account, "display_name", None) or getattr(account, "default_name", None)
         self.login_status = self.get_x_access_token() is not None
-        self.account_proxies = {self.current_user_id: self._proxy_url_or_none}
+        self.account_proxies = {self.current_user_id: self._api_proxy_url_or_none}
 
     @property
-    def _proxy_url_or_none(self) -> str | None:
-        proxy_url = getattr(self._account, "proxy_url", None)
+    def _api_proxy_url_or_none(self) -> str | None:
+        proxy_url = getattr(self._account, "api_proxy_url", None)
         return proxy_url or None
 
     def get_account_id(self) -> str:
@@ -136,7 +136,7 @@ class RuntimeAccountAdapter:
         try:
             return aiohttp.ClientSession(
                 connector=connector,
-                proxy=self._proxy_url_or_none,
+                proxy=self._api_proxy_url_or_none,
                 timeout=timeout,
                 cookie_jar=None,
             )
@@ -146,7 +146,7 @@ class RuntimeAccountAdapter:
                 timeout=timeout,
                 cookie_jar=None,
             )
-            setattr(session, "_default_proxy", self._proxy_url_or_none)
+            setattr(session, "_default_proxy", self._api_proxy_url_or_none)
             return session
 
     def _get_cookie_value(self, key: str) -> str | None:

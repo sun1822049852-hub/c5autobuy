@@ -30,8 +30,10 @@ class SqliteAccountRepository:
                 account_id=account.account_id,
                 default_name=account.default_name,
                 remark_name=account.remark_name,
-                proxy_mode=account.proxy_mode,
-                proxy_url=account.proxy_url,
+                browser_proxy_mode=account.browser_proxy_mode,
+                browser_proxy_url=account.browser_proxy_url,
+                api_proxy_mode=account.api_proxy_mode,
+                api_proxy_url=account.api_proxy_url,
                 api_key=account.api_key,
                 c5_user_id=account.c5_user_id,
                 c5_nick_name=account.c5_nick_name,
@@ -49,6 +51,9 @@ class SqliteAccountRepository:
                 token_enabled=int(account.token_enabled),
                 api_query_disabled_reason=account.api_query_disabled_reason,
                 browser_query_disabled_reason=account.browser_query_disabled_reason,
+                api_ip_allow_list=account.api_ip_allow_list,
+                browser_public_ip=account.browser_public_ip,
+                api_public_ip=account.api_public_ip,
             )
             session.add(row)
             session.commit()
@@ -101,8 +106,10 @@ class SqliteAccountRepository:
             account_id=row.account_id,
             default_name=row.default_name,
             remark_name=row.remark_name,
-            proxy_mode=row.proxy_mode,
-            proxy_url=row.proxy_url,
+            browser_proxy_mode=row.browser_proxy_mode,
+            browser_proxy_url=row.browser_proxy_url,
+            api_proxy_mode=row.api_proxy_mode,
+            api_proxy_url=row.api_proxy_url,
             api_key=row.api_key,
             c5_user_id=row.c5_user_id,
             c5_nick_name=row.c5_nick_name,
@@ -120,4 +127,7 @@ class SqliteAccountRepository:
             token_enabled=bool(row.token_enabled),
             api_query_disabled_reason=getattr(row, "api_query_disabled_reason", None),
             browser_query_disabled_reason=getattr(row, "browser_query_disabled_reason", None),
+            api_ip_allow_list=getattr(row, "api_ip_allow_list", None),
+            browser_public_ip=getattr(row, "browser_public_ip", None),
+            api_public_ip=getattr(row, "api_public_ip", None),
         )

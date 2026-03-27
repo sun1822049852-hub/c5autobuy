@@ -39,6 +39,14 @@ node main_ui_account_center_desktop.js
 3. 加载新的桌面化 Web 前端
 4. 默认使用 SQLite 数据库 `data/app.db`
 
+登录补充说明：
+
+- Python backend 启动时会收到 `C5_APP_PRIVATE_DIR`，默认落到 `app_desktop_web/.runtime/app-private`
+- Python backend 会把账号相关运行时数据落到 `app-private/`，包括账号独立 profile、临时 browser session 和 session bundle
+- 登录成功不再只看扫码跳转，后端会强制 refresh `https://www.c5game.com/user/user/` 做二次验真
+- 登录成功后会为账号写入加密 session bundle；当前仍保留 `cookie_raw` 字段，旧账号与旧运行链可继续兼容
+- 直连账号会优先复用账号独立 profile，并在需要时附着真实 Microsoft Edge 会话；自定义代理账号继续走隔离临时浏览器链
+
 ### Python 包装入口
 
 ```bash
@@ -60,6 +68,78 @@ python -m app_backend.main
 - 如果 `app_desktop_web/dist/index.html` 不存在，启动器会先自动执行一次构建
 - 如果改了 `app_desktop_web/src/` 里的前端代码，重新启动前建议先执行 `npm --prefix app_desktop_web run build`
 
+### 附着真实浏览器做登录验真
+
+推荐在 Windows PowerShell 中直接运行：
+
+```powershell
+.\调试\默认配置附着登录验真.ps1
+```
+
+这个入口会自动：
+
+1. 使用系统默认 Edge `Default` profile 启动带 `9222` 调试端口的真实浏览器
+2. 设置当前 PowerShell 会话的 `C5_EDGE_DEBUGGER_ADDRESS`
+3. 运行 `app_backend.debug.login_e2e_watch`
+
+使用约束：
+
+- 运行前先关闭所有 Edge 窗口
+- 该脚本默认附着 `C:\Users\<用户名>\AppData\Local\Microsoft\Edge\User Data\Default`
+- 登录成功后任务应自动结束，attach 模式无需手动关闭浏览器
+- 如登录成功后任务未自动结束，可在同一浏览器打开或刷新 `https://www.c5game.com/user/user/`
+
+### 初始化受管 browser-runtime
+
+如果你想让项目优先使用自己的浏览器 runtime，而不是每次去找系统 Edge，可以先把本机现有 Edge 安装导入到 `browser-runtime`：
+
+```powershell
+.\.venv\Scripts\python.exe -m app_backend.debug.init_managed_browser_runtime `
+  --source-path "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" `
+  --app-private-dir "app_desktop_web\.runtime\app-private" `
+  --force
+```
+
+补充说明：
+
+- `--source-path` 可以传 `msedge.exe`，也可以传包含它的 `Application` 目录
+- 导入完成后会在 `app-private/browser-runtime/.managed-runtime.json` 写入 manifest
+- 登录启动器查找浏览器的优先级现在是：`C5_EDGE_RUNTIME_EXECUTABLE` → `app-private/browser-runtime/` → 系统 Edge
+- 这样后续封装程序时，可以直接把 `browser-runtime/` 一起带走，减少对用户本机环境的依赖
+
+如果你不想依赖本机已有 Edge 安装，也可以直接让程序从 Microsoft Edge Enterprise releases API 下载最新 Windows runtime：
+
+```powershell
+.\.venv\Scripts\python.exe -m app_backend.debug.init_managed_browser_runtime `
+  --download-latest `
+  --channel Stable `
+  --app-private-dir "app_desktop_web\.runtime\app-private" `
+  --force
+```
+
+补充说明：
+
+- 下载源使用官方 `https://edgeupdates.microsoft.com/api/products?view=enterprise`
+- 当前默认按本机架构选择 `x64` 或 `arm64`
+- 下载后会做 SHA256 校验，再解包导入到 `browser-runtime`
+- 如果设置环境变量 `C5_EDGE_AUTO_DOWNLOAD=1`，在程序找不到本地 runtime 且也找不到系统 Edge 时，会自动触发这条下载链
+
+### 当前浏览器环境说明
+
+当前项目已经移除旧的浏览器环境调试链。
+
+现在保留的只有：
+
+- `browser-runtime`
+- 账号独立 `browser-profiles`
+- 运行时克隆出来的临时 `browser-sessions`
+
+登录与 API 信息同步均直接走：
+
+- 真 Edge 进程启动
+- 账号 Profile 复用
+- CDP 读取登录态 / Cookie / API 页面状态
+
 ## 入口与调用链
 
 - `run_app.py`
@@ -75,7 +155,7 @@ python -m app_backend.main
 ## 目录说明
 
 - `app_backend/`
-  - API、用例、领域模型、仓储、查询运行时、购买运行时、Selenium 登录链路
+  - API、用例、领域模型、仓储、查询运行时、购买运行时、浏览器登录与 CDP 会话链路
 - `app_desktop_web/`
   - Electron + React 桌面化 Web 前端
   - 负责新的账号中心界面和后续模块迁移骨架
@@ -102,7 +182,9 @@ python -m app_backend.main
 
 下面这些约束是当前系统的有效语义，后续改动不要擅自改掉：
 
-- 登录流程保留旧逻辑：用户扫码，浏览器抓取登录信息，用户手动关闭浏览器后登录任务结束
+- 登录流程区分两条主链：直连账号复用账号独立 profile，并在需要时附着真实 Edge 会话；自定义代理账号使用隔离临时浏览器链
+- 登录任务成功标准包含 refresh 验真；只有 refresh 后仍在线、且关键 cookie 仍存在时，任务才算真正成功
+- 登录成功后除了回写 `cookie_raw`，还会为账号保存独立 session bundle；重新登录只覆盖当前账号自己的 bundle，不应污染其他账号
 - 查询和购买必须联动，不能只开查询不跑购买
 - 事件是全局共享的，不挂到账户上
 - `new_api`、`fast_api`、`token` 是三套独立调度器

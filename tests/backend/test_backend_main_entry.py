@@ -23,13 +23,21 @@ def test_backend_main_runs_uvicorn(monkeypatch, tmp_path: Path):
     assert called["log_level"] == "info"
 
 
-def test_create_app_wires_selenium_login_adapter(tmp_path: Path):
+def test_create_app_wires_browser_login_adapter(tmp_path: Path):
     from app_backend.main import create_app
-    from app_backend.infrastructure.selenium.login_adapter import SeleniumLoginAdapter
+    from app_backend.infrastructure.repositories.account_session_bundle_repository import (
+        SqliteAccountSessionBundleRepository,
+    )
+    from app_backend.infrastructure.browser_runtime.login_adapter import (
+        ManagedEdgeCdpLoginRunner,
+        BrowserLoginAdapter,
+    )
 
     app = create_app(db_path=tmp_path / "entry.db")
 
-    assert isinstance(app.state.login_adapter, SeleniumLoginAdapter)
+    assert isinstance(app.state.login_adapter, BrowserLoginAdapter)
+    assert isinstance(getattr(app.state.login_adapter._login_runner, "__self__", None), ManagedEdgeCdpLoginRunner)
+    assert isinstance(app.state.account_session_bundle_repository, SqliteAccountSessionBundleRepository)
 
 
 def test_create_app_wires_real_product_detail_fetcher(tmp_path: Path):
@@ -51,3 +59,17 @@ def test_create_app_wires_prepare_service_with_shared_product_detail_collector(t
     app = create_app(db_path=tmp_path / "entry.db")
 
     assert app.state.query_item_detail_refresh_service._collector is app.state.product_detail_collector
+
+def test_managed_browser_runtime_uses_app_private_env_layout(monkeypatch, tmp_path: Path):
+    from app_backend.infrastructure.browser_runtime.managed_browser_runtime import ManagedBrowserRuntime
+
+    app_private_dir = tmp_path / "app-private"
+    monkeypatch.setenv("C5_APP_PRIVATE_DIR", str(app_private_dir))
+
+    runtime = ManagedBrowserRuntime.from_environment()
+
+    assert runtime.app_private_dir == app_private_dir
+    assert runtime.bundle_root == app_private_dir / "account-session-bundles"
+    assert runtime.runtime_root == app_private_dir / "browser-runtime"
+    assert runtime.session_root == app_private_dir / "browser-sessions"
+

@@ -8,6 +8,8 @@
 
 **Tech Stack:** Python, asyncio, aiohttp, Selenium, CDP remote debugging, websockets, Node.js-backed `xsign.py`, pytest, git hygiene
 
+**Historical Naming Note:** 本计划撰写时，登录相关模块仍放在 `app_backend/infrastructure/selenium/` 下。当前代码已迁到 `app_backend/infrastructure/browser_runtime/`；本文中的旧路径仅用于保留当时的实施上下文。
+
 ---
 
 ## 文件结构

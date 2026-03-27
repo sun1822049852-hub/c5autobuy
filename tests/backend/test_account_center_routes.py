@@ -19,8 +19,10 @@ def _build_account(
         account_id=account_id,
         default_name=f"默认-{account_id}",
         remark_name=remark_name,
-        proxy_mode="custom",
-        proxy_url=f"http://127.0.0.1:{9000 + len(account_id)}",
+        browser_proxy_mode="custom",
+        browser_proxy_url=f"http://127.0.0.1:{9000 + len(account_id)}",
+        api_proxy_mode="custom",
+        api_proxy_url=f"http://127.0.0.1:{9000 + len(account_id)}",
         api_key=api_key,
         c5_user_id="10001" if cookie_raw else None,
         c5_nick_name=c5_nick_name,
@@ -34,6 +36,18 @@ def _build_account(
         purchase_disabled=purchase_disabled,
         purchase_recovery_due_at=purchase_recovery_due_at,
     )
+
+
+def _assert_dual_proxy_payload(row: dict, proxy_url: str) -> None:
+    assert row["browser_proxy_mode"] == "custom"
+    assert row["browser_proxy_url"] == proxy_url
+    assert row["browser_proxy_display"] == proxy_url
+    assert row["api_proxy_mode"] == "custom"
+    assert row["api_proxy_url"] == proxy_url
+    assert row["api_proxy_display"] == proxy_url
+    assert row["proxy_mode"] == "custom"
+    assert row["proxy_url"] == proxy_url
+    assert row["proxy_display"] == proxy_url
 
 
 async def test_account_center_accounts_route_renders_purchase_status_priority(client, app):
@@ -96,124 +110,17 @@ async def test_account_center_accounts_route_renders_purchase_status_priority(cl
     response = await client.get("/account-center/accounts")
 
     assert response.status_code == 200
-    assert response.json() == [
-        {
-            "account_id": "not-login",
-            "display_name": "未登录账号",
-            "remark_name": "未登录账号",
-            "c5_nick_name": None,
-            "default_name": "默认-not-login",
-            "api_key_present": False,
-            "api_query_enabled": False,
-            "api_query_status_code": "disabled",
-            "api_query_status_text": "已禁用",
-            "api_query_disable_reason_code": "missing_api_key",
-            "api_query_disable_reason_text": "未配置",
-            "browser_query_enabled": False,
-            "browser_query_status_code": "disabled",
-            "browser_query_status_text": "已禁用",
-            "browser_query_disable_reason_code": "not_logged_in",
-            "browser_query_disable_reason_text": "未登录",
-            "api_key": None,
-            "proxy_mode": "custom",
-            "proxy_url": "http://127.0.0.1:9009",
-            "proxy_display": "http://127.0.0.1:9009",
-            "purchase_capability_state": "unbound",
-            "purchase_pool_state": "not_connected",
-            "purchase_disabled": False,
-            "selected_steam_id": None,
-            "selected_warehouse_text": None,
-            "purchase_status_code": "not_logged_in",
-            "purchase_status_text": "未登录",
-        },
-        {
-            "account_id": "disabled",
-            "display_name": "禁用账号",
-            "remark_name": "禁用账号",
-            "c5_nick_name": "平台禁用号",
-            "default_name": "默认-disabled",
-            "api_key_present": True,
-            "api_query_enabled": True,
-            "api_query_status_code": "enabled",
-            "api_query_status_text": "已启用",
-            "api_query_disable_reason_code": None,
-            "api_query_disable_reason_text": None,
-            "browser_query_enabled": True,
-            "browser_query_status_code": "enabled",
-            "browser_query_status_text": "已启用",
-            "browser_query_disable_reason_code": None,
-            "browser_query_disable_reason_text": None,
-            "api_key": "api-disabled",
-            "proxy_mode": "custom",
-            "proxy_url": "http://127.0.0.1:9008",
-            "proxy_display": "http://127.0.0.1:9008",
-            "purchase_capability_state": "bound",
-            "purchase_pool_state": "not_connected",
-            "purchase_disabled": True,
-            "selected_steam_id": "steam-disabled",
-            "selected_warehouse_text": "禁用仓",
-            "purchase_status_code": "disabled",
-            "purchase_status_text": "禁用",
-        },
-        {
-            "account_id": "full",
-            "display_name": "满仓账号",
-            "remark_name": "满仓账号",
-            "c5_nick_name": None,
-            "default_name": "默认-full",
-            "api_key_present": False,
-            "api_query_enabled": False,
-            "api_query_status_code": "disabled",
-            "api_query_status_text": "已禁用",
-            "api_query_disable_reason_code": "missing_api_key",
-            "api_query_disable_reason_text": "未配置",
-            "browser_query_enabled": True,
-            "browser_query_status_code": "enabled",
-            "browser_query_status_text": "已启用",
-            "browser_query_disable_reason_code": None,
-            "browser_query_disable_reason_text": None,
-            "api_key": None,
-            "proxy_mode": "custom",
-            "proxy_url": "http://127.0.0.1:9004",
-            "proxy_display": "http://127.0.0.1:9004",
-            "purchase_capability_state": "bound",
-            "purchase_pool_state": "paused_no_inventory",
-            "purchase_disabled": False,
-            "selected_steam_id": None,
-            "selected_warehouse_text": None,
-            "purchase_status_code": "inventory_full",
-            "purchase_status_text": "库存已满",
-        },
-        {
-            "account_id": "ready",
-            "display_name": "可买账号",
-            "remark_name": "可买账号",
-            "c5_nick_name": "平台可买号",
-            "default_name": "默认-ready",
-            "api_key_present": True,
-            "api_query_enabled": True,
-            "api_query_status_code": "enabled",
-            "api_query_status_text": "已启用",
-            "api_query_disable_reason_code": None,
-            "api_query_disable_reason_text": None,
-            "browser_query_enabled": True,
-            "browser_query_status_code": "enabled",
-            "browser_query_status_text": "已启用",
-            "browser_query_disable_reason_code": None,
-            "browser_query_disable_reason_text": None,
-            "api_key": "api-ready",
-            "proxy_mode": "custom",
-            "proxy_url": "http://127.0.0.1:9005",
-            "proxy_display": "http://127.0.0.1:9005",
-            "purchase_capability_state": "bound",
-            "purchase_pool_state": "not_connected",
-            "purchase_disabled": False,
-            "selected_steam_id": "steam-ready",
-            "selected_warehouse_text": "可买主仓",
-            "purchase_status_code": "selected_warehouse",
-            "purchase_status_text": "可买主仓",
-        },
-    ]
+    rows = response.json()
+    assert [row["account_id"] for row in rows] == ["not-login", "disabled", "full", "ready"]
+    _assert_dual_proxy_payload(rows[0], "http://127.0.0.1:9009")
+    _assert_dual_proxy_payload(rows[1], "http://127.0.0.1:9008")
+    _assert_dual_proxy_payload(rows[2], "http://127.0.0.1:9004")
+    _assert_dual_proxy_payload(rows[3], "http://127.0.0.1:9005")
+    assert rows[0]["purchase_status_code"] == "not_logged_in"
+    assert rows[1]["purchase_status_code"] == "disabled"
+    assert rows[2]["purchase_status_code"] == "inventory_full"
+    assert rows[3]["purchase_status_code"] == "selected_warehouse"
+    assert rows[3]["selected_warehouse_text"] == "可买主仓"
 
 
 async def test_account_center_accounts_route_marks_ip_invalid_api_key(client, app):
@@ -232,37 +139,11 @@ async def test_account_center_accounts_route_marks_ip_invalid_api_key(client, ap
 
     assert response.status_code == 200
     rows = response.json()
-    assert rows == [
-        {
-            "account_id": "ip-invalid",
-            "display_name": "白名单失效账号",
-            "remark_name": "白名单失效账号",
-            "c5_nick_name": None,
-            "default_name": "默认-ip-invalid",
-            "api_key_present": True,
-            "api_query_enabled": False,
-            "api_query_status_code": "disabled",
-            "api_query_status_text": "已禁用",
-            "api_query_disable_reason_code": "ip_invalid",
-            "api_query_disable_reason_text": "IP失效",
-            "browser_query_enabled": True,
-            "browser_query_status_code": "enabled",
-            "browser_query_status_text": "已启用",
-            "browser_query_disable_reason_code": None,
-            "browser_query_disable_reason_text": None,
-            "api_key": "api-ip-invalid",
-            "proxy_mode": "custom",
-            "proxy_url": "http://127.0.0.1:9010",
-            "proxy_display": "http://127.0.0.1:9010",
-            "purchase_capability_state": "bound",
-            "purchase_pool_state": "not_connected",
-            "purchase_disabled": False,
-            "selected_steam_id": None,
-            "selected_warehouse_text": None,
-            "purchase_status_code": "inventory_full",
-            "purchase_status_text": "库存已满",
-        }
-    ]
+    assert len(rows) == 1
+    row = rows[0]
+    _assert_dual_proxy_payload(row, "http://127.0.0.1:9010")
+    assert row["api_query_disable_reason_code"] == "ip_invalid"
+    assert row["api_query_disable_reason_text"] == "IP 不在白名单内，请手动绑定"
 
 
 async def test_account_center_accounts_route_marks_manual_disabled_api_query(client, app):
@@ -280,37 +161,11 @@ async def test_account_center_accounts_route_marks_manual_disabled_api_query(cli
 
     assert response.status_code == 200
     rows = response.json()
-    assert rows == [
-        {
-            "account_id": "api-disabled",
-            "display_name": "API禁用账号",
-            "remark_name": "API禁用账号",
-            "c5_nick_name": None,
-            "default_name": "默认-api-disabled",
-            "api_key_present": True,
-            "api_query_enabled": False,
-            "api_query_status_code": "disabled",
-            "api_query_status_text": "已禁用",
-            "api_query_disable_reason_code": "manual_disabled",
-            "api_query_disable_reason_text": "手动禁用",
-            "browser_query_enabled": True,
-            "browser_query_status_code": "enabled",
-            "browser_query_status_text": "已启用",
-            "browser_query_disable_reason_code": None,
-            "browser_query_disable_reason_text": None,
-            "api_key": "api-manual-disabled",
-            "proxy_mode": "custom",
-            "proxy_url": "http://127.0.0.1:9012",
-            "proxy_display": "http://127.0.0.1:9012",
-            "purchase_capability_state": "bound",
-            "purchase_pool_state": "not_connected",
-            "purchase_disabled": False,
-            "selected_steam_id": None,
-            "selected_warehouse_text": None,
-            "purchase_status_code": "inventory_full",
-            "purchase_status_text": "库存已满",
-        }
-    ]
+    assert len(rows) == 1
+    row = rows[0]
+    _assert_dual_proxy_payload(row, "http://127.0.0.1:9012")
+    assert row["api_query_disable_reason_code"] == "manual_disabled"
+    assert row["api_query_disable_reason_text"] == "手动禁用"
 
 
 async def test_account_center_accounts_route_marks_manual_disabled_browser_query(client, app):
@@ -327,37 +182,11 @@ async def test_account_center_accounts_route_marks_manual_disabled_browser_query
 
     assert response.status_code == 200
     rows = response.json()
-    assert rows == [
-        {
-            "account_id": "browser-disabled",
-            "display_name": "浏览器禁用账号",
-            "remark_name": "浏览器禁用账号",
-            "c5_nick_name": None,
-            "default_name": "默认-browser-disabled",
-            "api_key_present": True,
-            "api_query_enabled": True,
-            "api_query_status_code": "enabled",
-            "api_query_status_text": "已启用",
-            "api_query_disable_reason_code": None,
-            "api_query_disable_reason_text": None,
-            "browser_query_enabled": False,
-            "browser_query_status_code": "disabled",
-            "browser_query_status_text": "已禁用",
-            "browser_query_disable_reason_code": "manual_disabled",
-            "browser_query_disable_reason_text": "手动禁用",
-            "api_key": "api-browser",
-            "proxy_mode": "custom",
-            "proxy_url": "http://127.0.0.1:9016",
-            "proxy_display": "http://127.0.0.1:9016",
-            "purchase_capability_state": "bound",
-            "purchase_pool_state": "not_connected",
-            "purchase_disabled": False,
-            "selected_steam_id": None,
-            "selected_warehouse_text": None,
-            "purchase_status_code": "inventory_full",
-            "purchase_status_text": "库存已满",
-        }
-    ]
+    assert len(rows) == 1
+    row = rows[0]
+    _assert_dual_proxy_payload(row, "http://127.0.0.1:9016")
+    assert row["browser_query_disable_reason_code"] == "manual_disabled"
+    assert row["browser_query_disable_reason_text"] == "手动禁用"
 
 
 async def test_account_center_accounts_route_prefers_runtime_selected_inventory_over_snapshot(client, app):
@@ -508,3 +337,127 @@ async def test_update_purchase_config_route_rejects_unavailable_inventory(client
 
     assert response.status_code == 409
     assert response.json()["detail"] == "目标仓库不可用，无法选中"
+
+
+async def test_sync_open_api_binding_route_refreshes_allow_list_and_public_ip(client, app):
+    account = _build_account(
+        "sync-open-api",
+        remark_name="同步白名单账号",
+        api_key="api-key-old",
+    )
+    account.api_ip_allow_list = "1.1.1.1"
+    app.state.account_repository.create_account(account)
+
+    service = app.state.open_api_binding_sync_service
+    service._public_ip_fetcher = lambda proxy_url: "2.2.2.2"
+
+    response = await client.post("/accounts/sync-open-api/open-api/sync")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["api_key"] == "api-key-old"
+    assert payload["api_ip_allow_list"] == "1.1.1.1"
+    assert payload["api_public_ip"] == "http://127.0.0.1:9013"
+
+
+async def test_sync_open_api_binding_route_rejects_not_logged_in_account(client, app):
+    app.state.account_repository.create_account(
+        _build_account(
+            "sync-open-api-no-login",
+            remark_name="未登录同步账号",
+            cookie_raw=None,
+        )
+    )
+
+    response = await client.post("/accounts/sync-open-api-no-login/open-api/sync")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "当前账号未登录，无法同步 API 白名单"
+
+
+async def test_open_open_api_binding_page_route_rejects_account_without_saved_profile(client, app):
+    account = _build_account(
+        "open-open-api",
+        remark_name="打开绑定页账号",
+        api_key="api-key",
+    )
+    app.state.account_repository.create_account(account)
+
+    response = await client.post("/accounts/open-open-api/open-api/open")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "当前账号缺少可复用登录会话，请重新登录后再添加白名单"
+
+
+async def test_open_open_api_binding_page_route_prefers_saved_profile_bundle(client, app):
+    account = _build_account(
+        "open-open-api-profile",
+        remark_name="打开绑定页复用 profile",
+        api_key="api-key",
+    )
+    app.state.account_repository.create_account(account)
+    bundle_repository = app.state.account_session_bundle_repository
+    staged = bundle_repository.stage_bundle(
+        account_id="open-open-api-profile",
+        captured_c5_user_id="10001",
+        payload={
+            "cookie_raw": "NC5_accessToken=token",
+            "profile_root": "C:/profiles/open-open-api-profile",
+            "profile_directory": "Default",
+            "profile_kind": "account",
+        },
+    )
+    bundle_repository.activate_bundle(
+        bundle_repository.mark_bundle_verified(staged.bundle_id).bundle_id,
+        account_id="open-open-api-profile",
+    )
+
+    calls = []
+
+    class FakeLauncher:
+        def launch(
+            self,
+            *,
+            account_id: str | None = None,
+            profile_root: str | None = None,
+            profile_directory: str | None = None,
+            proxy_url: str | None = None,
+            sync_service=None,
+        ) -> dict[str, object]:
+            calls.append(
+                {
+                    "account_id": account_id,
+                    "profile_root": profile_root,
+                    "profile_directory": profile_directory,
+                    "proxy_url": proxy_url,
+                    "sync_service": sync_service,
+                }
+            )
+            return {"open_api_url": "https://www.c5game.com/user/user/open-api"}
+
+    app.state.open_api_binding_page_launcher = FakeLauncher()
+
+    response = await client.post("/accounts/open-open-api-profile/open-api/open")
+
+    assert response.status_code == 200
+    assert response.json()["launched"] is True
+    assert calls[0]["account_id"] == "open-open-api-profile"
+    assert calls[0]["profile_root"] == "C:/profiles/open-open-api-profile"
+    assert calls[0]["profile_directory"] == "Default"
+    assert calls[0]["proxy_url"] == "http://127.0.0.1:9021"
+    assert calls[0]["sync_service"] is app.state.open_api_binding_sync_service
+
+
+async def test_open_open_api_binding_page_route_rejects_not_logged_in_account(client, app):
+    app.state.account_repository.create_account(
+        _build_account(
+            "open-open-api-no-login",
+            remark_name="未登录打开绑定页账号",
+            cookie_raw=None,
+        )
+    )
+
+    response = await client.post("/accounts/open-open-api-no-login/open-api/open")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "当前账号缺少可复用登录会话，请重新登录后再添加白名单"

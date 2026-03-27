@@ -3,16 +3,19 @@ import { useEffect, useState } from "react";
 
 const DEFAULT_FORM = {
   remark_name: "",
-  proxy_input: "",
+  browser_proxy_input: "",
+  api_proxy_input: "",
 };
 
 
 export function AccountCreateDialog({ open, onClose, onSubmit }) {
   const [form, setForm] = useState(DEFAULT_FORM);
+  const [apiProxyTouched, setApiProxyTouched] = useState(false);
 
   useEffect(() => {
     if (open) {
       setForm(DEFAULT_FORM);
+      setApiProxyTouched(false);
     }
   }, [open]);
 
@@ -36,11 +39,14 @@ export function AccountCreateDialog({ open, onClose, onSubmit }) {
         role="dialog"
         onSubmit={async (event) => {
           event.preventDefault();
-          const proxyInput = form.proxy_input.trim();
+          const browserProxyInput = form.browser_proxy_input.trim();
+          const apiProxyInput = form.api_proxy_input.trim();
           await onSubmit?.({
             api_key: null,
-            proxy_mode: proxyInput ? "custom" : "direct",
-            proxy_url: proxyInput || null,
+            browser_proxy_mode: browserProxyInput ? "custom" : "direct",
+            browser_proxy_url: browserProxyInput || null,
+            api_proxy_mode: apiProxyInput ? "custom" : "direct",
+            api_proxy_url: apiProxyInput || null,
             remark_name: form.remark_name.trim() || null,
           }, {
             startLoginAfterCreate: event.nativeEvent.submitter?.dataset.action === "save-and-login",
@@ -70,20 +76,45 @@ export function AccountCreateDialog({ open, onClose, onSubmit }) {
           </label>
 
           <div className="form-field">
-            <label className="form-label" htmlFor="create-account-proxy-input">代理</label>
+            <label className="form-label" htmlFor="create-account-browser-proxy-input">浏览器代理</label>
             <input
-              aria-describedby="create-account-proxy-hint"
+              aria-describedby="create-account-browser-proxy-hint"
               className="form-input"
-              id="create-account-proxy-input"
-              name="proxy_input"
+              id="create-account-browser-proxy-input"
+              name="browser_proxy_input"
               placeholder="留空直连，或输入 127.0.0.1:9000 / user:pass@127.0.0.1:9000 / socks5://..."
-              value={form.proxy_input}
-              onChange={(event) => setForm((current) => ({
-                ...current,
-                proxy_input: event.target.value,
-              }))}
+              value={form.browser_proxy_input}
+              onChange={(event) => setForm((current) => {
+                const nextBrowserProxyInput = event.target.value;
+                const shouldPrefillApi = !apiProxyTouched || current.api_proxy_input === current.browser_proxy_input;
+                return {
+                  ...current,
+                  browser_proxy_input: nextBrowserProxyInput,
+                  api_proxy_input: shouldPrefillApi ? nextBrowserProxyInput : current.api_proxy_input,
+                };
+              })}
             />
-            <span className="form-hint" id="create-account-proxy-hint">留空即直连；支持 host:port、user:pass@host:port、完整 http(s):// 与 socks5://。</span>
+            <span className="form-hint" id="create-account-browser-proxy-hint">登录浏览器使用；改动后通常需要重新登录。</span>
+          </div>
+
+          <div className="form-field">
+            <label className="form-label" htmlFor="create-account-api-proxy-input">API代理</label>
+            <input
+              aria-describedby="create-account-api-proxy-hint"
+              className="form-input"
+              id="create-account-api-proxy-input"
+              name="api_proxy_input"
+              placeholder="留空直连，或输入 127.0.0.1:9000 / user:pass@127.0.0.1:9000 / socks5://..."
+              value={form.api_proxy_input}
+              onChange={(event) => {
+                setApiProxyTouched(true);
+                setForm((current) => ({
+                  ...current,
+                  api_proxy_input: event.target.value,
+                }));
+              }}
+            />
+            <span className="form-hint" id="create-account-api-proxy-hint">API 查询使用；支持动态切换，系统会自动检查当前出口 IP 是否在白名单内。</span>
           </div>
         </div>
 

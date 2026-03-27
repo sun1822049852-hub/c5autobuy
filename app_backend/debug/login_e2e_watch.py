@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sqlite3
 import tempfile
 import time
@@ -15,7 +16,7 @@ import httpx
 from app_backend.main import create_app
 
 TERMINAL_STATES = {"succeeded", "failed", "conflict"}
-SENSITIVE_KEYS = {"api_key", "cookie_raw", "proxy_url"}
+SENSITIVE_KEYS = {"api_key", "cookie_raw", "browser_proxy_url", "api_proxy_url"}
 
 
 def _timestamp() -> str:
@@ -58,7 +59,8 @@ def _summarize_account(payload: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "account_id": payload.get("account_id"),
         "remark_name": payload.get("remark_name"),
-        "proxy_mode": payload.get("proxy_mode"),
+        "browser_proxy_mode": payload.get("browser_proxy_mode"),
+        "api_proxy_mode": payload.get("api_proxy_mode"),
         "c5_user_id": payload.get("c5_user_id"),
         "c5_nick_name": payload.get("c5_nick_name"),
         "purchase_capability_state": payload.get("purchase_capability_state"),
@@ -78,7 +80,8 @@ def _load_sqlite_account_summary(db_path: Path, account_id: str) -> dict[str, An
             SELECT
                 account_id,
                 remark_name,
-                proxy_mode,
+                browser_proxy_mode,
+                api_proxy_mode,
                 c5_user_id,
                 c5_nick_name,
                 purchase_capability_state,
@@ -113,8 +116,10 @@ def _default_account_payload(
 ) -> dict[str, Any]:
     return {
         "remark_name": remark_name,
-        "proxy_mode": proxy_mode,
-        "proxy_url": proxy_url,
+        "browser_proxy_mode": proxy_mode,
+        "browser_proxy_url": proxy_url,
+        "api_proxy_mode": "direct",
+        "api_proxy_url": None,
         "api_key": api_key,
     }
 
@@ -126,6 +131,19 @@ def _default_paths() -> tuple[Path, Path]:
         base_dir / f"login_verify_{stamp}.db",
         base_dir / f"login_verify_{stamp}.jsonl",
     )
+
+
+def _instruction_lines() -> list[str]:
+    debugger_address = str(os.environ.get("C5_EDGE_DEBUGGER_ADDRESS", "") or "").strip()
+    if debugger_address:
+        return [
+            f"步骤: 当前为 attach 模式（{debugger_address}）。请在已启动的真实浏览器中完成登录。",
+            "如登录成功后任务未自动结束，请在同一浏览器打开或刷新 https://www.c5game.com/user/user/ 。",
+            "attach 模式无需关闭浏览器窗口。",
+        ]
+    return [
+        "步骤: 浏览器打开后扫码登录，登录成功后关闭临时浏览器窗口，再把日志贴回。"
+    ]
 
 
 async def run_login_watch(
@@ -305,7 +323,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     print(f"日志文件: {log_path}")
     print(f"数据库: {db_path}")
-    print("步骤: 浏览器打开后扫码登录，登录成功后关闭临时浏览器窗口，再把日志贴回。")
+    for line in _instruction_lines():
+        print(line)
 
     try:
         summary = asyncio.run(

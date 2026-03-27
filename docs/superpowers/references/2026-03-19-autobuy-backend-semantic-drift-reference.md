@@ -4,6 +4,8 @@
 
 基准提交：`179c5e0`
 
+注：本文中的 `app_backend/infrastructure/selenium/*` 与 `selenium_login_runner.py` 属于当时代码结构。当前仓库里，活跃登录链已迁到 `app_backend/infrastructure/browser_runtime/`，并由 `BrowserLoginAdapter` / `ManagedEdgeCdpLoginRunner` 承接。
+
 ## 1. 目的
 
 这份文档不是架构介绍，而是给后续开发排查“为什么旧版 `autobuy.py` 能跑、新版 `app_backend` 出问题”时用的实现级 reference。

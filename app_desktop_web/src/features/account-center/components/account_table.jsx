@@ -65,7 +65,7 @@ function renderBody({
   if (isLoading) {
     return (
       <tr>
-        <td className="account-table__empty" colSpan={5} style={NO_SELECT_STYLE}>正在加载账号列表...</td>
+        <td className="account-table__empty" colSpan={6} style={NO_SELECT_STYLE}>正在加载账号列表...</td>
       </tr>
     );
   }
@@ -73,7 +73,7 @@ function renderBody({
   if (loadError) {
     return (
       <tr>
-        <td className="account-table__empty" colSpan={5} style={NO_SELECT_STYLE}>加载失败：{loadError}</td>
+        <td className="account-table__empty" colSpan={6} style={NO_SELECT_STYLE}>加载失败：{loadError}</td>
       </tr>
     );
   }
@@ -81,7 +81,7 @@ function renderBody({
   if (!rows.length) {
     return (
       <tr>
-        <td className="account-table__empty" colSpan={5} style={NO_SELECT_STYLE}>没有符合条件的账号</td>
+        <td className="account-table__empty" colSpan={6} style={NO_SELECT_STYLE}>没有符合条件的账号</td>
       </tr>
     );
   }
@@ -167,12 +167,30 @@ function renderBody({
         </td>
         <td>
           <button
-            aria-label={`编辑代理 ${displayName}`}
+            aria-label={`查看账号代理 ${displayName}`}
+            className="account-table__action account-table__action--proxy"
+            disabled
+            type="button"
+          >
+            <div className="account-table__nickname">
+              <span className="account-table__nickname-main">
+                {row.browser_proxy_display || "未获取IP"}
+              </span>
+            </div>
+          </button>
+        </td>
+        <td>
+          <button
+            aria-label={`编辑API IP ${displayName}`}
             className="account-table__action account-table__action--proxy"
             type="button"
             onClick={() => onProxyClick?.(row)}
           >
-            {row.proxy_display || "未配置代理"}
+            <div className="account-table__nickname">
+              <span className="account-table__nickname-main">
+                {row.api_proxy_display || "未获取IP"}
+              </span>
+            </div>
           </button>
         </td>
       </tr>
@@ -202,7 +220,8 @@ export function AccountTable({
           <th scope="col" style={NO_SELECT_STYLE}>API 状态</th>
           <th scope="col" style={NO_SELECT_STYLE}>浏览器查询</th>
           <th scope="col" style={NO_SELECT_STYLE}>购买状态</th>
-          <th scope="col" style={NO_SELECT_STYLE}>代理</th>
+          <th scope="col" style={NO_SELECT_STYLE}>账号代理</th>
+          <th scope="col" style={NO_SELECT_STYLE}>API代理</th>
         </tr>
       </thead>
       <tbody>

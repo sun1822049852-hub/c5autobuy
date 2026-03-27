@@ -227,3 +227,29 @@ async def test_delete_account_removes_record(client):
 
     assert delete_response.status_code == 204
     assert list_response.json() == []
+
+
+async def test_delete_account_removes_active_session_bundle(app, client):
+    created = await client.post(
+        "/accounts",
+        json={
+            "remark_name": "账号A",
+            "proxy_mode": "direct",
+            "proxy_url": None,
+            "api_key": None,
+        },
+    )
+    account_id = created.json()["account_id"]
+    bundle_repository = app.state.account_session_bundle_repository
+    staged = bundle_repository.stage_bundle(
+        account_id=account_id,
+        captured_c5_user_id="10001",
+        payload={"cookie_raw": "cookie=value"},
+    )
+    verified = bundle_repository.mark_bundle_verified(staged.bundle_id)
+    bundle_repository.activate_bundle(verified.bundle_id, account_id=account_id)
+
+    delete_response = await client.delete(f"/accounts/{account_id}")
+
+    assert delete_response.status_code == 204
+    assert bundle_repository.get_active_bundle(account_id) is None

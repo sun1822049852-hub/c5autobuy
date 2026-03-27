@@ -300,3 +300,4 @@ async def test_sidebar_diagnostics_exposes_raw_debug_fields_for_query_purchase_a
     assert payload["purchase"]["recent_events"][0]["response_text"] == "{\"error\":\"sold out\"}"
     assert payload["login_tasks"]["recent_tasks"][0]["events"][-1]["payload"]["status_code"] == 500
     assert payload["login_tasks"]["recent_tasks"][0]["events"][-1]["payload"]["request_path"] == "/accounts/a-1/login"
+

@@ -73,6 +73,14 @@ function buildBackendExitError({ code, signal, stderrOutput }) {
 }
 
 
+function buildPythonBackendEnv(projectRoot, baseEnv = process.env) {
+  return {
+    ...baseEnv,
+    C5_APP_PRIVATE_DIR: path.join(projectRoot, ".runtime", "app-private"),
+  };
+}
+
+
 export async function startPythonBackend({
   projectRoot,
   dbPath,
@@ -89,6 +97,7 @@ export async function startPythonBackend({
     command: pythonExecutable,
     args,
     cwd: projectRoot,
+    env: buildPythonBackendEnv(projectRoot),
   });
   const baseUrl = `http://127.0.0.1:${port}`;
   const startedAt = Date.now();
@@ -149,9 +158,10 @@ export async function startPythonBackend({
 }
 
 
-function defaultSpawnProcess({ command, args, cwd }) {
+function defaultSpawnProcess({ command, args, cwd, env }) {
   return spawn(command, args, {
     cwd,
+    env,
     stdio: "pipe",
     windowsHide: true,
   });

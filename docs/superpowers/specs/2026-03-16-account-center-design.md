@@ -165,7 +165,7 @@ app_backend/
   infrastructure/
     db/
     repositories/
-    selenium/
+    browser_runtime/
     naming/
     proxy/
   workers/

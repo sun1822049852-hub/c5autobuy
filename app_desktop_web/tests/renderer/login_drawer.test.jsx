@@ -515,4 +515,76 @@ describe("login drawer", () => {
       expect(screen.queryByRole("complementary", { name: "登录配置" })).not.toBeInTheDocument();
     });
   });
+
+  it("allows login without touching removed browser-environment diagnostics routes", async () => {
+    const calls = [];
+
+    installDesktopApp(vi.fn(async (input, options = {}) => {
+      const url = new URL(input);
+      const method = String(options.method ?? "GET").toUpperCase();
+      calls.push({ method, pathname: url.pathname });
+
+      if (url.pathname === "/account-center/accounts" && method === "GET") {
+        return jsonResponse(buildRows());
+      }
+
+      if (url.pathname === "/accounts/a-2/login" && method === "POST") {
+        return jsonResponse({
+          task_id: "task-login-1",
+          task_type: "login",
+          state: "pending",
+          created_at: "2026-03-18T12:00:00",
+          updated_at: "2026-03-18T12:00:00",
+          events: [],
+          result: null,
+          error: null,
+          pending_conflict: null,
+        }, 202);
+      }
+
+      if (url.pathname === "/tasks/task-login-1" && method === "GET") {
+        return jsonResponse({
+          task_id: "task-login-1",
+          task_type: "login",
+          state: "succeeded",
+          created_at: "2026-03-18T12:00:00",
+          updated_at: "2026-03-18T12:00:02",
+          events: [
+            {
+              state: "succeeded",
+              timestamp: "2026-03-18T12:00:02",
+              message: "登录完成",
+              payload: null,
+            },
+          ],
+          result: null,
+          error: null,
+          pending_conflict: null,
+        });
+      }
+
+      throw new Error(`Unhandled request: ${method} ${url.pathname}`);
+    }));
+
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByText("账号 B");
+    await user.click(screen.getByRole("button", { name: "配置购买状态 账号 B" }));
+
+    const drawer = await screen.findByRole("complementary", { name: "登录配置" });
+    expect(within(drawer).getByRole("button", { name: "发起登录" })).not.toBeDisabled();
+
+    await user.click(within(drawer).getByRole("button", { name: "发起登录" }));
+
+    await waitFor(() => {
+      expect(calls).toEqual(expect.arrayContaining([
+        expect.objectContaining({ method: "POST", pathname: "/accounts/a-2/login" }),
+      ]));
+    });
+    expect(calls).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ pathname: "/diagnostics/browser-environment" }),
+      expect.objectContaining({ pathname: "/diagnostics/browser-environment/bootstrap" }),
+    ]));
+  });
 });

@@ -29,6 +29,7 @@ class QueryRuntimeService:
         account_repository,
         runtime_factory: RuntimeFactory | None = None,
         purchase_runtime_service=None,
+        open_api_binding_sync_service=None,
         stats_sink=None,
     ) -> None:
         self._query_config_repository = query_config_repository
@@ -36,6 +37,7 @@ class QueryRuntimeService:
         self._account_repository = account_repository
         self._runtime_factory = runtime_factory or self._build_default_runtime
         self._purchase_runtime_service = purchase_runtime_service
+        self._open_api_binding_sync_service = open_api_binding_sync_service
         self._stats_sink = stats_sink
         self._state_lock = threading.RLock()
         self._runtime = None
@@ -1041,6 +1043,13 @@ class QueryRuntimeService:
             )
         except Exception:
             return
+        sync_service = self._open_api_binding_sync_service
+        sync_account_now = getattr(sync_service, "sync_account_now", None) if sync_service is not None else None
+        if callable(sync_account_now):
+            try:
+                sync_account_now(account_id, final=False)
+            except Exception:
+                return
 
     def _get_or_create_runtime_account(self, account: object) -> RuntimeAccountAdapter:
         account_id = str(getattr(account, "account_id", "") or "")

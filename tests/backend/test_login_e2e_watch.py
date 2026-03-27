@@ -4,7 +4,7 @@ import asyncio
 import json
 from pathlib import Path
 
-from app_backend.infrastructure.selenium.login_adapter import LoginCapture
+from app_backend.infrastructure.browser_runtime.login_adapter import LoginCapture
 from app_backend.main import create_app
 from app_backend.debug.login_e2e_watch import run_login_watch
 
@@ -112,3 +112,56 @@ async def test_run_login_watch_emits_heartbeat_when_state_lingers(tmp_path: Path
     heartbeats = [line for line in lines if line["phase"] == "task_heartbeat"]
     assert heartbeats
     assert any(line["state"] == "waiting_for_scan" for line in heartbeats)
+
+
+def test_login_e2e_watch_main_prints_attach_mode_instructions(monkeypatch, capsys, tmp_path: Path):
+    import app_backend.debug.login_e2e_watch as module
+
+    db_path = tmp_path / "attach.db"
+    log_path = tmp_path / "attach.jsonl"
+
+    monkeypatch.setenv("C5_EDGE_DEBUGGER_ADDRESS", "127.0.0.1:9222")
+    monkeypatch.setattr(module, "_default_paths", lambda: (db_path, log_path))
+
+    async def fake_run_login_watch(**kwargs):
+        return {
+            "account_id": "acc-1",
+            "task_id": "task-1",
+            "task_state": "succeeded",
+            "db_path": str(kwargs["db_path"]),
+            "log_path": str(kwargs["log_path"]),
+        }
+
+    monkeypatch.setattr(module, "run_login_watch", fake_run_login_watch)
+
+    exit_code = module.main(["--remark-name", "登录验真-attach"])
+
+    captured = capsys.readouterr().out
+    assert exit_code == 0
+    assert "attach 模式" in captured
+    assert "无需关闭浏览器窗口" in captured
+    assert "关闭临时浏览器窗口" not in captured
+
+
+def test_attach_helper_script_targets_default_profile():
+    script_path = Path("app_backend/debug/start_default_profile_attach_login_watch.ps1")
+
+    content = script_path.read_text(encoding="utf-8")
+
+    assert '[int]$Port = 9222' in content
+    assert '[string]$ProfileDirectory = "Default"' in content
+    assert '"--remote-debugging-port=$Port"' in content
+    assert '"--profile-directory=$ProfileDirectory"' in content
+    assert "C5_EDGE_DEBUGGER_ADDRESS" in content
+    assert "login_e2e_watch" in content
+    assert "Microsoft\\Edge\\User Data" in content
+
+
+def test_shortcut_attach_helper_script_invokes_backend_helper():
+    script_path = Path("调试/默认配置附着登录验真.ps1")
+
+    content = script_path.read_text(encoding="utf-8")
+
+    assert "start_default_profile_attach_login_watch.ps1" in content
+    assert "app_backend\\debug" in content
+

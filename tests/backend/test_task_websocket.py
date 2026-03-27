@@ -23,3 +23,17 @@ def test_task_websocket_streams_state_updates(app):
             succeeded = websocket.receive_json()
             assert succeeded["state"] == "succeeded"
             assert succeeded["result"] == {"account_id": "a-1"}
+
+
+def test_account_update_websocket_streams_account_changes(app):
+    with TestClient(app) as client:
+        with client.websocket_connect("/ws/accounts/updates") as websocket:
+            app.state.account_update_hub.publish(
+                account_id="a-1",
+                event="write_account",
+                payload={"api_key": "api-1", "api_public_ip": "1.1.1.1"},
+            )
+            payload = websocket.receive_json()
+            assert payload["account_id"] == "a-1"
+            assert payload["event"] == "write_account"
+            assert payload["payload"] == {"api_key": "api-1", "api_public_ip": "1.1.1.1"}

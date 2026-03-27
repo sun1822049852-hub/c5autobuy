@@ -16,6 +16,10 @@ function buildExpectedLaunchScript(dbPath, port) {
   ].join(" ");
 }
 
+function buildExpectedAppPrivateDir(projectRoot) {
+  return path.join(projectRoot, ".runtime", "app-private");
+}
+
 describe("python backend manager", () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -82,20 +86,49 @@ describe("python backend manager", () => {
       timeoutMs: 50,
     });
 
-    expect(spawnProcess).toHaveBeenCalledWith({
+    expect(spawnProcess).toHaveBeenCalledWith(expect.objectContaining({
       command: "C:/demo/project/.venv/Scripts/python.exe",
       args: [
         "-c",
         buildExpectedLaunchScript("C:/demo/project/data/app.db", 8133),
       ],
       cwd: "C:/demo/project",
-    });
+      env: expect.objectContaining({
+        C5_APP_PRIVATE_DIR: buildExpectedAppPrivateDir("C:/demo/project"),
+      }),
+    }));
     expect(fetchImpl).toHaveBeenCalledWith("http://127.0.0.1:8133/health");
     expect(backend.baseUrl).toBe("http://127.0.0.1:8133");
     expect(backend.port).toBe(8133);
 
     backend.stop();
     expect(fakeChild.kill).toHaveBeenCalledWith();
+  });
+
+  it("passes the app-private directory to the python child environment", async () => {
+    const fakeChild = {
+      once: vi.fn(),
+      kill: vi.fn(),
+    };
+    const spawnProcess = vi.fn(() => fakeChild);
+    const fetchImpl = vi.fn().mockResolvedValue({ ok: true });
+
+    await startPythonBackend({
+      projectRoot: "C:/demo/project",
+      dbPath: "C:/demo/project/data/app.db",
+      portProvider: () => 8233,
+      pythonExecutable: "C:/demo/project/.venv/Scripts/python.exe",
+      spawnProcess,
+      fetchImpl,
+      pollIntervalMs: 1,
+      timeoutMs: 50,
+    });
+
+    expect(spawnProcess).toHaveBeenCalledWith(expect.objectContaining({
+      env: expect.objectContaining({
+        C5_APP_PRIVATE_DIR: buildExpectedAppPrivateDir("C:/demo/project"),
+      }),
+    }));
   });
 
   it("kills python and throws when health check times out", async () => {

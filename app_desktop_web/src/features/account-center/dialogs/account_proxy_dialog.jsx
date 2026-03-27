@@ -1,12 +1,18 @@
 import { useEffect, useState } from "react";
 
 
-export function AccountProxyDialog({ account, open, onClose, onSubmit }) {
-  const [proxyInput, setProxyInput] = useState("");
+export function AccountProxyDialog({
+  account,
+  open,
+  onClose,
+  onOpenBindingPage,
+  onSubmit,
+}) {
+  const [apiProxyInput, setApiProxyInput] = useState("");
 
   useEffect(() => {
     if (open && account) {
-      setProxyInput(account.proxy_mode === "direct" ? "" : (account.proxy_url ?? ""));
+      setApiProxyInput(account.api_proxy_mode === "direct" ? "" : (account.api_proxy_url ?? ""));
     }
   }, [account, open]);
 
@@ -30,33 +36,46 @@ export function AccountProxyDialog({ account, open, onClose, onSubmit }) {
         role="dialog"
         onSubmit={async (event) => {
           event.preventDefault();
-          const normalizedProxyInput = proxyInput.trim();
+          const normalizedApiProxyInput = apiProxyInput.trim();
           await onSubmit?.({
-            proxy_mode: normalizedProxyInput ? "custom" : "direct",
-            proxy_url: normalizedProxyInput || null,
+            api_proxy_mode: normalizedApiProxyInput ? "custom" : "direct",
+            api_proxy_url: normalizedApiProxyInput || null,
           });
         }}
       >
         <div className="surface-header">
           <div>
-            <h2 className="surface-title" id="proxy-dialog-title">修改代理</h2>
-            <p className="surface-subtitle">留空即直连；支持 host:port、user:pass@host:port、完整 URL。改动后会自动拉起登录抽屉。</p>
+            <h2 className="surface-title" id="proxy-dialog-title">API IP 设置</h2>
+            <p className="surface-subtitle">上半区用于查看并添加 API 白名单，下半区用于修改 API 代理出口。</p>
           </div>
           <button className="ghost-button" type="button" onClick={onClose}>取消</button>
         </div>
 
         <div className="form-grid">
           <div className="form-field">
-            <label className="form-label" htmlFor="account-proxy-input">代理</label>
+            <label className="form-label" htmlFor="account-api-whitelist-ip">白名单 IP</label>
+            <div className="form-input" id="account-api-whitelist-ip" role="note">
+              {account.api_public_ip || "未获取IP"}
+            </div>
+            <span className="form-hint">以已登录浏览器打开绑定页后显示的白名单 IP 为准。</span>
+            <div className="surface-actions">
+              <button className="ghost-button" type="button" onClick={() => onOpenBindingPage?.(account)}>
+                添加白名单
+              </button>
+            </div>
+          </div>
+
+          <div className="form-field">
+            <label className="form-label" htmlFor="account-api-proxy-input">API代理</label>
             <input
-              aria-describedby="account-proxy-hint"
+              aria-describedby="account-api-proxy-hint"
               className="form-input"
-              id="account-proxy-input"
+              id="account-api-proxy-input"
               placeholder="留空直连，或输入 127.0.0.1:9000 / user:pass@127.0.0.1:9000 / socks5://..."
-              value={proxyInput}
-              onChange={(event) => setProxyInput(event.target.value)}
+              value={apiProxyInput}
+              onChange={(event) => setApiProxyInput(event.target.value)}
             />
-            <span className="form-hint" id="account-proxy-hint">如果只填 host:port 或 user:pass@host:port，后端会自动补成 http://。</span>
+            <span className="form-hint" id="account-api-proxy-hint">用于 API 查询与白名单匹配检测；保存后会自动重新同步白名单状态。</span>
           </div>
         </div>
 

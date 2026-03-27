@@ -33,6 +33,7 @@ export function AccountCenterPage({ client }) {
     loadError,
     loginDrawerAccount,
     openApiKeyDialog,
+    openAccountOpenApiBindingPage,
     toggleApiQueryMode,
     toggleBrowserQueryMode,
     openContextMenu,
@@ -50,6 +51,7 @@ export function AccountCenterPage({ client }) {
     searchTerm,
     setActiveFilter,
     setSearchTerm,
+    syncAccountOpenApi,
     startLoginFromDrawer,
     submitApiKey,
     submitCreate,
@@ -143,7 +145,13 @@ export function AccountCenterPage({ client }) {
       <AccountCreateDialog open={createDialogOpen} onClose={closeCreateDialog} onSubmit={submitCreate} />
       <AccountRemarkDialog account={remarkDialogAccount} open={Boolean(remarkDialogAccount)} onClose={closeRemarkDialog} onSubmit={submitRemark} />
       <AccountApiKeyDialog account={apiKeyDialogAccount} open={Boolean(apiKeyDialogAccount)} onClose={closeApiKeyDialog} onSubmit={submitApiKey} />
-      <AccountProxyDialog account={proxyDialogAccount} open={Boolean(proxyDialogAccount)} onClose={closeProxyDialog} onSubmit={submitProxy} />
+      <AccountProxyDialog
+        account={proxyDialogAccount}
+        open={Boolean(proxyDialogAccount)}
+        onClose={closeProxyDialog}
+        onOpenBindingPage={openAccountOpenApiBindingPage}
+        onSubmit={submitProxy}
+      />
       <PurchaseConfigDrawer
         account={purchaseDrawerState.account}
         detail={purchaseDrawerState.detail}
@@ -171,7 +179,7 @@ export function AccountCenterPage({ client }) {
         position={logsModalState.position}
         size={logsModalState.size}
       />
-      <AccountContextMenu menu={contextMenu} onClose={closeContextMenu} onDelete={deleteAccount} />
+      <AccountContextMenu menu={contextMenu} onClose={closeContextMenu} onDelete={deleteAccount} onOpenOpenApiBindingPage={openAccountOpenApiBindingPage} onSyncOpenApi={syncAccountOpenApi} />
     </section>
   );
 }

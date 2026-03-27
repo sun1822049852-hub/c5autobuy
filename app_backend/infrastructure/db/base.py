@@ -22,6 +22,7 @@ def build_session_factory(engine: Engine) -> sessionmaker:
 def create_schema(engine: Engine) -> None:
     from app_backend.infrastructure.db.models import (
         AccountRecord,
+        AccountSessionBundleRecord,
         AccountCapabilityStatsDailyRecord,
         AccountCapabilityStatsTotalRecord,
         AccountInventorySnapshotRecord,
@@ -42,6 +43,7 @@ def create_schema(engine: Engine) -> None:
         bind=engine,
         tables=[
             AccountRecord.__table__,
+            AccountSessionBundleRecord.__table__,
             AccountInventorySnapshotRecord.__table__,
             QueryConfigRecord.__table__,
             QueryProductRecord.__table__,
@@ -132,6 +134,10 @@ def _ensure_account_columns(engine: Engine) -> None:
         inspector = inspect(engine)
         existing_columns = {column["name"] for column in inspector.get_columns("accounts")}
     with engine.begin() as connection:
+        if "proxy_mode" in existing_columns or "proxy_url" in existing_columns or "proxy_public_ip" in existing_columns:
+            _rebuild_accounts_table_for_dual_proxy(engine, existing_columns=existing_columns)
+            inspector = inspect(engine)
+            existing_columns = {column["name"] for column in inspector.get_columns("accounts")}
         if "purchase_disabled" not in existing_columns:
             connection.execute(text("ALTER TABLE accounts ADD COLUMN purchase_disabled INTEGER NOT NULL DEFAULT 0"))
         if "purchase_recovery_due_at" not in existing_columns:
@@ -146,6 +152,131 @@ def _ensure_account_columns(engine: Engine) -> None:
             connection.execute(text("ALTER TABLE accounts ADD COLUMN api_query_disabled_reason TEXT"))
         if "browser_query_disabled_reason" not in existing_columns:
             connection.execute(text("ALTER TABLE accounts ADD COLUMN browser_query_disabled_reason TEXT"))
+        if "api_ip_allow_list" not in existing_columns:
+            connection.execute(text("ALTER TABLE accounts ADD COLUMN api_ip_allow_list TEXT"))
+        if "browser_public_ip" not in existing_columns:
+            connection.execute(text("ALTER TABLE accounts ADD COLUMN browser_public_ip TEXT"))
+        if "api_public_ip" not in existing_columns:
+            connection.execute(text("ALTER TABLE accounts ADD COLUMN api_public_ip TEXT"))
+
+
+def _rebuild_accounts_table_for_dual_proxy(engine: Engine, *, existing_columns: set[str]) -> None:
+    def _expr(name: str, fallback: str) -> str:
+        return name if name in existing_columns else fallback
+
+    with engine.begin() as connection:
+        connection.execute(text("PRAGMA foreign_keys=OFF"))
+        connection.execute(text("DROP TABLE IF EXISTS accounts__dual_proxy"))
+        connection.execute(
+            text(
+                """
+                CREATE TABLE accounts__dual_proxy (
+                    account_id TEXT PRIMARY KEY,
+                    default_name TEXT NOT NULL,
+                    remark_name TEXT,
+                    browser_proxy_mode TEXT NOT NULL,
+                    browser_proxy_url TEXT,
+                    api_proxy_mode TEXT NOT NULL,
+                    api_proxy_url TEXT,
+                    api_key TEXT,
+                    c5_user_id TEXT,
+                    c5_nick_name TEXT,
+                    cookie_raw TEXT,
+                    purchase_capability_state TEXT NOT NULL,
+                    purchase_pool_state TEXT NOT NULL,
+                    last_login_at TEXT,
+                    last_error TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    purchase_disabled INTEGER NOT NULL DEFAULT 0,
+                    purchase_recovery_due_at TEXT,
+                    new_api_enabled INTEGER NOT NULL DEFAULT 1,
+                    fast_api_enabled INTEGER NOT NULL DEFAULT 1,
+                    token_enabled INTEGER NOT NULL DEFAULT 1,
+                    api_query_disabled_reason TEXT,
+                    browser_query_disabled_reason TEXT,
+                    api_ip_allow_list TEXT,
+                    browser_public_ip TEXT,
+                    api_public_ip TEXT
+                )
+                """
+            )
+        )
+        connection.execute(
+            text(
+                f"""
+                INSERT INTO accounts__dual_proxy (
+                    account_id,
+                    default_name,
+                    remark_name,
+                    browser_proxy_mode,
+                    browser_proxy_url,
+                    api_proxy_mode,
+                    api_proxy_url,
+                    api_key,
+                    c5_user_id,
+                    c5_nick_name,
+                    cookie_raw,
+                    purchase_capability_state,
+                    purchase_pool_state,
+                    last_login_at,
+                    last_error,
+                    created_at,
+                    updated_at,
+                    purchase_disabled,
+                    purchase_recovery_due_at,
+                    new_api_enabled,
+                    fast_api_enabled,
+                    token_enabled,
+                    api_query_disabled_reason,
+                    browser_query_disabled_reason,
+                    api_ip_allow_list,
+                    browser_public_ip,
+                    api_public_ip
+                )
+                SELECT
+                    account_id,
+                    default_name,
+                    remark_name,
+                    CASE
+                        WHEN {_expr("browser_proxy_mode", "NULL")} IS NOT NULL THEN {_expr("browser_proxy_mode", "NULL")}
+                        WHEN {_expr("proxy_url", "NULL")} IS NOT NULL THEN 'custom'
+                        ELSE 'direct'
+                    END,
+                    COALESCE({_expr("browser_proxy_url", "NULL")}, {_expr("proxy_url", "NULL")}),
+                    CASE
+                        WHEN {_expr("api_proxy_mode", "NULL")} IS NOT NULL THEN {_expr("api_proxy_mode", "NULL")}
+                        WHEN {_expr("proxy_url", "NULL")} IS NOT NULL THEN 'custom'
+                        ELSE 'direct'
+                    END,
+                    COALESCE({_expr("api_proxy_url", "NULL")}, {_expr("proxy_url", "NULL")}),
+                    api_key,
+                    c5_user_id,
+                    c5_nick_name,
+                    cookie_raw,
+                    purchase_capability_state,
+                    purchase_pool_state,
+                    last_login_at,
+                    last_error,
+                    created_at,
+                    updated_at,
+                    {_expr("purchase_disabled", "0")},
+                    {_expr("purchase_recovery_due_at", "NULL")},
+                    {_expr("new_api_enabled", "1")},
+                    {_expr("fast_api_enabled", "1")},
+                    {_expr("token_enabled", "1")},
+                    {_expr("api_query_disabled_reason", "NULL")},
+                    {_expr("browser_query_disabled_reason", "NULL")},
+                    {_expr("api_ip_allow_list", "NULL")},
+                    {_expr("browser_public_ip", _expr("proxy_public_ip", "NULL"))},
+                    {_expr("api_public_ip", _expr("proxy_public_ip", "NULL"))}
+                FROM accounts
+                """
+            )
+        )
+        connection.execute(text("DROP TABLE accounts"))
+        connection.execute(text("ALTER TABLE accounts__dual_proxy RENAME TO accounts"))
+        connection.execute(text("PRAGMA foreign_keys=ON"))
 
 
 def _rebuild_accounts_table_without_disabled(engine: Engine, *, existing_columns: set[str]) -> None:
@@ -161,6 +292,8 @@ def _rebuild_accounts_table_without_disabled(engine: Engine, *, existing_columns
         "browser_query_disabled_reason": (
             "browser_query_disabled_reason" if "browser_query_disabled_reason" in existing_columns else "NULL"
         ),
+        "api_ip_allow_list": "api_ip_allow_list" if "api_ip_allow_list" in existing_columns else "NULL",
+        "proxy_public_ip": "proxy_public_ip" if "proxy_public_ip" in existing_columns else "NULL",
     }
 
     with engine.begin() as connection:
@@ -190,7 +323,9 @@ def _rebuild_accounts_table_without_disabled(engine: Engine, *, existing_columns
                     fast_api_enabled INTEGER NOT NULL DEFAULT 1,
                     token_enabled INTEGER NOT NULL DEFAULT 1,
                     api_query_disabled_reason TEXT,
-                    browser_query_disabled_reason TEXT
+                    browser_query_disabled_reason TEXT,
+                    api_ip_allow_list TEXT,
+                    proxy_public_ip TEXT
                 )
                 """
             )
@@ -220,7 +355,9 @@ def _rebuild_accounts_table_without_disabled(engine: Engine, *, existing_columns
                     fast_api_enabled,
                     token_enabled,
                     api_query_disabled_reason,
-                    browser_query_disabled_reason
+                    browser_query_disabled_reason,
+                    api_ip_allow_list,
+                    proxy_public_ip
                 )
                 SELECT
                     account_id,
@@ -244,7 +381,9 @@ def _rebuild_accounts_table_without_disabled(engine: Engine, *, existing_columns
                     {column_expr["fast_api_enabled"]},
                     {column_expr["token_enabled"]},
                     {column_expr["api_query_disabled_reason"]},
-                    {column_expr["browser_query_disabled_reason"]}
+                    {column_expr["browser_query_disabled_reason"]},
+                    {column_expr["api_ip_allow_list"]},
+                    {column_expr["proxy_public_ip"]}
                 FROM accounts
                 """
             )

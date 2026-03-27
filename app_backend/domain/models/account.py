@@ -8,8 +8,10 @@ class Account:
     account_id: str
     default_name: str
     remark_name: str | None
-    proxy_mode: str
-    proxy_url: str | None
+    browser_proxy_mode: str
+    browser_proxy_url: str | None
+    api_proxy_mode: str
+    api_proxy_url: str | None
     api_key: str | None
     c5_user_id: str | None
     c5_nick_name: str | None
@@ -27,7 +29,14 @@ class Account:
     token_enabled: bool = True
     api_query_disabled_reason: str | None = None
     browser_query_disabled_reason: str | None = None
+    api_ip_allow_list: str | None = None
+    browser_public_ip: str | None = None
+    api_public_ip: str | None = None
 
     @property
     def display_name(self) -> str:
         return self.remark_name or self.c5_nick_name or self.default_name
+
+    @property
+    def proxy_public_ip(self) -> str | None:
+        return self.api_public_ip

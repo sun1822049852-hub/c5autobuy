@@ -42,7 +42,14 @@ function accountRows() {
       browser_query_disable_reason_code: null,
       browser_query_disable_reason_text: null,
       api_key: "api-a",
-      proxy_display: "直连",
+      browser_proxy_mode: "direct",
+      browser_proxy_url: null,
+      browser_proxy_display: "39.71.213.149",
+      browser_public_ip: "39.71.213.149",
+      api_proxy_mode: "direct",
+      api_proxy_url: null,
+      api_proxy_display: "39.71.213.149",
+      api_public_ip: "39.71.213.149",
       purchase_status_code: "selected_warehouse",
       purchase_status_text: "steam-1",
     },
@@ -64,7 +71,13 @@ function accountRows() {
       browser_query_disable_reason_code: "not_logged_in",
       browser_query_disable_reason_text: "未登录",
       api_key: null,
-      proxy_display: "http://127.0.0.1:9000",
+      browser_proxy_mode: "custom",
+      browser_proxy_url: "http://127.0.0.1:9000",
+      browser_proxy_display: "http://127.0.0.1:9000",
+      api_proxy_mode: "custom",
+      api_proxy_url: "http://127.0.0.1:9000",
+      api_proxy_display: "http://127.0.0.1:9000",
+      api_public_ip: "127.0.0.1",
       purchase_status_code: "not_logged_in",
       purchase_status_text: "未登录",
     },
@@ -86,7 +99,13 @@ function accountRows() {
       browser_query_disable_reason_code: null,
       browser_query_disable_reason_text: null,
       api_key: "api-c",
-      proxy_display: "socks5://127.0.0.1:9900",
+      browser_proxy_mode: "custom",
+      browser_proxy_url: "socks5://127.0.0.1:9900",
+      browser_proxy_display: "socks5://127.0.0.1:9900",
+      api_proxy_mode: "custom",
+      api_proxy_url: "socks5://127.0.0.1:9900",
+      api_proxy_display: "socks5://127.0.0.1:9900",
+      api_public_ip: "39.71.213.149",
       purchase_status_code: "inventory_full",
       purchase_status_text: "库存已满",
     },
@@ -114,7 +133,14 @@ function queryModeRows() {
       browser_query_disable_reason_code: null,
       browser_query_disable_reason_text: null,
       api_key: "api-a",
-      proxy_display: "直连",
+      browser_proxy_mode: "direct",
+      browser_proxy_url: null,
+      browser_proxy_display: "39.71.213.149",
+      browser_public_ip: "39.71.213.149",
+      api_proxy_mode: "direct",
+      api_proxy_url: null,
+      api_proxy_display: "39.71.213.149",
+      api_public_ip: "39.71.213.149",
       purchase_status_code: "selected_warehouse",
       purchase_status_text: "steam-1",
     },
@@ -136,7 +162,13 @@ function queryModeRows() {
       browser_query_disable_reason_code: "not_logged_in",
       browser_query_disable_reason_text: "未登录",
       api_key: null,
-      proxy_display: "http://127.0.0.1:9000",
+      browser_proxy_mode: "custom",
+      browser_proxy_url: "http://127.0.0.1:9000",
+      browser_proxy_display: "http://127.0.0.1:9000",
+      api_proxy_mode: "custom",
+      api_proxy_url: "http://127.0.0.1:9000",
+      api_proxy_display: "http://127.0.0.1:9000",
+      api_public_ip: "127.0.0.1",
       purchase_status_code: "not_logged_in",
       purchase_status_text: "未登录",
     },
@@ -158,7 +190,13 @@ function queryModeRows() {
       browser_query_disable_reason_code: null,
       browser_query_disable_reason_text: null,
       api_key: "api-c",
-      proxy_display: "socks5://127.0.0.1:9900",
+      browser_proxy_mode: "custom",
+      browser_proxy_url: "socks5://127.0.0.1:9900",
+      browser_proxy_display: "socks5://127.0.0.1:9900",
+      api_proxy_mode: "custom",
+      api_proxy_url: "socks5://127.0.0.1:9900",
+      api_proxy_display: "socks5://127.0.0.1:9900",
+      api_public_ip: "39.71.213.149",
       purchase_status_code: "selected_warehouse",
       purchase_status_text: "steam-3",
     },
@@ -180,7 +218,13 @@ function queryModeRows() {
       browser_query_disable_reason_code: "manual_disabled",
       browser_query_disable_reason_text: "手动禁用",
       api_key: "api-d",
-      proxy_display: "http://127.0.0.1:9010",
+      browser_proxy_mode: "custom",
+      browser_proxy_url: "http://127.0.0.1:9010",
+      browser_proxy_display: "http://127.0.0.1:9010",
+      api_proxy_mode: "custom",
+      api_proxy_url: "http://127.0.0.1:9010",
+      api_proxy_display: "http://127.0.0.1:9010",
+      api_public_ip: "39.71.213.150",
       purchase_status_code: "selected_warehouse",
       purchase_status_text: "steam-4",
     },
@@ -193,6 +237,98 @@ beforeEach(() => {
 });
 
 describe("account center page", () => {
+  it("patches only the pushed account row after websocket updates", async () => {
+    class FakeWebSocket {
+      static instances = [];
+
+      constructor(url) {
+        this.url = url;
+        this.onopen = null;
+        this.onmessage = null;
+        this.onerror = null;
+        this.onclose = null;
+        FakeWebSocket.instances.push(this);
+        queueMicrotask(() => this.onopen?.());
+      }
+
+      emit(payload) {
+        this.onmessage?.({ data: JSON.stringify(payload) });
+      }
+
+      close() {
+        this.onclose?.();
+      }
+    }
+
+    const originalWebSocket = window.WebSocket;
+    window.WebSocket = FakeWebSocket;
+
+    const initialRows = accountRows();
+    const updatedAccount = {
+      ...initialRows[0],
+      api_key: "api-a-updated",
+      api_public_ip: "8.8.8.8",
+      api_proxy_display: "8.8.8.8",
+      browser_public_ip: "8.8.8.8",
+      browser_proxy_display: "8.8.8.8",
+    };
+    const fetchImpl = vi.fn(async (input, options = {}) => {
+      const url = new URL(input);
+      const method = String(options.method ?? "GET").toUpperCase();
+
+      if (url.pathname === "/account-center/accounts" && method === "GET") {
+        return {
+          ok: true,
+          json: async () => initialRows,
+        };
+      }
+
+      if (url.pathname === "/accounts/a-1" && method === "GET") {
+        return {
+          ok: true,
+          json: async () => updatedAccount,
+        };
+      }
+
+      throw new Error(`Unhandled request: ${method} ${url.pathname}`);
+    });
+
+    installDesktopApp(fetchImpl);
+    render(<App />);
+
+    await screen.findByText("账号 A");
+    expect(screen.getAllByText("39.71.213.149").length).toBeGreaterThan(0);
+    expect(FakeWebSocket.instances[0].url).toBe("ws://127.0.0.1:8123/ws/accounts/updates");
+    const listCallsBeforePush = fetchImpl.mock.calls.filter(([input, options = {}]) => {
+      const url = new URL(input);
+      const method = String(options.method ?? "GET").toUpperCase();
+      return url.pathname === "/account-center/accounts" && method === "GET";
+    }).length;
+
+    FakeWebSocket.instances[0].emit({
+      account_id: "a-1",
+      event: "write_account",
+      updated_at: "2026-03-27T20:00:00",
+      payload: { api_key: "api-a-updated" },
+    });
+
+    await waitFor(() => {
+      expect(screen.getAllByText("8.8.8.8").length).toBeGreaterThan(0);
+    });
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "http://127.0.0.1:8123/accounts/a-1",
+      expect.objectContaining({ method: "GET" }),
+    );
+    const listCallsAfterPush = fetchImpl.mock.calls.filter(([input, options = {}]) => {
+      const url = new URL(input);
+      const method = String(options.method ?? "GET").toUpperCase();
+      return url.pathname === "/account-center/accounts" && method === "GET";
+    }).length;
+    expect(listCallsAfterPush).toBe(listCallsBeforePush);
+
+    window.WebSocket = originalWebSocket;
+  });
+
   it("renders shell navigation, overview cards, account table and log entry point", async () => {
     installDesktopApp(
       vi.fn().mockResolvedValue({
@@ -225,7 +361,9 @@ describe("account center page", () => {
     expect(screen.getByRole("columnheader", { name: "API 状态" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "浏览器查询" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "购买状态" })).toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: "代理" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "账号代理" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "API代理" })).toBeInTheDocument();
+    expect(screen.getAllByText("39.71.213.149").length).toBeGreaterThan(0);
 
     expect(screen.queryByLabelText("状态带")).not.toBeInTheDocument();
     expect(screen.queryByText("最近登录任务")).not.toBeInTheDocument();

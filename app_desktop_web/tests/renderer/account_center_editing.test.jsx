@@ -22,9 +22,14 @@ function buildRows() {
       new_api_enabled: false,
       fast_api_enabled: false,
       token_enabled: true,
-      proxy_mode: "direct",
-      proxy_url: null,
-      proxy_display: "直连",
+      browser_proxy_mode: "direct",
+      browser_proxy_url: null,
+      browser_proxy_display: "39.71.213.149",
+      browser_public_ip: "39.71.213.149",
+      api_proxy_mode: "direct",
+      api_proxy_url: null,
+      api_proxy_display: "39.71.213.149",
+      api_public_ip: "39.71.213.149",
       purchase_status_code: "selected_warehouse",
       purchase_status_text: "steam-1",
       purchase_disabled: false,
@@ -42,9 +47,13 @@ function buildRows() {
       new_api_enabled: true,
       fast_api_enabled: true,
       token_enabled: true,
-      proxy_mode: "custom",
-      proxy_url: "http://127.0.0.1:9000",
-      proxy_display: "http://127.0.0.1:9000",
+      browser_proxy_mode: "custom",
+      browser_proxy_url: "http://127.0.0.1:9000",
+      browser_proxy_display: "http://127.0.0.1:9000",
+      api_proxy_mode: "custom",
+      api_proxy_url: "http://127.0.0.1:9000",
+      api_proxy_display: "http://127.0.0.1:9000",
+      api_public_ip: "127.0.0.1",
       purchase_status_code: "not_logged_in",
       purchase_status_text: "未登录",
       purchase_disabled: false,
@@ -62,9 +71,13 @@ function buildRows() {
       new_api_enabled: true,
       fast_api_enabled: true,
       token_enabled: false,
-      proxy_mode: "custom",
-      proxy_url: "socks5://127.0.0.1:9900",
-      proxy_display: "socks5://127.0.0.1:9900",
+      browser_proxy_mode: "custom",
+      browser_proxy_url: "socks5://127.0.0.1:9900",
+      browser_proxy_display: "socks5://127.0.0.1:9900",
+      api_proxy_mode: "custom",
+      api_proxy_url: "socks5://127.0.0.1:9900",
+      api_proxy_display: "socks5://127.0.0.1:9900",
+      api_public_ip: "39.71.213.149",
       purchase_status_code: "selected_warehouse",
       purchase_status_text: "steam-3",
       purchase_disabled: false,
@@ -193,9 +206,14 @@ function createFetchHarness() {
         new_api_enabled: true,
         fast_api_enabled: true,
         token_enabled: true,
-        proxy_mode: body.proxy_mode,
-        proxy_url: body.proxy_url,
-        proxy_display: body.proxy_mode === "direct" ? "直连" : body.proxy_url,
+        browser_proxy_mode: body.browser_proxy_mode,
+        browser_proxy_url: body.browser_proxy_url,
+        browser_public_ip: null,
+        browser_proxy_display: body.browser_proxy_mode === "direct" ? "未获取IP" : body.browser_proxy_url,
+        api_proxy_mode: body.api_proxy_mode,
+        api_proxy_url: body.api_proxy_url,
+        api_proxy_display: body.api_proxy_mode === "direct" ? "未获取IP" : body.api_proxy_url,
+        api_public_ip: null,
         purchase_status_code: "not_logged_in",
         purchase_status_text: "未登录",
         purchase_disabled: false,
@@ -370,8 +388,10 @@ function createFetchHarness() {
 
         const nextRemarkName = body.remark_name ?? row.remark_name;
         const nextApiKey = Object.prototype.hasOwnProperty.call(body, "api_key") ? body.api_key : row.api_key;
-        const nextProxyMode = body.proxy_mode ?? row.proxy_mode;
-        const nextProxyUrl = Object.prototype.hasOwnProperty.call(body, "proxy_url") ? body.proxy_url : row.proxy_url;
+        const nextBrowserProxyMode = body.browser_proxy_mode ?? row.browser_proxy_mode;
+        const nextBrowserProxyUrl = Object.prototype.hasOwnProperty.call(body, "browser_proxy_url") ? body.browser_proxy_url : row.browser_proxy_url;
+        const nextApiProxyMode = body.api_proxy_mode ?? row.api_proxy_mode;
+        const nextApiProxyUrl = Object.prototype.hasOwnProperty.call(body, "api_proxy_url") ? body.api_proxy_url : row.api_proxy_url;
 
         return {
           ...row,
@@ -379,12 +399,37 @@ function createFetchHarness() {
           remark_name: nextRemarkName,
           api_key: nextApiKey,
           api_key_present: Boolean(nextApiKey),
-          proxy_mode: nextProxyMode,
-          proxy_url: nextProxyUrl,
-          proxy_display: nextProxyMode === "direct" ? "直连" : nextProxyUrl,
+          browser_proxy_mode: nextBrowserProxyMode,
+          browser_proxy_url: nextBrowserProxyUrl,
+          browser_proxy_display: nextBrowserProxyMode === "direct" ? (row.browser_public_ip || "未获取IP") : nextBrowserProxyUrl,
+          api_proxy_mode: nextApiProxyMode,
+          api_proxy_url: nextApiProxyUrl,
+          api_proxy_display: nextApiProxyMode === "direct" ? (row.api_public_ip || "未获取IP") : nextApiProxyUrl,
         };
       });
       return jsonResponse(rows.find((row) => row.account_id === accountId));
+    }
+
+    const syncOpenApiMatch = url.pathname.match(/^\/accounts\/([^/]+)\/open-api\/sync$/);
+    if (syncOpenApiMatch && method === "POST") {
+      const accountId = syncOpenApiMatch[1];
+      rows = rows.map((row) => (
+        row.account_id === accountId
+          ? {
+            ...row,
+            api_public_ip: row.api_proxy_mode === "direct" ? "39.71.213.149" : "36.138.220.178",
+          }
+          : row
+      ));
+      return jsonResponse(rows.find((row) => row.account_id === accountId));
+    }
+
+    const openOpenApiMatch = url.pathname.match(/^\/accounts\/([^/]+)\/open-api\/open$/);
+    if (openOpenApiMatch && method === "POST") {
+      return jsonResponse({
+        launched: true,
+        account_id: openOpenApiMatch[1],
+      });
     }
 
     const queryModesMatch = url.pathname.match(/^\/accounts\/([^/]+)\/query-modes$/);
@@ -463,8 +508,10 @@ describe("account center editing flows", () => {
         expect.objectContaining({
           body: {
             api_key: null,
-            proxy_mode: "direct",
-            proxy_url: null,
+            browser_proxy_mode: "direct",
+            browser_proxy_url: null,
+            api_proxy_mode: "direct",
+            api_proxy_url: null,
             remark_name: "账号 D",
           },
           method: "POST",
@@ -489,7 +536,7 @@ describe("account center editing flows", () => {
 
     await screen.findByRole("heading", { name: "添加账号" });
     await user.type(screen.getByLabelText("备注"), "账号 D");
-    await user.type(screen.getByLabelText("代理"), "user:pass@127.0.0.1:9200");
+    await user.type(screen.getByLabelText("浏览器代理"), "user:pass@127.0.0.1:9200");
     await user.click(screen.getByRole("button", { name: "保存并登录" }));
 
     await waitFor(() => {
@@ -498,8 +545,10 @@ describe("account center editing flows", () => {
           expect.objectContaining({
             body: {
               api_key: null,
-              proxy_mode: "custom",
-              proxy_url: "user:pass@127.0.0.1:9200",
+              browser_proxy_mode: "custom",
+              browser_proxy_url: "user:pass@127.0.0.1:9200",
+              api_proxy_mode: "custom",
+              api_proxy_url: "user:pass@127.0.0.1:9200",
               remark_name: "账号 D",
             },
             method: "POST",
@@ -679,33 +728,6 @@ describe("account center editing flows", () => {
 
     await screen.findByText("账号 A");
 
-    await user.click(screen.getByRole("button", { name: "编辑代理 账号 B" }));
-    await screen.findByRole("heading", { name: "修改代理" });
-    await user.clear(screen.getByLabelText("代理"));
-    await user.click(screen.getByRole("button", { name: "保存" }));
-
-    await waitFor(() => {
-      expect(harness.calls).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            body: expect.objectContaining({
-              proxy_mode: "direct",
-              proxy_url: null,
-            }),
-            method: "PATCH",
-            pathname: "/accounts/a-2",
-          }),
-        ]),
-      );
-    });
-
-    const loginDrawer = await screen.findByRole("complementary", { name: "登录配置" });
-    expect(within(loginDrawer).getByRole("heading", { name: "登录配置" })).toBeInTheDocument();
-    expect(within(loginDrawer).getByText("账号 B")).toBeInTheDocument();
-    expect(within(loginDrawer).getByText("直连")).toBeInTheDocument();
-
-    await user.click(within(loginDrawer).getByRole("button", { name: "关闭" }));
-
     await user.click(screen.getByRole("button", { name: "配置购买状态 账号 B" }));
     const loginDrawerForB = await screen.findByRole("complementary", { name: "登录配置" });
     expect(within(loginDrawerForB).getByText("账号 B")).toBeInTheDocument();
@@ -761,6 +783,68 @@ describe("account center editing flows", () => {
     await user.click(screen.getByRole("button", { name: /^日志 \d+$/ }));
     const logDialog = await screen.findByRole("dialog", { name: "日志" });
     expect(within(logDialog).getByText("已更新购买配置：账号 A")).toBeInTheDocument();
+  });
+
+  it("auto syncs whitelist after api proxy change", async () => {
+    const harness = createFetchHarness();
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await screen.findByText("账号 A");
+
+    await user.click(screen.getByRole("button", { name: "编辑API IP 账号 A" }));
+    await screen.findByRole("heading", { name: "API IP 设置" });
+    await user.type(screen.getByLabelText("API代理"), "127.0.0.1:9100");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => {
+      expect(harness.calls).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            method: "PATCH",
+            pathname: "/accounts/a-1",
+            body: expect.objectContaining({
+              api_proxy_mode: "custom",
+              api_proxy_url: "127.0.0.1:9100",
+            }),
+          }),
+          expect.objectContaining({
+            method: "POST",
+            pathname: "/accounts/a-1/open-api/sync",
+            body: {},
+          }),
+        ]),
+      );
+    });
+  });
+
+  it("opens the binding page from api ip dialog", async () => {
+    const harness = createFetchHarness();
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await screen.findByText("账号 A");
+
+    await user.click(screen.getByRole("button", { name: "编辑API IP 账号 A" }));
+    const dialog = await screen.findByRole("dialog", { name: "API IP 设置" });
+    expect(within(dialog).getByRole("note")).toHaveTextContent("39.71.213.149");
+    await user.click(screen.getByRole("button", { name: "添加白名单" }));
+
+    await waitFor(() => {
+      expect(harness.calls).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            method: "POST",
+            pathname: "/accounts/a-1/open-api/open",
+            body: {},
+          }),
+        ]),
+      );
+    });
   });
 
   it("deletes an account from the context menu after confirmation", async () => {

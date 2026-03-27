@@ -40,7 +40,7 @@
 
 当前登录链路虽然已经有新的任务入口、任务管理、冲突处理和账号持久化，但在设计时真正执行登录时仍然依赖：
 
-- `SeleniumLoginAdapter`
+- 设计时命名为 `SeleniumLoginAdapter` 的登录适配器（当前代码已改名为 `BrowserLoginAdapter`）
 - `autobuy.py` 中的 `SeleniumLoginManager`
 
 这带来几个问题：

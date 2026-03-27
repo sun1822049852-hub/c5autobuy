@@ -17,18 +17,31 @@ class CreateAccountUseCase:
         self,
         *,
         remark_name: str | None,
-        proxy_mode: str,
-        proxy_url: str | None,
+        browser_proxy_mode: str,
+        browser_proxy_url: str | None,
+        api_proxy_mode: str,
+        api_proxy_url: str | None,
         api_key: str | None,
     ) -> Account:
         now = datetime.now().isoformat(timespec="seconds")
-        normalized_proxy_url = normalize_proxy_input(proxy_mode=proxy_mode, proxy_url=proxy_url)
+        normalized_browser_proxy_url = normalize_proxy_input(
+            proxy_mode=browser_proxy_mode,
+            proxy_url=browser_proxy_url,
+        )
+        normalized_api_proxy_url = normalize_proxy_input(
+            proxy_mode=api_proxy_mode,
+            proxy_url=api_proxy_url,
+        )
+        if normalized_api_proxy_url is None and normalized_browser_proxy_url is not None:
+            normalized_api_proxy_url = normalized_browser_proxy_url
         account = Account(
             account_id=str(uuid4()),
             default_name=AccountNameService.build_default_name(),
             remark_name=remark_name,
-            proxy_mode="custom" if normalized_proxy_url else "direct",
-            proxy_url=normalized_proxy_url,
+            browser_proxy_mode="custom" if normalized_browser_proxy_url else "direct",
+            browser_proxy_url=normalized_browser_proxy_url,
+            api_proxy_mode="custom" if normalized_api_proxy_url else "direct",
+            api_proxy_url=normalized_api_proxy_url,
             api_key=(api_key or None),
             c5_user_id=None,
             c5_nick_name=None,

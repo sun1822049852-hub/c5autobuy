@@ -20,7 +20,14 @@ function renderTaskEvents(task) {
 }
 
 
-export function LoginDrawer({ account, isStarting, onClose, onStartLogin, open, task }) {
+export function LoginDrawer({
+  account,
+  isStarting,
+  onClose,
+  onStartLogin,
+  open,
+  task,
+}) {
   if (!open || !account) {
     return null;
   }
@@ -42,8 +49,13 @@ export function LoginDrawer({ account, isStarting, onClose, onStartLogin, open, 
         </div>
 
         <div className="drawer-card">
-          <div className="drawer-card__label">当前代理</div>
-          <div className="drawer-card__value">{account.proxy_display}</div>
+          <div className="drawer-card__label">浏览器代理</div>
+          <div className="drawer-card__value">{account.browser_proxy_display || "未获取IP"}</div>
+        </div>
+
+        <div className="drawer-card">
+          <div className="drawer-card__label">API代理</div>
+          <div className="drawer-card__value">{account.api_proxy_display || "未获取IP"}</div>
         </div>
 
         <div className="drawer-card">
@@ -55,7 +67,12 @@ export function LoginDrawer({ account, isStarting, onClose, onStartLogin, open, 
       </div>
 
       <div className="surface-actions">
-        <button className="accent-button" disabled={isStarting} type="button" onClick={onStartLogin}>
+        <button
+          className="accent-button"
+          disabled={isStarting}
+          type="button"
+          onClick={onStartLogin}
+        >
           发起登录
         </button>
       </div>

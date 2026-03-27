@@ -21,9 +21,18 @@ class AccountCenterAccountResponse(BaseModel):
     browser_query_disable_reason_code: str | None = None
     browser_query_disable_reason_text: str | None = None
     api_key: str | None = None
-    proxy_mode: str
+    browser_proxy_mode: str
+    browser_proxy_url: str | None = None
+    browser_proxy_display: str
+    api_proxy_mode: str
+    api_proxy_url: str | None = None
+    api_proxy_display: str
+    proxy_mode: str | None = None
     proxy_url: str | None = None
-    proxy_display: str
+    proxy_display: str | None = None
+    api_ip_allow_list: str | None = None
+    browser_public_ip: str | None = None
+    api_public_ip: str | None = None
     purchase_capability_state: str
     purchase_pool_state: str
     purchase_disabled: bool

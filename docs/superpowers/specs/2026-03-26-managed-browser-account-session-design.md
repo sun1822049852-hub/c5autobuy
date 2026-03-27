@@ -459,7 +459,7 @@
 
 需要新增或重构的方向：
 
-- 当前 `selenium_login_runner.py` 演进为受管浏览器登录执行器
+- 当前登录执行器已进一步收口为受管浏览器登录执行器；现行代码入口位于 `app_backend/infrastructure/browser_runtime/login_adapter.py` 中的 `ManagedEdgeCdpLoginRunner`
 - `login_adapter.py` 的内部返回值允许从单一 `LoginCapture` 演进为 `LoginExecutionResult`
 - 新增 runtime 管理模块
 - 新增 seed profile 管理模块

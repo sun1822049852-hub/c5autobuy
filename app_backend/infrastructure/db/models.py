@@ -12,8 +12,10 @@ class AccountRecord(Base):
     account_id: Mapped[str] = mapped_column(Text, primary_key=True)
     default_name: Mapped[str] = mapped_column(Text, nullable=False)
     remark_name: Mapped[str | None] = mapped_column(Text, nullable=True)
-    proxy_mode: Mapped[str] = mapped_column(Text, nullable=False)
-    proxy_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    browser_proxy_mode: Mapped[str] = mapped_column(Text, nullable=False)
+    browser_proxy_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    api_proxy_mode: Mapped[str] = mapped_column(Text, nullable=False)
+    api_proxy_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     api_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     c5_user_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     c5_nick_name: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -31,6 +33,22 @@ class AccountRecord(Base):
     token_enabled: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     api_query_disabled_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     browser_query_disabled_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    api_ip_allow_list: Mapped[str | None] = mapped_column(Text, nullable=True)
+    browser_public_ip: Mapped[str | None] = mapped_column(Text, nullable=True)
+    api_public_ip: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class AccountSessionBundleRecord(Base):
+    __tablename__ = "account_session_bundles"
+
+    bundle_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    account_id: Mapped[str | None] = mapped_column(ForeignKey("accounts.account_id"), nullable=True)
+    captured_c5_user_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    state: Mapped[str] = mapped_column(Text, nullable=False)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    payload_path: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False)
 
 
 class QueryConfigRecord(Base):

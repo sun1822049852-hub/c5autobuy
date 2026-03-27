@@ -8,6 +8,8 @@
 
 **Tech Stack:** Python 3.11, FastAPI, Uvicorn, SQLAlchemy, Pydantic, PySide6, aiohttp-compatible Selenium login adapter reuse, SQLite, pytest, pytest-asyncio, httpx, pytest-qt
 
+**Historical Naming Note:** 本计划阶段的登录链仍以 `selenium` 作为目录与能力命名。当前仓库中，相关活跃模块已迁到 `app_backend/infrastructure/browser_runtime/`，并由 `BrowserLoginAdapter` 承接原 `SeleniumLoginAdapter` 的职责。
+
 ---
 
 ## Scope

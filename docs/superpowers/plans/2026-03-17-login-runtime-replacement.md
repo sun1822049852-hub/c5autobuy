@@ -8,6 +8,8 @@
 
 **Tech Stack:** Python, asyncio, Selenium, pytest
 
+**Historical Naming Note:** 本计划中的 `app_backend/infrastructure/selenium/` 和 `SeleniumLoginAdapter` 都是当时命名。当前代码里，活跃登录链已迁到 `app_backend/infrastructure/browser_runtime/`，适配器现名为 `BrowserLoginAdapter`。
+
 ---
 
 ## 文件结构

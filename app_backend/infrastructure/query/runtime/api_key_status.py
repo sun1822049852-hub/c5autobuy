@@ -15,7 +15,7 @@ BOUND_PURCHASE_STATE = "bound"
 PAUSED_AUTH_INVALID_STATE = "paused_auth_invalid"
 NOT_LOGGED_IN_ERROR = "Not login"
 REASON_TEXTS = {
-    DISABLE_REASON_IP_INVALID: "IP失效",
+    DISABLE_REASON_IP_INVALID: "IP 不在白名单内，请手动绑定",
     DISABLE_REASON_MANUAL_DISABLED: "手动禁用",
     DISABLE_REASON_MISSING_API_KEY: "未配置",
     DISABLE_REASON_NOT_LOGGED_IN: "未登录",
@@ -32,12 +32,15 @@ def build_api_query_status(
     new_api_enabled: bool,
     fast_api_enabled: bool,
     api_query_disabled_reason: str | None,
+    proxy_public_ip: str | None = None,
 ) -> tuple[bool, str, str, str | None, str | None]:
     if not str(api_key or "").strip():
         return _build_disabled_status(DISABLE_REASON_MISSING_API_KEY)
     if bool(new_api_enabled) and bool(fast_api_enabled):
         return _build_enabled_status()
     reason = _normalize_api_disabled_reason(api_query_disabled_reason) or DISABLE_REASON_MANUAL_DISABLED
+    if reason == DISABLE_REASON_IP_INVALID and str(proxy_public_ip or "").strip():
+        return False, QUERY_STATUS_DISABLED, "已禁用", reason, f"IP 不在白名单内，请手动绑定当前代理IP {str(proxy_public_ip).strip()}"
     return _build_disabled_status(reason)
 
 
