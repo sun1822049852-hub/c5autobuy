@@ -405,6 +405,7 @@ export function useAccountCenterPage({ client }) {
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [remarkDialogAccount, setRemarkDialogAccount] = useState(null);
   const [apiKeyDialogAccount, setApiKeyDialogAccount] = useState(null);
+  const [browserProxyDialogAccount, setBrowserProxyDialogAccount] = useState(null);
   const [proxyDialogAccount, setProxyDialogAccount] = useState(null);
   const [purchaseDrawerState, setPurchaseDrawerState] = useState({
     account: null,
@@ -524,6 +525,9 @@ export function useAccountCenterPage({ client }) {
             if (loginDrawerAccountRef.current?.account_id === accountId) {
               setLoginDrawerAccount(null);
             }
+            setBrowserProxyDialogAccount((current) => (
+              current?.account_id === accountId ? null : current
+            ));
             setPurchaseDrawerState((current) => (
               current.account?.account_id === accountId
                 ? {
@@ -713,6 +717,9 @@ export function useAccountCenterPage({ client }) {
     closeApiKeyDialog() {
       setApiKeyDialogAccount(null);
     },
+    closeBrowserProxyDialog() {
+      setBrowserProxyDialogAccount(null);
+    },
     closeContextMenu() {
       setContextMenu(null);
     },
@@ -725,6 +732,7 @@ export function useAccountCenterPage({ client }) {
       loginTaskStream.reset();
     },
     logsModalState,
+    browserProxyDialogAccount,
     closeProxyDialog() {
       setProxyDialogAccount(null);
     },
@@ -767,6 +775,10 @@ export function useAccountCenterPage({ client }) {
     openLogsModal: logsModalState.onOpen,
     openApiKeyDialog(account) {
       setApiKeyDialogAccount(account);
+      setContextMenu(null);
+    },
+    openBrowserProxyDialog(account) {
+      setBrowserProxyDialogAccount(account);
       setContextMenu(null);
     },
     openContextMenu(account, position) {
@@ -834,6 +846,34 @@ export function useAccountCenterPage({ client }) {
         setApiKeyDialogAccount(null);
         await refreshAccounts();
       }, `已更新 API Key：${getDisplayName(account)}`);
+    },
+    submitBrowserProxy: async (payload) => {
+      const account = browserProxyDialogAccount;
+      if (!account) {
+        return null;
+      }
+
+      const browserProxyChanged = account.browser_proxy_mode !== payload.browser_proxy_mode
+        || (account.browser_proxy_url ?? "") !== (payload.browser_proxy_url ?? "");
+
+      if (!browserProxyChanged) {
+        setBrowserProxyDialogAccount(null);
+        return account;
+      }
+
+      try {
+        await client.updateAccount(account.account_id, buildAccountUpdatePayload(account, payload));
+        await client.clearPurchaseCapability(account.account_id);
+        setBrowserProxyDialogAccount(null);
+        appendModificationLog(`已更新浏览器代理，账号进入未登录状态：${getDisplayName(account)}`);
+        const nextRows = await refreshAccounts();
+        const nextAccount = nextRows.find((row) => row.account_id === account.account_id) ?? account;
+        await runLoginForAccount(nextAccount);
+        return nextAccount;
+      } catch (error) {
+        appendErrorLog(toErrorMessage(error), getErrorMeta(error));
+        return null;
+      }
     },
     submitCreate: async (payload, { startLoginAfterCreate = false } = {}) => {
       const outcome = await handleAction(async () => {

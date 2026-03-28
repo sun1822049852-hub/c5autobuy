@@ -460,6 +460,21 @@ function createFetchHarness() {
       return jsonResponse(rows.find((row) => row.account_id === accountId));
     }
 
+    const clearCapabilityMatch = url.pathname.match(/^\/accounts\/([^/]+)\/purchase-capability\/clear$/);
+    if (clearCapabilityMatch && method === "POST") {
+      const accountId = clearCapabilityMatch[1];
+      rows = rows.map((row) => (
+        row.account_id === accountId
+          ? {
+            ...row,
+            purchase_status_code: "not_logged_in",
+            purchase_status_text: "未登录",
+          }
+          : row
+      ));
+      return jsonResponse(rows.find((row) => row.account_id === accountId));
+    }
+
     const deleteMatch = url.pathname.match(/^\/accounts\/([^/]+)$/);
     if (deleteMatch && method === "DELETE") {
       rows = rows.filter((row) => row.account_id !== deleteMatch[1]);
@@ -845,6 +860,153 @@ describe("account center editing flows", () => {
         ]),
       );
     });
+  });
+
+  it("updates browser proxy from the browser ip dialog", async () => {
+    const harness = createFetchHarness();
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await screen.findByText("账号 A");
+
+    await user.click(screen.getByRole("button", { name: "编辑浏览器 IP 账号 A" }));
+    await screen.findByRole("heading", { name: "浏览器代理设置" });
+    await user.clear(screen.getByLabelText("浏览器代理"));
+    await user.type(screen.getByLabelText("浏览器代理"), "127.0.0.1:9200");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => {
+      expect(harness.calls).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            method: "PATCH",
+            pathname: "/accounts/a-1",
+            body: expect.objectContaining({
+              browser_proxy_mode: "custom",
+              browser_proxy_url: "127.0.0.1:9200",
+            }),
+          }),
+        ]),
+      );
+    });
+    expect(harness.calls).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          method: "POST",
+          pathname: "/accounts/a-1/open-api/sync",
+        }),
+      ]),
+    );
+  });
+
+  it("treats direct in the browser ip dialog as a direct connection", async () => {
+    const harness = createFetchHarness();
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await screen.findByText("账号 B");
+
+    await user.click(screen.getByRole("button", { name: "编辑浏览器 IP 账号 B" }));
+    await screen.findByRole("heading", { name: "浏览器代理设置" });
+    await user.clear(screen.getByLabelText("浏览器代理"));
+    await user.type(screen.getByLabelText("浏览器代理"), "direct");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => {
+      expect(harness.calls).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            method: "PATCH",
+            pathname: "/accounts/a-2",
+            body: expect.objectContaining({
+              browser_proxy_mode: "direct",
+              browser_proxy_url: null,
+            }),
+          }),
+        ]),
+      );
+    });
+  });
+
+  it("clears login state and starts login after browser proxy changes", async () => {
+    const harness = createFetchHarness();
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await screen.findByText("账号 A");
+
+    await user.click(screen.getByRole("button", { name: "编辑浏览器 IP 账号 A" }));
+    await screen.findByRole("heading", { name: "浏览器代理设置" });
+    await user.clear(screen.getByLabelText("浏览器代理"));
+    await user.type(screen.getByLabelText("浏览器代理"), "http://127.0.0.1:9300");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => {
+      expect(harness.calls).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            method: "PATCH",
+            pathname: "/accounts/a-1",
+            body: expect.objectContaining({
+              browser_proxy_mode: "custom",
+              browser_proxy_url: "http://127.0.0.1:9300",
+            }),
+          }),
+          expect.objectContaining({
+            method: "POST",
+            pathname: "/accounts/a-1/purchase-capability/clear",
+            body: {},
+          }),
+          expect.objectContaining({
+            method: "POST",
+            pathname: "/accounts/a-1/login",
+            body: {},
+          }),
+        ]),
+      );
+    });
+  });
+
+  it("does not restart login when browser proxy is unchanged", async () => {
+    const harness = createFetchHarness();
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await screen.findByText("账号 B");
+
+    await user.click(screen.getByRole("button", { name: "编辑浏览器 IP 账号 B" }));
+    await screen.findByRole("heading", { name: "浏览器代理设置" });
+    await user.clear(screen.getByLabelText("浏览器代理"));
+    await user.type(screen.getByLabelText("浏览器代理"), "http://127.0.0.1:9000");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("heading", { name: "浏览器代理设置" })).not.toBeInTheDocument();
+    });
+    expect(harness.calls).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            method: "PATCH",
+            pathname: "/accounts/a-2",
+          }),
+          expect.objectContaining({
+            method: "POST",
+            pathname: "/accounts/a-2/purchase-capability/clear",
+          }),
+          expect.objectContaining({
+            method: "POST",
+            pathname: "/accounts/a-2/login",
+          }),
+      ]),
+    );
   });
 
   it("deletes an account from the context menu after confirmation", async () => {

@@ -326,6 +326,9 @@ export function createAccountCenterClient({
     async updateAccountPurchaseConfig(accountId, payload) {
       return http.patchJson(`/accounts/${accountId}/purchase-config`, payload);
     },
+    async clearPurchaseCapability(accountId) {
+      return http.postJson(`/accounts/${accountId}/purchase-capability/clear`, {});
+    },
     async deleteAccount(accountId) {
       await http.delete(`/accounts/${accountId}`);
     },

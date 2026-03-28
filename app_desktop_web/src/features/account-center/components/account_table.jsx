@@ -55,6 +55,7 @@ function renderBody({
   onApiKeyClick,
   onApiKeyEdit,
   onApiQueryToggle,
+  onBrowserProxyClick,
   onBrowserQueryToggle,
   onNicknameClick,
   onProxyClick,
@@ -167,10 +168,10 @@ function renderBody({
         </td>
         <td>
           <button
-            aria-label={`查看账号代理 ${displayName}`}
+            aria-label={`编辑浏览器 IP ${displayName}`}
             className="account-table__action account-table__action--proxy"
-            disabled
             type="button"
+            onClick={() => onBrowserProxyClick?.(row)}
           >
             <div className="account-table__nickname">
               <span className="account-table__nickname-main">
@@ -205,6 +206,7 @@ export function AccountTable({
   onApiKeyClick,
   onApiKeyEdit,
   onApiQueryToggle,
+  onBrowserProxyClick,
   onBrowserQueryToggle,
   onNicknameClick,
   onProxyClick,
@@ -231,6 +233,7 @@ export function AccountTable({
           onApiKeyClick,
           onApiKeyEdit,
           onApiQueryToggle,
+          onBrowserProxyClick,
           onBrowserQueryToggle,
           onNicknameClick,
           onProxyClick,

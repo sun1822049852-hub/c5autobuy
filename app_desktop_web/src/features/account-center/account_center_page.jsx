@@ -4,6 +4,7 @@ import { AccountLogsModal } from "./components/account_logs_modal.jsx";
 import { AccountTable } from "./components/account_table.jsx";
 import { OverviewCards } from "./components/overview_cards.jsx";
 import { AccountApiKeyDialog } from "./dialogs/account_api_key_dialog.jsx";
+import { AccountBrowserProxyDialog } from "./dialogs/account_browser_proxy_dialog.jsx";
 import { AccountCreateDialog } from "./dialogs/account_create_dialog.jsx";
 import { AccountProxyDialog } from "./dialogs/account_proxy_dialog.jsx";
 import { AccountRemarkDialog } from "./dialogs/account_remark_dialog.jsx";
@@ -17,7 +18,9 @@ export function AccountCenterPage({ client }) {
     activeFilter,
     accountLogs,
     apiKeyDialogAccount,
+    browserProxyDialogAccount,
     closeApiKeyDialog,
+    closeBrowserProxyDialog,
     closeContextMenu,
     closeCreateDialog,
     closeLoginDrawer,
@@ -33,6 +36,7 @@ export function AccountCenterPage({ client }) {
     loadError,
     loginDrawerAccount,
     openApiKeyDialog,
+    openBrowserProxyDialog,
     openAccountOpenApiBindingPage,
     toggleApiQueryMode,
     toggleBrowserQueryMode,
@@ -54,6 +58,7 @@ export function AccountCenterPage({ client }) {
     syncAccountOpenApi,
     startLoginFromDrawer,
     submitApiKey,
+    submitBrowserProxy,
     submitCreate,
     submitProxy,
     submitPurchaseConfig,
@@ -133,6 +138,7 @@ export function AccountCenterPage({ client }) {
           loadError={loadError}
           onApiKeyEdit={openApiKeyDialog}
           onApiQueryToggle={toggleApiQueryMode}
+          onBrowserProxyClick={openBrowserProxyDialog}
           onBrowserQueryToggle={toggleBrowserQueryMode}
           onNicknameClick={openNicknameDialog}
           onProxyClick={openProxyDialog}
@@ -145,6 +151,12 @@ export function AccountCenterPage({ client }) {
       <AccountCreateDialog open={createDialogOpen} onClose={closeCreateDialog} onSubmit={submitCreate} />
       <AccountRemarkDialog account={remarkDialogAccount} open={Boolean(remarkDialogAccount)} onClose={closeRemarkDialog} onSubmit={submitRemark} />
       <AccountApiKeyDialog account={apiKeyDialogAccount} open={Boolean(apiKeyDialogAccount)} onClose={closeApiKeyDialog} onSubmit={submitApiKey} />
+      <AccountBrowserProxyDialog
+        account={browserProxyDialogAccount}
+        open={Boolean(browserProxyDialogAccount)}
+        onClose={closeBrowserProxyDialog}
+        onSubmit={submitBrowserProxy}
+      />
       <AccountProxyDialog
         account={proxyDialogAccount}
         open={Boolean(proxyDialogAccount)}
