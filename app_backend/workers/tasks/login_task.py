@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from app_backend.application.use_cases.create_account import CreateAccountUseCase
 from app_backend.application.services.post_token_inventory_refresh import (
     refresh_inventory_after_token_binding,
 )
@@ -78,6 +79,75 @@ def _normalize_login_result(payload) -> LoginExecutionResult:
     raise TypeError(f"Unsupported login result payload: {type(payload)!r}")
 
 
+def _find_existing_account_by_c5_user_id(repository, *, c5_user_id: str, exclude_account_id: str) -> object | None:
+    normalized_c5_user_id = str(c5_user_id or "").strip()
+    if not normalized_c5_user_id:
+        return None
+    list_accounts = getattr(repository, "list_accounts", None)
+    if not callable(list_accounts):
+        return None
+    for account in list_accounts():
+        candidate_account_id = str(getattr(account, "account_id", "") or "")
+        if candidate_account_id == str(exclude_account_id or ""):
+            continue
+        if str(getattr(account, "c5_user_id", "") or "").strip() == normalized_c5_user_id:
+            return account
+    return None
+
+
+def _is_api_key_only_account(account) -> bool:
+    return bool(str(getattr(account, "api_key", "") or "").strip()) and not bool(
+        str(getattr(account, "c5_user_id", "") or "").strip()
+    ) and not bool(str(getattr(account, "cookie_raw", "") or "").strip())
+
+
+def _create_login_result_account(repository) -> object:
+    return CreateAccountUseCase(repository).execute(
+        remark_name=None,
+        browser_proxy_mode="direct",
+        browser_proxy_url=None,
+        api_proxy_mode="direct",
+        api_proxy_url=None,
+        api_key=None,
+    )
+
+
+def _schedule_open_api_watch(
+    open_api_binding_sync_service,
+    *,
+    final_account_id: str,
+    result: LoginExecutionResult,
+    source_account=None,
+) -> None:
+    if open_api_binding_sync_service is None:
+        return
+    schedule_watch = getattr(open_api_binding_sync_service, "schedule_account_watch", None)
+    if not callable(schedule_watch):
+        return
+
+    debugger_address = result.session_payload.get("debugger_address")
+    source_account_id = None
+    source_api_key = None
+    if source_account is not None and _is_api_key_only_account(source_account):
+        source_account_id = str(getattr(source_account, "account_id", "") or "") or None
+        source_api_key = str(getattr(source_account, "api_key", "") or "").strip() or None
+
+    try:
+        schedule_watch(
+            final_account_id,
+            debugger_address=debugger_address,
+            source_account_id=source_account_id,
+            source_api_key=source_api_key,
+        )
+    except TypeError as exc:
+        if "source_account_id" not in str(exc) and "source_api_key" not in str(exc):
+            raise
+        schedule_watch(
+            final_account_id,
+            debugger_address=debugger_address,
+        )
+
+
 async def run_login_task(
     *,
     task_id: str,
@@ -119,8 +189,8 @@ async def run_login_task(
         result = _normalize_login_result(login_payload)
         capture = result.captured_login
 
-        current_account = repository.get_account(account_id)
-        if current_account is None:
+        source_account = repository.get_account(account_id)
+        if source_account is None:
             if result.staged_bundle_ref is not None:
                 bundle_repository.delete_bundle(result.staged_bundle_ref.bundle_id)
             task_manager.set_error(task_id, "Account not found")
@@ -139,13 +209,13 @@ async def run_login_task(
 
         staged_bundle_id = result.staged_bundle_ref.bundle_id
 
-        if current_account.c5_user_id and current_account.c5_user_id != capture.c5_user_id:
+        if source_account.c5_user_id and source_account.c5_user_id != capture.c5_user_id:
             task_manager.set_pending_conflict(
                 task_id,
                 {
-                    "account_id": current_account.account_id,
-                    "existing_c5_user_id": current_account.c5_user_id,
-                    "existing_c5_nick_name": current_account.c5_nick_name,
+                    "account_id": source_account.account_id,
+                    "existing_c5_user_id": source_account.c5_user_id,
+                    "existing_c5_nick_name": source_account.c5_nick_name,
                     "captured_login": {
                         "c5_user_id": capture.c5_user_id,
                         "c5_nick_name": capture.c5_nick_name,
@@ -162,10 +232,21 @@ async def run_login_task(
             )
             return
 
+        matched_account = _find_existing_account_by_c5_user_id(
+            repository,
+            c5_user_id=capture.c5_user_id,
+            exclude_account_id=account_id,
+        )
+        final_account = matched_account
+        if final_account is None and _is_api_key_only_account(source_account):
+            final_account = _create_login_result_account(repository)
+        if final_account is None:
+            final_account = source_account
+
         task_manager.set_state(task_id, "saving_account")
         now = datetime.now().isoformat(timespec="seconds")
         updated = repository.update_account(
-            account_id,
+            str(getattr(final_account, "account_id", "") or account_id),
             c5_user_id=capture.c5_user_id,
             c5_nick_name=capture.c5_nick_name,
             cookie_raw=capture.cookie_raw,
@@ -175,19 +256,18 @@ async def run_login_task(
             last_error=None,
             updated_at=now,
         )
-        bundle_repository.activate_bundle(staged_bundle_id, account_id=account_id)
+        bundle_repository.activate_bundle(staged_bundle_id, account_id=updated.account_id)
         bundle_activated = True
         refresh_inventory_after_token_binding(
             account=updated,
             purchase_runtime_service=purchase_runtime_service,
         )
-        if open_api_binding_sync_service is not None:
-            schedule_watch = getattr(open_api_binding_sync_service, "schedule_account_watch", None)
-            if callable(schedule_watch):
-                schedule_watch(
-                    account_id,
-                    debugger_address=result.session_payload.get("debugger_address"),
-                )
+        _schedule_open_api_watch(
+            open_api_binding_sync_service,
+            final_account_id=updated.account_id,
+            result=result,
+            source_account=source_account,
+        )
         task_manager.set_result(
             task_id,
             {

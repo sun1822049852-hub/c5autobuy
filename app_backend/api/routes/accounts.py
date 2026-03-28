@@ -246,6 +246,10 @@ async def resolve_login_conflict(
 
 @router.delete("/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_account(account_id: str, request: Request) -> Response:
-    use_case = DeleteAccountUseCase(_repository(request), _bundle_repository(request))
+    use_case = DeleteAccountUseCase(
+        _repository(request),
+        _bundle_repository(request),
+        request.app.state.account_update_hub,
+    )
     use_case.execute(account_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

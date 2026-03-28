@@ -58,6 +58,7 @@ from app_backend.infrastructure.browser_runtime.open_api_binding_sync_service im
 from app_backend.infrastructure.browser_runtime.open_api_binding_page_launcher import (
     OpenApiBindingPageLauncher,
 )
+from app_backend.application.use_cases.delete_account import DeleteAccountUseCase
 from app_backend.workers.manager.task_manager import TaskManager
 
 
@@ -92,6 +93,11 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     open_api_binding_sync_service = OpenApiBindingSyncService(
         account_repository=repository,
         account_update_hub=account_update_hub,
+        account_cleanup_callback=DeleteAccountUseCase(
+            repository,
+            bundle_repository,
+            account_update_hub,
+        ).execute,
         poll_interval_seconds=1.0,
         debug_log_path=database_path.parent / "runtime" / "open_api_binding_debug.runtime.jsonl",
     )

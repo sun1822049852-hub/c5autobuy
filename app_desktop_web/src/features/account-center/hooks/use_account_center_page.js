@@ -271,6 +271,14 @@ function upsertAccountRow(rows, nextRow) {
 }
 
 
+function removeAccountRow(rows, accountId) {
+  if (!accountId) {
+    return rows;
+  }
+  return Array.isArray(rows) ? rows.filter((row) => row.account_id !== accountId) : rows;
+}
+
+
 function buildLoginTaskStatusText(account, taskSnapshot) {
   const displayName = getDisplayName(account);
 
@@ -509,6 +517,27 @@ export function useAccountCenterPage({ client }) {
           }
           const accountId = String(event?.account_id ?? "");
           if (!accountId) {
+            continue;
+          }
+          if (event?.event === "delete_account") {
+            setRows((currentRows) => removeAccountRow(currentRows, accountId));
+            if (loginDrawerAccountRef.current?.account_id === accountId) {
+              setLoginDrawerAccount(null);
+            }
+            setPurchaseDrawerState((current) => (
+              current.account?.account_id === accountId
+                ? {
+                  account: null,
+                  detail: null,
+                  isLoading: false,
+                  isRefreshing: false,
+                  open: false,
+                }
+                : current
+            ));
+            setContextMenu((current) => (
+              current?.account?.account_id === accountId ? null : current
+            ));
             continue;
           }
           const nextAccount = normalizeAccountCenterRow(await client.getAccount(accountId));

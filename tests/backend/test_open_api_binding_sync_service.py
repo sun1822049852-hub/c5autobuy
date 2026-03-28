@@ -7,22 +7,28 @@ from app_backend.domain.models.account import Account
 
 class _MemoryRepository:
     def __init__(self, account: Account) -> None:
-        self._account = account
+        self._accounts = {account.account_id: account}
         self.updates: list[dict[str, object]] = []
 
     def get_account(self, account_id: str) -> Account | None:
-        if self._account.account_id != account_id:
-            return None
-        return self._account
+        return self._accounts.get(account_id)
 
     def update_account(self, account_id: str, **changes):
-        if self._account.account_id != account_id:
+        account = self._accounts.get(account_id)
+        if account is None:
             raise KeyError(account_id)
         self.updates.append(dict(changes))
         for key, value in changes.items():
-            if hasattr(self._account, key):
-                setattr(self._account, key, value)
-        return self._account
+            if hasattr(account, key):
+                setattr(account, key, value)
+        return account
+
+    def create_account(self, account: Account) -> Account:
+        self._accounts[account.account_id] = account
+        return account
+
+    def delete_account(self, account_id: str) -> None:
+        self._accounts.pop(account_id, None)
 
 
 def _build_account() -> Account:
@@ -41,6 +47,28 @@ def _build_account() -> Account:
         purchase_capability_state="bound",
         purchase_pool_state="not_connected",
         last_login_at="2026-03-27T12:00:00",
+        last_error=None,
+        created_at="2026-03-27T12:00:00",
+        updated_at="2026-03-27T12:00:00",
+    )
+
+
+def _build_api_only_source_account(*, account_id: str = "source", api_key: str = "api-key-1") -> Account:
+    return Account(
+        account_id=account_id,
+        default_name="API only",
+        remark_name="API only",
+        browser_proxy_mode="direct",
+        browser_proxy_url=None,
+        api_proxy_mode="direct",
+        api_proxy_url=None,
+        api_key=api_key,
+        c5_user_id=None,
+        c5_nick_name=None,
+        cookie_raw=None,
+        purchase_capability_state="unbound",
+        purchase_pool_state="not_connected",
+        last_login_at=None,
         last_error=None,
         created_at="2026-03-27T12:00:00",
         updated_at="2026-03-27T12:00:00",
@@ -377,4 +405,82 @@ def test_open_api_binding_sync_service_never_issues_backend_partner_fetch(tmp_pa
     content = (tmp_path / "open_api_binding_debug.jsonl").read_text(encoding="utf-8")
     assert "stored_account_snapshot" in content
     assert "backend_fetch" not in content
+
+
+def test_open_api_binding_watch_deletes_source_api_only_account_when_browser_api_key_matches(
+    tmp_path: Path,
+    monkeypatch,
+):
+    import app_backend.infrastructure.browser_runtime.open_api_binding_sync_service as module
+    from app_backend.infrastructure.browser_runtime.open_api_binding_sync_service import OpenApiBindingSyncService
+
+    final_account = _build_account()
+    repository = _MemoryRepository(final_account)
+    repository.create_account(_build_api_only_source_account(api_key="api-key-1"))
+
+    monkeypatch.setattr(
+        module,
+        "navigate_and_capture_open_api_partner_info",
+        lambda debugger_address, url, timeout_seconds=20.0: {
+            "success": True,
+            "data": {"apiInfo": {"key": "api-key-1", "ipAllowList": "39.71.213.149"}},
+        },
+    )
+    monkeypatch.setattr(module, "capture_open_api_partner_info", lambda debugger_address, timeout_seconds=20.0: None)
+    monkeypatch.setattr(module, "poll_open_api_page_partner_info", lambda debugger_address, timeout_seconds=20.0, interval_seconds=1.0: None)
+
+    service = OpenApiBindingSyncService(
+        account_repository=repository,
+        public_ip_fetcher=lambda proxy_url: "39.71.213.149",
+        poll_interval_seconds=0.01,
+        max_wait_seconds=0.05,
+        debug_log_path=tmp_path / "open_api_binding_debug.jsonl",
+    )
+
+    service._watch_account("a-1", "127.0.0.1:9222", "source", "api-key-1")
+
+    updated = repository.get_account("a-1")
+    assert updated is not None
+    assert updated.api_key == "api-key-1"
+    assert repository.get_account("source") is None
+
+
+def test_open_api_binding_watch_keeps_source_api_only_account_when_browser_api_key_differs(
+    tmp_path: Path,
+    monkeypatch,
+):
+    import app_backend.infrastructure.browser_runtime.open_api_binding_sync_service as module
+    from app_backend.infrastructure.browser_runtime.open_api_binding_sync_service import OpenApiBindingSyncService
+
+    final_account = _build_account()
+    repository = _MemoryRepository(final_account)
+    repository.create_account(_build_api_only_source_account(api_key="api-key-1"))
+
+    monkeypatch.setattr(
+        module,
+        "navigate_and_capture_open_api_partner_info",
+        lambda debugger_address, url, timeout_seconds=20.0: {
+            "success": True,
+            "data": {"apiInfo": {"key": "api-key-2", "ipAllowList": "39.71.213.149"}},
+        },
+    )
+    monkeypatch.setattr(module, "capture_open_api_partner_info", lambda debugger_address, timeout_seconds=20.0: None)
+    monkeypatch.setattr(module, "poll_open_api_page_partner_info", lambda debugger_address, timeout_seconds=20.0, interval_seconds=1.0: None)
+
+    service = OpenApiBindingSyncService(
+        account_repository=repository,
+        public_ip_fetcher=lambda proxy_url: "39.71.213.149",
+        poll_interval_seconds=0.01,
+        max_wait_seconds=0.05,
+        debug_log_path=tmp_path / "open_api_binding_debug.jsonl",
+    )
+
+    service._watch_account("a-1", "127.0.0.1:9222", "source", "api-key-1")
+
+    updated = repository.get_account("a-1")
+    source = repository.get_account("source")
+    assert updated is not None
+    assert updated.api_key == "api-key-2"
+    assert source is not None
+    assert source.api_key == "api-key-1"
 

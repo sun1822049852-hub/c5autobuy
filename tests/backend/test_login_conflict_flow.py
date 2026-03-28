@@ -35,6 +35,27 @@ class _RecordingRefreshGateway:
         return self._result
 
 
+class _RecordingOpenApiBindingSyncService:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, str | None]] = []
+
+    def schedule_account_watch(
+        self,
+        account_id: str,
+        debugger_address: str | None = None,
+        source_account_id: str | None = None,
+        source_api_key: str | None = None,
+    ) -> None:
+        self.calls.append(
+            {
+                "account_id": account_id,
+                "debugger_address": debugger_address,
+                "source_account_id": source_account_id,
+                "source_api_key": source_api_key,
+            }
+        )
+
+
 async def _create_account(client, *, remark_name: str, proxy_mode: str = "custom", proxy_url: str | None = None, api_key: str | None = None) -> dict:
     response = await client.post(
         "/accounts",
@@ -448,4 +469,178 @@ async def test_resolve_login_conflict_replace_with_new_account_keeps_success_whe
             "cookie_raw": "foo=bar; NC5_accessToken=token-40; NC5_deviceId=device-40",
         }
     ]
+
+
+async def test_login_task_on_api_only_account_routes_to_existing_c5_account_and_keeps_old_account_config(app, client):
+    class FakeLoginAdapter:
+        async def run_login(self, *, proxy_url: str | None, emit_state=None, account_id=None):
+            await emit_state("waiting_for_scan")
+            await emit_state("captured_login_info")
+            await emit_state("waiting_for_browser_close")
+            return {
+                "c5_user_id": "10001",
+                "c5_nick_name": "命中老账号",
+                "cookie_raw": "foo=bar; NC5_accessToken=token-merge; NC5_deviceId=device-merge",
+                "debugger_address": "127.0.0.1:9222",
+            }
+
+    refresh_gateway = _RecordingRefreshGateway(
+        InventoryRefreshResult.success(
+            inventories=[
+                {"steamId": "steam-merge", "nickname": "新仓", "inventory_num": 0, "inventory_max": 1000},
+            ]
+        )
+    )
+    watch_service = _RecordingOpenApiBindingSyncService()
+    app.state.login_adapter = FakeLoginAdapter()
+    app.state.purchase_runtime_service._inventory_refresh_gateway_factory = lambda: refresh_gateway
+    app.state.open_api_binding_sync_service = watch_service
+
+    existing = await _create_account(
+        client,
+        remark_name="老账号",
+        proxy_mode="custom",
+        proxy_url="http://127.0.0.1:9101",
+        api_key="api-old",
+    )
+    _bind_existing_account(app, existing["account_id"], c5_user_id="10001", c5_nick_name="旧绑定")
+
+    source = await _create_account(
+        client,
+        remark_name="API only 来源",
+        proxy_mode="custom",
+        proxy_url="http://127.0.0.1:9301",
+        api_key="api-source",
+    )
+    await client.patch(
+        f"/accounts/{source['account_id']}/query-modes",
+        json={
+            "browser_query_enabled": False,
+            "browser_query_disabled_reason": "manual_disabled",
+        },
+    )
+
+    start_response = await client.post(f"/accounts/{source['account_id']}/login")
+    task_payload = await _wait_for_task(client, start_response.json()["task_id"], "succeeded")
+
+    assert task_payload["result"]["account_id"] == existing["account_id"]
+    assert app.state.account_repository.get_account(source["account_id"]) is not None
+
+    existing_response = await client.get(f"/accounts/{existing['account_id']}")
+    payload = existing_response.json()
+    assert payload["remark_name"] == "老账号"
+    assert payload["browser_proxy_url"] == "http://127.0.0.1:9101"
+    assert payload["api_proxy_url"] == "http://127.0.0.1:9101"
+    assert payload["api_key"] == "api-old"
+    assert payload["token_enabled"] is True
+    assert payload["browser_query_disabled_reason"] is None
+    assert payload["c5_user_id"] == "10001"
+    assert payload["c5_nick_name"] == "命中老账号"
+    assert payload["cookie_raw"] == "foo=bar; NC5_accessToken=token-merge; NC5_deviceId=device-merge"
+
+    active_bundle = app.state.account_session_bundle_repository.get_active_bundle(existing["account_id"])
+    assert active_bundle is not None
+    assert active_bundle.bundle_id == task_payload["result"]["bundle_id"]
+    assert watch_service.calls == [
+        {
+            "account_id": existing["account_id"],
+            "debugger_address": "127.0.0.1:9222",
+            "source_account_id": source["account_id"],
+            "source_api_key": "api-source",
+        }
+    ]
+    assert refresh_gateway.calls == [
+        {
+            "account_id": existing["account_id"],
+            "cookie_raw": "foo=bar; NC5_accessToken=token-merge; NC5_deviceId=device-merge",
+        }
+    ]
+
+    snapshot = app.state.purchase_runtime_service._inventory_snapshot_repository.get(existing["account_id"])
+    assert snapshot is not None
+    assert snapshot.selected_steam_id == "steam-merge"
+
+
+async def test_login_task_on_api_only_account_creates_new_logged_in_account_without_inheriting_source_config(app, client):
+    class FakeLoginAdapter:
+        async def run_login(self, *, proxy_url: str | None, emit_state=None, account_id=None):
+            await emit_state("waiting_for_scan")
+            await emit_state("captured_login_info")
+            await emit_state("waiting_for_browser_close")
+            return {
+                "c5_user_id": "50005",
+                "c5_nick_name": "新增登录账号",
+                "cookie_raw": "foo=bar; NC5_accessToken=token-new; NC5_deviceId=device-new",
+                "debugger_address": "127.0.0.1:9222",
+            }
+
+    refresh_gateway = _RecordingRefreshGateway(
+        InventoryRefreshResult.success(
+            inventories=[
+                {"steamId": "steam-new", "nickname": "新仓", "inventory_num": 0, "inventory_max": 1000},
+            ]
+        )
+    )
+    watch_service = _RecordingOpenApiBindingSyncService()
+    app.state.login_adapter = FakeLoginAdapter()
+    app.state.purchase_runtime_service._inventory_refresh_gateway_factory = lambda: refresh_gateway
+    app.state.open_api_binding_sync_service = watch_service
+
+    source = await _create_account(
+        client,
+        remark_name="API only 来源",
+        proxy_mode="custom",
+        proxy_url="http://127.0.0.1:9401",
+        api_key="api-source",
+    )
+    await client.patch(
+        f"/accounts/{source['account_id']}/query-modes",
+        json={
+            "browser_query_enabled": False,
+            "browser_query_disabled_reason": "manual_disabled",
+        },
+    )
+
+    start_response = await client.post(f"/accounts/{source['account_id']}/login")
+    task_payload = await _wait_for_task(client, start_response.json()["task_id"], "succeeded")
+
+    new_account_id = task_payload["result"]["account_id"]
+    assert new_account_id != source["account_id"]
+    assert app.state.account_repository.get_account(source["account_id"]) is not None
+
+    accounts_response = await client.get("/accounts")
+    accounts = accounts_response.json()
+    assert len(accounts) == 2
+    payload = next(item for item in accounts if item["account_id"] == new_account_id)
+    assert payload["account_id"] == new_account_id
+    assert payload["remark_name"] is None
+    assert payload["browser_proxy_url"] is None
+    assert payload["api_proxy_url"] is None
+    assert payload["api_key"] is None
+    assert payload["token_enabled"] is True
+    assert payload["browser_query_disabled_reason"] is None
+    assert payload["c5_user_id"] == "50005"
+    assert payload["c5_nick_name"] == "新增登录账号"
+
+    active_bundle = app.state.account_session_bundle_repository.get_active_bundle(new_account_id)
+    assert active_bundle is not None
+    assert active_bundle.bundle_id == task_payload["result"]["bundle_id"]
+    assert watch_service.calls == [
+        {
+            "account_id": new_account_id,
+            "debugger_address": "127.0.0.1:9222",
+            "source_account_id": source["account_id"],
+            "source_api_key": "api-source",
+        }
+    ]
+    assert refresh_gateway.calls == [
+        {
+            "account_id": new_account_id,
+            "cookie_raw": "foo=bar; NC5_accessToken=token-new; NC5_deviceId=device-new",
+        }
+    ]
+
+    snapshot = app.state.purchase_runtime_service._inventory_snapshot_repository.get(new_account_id)
+    assert snapshot is not None
+    assert snapshot.selected_steam_id == "steam-new"
 

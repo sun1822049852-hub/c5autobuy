@@ -881,7 +881,7 @@ class PurchaseRuntimeService:
                     "inventory_max": max_num,
                     "remaining_capacity": remaining,
                     "is_selected": bool(selected_steam_id and steam_id == selected_steam_id),
-                    "is_available": current_num > 0 and remaining >= int(min_capacity_threshold),
+                    "is_available": remaining >= int(min_capacity_threshold),
                 }
             )
         return rows

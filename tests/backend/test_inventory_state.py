@@ -62,3 +62,16 @@ def test_inventory_state_requests_remote_refresh_when_no_local_inventory_left():
     assert transition.requires_remote_refresh is True
     assert transition.became_unavailable is True
     assert state.selected_steam_id is None
+
+
+def test_inventory_state_treats_empty_inventory_with_remaining_capacity_as_available():
+    state = InventoryState(min_capacity_threshold=50)
+
+    state.load_snapshot(
+        [
+            {"steamId": "s-empty", "inventory_num": 0, "inventory_max": 1000},
+        ]
+    )
+
+    assert state.selected_steam_id == "s-empty"
+    assert [item["steamId"] for item in state.available_inventories] == ["s-empty"]

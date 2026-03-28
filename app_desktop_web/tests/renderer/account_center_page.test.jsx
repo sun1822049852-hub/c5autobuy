@@ -329,6 +329,69 @@ describe("account center page", () => {
     window.WebSocket = originalWebSocket;
   });
 
+  it("removes the pushed account row after delete_account websocket updates without refetching detail", async () => {
+    class FakeWebSocket {
+      static instances = [];
+
+      constructor(url) {
+        this.url = url;
+        this.onopen = null;
+        this.onmessage = null;
+        this.onerror = null;
+        this.onclose = null;
+        FakeWebSocket.instances.push(this);
+        queueMicrotask(() => this.onopen?.());
+      }
+
+      emit(payload) {
+        this.onmessage?.({ data: JSON.stringify(payload) });
+      }
+
+      close() {
+        this.onclose?.();
+      }
+    }
+
+    const originalWebSocket = window.WebSocket;
+    window.WebSocket = FakeWebSocket;
+
+    const initialRows = accountRows();
+    const fetchImpl = vi.fn(async (input, options = {}) => {
+      const url = new URL(input);
+      const method = String(options.method ?? "GET").toUpperCase();
+
+      if (url.pathname === "/account-center/accounts" && method === "GET") {
+        return {
+          ok: true,
+          json: async () => initialRows,
+        };
+      }
+
+      throw new Error(`Unhandled request: ${method} ${url.pathname}`);
+    });
+
+    installDesktopApp(fetchImpl);
+    render(<App />);
+
+    await screen.findByText("账号 B");
+    FakeWebSocket.instances[0].emit({
+      account_id: "a-2",
+      event: "delete_account",
+      updated_at: "2026-03-29T12:00:00",
+      payload: {},
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText("账号 B")).not.toBeInTheDocument();
+    });
+    expect(fetchImpl).not.toHaveBeenCalledWith(
+      "http://127.0.0.1:8123/accounts/a-2",
+      expect.anything(),
+    );
+
+    window.WebSocket = originalWebSocket;
+  });
+
   it("renders shell navigation, overview cards, account table and log entry point", async () => {
     installDesktopApp(
       vi.fn().mockResolvedValue({

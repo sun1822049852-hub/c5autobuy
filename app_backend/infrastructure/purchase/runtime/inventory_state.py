@@ -88,6 +88,6 @@ class InventoryState:
             max_num = int(inventory.get("inventory_max", 1000))
             remaining = max_num - current_num
             inventory["remaining_capacity"] = remaining
-            if current_num > 0 and remaining >= self._min_capacity_threshold:
+            if remaining >= self._min_capacity_threshold:
                 self.available_inventories.append(inventory)
         self.available_inventories.sort(key=lambda item: (item.get("remaining_capacity", 0), item.get("steamId", "")))

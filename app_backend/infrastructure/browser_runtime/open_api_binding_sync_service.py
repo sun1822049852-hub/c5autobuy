@@ -28,6 +28,7 @@ class OpenApiBindingSyncService:
         *,
         account_repository,
         account_update_hub=None,
+        account_cleanup_callback=None,
         public_ip_fetcher: PublicIpFetcher | None = None,
         poll_interval_seconds: float = 5.0,
         max_wait_seconds: float = 600.0,
@@ -35,6 +36,7 @@ class OpenApiBindingSyncService:
     ) -> None:
         self._account_repository = account_repository
         self._account_update_hub = account_update_hub
+        self._account_cleanup_callback = account_cleanup_callback
         self._public_ip_fetcher = public_ip_fetcher or self._fetch_public_ip
         self._public_ip_resolver = PublicIpResolver()
         self._poll_interval_seconds = float(poll_interval_seconds)
@@ -43,7 +45,13 @@ class OpenApiBindingSyncService:
         self._active_watches: set[str] = set()
         self._debug_log_path = Path(debug_log_path) if debug_log_path is not None else Path("data/open_api_binding_debug.jsonl")
 
-    def schedule_account_watch(self, account_id: str, debugger_address: str | None = None) -> None:
+    def schedule_account_watch(
+        self,
+        account_id: str,
+        debugger_address: str | None = None,
+        source_account_id: str | None = None,
+        source_api_key: str | None = None,
+    ) -> None:
         normalized_account_id = str(account_id or "").strip()
         if not normalized_account_id:
             return
@@ -54,7 +62,12 @@ class OpenApiBindingSyncService:
 
         thread = threading.Thread(
             target=self._watch_account,
-            args=(normalized_account_id, str(debugger_address or "").strip() or None),
+            args=(
+                normalized_account_id,
+                str(debugger_address or "").strip() or None,
+                str(source_account_id or "").strip() or None,
+                str(source_api_key or "").strip() or None,
+            ),
             name=f"open-api-binding-watch-{normalized_account_id}",
             daemon=True,
         )
@@ -147,12 +160,24 @@ class OpenApiBindingSyncService:
         )
         return {"matched": matched, "updated": True}
 
-    def _watch_account(self, account_id: str, debugger_address: str | None) -> None:
+    def _watch_account(
+        self,
+        account_id: str,
+        debugger_address: str | None,
+        source_account_id: str | None = None,
+        source_api_key: str | None = None,
+    ) -> None:
         deadline = time.time() + self._max_wait_seconds
+        source_cleanup_done = False
         try:
             self._append_debug_log(
                 "watch_started",
-                {"account_id": account_id, "debugger_address": debugger_address},
+                {
+                    "account_id": account_id,
+                    "debugger_address": debugger_address,
+                    "source_account_id": source_account_id,
+                    "source_api_key_present": bool(source_api_key),
+                },
             )
             navigated_open_api = False
             last_browser_payload_signature: str | None = None
@@ -215,6 +240,16 @@ class OpenApiBindingSyncService:
                                     "payload_summary": _summarize_partner_payload(partner_payload),
                                 },
                             )
+                            if (
+                                not source_cleanup_done
+                                and source_account_id
+                                and source_account_id != account_id
+                                and api_key
+                                and source_api_key
+                                and api_key == source_api_key
+                            ):
+                                self._cleanup_source_account(source_account_id)
+                                source_cleanup_done = True
                             if outcome.get("matched"):
                                 self._append_debug_log(
                                     "watch_finished",
@@ -234,6 +269,26 @@ class OpenApiBindingSyncService:
         finally:
             with self._watch_lock:
                 self._active_watches.discard(account_id)
+
+    def _cleanup_source_account(self, source_account_id: str) -> None:
+        callback = self._account_cleanup_callback
+        if callable(callback):
+            try:
+                callback(source_account_id)
+                self._append_debug_log("cleanup_source_account", {"source_account_id": source_account_id, "mode": "callback"})
+                return
+            except Exception:
+                self._append_debug_log("cleanup_source_account_error", {"source_account_id": source_account_id, "mode": "callback"})
+                return
+
+        delete_account = getattr(self._account_repository, "delete_account", None)
+        if not callable(delete_account):
+            return
+        try:
+            delete_account(source_account_id)
+            self._append_debug_log("cleanup_source_account", {"source_account_id": source_account_id, "mode": "repository"})
+        except Exception:
+            self._append_debug_log("cleanup_source_account_error", {"source_account_id": source_account_id, "mode": "repository"})
 
     def _resolve_account_ip(self, account) -> str | None:
         api_proxy_mode = str(getattr(account, "api_proxy_mode", "") or "direct")

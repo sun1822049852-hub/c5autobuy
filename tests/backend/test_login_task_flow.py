@@ -236,3 +236,53 @@ async def test_login_task_keeps_success_when_inventory_refresh_after_token_bindi
     account_response = await client.get(f"/accounts/{account_id}")
     assert account_response.json()["purchase_capability_state"] == "bound"
 
+
+async def test_login_task_auto_selects_empty_inventory_after_token_binding(app, client):
+    class FakeLoginAdapter:
+        async def run_login(self, *, proxy_url: str | None, emit_state=None) -> LoginCapture:
+            await emit_state("waiting_for_scan")
+            await emit_state("captured_login_info")
+            await emit_state("waiting_for_browser_close")
+            return LoginCapture(
+                c5_user_id="90004",
+                c5_nick_name="空仓账号",
+                cookie_raw="foo=bar; NC5_accessToken=token-4; NC5_deviceId=device-4",
+            )
+
+    refresh_gateway = _RecordingRefreshGateway(
+        InventoryRefreshResult.success(
+            inventories=[
+                {"steamId": "steam-empty", "nickname": "空主仓", "inventory_num": 0, "inventory_max": 1000},
+            ]
+        )
+    )
+    app.state.login_adapter = FakeLoginAdapter()
+    app.state.purchase_runtime_service._inventory_refresh_gateway_factory = lambda: refresh_gateway
+
+    create_response = await client.post(
+        "/accounts",
+        json={
+            "remark_name": "空仓也要自动绑定",
+            "browser_proxy_mode": "direct",
+            "browser_proxy_url": None,
+            "api_proxy_mode": "direct",
+            "api_proxy_url": None,
+            "api_key": None,
+        },
+    )
+    account_id = create_response.json()["account_id"]
+
+    start_response = await client.post(f"/accounts/{account_id}/login")
+    task_payload = await _wait_for_task(client, start_response.json()["task_id"], "succeeded")
+
+    assert task_payload["state"] == "succeeded"
+    snapshot = app.state.purchase_runtime_service._inventory_snapshot_repository.get(account_id)
+    assert snapshot is not None
+    assert snapshot.selected_steam_id == "steam-empty"
+
+    account_center_response = await client.get("/account-center/accounts")
+    row = next(item for item in account_center_response.json() if item["account_id"] == account_id)
+    assert row["selected_steam_id"] == "steam-empty"
+    assert row["purchase_status_code"] == "selected_warehouse"
+    assert row["purchase_status_text"] == "空主仓"
+
