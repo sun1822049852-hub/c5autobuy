@@ -41,7 +41,8 @@ node main_ui_account_center_desktop.js
 
 登录补充说明：
 
-- Python backend 启动时会收到 `C5_APP_PRIVATE_DIR`，默认落到 `app_desktop_web/.runtime/app-private`
+- 通过桌面入口 `node main_ui_account_center_desktop.js` 启动时，Python backend 会收到 `C5_APP_PRIVATE_DIR`，默认落到仓库根目录 `.runtime/app-private`
+- 如果单独执行 `python -m app_backend.main` 且未显式设置 `C5_APP_PRIVATE_DIR`，fallback 才会落到 `data/app-private`
 - Python backend 会把账号相关运行时数据落到 `app-private/`，包括账号独立 profile、临时 browser session 和 session bundle
 - 登录成功不再只看扫码跳转，后端会强制 refresh `https://www.c5game.com/user/user/` 做二次验真
 - 登录成功后会为账号写入加密 session bundle；当前仍保留 `cookie_raw` 字段，旧账号与旧运行链可继续兼容
@@ -68,27 +69,6 @@ python -m app_backend.main
 - 如果 `app_desktop_web/dist/index.html` 不存在，启动器会先自动执行一次构建
 - 如果改了 `app_desktop_web/src/` 里的前端代码，重新启动前建议先执行 `npm --prefix app_desktop_web run build`
 
-### 附着真实浏览器做登录验真
-
-推荐在 Windows PowerShell 中直接运行：
-
-```powershell
-.\调试\默认配置附着登录验真.ps1
-```
-
-这个入口会自动：
-
-1. 使用系统默认 Edge `Default` profile 启动带 `9222` 调试端口的真实浏览器
-2. 设置当前 PowerShell 会话的 `C5_EDGE_DEBUGGER_ADDRESS`
-3. 运行 `app_backend.debug.login_e2e_watch`
-
-使用约束：
-
-- 运行前先关闭所有 Edge 窗口
-- 该脚本默认附着 `C:\Users\<用户名>\AppData\Local\Microsoft\Edge\User Data\Default`
-- 登录成功后任务应自动结束，attach 模式无需手动关闭浏览器
-- 如登录成功后任务未自动结束，可在同一浏览器打开或刷新 `https://www.c5game.com/user/user/`
-
 ### 初始化受管 browser-runtime
 
 如果你想让项目优先使用自己的浏览器 runtime，而不是每次去找系统 Edge，可以先把本机现有 Edge 安装导入到 `browser-runtime`：
@@ -96,7 +76,7 @@ python -m app_backend.main
 ```powershell
 .\.venv\Scripts\python.exe -m app_backend.debug.init_managed_browser_runtime `
   --source-path "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe" `
-  --app-private-dir "app_desktop_web\.runtime\app-private" `
+  --app-private-dir ".runtime\app-private" `
   --force
 ```
 
@@ -113,7 +93,7 @@ python -m app_backend.main
 .\.venv\Scripts\python.exe -m app_backend.debug.init_managed_browser_runtime `
   --download-latest `
   --channel Stable `
-  --app-private-dir "app_desktop_web\.runtime\app-private" `
+  --app-private-dir ".runtime\app-private" `
   --force
 ```
 

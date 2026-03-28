@@ -52,6 +52,13 @@ class _FakeProcess:
         return 0
 
 
+class _RelativeRuntime:
+    session_root = Path("data/app-private/browser-sessions")
+
+    def resolve_browser_executable(self) -> Path:
+        return Path("data/app-private/browser-runtime/Application/msedge.exe")
+
+
 async def test_managed_edge_cdp_login_runner_returns_capture_after_token_detected(monkeypatch, tmp_path: Path):
     from app_backend.infrastructure.browser_runtime.login_adapter import ManagedEdgeCdpLoginRunner
 
@@ -335,6 +342,40 @@ async def test_managed_edge_cdp_login_runner_uses_account_profile_store(monkeypa
     assert profile_store.clone_calls == ["account-1"]
     assert profile_store.persist_calls == [("account-1", str(tmp_path / "browser-sessions" / "account-1"))]
     assert any(str(tmp_path / "browser-sessions" / "account-1") in item for item in captured_commands[0])
+
+
+def test_managed_edge_cdp_login_runner_launches_with_absolute_edge_and_session_paths(monkeypatch, tmp_path: Path):
+    from app_backend.infrastructure.browser_runtime.login_adapter import ManagedEdgeCdpLoginRunner
+
+    monkeypatch.chdir(tmp_path)
+    runner = ManagedEdgeCdpLoginRunner(runtime=_RelativeRuntime())
+    process = _FakeProcess()
+    captured_commands: list[list[str]] = []
+
+    monkeypatch.setattr(
+        "app_backend.infrastructure.browser_runtime.login_adapter.subprocess.Popen",
+        lambda command: captured_commands.append(command) or process,
+    )
+    monkeypatch.setattr(
+        "app_backend.infrastructure.browser_runtime.login_adapter.reserve_debug_port",
+        lambda: 9661,
+    )
+    monkeypatch.setattr(
+        "app_backend.infrastructure.browser_runtime.login_adapter.wait_for_debugger_port",
+        lambda port, process: None,
+    )
+
+    runner._launch_browser(
+        session_root=Path("data/app-private/browser-sessions/session-fixed"),
+        proxy_url=None,
+        cleanup_callbacks=[],
+    )
+
+    command = captured_commands[0]
+    assert command[0] == str(
+        (tmp_path / "data" / "app-private" / "browser-runtime" / "Application" / "msedge.exe").resolve()
+    )
+    assert f"--user-data-dir={(tmp_path / 'data' / 'app-private' / 'browser-sessions' / 'session-fixed').resolve()}" in command
 
 
 async def test_managed_edge_cdp_login_runner_persists_profile_after_browser_exit(monkeypatch, tmp_path: Path):

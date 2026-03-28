@@ -10,6 +10,8 @@
 
 **Historical Naming Note:** 本计划撰写时，相关模块仍记在 `app_backend/infrastructure/selenium/` 下；当前代码中这些活跃模块已迁到 `app_backend/infrastructure/browser_runtime/`。文中提到的 `SeleniumLoginAdapter` 现名为 `BrowserLoginAdapter`；`selenium_login_runner.py` 已移除，当前等价主链收口在 `login_adapter.py` 内的 `ManagedEdgeCdpLoginRunner`。
 
+**Historical Branch Note:** 文中提到的 `managed_profile_seed.py` / seed profile / Tampermonkey 预装方案最终没有进入当前活跃实现，现应视为废案记录，不再作为现状说明。
+
 ---
 
 ## File Structure

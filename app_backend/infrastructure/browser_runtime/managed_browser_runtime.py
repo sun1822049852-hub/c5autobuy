@@ -53,7 +53,7 @@ class ManagedBrowserRuntime:
 
     @classmethod
     def from_app_private_dir(cls, app_private_dir: Path) -> "ManagedBrowserRuntime":
-        root = Path(app_private_dir)
+        root = Path(app_private_dir).expanduser().resolve()
         layout = cls(
             app_private_dir=root,
             runtime_root=root / "browser-runtime",

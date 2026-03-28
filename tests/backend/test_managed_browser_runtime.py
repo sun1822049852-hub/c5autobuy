@@ -9,6 +9,19 @@ def _write_text(path: Path, content: str = "x") -> None:
     path.write_text(content, encoding="utf-8")
 
 
+def test_from_app_private_dir_normalizes_relative_paths_to_absolute(tmp_path: Path, monkeypatch):
+    from app_backend.infrastructure.browser_runtime.managed_browser_runtime import ManagedBrowserRuntime
+
+    monkeypatch.chdir(tmp_path)
+
+    runtime = ManagedBrowserRuntime.from_app_private_dir(Path("data/app-private"))
+
+    assert runtime.app_private_dir == tmp_path / "data" / "app-private"
+    assert runtime.runtime_root == tmp_path / "data" / "app-private" / "browser-runtime"
+    assert runtime.session_root == tmp_path / "data" / "app-private" / "browser-sessions"
+    assert runtime.bundle_root == tmp_path / "data" / "app-private" / "account-session-bundles"
+
+
 def test_resolve_browser_executable_prefers_managed_runtime_over_system_install(
     tmp_path: Path,
     monkeypatch,

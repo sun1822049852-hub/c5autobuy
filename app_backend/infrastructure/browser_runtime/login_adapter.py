@@ -196,7 +196,8 @@ class ManagedEdgeCdpLoginRunner:
         proxy_url: str | None,
         cleanup_callbacks: list[Callable[[], None]],
     ) -> tuple[subprocess.Popen[Any], str]:
-        edge_path = str(self._runtime.resolve_browser_executable())
+        edge_path = str(Path(self._runtime.resolve_browser_executable()).expanduser().resolve())
+        session_root = Path(session_root).expanduser().resolve()
         session_root.mkdir(parents=True, exist_ok=True)
         port = reserve_debug_port()
         command = self._build_launch_command(

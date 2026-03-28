@@ -1,5 +1,7 @@
 # Managed Browser Account Session Design
 
+> Historical note (2026-03-28): `ManagedProfileSeed` / `Tampermonkey` was a candidate design branch only and is now considered abandoned. The current active implementation does not provision Tampermonkey or a seed-profile chain; it uses managed runtime plus per-account `browser-profiles` / cloned `browser-sessions`.
+
 ## 1. 目标
 
 在当前前后端分层架构下，把登录链路从“依赖用户本机默认 Edge profile 的 attach 模式”和“临时 Selenium profile 模式”进一步收口成统一的受管浏览器方案，同时满足以下目标：
@@ -43,7 +45,7 @@
 
 - 使用真实 Edge 环境而不是 Selenium 临时 profile
 - 附着到了用户机器上已有的真实浏览器 profile
-- Tampermonkey 与反调试脚本位于该真实 profile 中
+- 当时曾依赖真实 profile 中已有的 Tampermonkey 与反调试脚本
 - attach 模式下跳过了页面监控注入，减少了被站点检测到的概率
 
 这条链解决了当前滑块问题，但仍有结构性缺陷：
@@ -90,7 +92,7 @@
 - 浏览器侧状态不完整，刷新或重新开浏览器时稳定性弱
 - 很可能需要反复补漏 `localStorage` 等状态
 
-### 方案 C：受管浏览器 runtime + 母体 seed profile + 每次克隆新 session + 账号会话资产封存
+### 方案 C：受管浏览器 runtime + 母体 seed profile + 每次克隆新 session + 账号会话资产封存（历史候选，已废弃）
 
 - 程序自带受管浏览器 runtime
 - 程序维护一份不含最终用户登录态的母体 seed profile
@@ -112,7 +114,7 @@
 
 ## 6. 结论
 
-采用方案 C。
+本文当时选择方案 C，但该 `seed profile + Tampermonkey` 分支最终未落地，现已废弃。
 
 原因：
 
@@ -137,7 +139,7 @@
 - 首选“程序自带受管 runtime”
 - 若未来要直接分发 Microsoft Edge 二进制，需要额外做分发与许可确认；当前设计不把某一厂商二进制写死到实现承诺中
 
-### 7.2 `ManagedProfileSeed`
+### 7.2 `ManagedProfileSeed`（历史候选，未实现）
 
 职责：
 

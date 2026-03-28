@@ -51,9 +51,10 @@ class OpenApiBindingPageLauncher:
             session_root = self._profile_store.clone_session(str(account_id))
         else:
             session_root = Path(normalized_profile_root)
+        session_root = session_root.expanduser().resolve()
         session_root.mkdir(parents=True, exist_ok=True)
 
-        edge_path = str(self._runtime.resolve_browser_executable())
+        edge_path = str(Path(self._runtime.resolve_browser_executable()).expanduser().resolve())
         port = reserve_debug_port()
         command = build_edge_launch_command(
             edge_path=edge_path,
