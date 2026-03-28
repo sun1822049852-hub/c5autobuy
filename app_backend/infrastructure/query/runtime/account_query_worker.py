@@ -28,6 +28,7 @@ class AccountQueryWorker:
         self._owns_runtime_account = runtime_account is None
         self._scanner_adapter = scanner_adapter or QueryExecutorRouter()
         self._now_provider = now_provider or time.time
+        self._eligible = True
         self._query_count = 0
         self._found_count = 0
         self._disabled_reason: str | None = None
@@ -41,6 +42,12 @@ class AccountQueryWorker:
     @property
     def account(self) -> object:
         return self._account
+
+    def refresh_account(self, account: object, *, eligible: bool | None = None) -> None:
+        self._account = account
+        self._runtime_account.bind_account(account)
+        if eligible is not None:
+            self._eligible = bool(eligible)
 
     async def run_once(self, query_item: QueryItem) -> QueryExecutionEvent | None:
         now_value = self._now_provider()
@@ -88,7 +95,7 @@ class AccountQueryWorker:
         return {
             "account_id": str(getattr(self._account, "account_id")),
             "active": self._is_active(),
-            "eligible": True,
+            "eligible": self._eligible,
             "query_count": self._query_count,
             "found_count": self._found_count,
             "disabled_reason": self._disabled_reason,
@@ -131,7 +138,7 @@ class AccountQueryWorker:
             self._disabled_reason = error or "query disabled"
 
     def _is_active(self) -> bool:
-        return self._disabled_reason is None
+        return self._eligible and self._disabled_reason is None
 
     def _expire_rate_limit_if_needed(self, now_value: float | datetime) -> None:
         if self._rate_limit_until is None:

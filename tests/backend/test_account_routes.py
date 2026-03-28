@@ -125,8 +125,10 @@ async def test_patch_account_query_modes_updates_api_and_browser_flags(client):
         "/accounts",
         json={
             "remark_name": "账号A",
-            "proxy_mode": "direct",
-            "proxy_url": None,
+            "browser_proxy_mode": "direct",
+            "browser_proxy_url": None,
+            "api_proxy_mode": "direct",
+            "api_proxy_url": None,
             "api_key": None,
         },
     )
@@ -156,8 +158,10 @@ async def test_patch_account_query_modes_supports_partial_browser_toggle(client)
         "/accounts",
         json={
             "remark_name": "账号A",
-            "proxy_mode": "direct",
-            "proxy_url": None,
+            "browser_proxy_mode": "direct",
+            "browser_proxy_url": None,
+            "api_proxy_mode": "direct",
+            "api_proxy_url": None,
             "api_key": "key-123",
         },
     )
@@ -178,6 +182,40 @@ async def test_patch_account_query_modes_supports_partial_browser_toggle(client)
     assert payload["token_enabled"] is False
     assert payload["api_query_disabled_reason"] is None
     assert payload["browser_query_disabled_reason"] == "manual_disabled"
+
+
+async def test_patch_account_query_modes_refreshes_query_runtime_accounts(client, app):
+    class FakeQueryRuntimeService:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def refresh_runtime_accounts(self) -> None:
+            self.calls += 1
+
+    app.state.query_runtime_service = FakeQueryRuntimeService()
+    created = await client.post(
+        "/accounts",
+        json={
+            "remark_name": "账号A",
+            "browser_proxy_mode": "direct",
+            "browser_proxy_url": None,
+            "api_proxy_mode": "direct",
+            "api_proxy_url": None,
+            "api_key": "key-123",
+        },
+    )
+    account_id = created.json()["account_id"]
+
+    response = await client.patch(
+        f"/accounts/{account_id}/query-modes",
+        json={
+            "api_query_enabled": False,
+            "api_query_disabled_reason": "manual_disabled",
+        },
+    )
+
+    assert response.status_code == 200
+    assert app.state.query_runtime_service.calls == 1
 
 
 async def test_clear_purchase_capability_keeps_api_key(client, app):

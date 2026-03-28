@@ -95,7 +95,12 @@ class QueryRuntimeService:
             if not purchase_started:
                 return False, purchase_message
             retained_runtime = self._get_retained_runtime_locked(config_id)
+            latest_accounts: list[object] | None = None
             if retained_runtime is not None:
+                latest_accounts = list(self._account_repository.list_accounts())
+                refresh_accounts = getattr(retained_runtime, "refresh_accounts", None)
+                if callable(refresh_accounts):
+                    refresh_accounts(latest_accounts)
                 runtime_session_id = (
                     self._extract_runtime_session_id(retained_runtime)
                     or self._pending_resume_runtime_session_id
@@ -115,7 +120,7 @@ class QueryRuntimeService:
             if retained_runtime is not None:
                 runtime = retained_runtime
             else:
-                accounts = list(self._account_repository.list_accounts())
+                accounts = latest_accounts if latest_accounts is not None else list(self._account_repository.list_accounts())
                 hit_sink = self._resolve_hit_sink()
                 runtime = self._create_runtime(
                     config,
@@ -143,6 +148,20 @@ class QueryRuntimeService:
         self._close_runtime_accounts()
         self._stop_linked_purchase_runtime()
         return True, "查询任务已停止"
+
+    def refresh_runtime_accounts(self) -> None:
+        latest_accounts = list(self._account_repository.list_accounts())
+        with self._state_lock:
+            runtimes: list[object] = []
+            if self._runtime is not None:
+                runtimes.append(self._runtime)
+            if self._retained_runtime is not None and self._retained_runtime not in runtimes:
+                runtimes.append(self._retained_runtime)
+
+        for runtime in runtimes:
+            refresh_accounts = getattr(runtime, "refresh_accounts", None)
+            if callable(refresh_accounts):
+                refresh_accounts(latest_accounts)
 
     def get_status(self) -> dict[str, object]:
         with self._state_lock:
@@ -1043,6 +1062,10 @@ class QueryRuntimeService:
             )
         except Exception:
             return
+        try:
+            self.refresh_runtime_accounts()
+        except Exception:
+            pass
         sync_service = self._open_api_binding_sync_service
         sync_account_now = getattr(sync_service, "sync_account_now", None) if sync_service is not None else None
         if callable(sync_account_now):

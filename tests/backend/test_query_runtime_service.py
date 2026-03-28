@@ -177,6 +177,38 @@ class FakeAccountRepository:
         return account
 
 
+class CopyingAccountRepository:
+    def __init__(self, accounts=None) -> None:
+        self._accounts = {
+            str(account.account_id): self._clone(account)
+            for account in list(accounts or [])
+        }
+
+    @staticmethod
+    def _clone(account):
+        return SimpleNamespace(**vars(account))
+
+    def list_accounts(self):
+        return [
+            self._clone(account)
+            for account in self._accounts.values()
+        ]
+
+    def get_account(self, account_id: str):
+        account = self._accounts.get(str(account_id))
+        if account is None:
+            return None
+        return self._clone(account)
+
+    def update_account(self, account_id: str, **changes):
+        account = self._accounts.get(str(account_id))
+        if account is None:
+            raise KeyError(account_id)
+        for key, value in changes.items():
+            setattr(account, key, value)
+        return self._clone(account)
+
+
 class FakeRuntime:
     def __init__(self, config, accounts) -> None:
         self.config = config
@@ -459,6 +491,55 @@ def test_query_task_runtime_forwards_preserve_allocation_state_to_mode_runners()
         "fast_api": [False, True],
         "token": [False, True],
     }
+
+
+def test_query_task_runtime_refreshes_accounts_for_mode_runners():
+    from app_backend.infrastructure.query.runtime.query_task_runtime import QueryTaskRuntime
+
+    runner_accounts: dict[str, list[object]] = {}
+
+    class FakeModeRunner:
+        def __init__(self, mode_setting, accounts, *, query_items=None, query_item_scheduler=None) -> None:
+            self.mode_type = mode_setting.mode_type
+            runner_accounts[self.mode_type] = list(accounts)
+
+        def start(self, *, preserve_allocation_state: bool = False) -> None:
+            return
+
+        def stop(self) -> None:
+            return
+
+        def refresh_accounts(self, accounts) -> None:
+            runner_accounts[self.mode_type] = list(accounts)
+
+        def snapshot(self) -> dict[str, object]:
+            return {
+                "mode_type": self.mode_type,
+                "enabled": True,
+                "eligible_account_count": len(runner_accounts[self.mode_type]),
+                "active_account_count": 0,
+                "in_window": True,
+                "next_window_start": None,
+                "next_window_end": None,
+                "query_count": 0,
+                "found_count": 0,
+                "last_error": None,
+                "recent_events": [],
+            }
+
+    runtime = QueryTaskRuntime(
+        build_config("cfg-1"),
+        [build_account("a1", api_key="api-1")],
+        mode_runner_factory=lambda mode_setting, accounts, **kwargs: FakeModeRunner(mode_setting, accounts, **kwargs),
+    )
+
+    refreshed_accounts = [build_account("a1", api_key="api-1", new_api_enabled=False, fast_api_enabled=False)]
+    runtime.refresh_accounts(refreshed_accounts)
+
+    assert all(
+        runner_accounts[mode_type][0].new_api_enabled is False
+        for mode_type in ("new_api", "fast_api", "token")
+    )
 
 
 async def test_query_mode_allocator_spreads_initial_assignments_before_filling_remaining_targets():
@@ -1108,6 +1189,181 @@ def test_runtime_service_reuses_stopped_runtime_for_same_config_restart():
     assert created_runtimes[0].preserve_flags == [False, True]
     assert created_runtimes[0].actual_dedicated_count == 3
     assert snapshot["item_rows"][0]["modes"]["new_api"]["actual_dedicated_count"] == 3
+
+
+def test_runtime_service_refreshes_retained_runtime_accounts_before_same_config_restart():
+    from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
+
+    repository = FakeQueryConfigRepository(build_config("cfg-1"))
+    account_repository = CopyingAccountRepository([build_account("a1", api_key="api-1")])
+    purchase_service = FakePurchaseRuntimeService()
+    created_runtimes: list[FakeRuntime] = []
+
+    class FakeRefreshableRuntime(FakeRuntime):
+        def __init__(self, config, accounts) -> None:
+            super().__init__(config, accounts)
+            self.runtime_session_id = "run-refresh-1"
+            self.refresh_calls: list[list[tuple[str, bool, bool, bool]]] = []
+            created_runtimes.append(self)
+
+        def refresh_accounts(self, accounts) -> None:
+            self.accounts = list(accounts)
+            self.refresh_calls.append(
+                [
+                    (
+                        str(account.account_id),
+                        bool(getattr(account, "new_api_enabled", False)),
+                        bool(getattr(account, "fast_api_enabled", False)),
+                        bool(getattr(account, "token_enabled", False)),
+                    )
+                    for account in self.accounts
+                ]
+            )
+
+        def snapshot(self) -> dict:
+            eligible_new_api = sum(
+                1
+                for account in self.accounts
+                if bool(getattr(account, "api_key", None)) and bool(getattr(account, "new_api_enabled", False))
+            )
+            return {
+                "running": self.started and not self.stopped,
+                "config_id": self.config.config_id,
+                "config_name": self.config.name,
+                "runtime_session_id": self.runtime_session_id,
+                "message": "运行中" if self.started and not self.stopped else "未运行",
+                "modes": {
+                    "new_api": {
+                        "mode_type": "new_api",
+                        "enabled": True,
+                        "eligible_account_count": eligible_new_api,
+                        "active_account_count": eligible_new_api,
+                        "in_window": True,
+                        "next_window_start": None,
+                        "next_window_end": None,
+                        "query_count": 0,
+                        "found_count": 0,
+                        "last_error": None,
+                    }
+                },
+                "group_rows": [],
+                "recent_events": [],
+                "item_rows": [],
+            }
+
+    service = QueryRuntimeService(
+        query_config_repository=repository,
+        account_repository=account_repository,
+        runtime_factory=lambda config, accounts: FakeRefreshableRuntime(config, accounts),
+        purchase_runtime_service=purchase_service,
+    )
+
+    started_first, message_first = service.start(config_id="cfg-1")
+    stopped, stop_message = service.stop()
+    account_repository.update_account(
+        "a1",
+        new_api_enabled=False,
+        fast_api_enabled=False,
+        token_enabled=False,
+        api_query_disabled_reason="ip_invalid",
+    )
+    started_second, message_second = service.start(config_id="cfg-1")
+    snapshot = service.get_status()
+
+    assert started_first is True
+    assert message_first == "查询任务已启动"
+    assert stopped is True
+    assert stop_message == "查询任务已停止"
+    assert started_second is True
+    assert message_second == "查询任务已启动"
+    assert len(created_runtimes) == 1
+    assert created_runtimes[0].refresh_calls == [[("a1", False, False, False)]]
+    assert created_runtimes[0].accounts[0].new_api_enabled is False
+    assert snapshot["modes"]["new_api"]["eligible_account_count"] == 0
+
+
+def test_runtime_service_refreshes_running_runtime_accounts_on_demand():
+    from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
+
+    repository = FakeQueryConfigRepository(build_config("cfg-1"))
+    account_repository = CopyingAccountRepository([build_account("a1", api_key="api-1")])
+    purchase_service = FakePurchaseRuntimeService()
+    created_runtimes: list[FakeRuntime] = []
+
+    class FakeRefreshableRuntime(FakeRuntime):
+        def __init__(self, config, accounts) -> None:
+            super().__init__(config, accounts)
+            self.refresh_calls: list[list[tuple[str, bool, bool, bool]]] = []
+            created_runtimes.append(self)
+
+        def refresh_accounts(self, accounts) -> None:
+            self.accounts = list(accounts)
+            self.refresh_calls.append(
+                [
+                    (
+                        str(account.account_id),
+                        bool(getattr(account, "new_api_enabled", False)),
+                        bool(getattr(account, "fast_api_enabled", False)),
+                        bool(getattr(account, "token_enabled", False)),
+                    )
+                    for account in self.accounts
+                ]
+            )
+
+        def snapshot(self) -> dict:
+            eligible_new_api = sum(
+                1
+                for account in self.accounts
+                if bool(getattr(account, "api_key", None)) and bool(getattr(account, "new_api_enabled", False))
+            )
+            return {
+                "running": self.started and not self.stopped,
+                "config_id": self.config.config_id,
+                "config_name": self.config.name,
+                "message": "运行中" if self.started and not self.stopped else "未运行",
+                "modes": {
+                    "new_api": {
+                        "mode_type": "new_api",
+                        "enabled": True,
+                        "eligible_account_count": eligible_new_api,
+                        "active_account_count": eligible_new_api,
+                        "in_window": True,
+                        "next_window_start": None,
+                        "next_window_end": None,
+                        "query_count": 0,
+                        "found_count": 0,
+                        "last_error": None,
+                    }
+                },
+                "group_rows": [],
+                "recent_events": [],
+                "item_rows": [],
+            }
+
+    service = QueryRuntimeService(
+        query_config_repository=repository,
+        account_repository=account_repository,
+        runtime_factory=lambda config, accounts: FakeRefreshableRuntime(config, accounts),
+        purchase_runtime_service=purchase_service,
+    )
+
+    started, message = service.start(config_id="cfg-1")
+    account_repository.update_account(
+        "a1",
+        new_api_enabled=False,
+        fast_api_enabled=False,
+        token_enabled=False,
+        api_query_disabled_reason="manual_disabled",
+    )
+
+    service.refresh_runtime_accounts()
+    snapshot = service.get_status()
+
+    assert started is True
+    assert message == "查询任务已启动"
+    assert len(created_runtimes) == 1
+    assert created_runtimes[0].refresh_calls == [[("a1", False, False, False)]]
+    assert snapshot["modes"]["new_api"]["eligible_account_count"] == 0
 
 
 def test_runtime_service_clears_retained_runtime_when_switching_to_another_config():

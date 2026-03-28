@@ -108,6 +108,13 @@ class QueryTaskRuntime:
         self._stopped_at = datetime.now().isoformat(timespec="seconds")
         self._background_thread = None
 
+    def refresh_accounts(self, accounts: list[object]) -> None:
+        self._accounts = list(accounts)
+        for runner in self._mode_runners:
+            refresh_accounts = getattr(runner, "refresh_accounts", None)
+            if callable(refresh_accounts):
+                refresh_accounts(self._accounts)
+
     def apply_query_item_runtime(self, *, config: QueryConfig, query_item_id: str) -> None:
         normalized_item_id = str(query_item_id or "")
         target_item = next(

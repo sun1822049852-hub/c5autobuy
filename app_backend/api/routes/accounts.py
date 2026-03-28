@@ -118,6 +118,13 @@ async def update_account_query_modes(
         )
     except KeyError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found") from exc
+    query_runtime_service = getattr(request.app.state, "query_runtime_service", None)
+    refresh_runtime_accounts = getattr(query_runtime_service, "refresh_runtime_accounts", None)
+    if callable(refresh_runtime_accounts):
+        try:
+            refresh_runtime_accounts()
+        except Exception:
+            pass
     return AccountResponse.model_validate(account)
 
 

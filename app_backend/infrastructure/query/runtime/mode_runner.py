@@ -104,6 +104,25 @@ class ModeRunner:
         self._has_run_cycle = False
         self._workers = []
 
+    def refresh_accounts(self, accounts: list[object]) -> None:
+        self._accounts = list(accounts)
+        latest_by_account_id = {
+            str(getattr(account, "account_id", "") or ""): account
+            for account in self._accounts
+        }
+        for worker in self._workers:
+            worker_account = getattr(worker, "account", None)
+            account_id = str(getattr(worker_account, "account_id", "") or "")
+            if not account_id:
+                continue
+            latest_account = latest_by_account_id.get(account_id, worker_account)
+            refresh_account = getattr(worker, "refresh_account", None)
+            if callable(refresh_account):
+                refresh_account(
+                    latest_account,
+                    eligible=self._is_eligible_account(latest_account),
+                )
+
     def apply_query_item_runtime(self, query_item: QueryItem) -> bool:
         item_id = str(query_item.query_item_id)
         applied = False

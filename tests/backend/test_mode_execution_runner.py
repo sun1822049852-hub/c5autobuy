@@ -176,6 +176,48 @@ def test_mode_runner_ignores_removed_disabled_flag_and_keeps_purchase_disabled_a
     assert snapshot["active_account_count"] == 0
 
 
+def test_mode_runner_refresh_accounts_marks_existing_worker_inactive_when_account_becomes_ineligible():
+    from app_backend.infrastructure.query.runtime.mode_runner import ModeRunner
+
+    refresh_calls: list[tuple[str, bool]] = []
+
+    class FakeWorker:
+        def __init__(self, account: Account) -> None:
+            self.account = account
+            self.active = True
+
+        def refresh_account(self, account: Account, *, eligible: bool | None = None) -> None:
+            self.account = account
+            self.active = bool(eligible)
+            refresh_calls.append((self.account.account_id, bool(eligible)))
+
+        def snapshot(self) -> dict[str, object]:
+            return {
+                "account_id": self.account.account_id,
+                "active": self.active,
+                "eligible": self.active,
+                "disabled_reason": None,
+                "last_query_at": None,
+                "last_success_at": None,
+                "last_error": None,
+            }
+
+    runner = ModeRunner(
+        build_mode("new_api"),
+        [build_account("a1", api_key="api-1")],
+        query_items=[build_item("1380979899390261111")],
+        worker_factory=lambda mode_type, account: FakeWorker(account),
+    )
+
+    runner.start()
+    runner.refresh_accounts([build_account("a1", api_key="api-1", new_api_enabled=False, fast_api_enabled=False)])
+    snapshot = runner.snapshot()
+
+    assert refresh_calls == [("a1", False)]
+    assert snapshot["eligible_account_count"] == 0
+    assert snapshot["active_account_count"] == 0
+
+
 async def test_mode_runner_dispatches_one_item_per_active_worker():
     from app_backend.infrastructure.query.runtime.mode_runner import ModeRunner
     from app_backend.infrastructure.query.runtime.runtime_events import QueryExecutionEvent
