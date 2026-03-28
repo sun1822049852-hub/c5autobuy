@@ -32,6 +32,8 @@ class OpenApiBindingPageLauncher:
         self._runtime = runtime
         self._profile_store = profile_store
         self._debug_log_path = Path(debug_log_path) if debug_log_path is not None else Path("data/runtime/open_api_binding_page_launcher.runtime.jsonl")
+        self._launch_lock = threading.Lock()
+        self._active_launches: dict[str, dict[str, object]] = {}
 
     def launch(
         self,
@@ -45,6 +47,24 @@ class OpenApiBindingPageLauncher:
         normalized_profile_root = str(profile_root or "").strip()
         if not normalized_profile_root:
             raise RuntimeError("当前账号缺少可复用登录会话，无法打开 API 绑定页")
+        normalized_account_id = str(account_id or "").strip()
+        if normalized_account_id:
+            with self._launch_lock:
+                active_launch = self._active_launches.get(normalized_account_id)
+                active_process = active_launch.get("process") if isinstance(active_launch, dict) else None
+                if active_process is not None and active_process.poll() is None:
+                    self._append_debug_log(
+                        "launch_reused",
+                        {
+                            "account_id": normalized_account_id,
+                            "debugger_address": active_launch.get("debugger_address"),
+                        },
+                    )
+                    return {
+                        "open_api_url": str(active_launch.get("open_api_url") or self.OPEN_API_URL),
+                        "debugger_address": str(active_launch.get("debugger_address") or ""),
+                    }
+                self._active_launches.pop(normalized_account_id, None)
 
         cleanup_callbacks: list = []
         if self._profile_store is not None and str(account_id or "").strip():
@@ -69,6 +89,13 @@ class OpenApiBindingPageLauncher:
         browser_process = subprocess.Popen(command)
         cleanup_callbacks.append(lambda process=browser_process: terminate_process(process))
         debugger_address = f"127.0.0.1:{port}"
+        if normalized_account_id:
+            with self._launch_lock:
+                self._active_launches[normalized_account_id] = {
+                    "process": browser_process,
+                    "debugger_address": debugger_address,
+                    "open_api_url": self.OPEN_API_URL,
+                }
 
         self._append_debug_log(
             "launch_started",
@@ -111,6 +138,11 @@ class OpenApiBindingPageLauncher:
             )
             terminate_process(browser_process)
             self._run_cleanup_callbacks(cleanup_callbacks)
+            if normalized_account_id:
+                with self._launch_lock:
+                    active_launch = self._active_launches.get(normalized_account_id)
+                    if isinstance(active_launch, dict) and active_launch.get("process") is browser_process:
+                        self._active_launches.pop(normalized_account_id, None)
             raise
 
     def _schedule_watch(
@@ -141,6 +173,12 @@ class OpenApiBindingPageLauncher:
             while process is not None and process.poll() is None:
                 time.sleep(1.0)
             self._run_cleanup_callbacks(cleanup_callbacks)
+            normalized_account_id = str(account_id or "").strip()
+            if normalized_account_id:
+                with self._launch_lock:
+                    active_launch = self._active_launches.get(normalized_account_id)
+                    if isinstance(active_launch, dict) and active_launch.get("process") is process:
+                        self._active_launches.pop(normalized_account_id, None)
             if remove_session_root and self._profile_store is not None and str(account_id or "").strip():
                 try:
                     self._profile_store.persist_session(str(account_id), session_root)

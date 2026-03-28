@@ -218,6 +218,64 @@ def test_open_api_binding_watch_keeps_refreshing_browser_allow_list_until_ip_mat
     assert updated.fast_api_enabled is False
 
 
+def test_open_api_binding_watch_keeps_syncing_after_initial_match_to_capture_allow_list_removal(tmp_path: Path, monkeypatch):
+    import app_backend.infrastructure.browser_runtime.open_api_binding_sync_service as module
+    from app_backend.infrastructure.browser_runtime.open_api_binding_sync_service import OpenApiBindingSyncService
+
+    account = _build_account()
+    account.browser_proxy_mode = "direct"
+    account.browser_proxy_url = None
+    account.api_proxy_mode = "direct"
+    account.api_proxy_url = None
+    repository = _MemoryRepository(account)
+    page_payloads = iter([
+        {
+            "success": True,
+            "data": {
+                "apiInfo": {
+                    "key": "api-key-1",
+                    "ipAllowList": "36.138.220.178, 39.71.213.149",
+                }
+            },
+        },
+        {
+            "success": True,
+            "data": {
+                "apiInfo": {
+                    "key": "api-key-1",
+                    "ipAllowList": "39.71.213.149",
+                }
+            },
+        },
+    ])
+    monkeypatch.setattr(
+        module,
+        "navigate_and_capture_open_api_partner_info",
+        lambda debugger_address, url, timeout_seconds=20.0: next(page_payloads),
+    )
+    monkeypatch.setattr(module, "capture_open_api_partner_info", lambda debugger_address, timeout_seconds=20.0: None)
+    monkeypatch.setattr(
+        module,
+        "poll_open_api_page_partner_info",
+        lambda debugger_address, timeout_seconds=20.0, interval_seconds=1.0: next(page_payloads, None),
+    )
+
+    service = OpenApiBindingSyncService(
+        account_repository=repository,
+        public_ip_fetcher=lambda proxy_url: "39.71.213.149",
+        poll_interval_seconds=0.01,
+        max_wait_seconds=0.05,
+        debug_log_path=tmp_path / "open_api_binding_debug.jsonl",
+    )
+
+    service._watch_account("a-1", "127.0.0.1:9222")
+
+    updated = repository.get_account("a-1")
+    assert updated is not None
+    assert updated.api_key == "api-key-1"
+    assert updated.api_ip_allow_list == "39.71.213.149"
+
+
 def test_open_api_binding_sync_service_writes_api_key_before_public_ip_fetch():
     from app_backend.infrastructure.browser_runtime.open_api_binding_sync_service import OpenApiBindingSyncService
 

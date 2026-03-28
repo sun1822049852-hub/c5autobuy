@@ -497,6 +497,15 @@ export function useAccountCenterPage({ client }) {
     loginDrawerAccountRef.current = loginDrawerAccount;
   }, [loginDrawerAccount]);
 
+  useEffect(() => {
+    setProxyDialogAccount((current) => {
+      if (!current) {
+        return current;
+      }
+      return rows.find((row) => row.account_id === current.account_id) ?? current;
+    });
+  }, [rows]);
+
   const overviewCards = useMemo(() => buildOverviewCards(rows), [rows]);
   const filteredRows = useMemo(() => rows.filter((row) => (
     matchesFilter(row, uiState.activeFilter) && matchesSearch(row, uiState.searchTerm)

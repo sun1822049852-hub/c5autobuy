@@ -12,6 +12,7 @@ from app_backend.infrastructure.browser_runtime.cdp_session_reader import (
     capture_open_api_partner_info,
     navigate_and_capture_open_api_partner_info,
     poll_open_api_page_partner_info,
+    select_target,
 )
 from app_backend.infrastructure.network import PublicIpResolver
 
@@ -250,13 +251,17 @@ class OpenApiBindingSyncService:
                             ):
                                 self._cleanup_source_account(source_account_id)
                                 source_cleanup_done = True
-                            if outcome.get("matched"):
-                                self._append_debug_log(
-                                    "watch_finished",
-                                    {"account_id": account_id, "reason": "matched_from_browser"},
-                                )
-                                return
                 if browser_payload_seen:
+                    time.sleep(self._poll_interval_seconds)
+                    continue
+                if debugger_address and navigated_open_api:
+                    if not _debugger_target_available(debugger_address):
+                        self.sync_account_now(account_id, final=True)
+                        self._append_debug_log(
+                            "watch_finished",
+                            {"account_id": account_id, "reason": "browser_closed_final_sync"},
+                        )
+                        return
                     time.sleep(self._poll_interval_seconds)
                     continue
                 outcome = self.sync_account_now(account_id, final=False)
@@ -342,6 +347,17 @@ def _build_opener(proxy_url: str | None):
             "https": proxy,
         })
     )
+
+
+def _debugger_target_available(debugger_address: str | None) -> bool:
+    normalized = str(debugger_address or "").strip()
+    if not normalized:
+        return False
+    try:
+        select_target(normalized)
+    except Exception:
+        return False
+    return True
 
 
 def _has_access_token(cookie_raw: str | None) -> bool:

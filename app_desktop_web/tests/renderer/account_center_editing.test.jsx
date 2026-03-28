@@ -29,6 +29,7 @@ function buildRows() {
       api_proxy_mode: "direct",
       api_proxy_url: null,
       api_proxy_display: "39.71.213.149",
+      api_ip_allow_list: "39.71.213.149",
       api_public_ip: "39.71.213.149",
       purchase_status_code: "selected_warehouse",
       purchase_status_text: "steam-1",
@@ -53,6 +54,7 @@ function buildRows() {
       api_proxy_mode: "custom",
       api_proxy_url: "http://127.0.0.1:9000",
       api_proxy_display: "http://127.0.0.1:9000",
+      api_ip_allow_list: null,
       api_public_ip: "127.0.0.1",
       purchase_status_code: "not_logged_in",
       purchase_status_text: "未登录",
@@ -77,6 +79,7 @@ function buildRows() {
       api_proxy_mode: "custom",
       api_proxy_url: "socks5://127.0.0.1:9900",
       api_proxy_display: "socks5://127.0.0.1:9900",
+      api_ip_allow_list: "39.71.213.149",
       api_public_ip: "39.71.213.149",
       purchase_status_code: "selected_warehouse",
       purchase_status_text: "steam-3",
@@ -492,6 +495,9 @@ function createFetchHarness() {
   return {
     calls,
     fetchImpl,
+    setRows(updater) {
+      rows = typeof updater === "function" ? updater(rows) : updater;
+    },
   };
 }
 
@@ -859,6 +865,35 @@ describe("account center editing flows", () => {
           }),
         ]),
       );
+    });
+  });
+
+  it("refreshes the open api ip dialog when whitelist rows change", async () => {
+    const harness = createFetchHarness();
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await screen.findByText("账号 A");
+
+    await user.click(screen.getByRole("button", { name: "编辑API IP 账号 A" }));
+    const dialog = await screen.findByRole("dialog", { name: "API IP 设置" });
+    expect(within(dialog).getByRole("note")).toHaveTextContent("39.71.213.149");
+
+    harness.setRows((currentRows) => currentRows.map((row) => (
+      row.account_id === "a-1"
+        ? {
+          ...row,
+          api_ip_allow_list: "36.138.220.178, 39.71.213.149",
+        }
+        : row
+    )));
+
+    await user.click(screen.getByRole("button", { name: "刷新" }));
+
+    await waitFor(() => {
+      expect(within(dialog).getByRole("note")).toHaveTextContent("36.138.220.178, 39.71.213.149");
     });
   });
 
