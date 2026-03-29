@@ -9,8 +9,10 @@ def build_account(account_id: str, default_name: str) -> Account:
         account_id=account_id,
         default_name=default_name,
         remark_name=None,
-        proxy_mode="direct",
-        proxy_url=None,
+        browser_proxy_mode="direct",
+        browser_proxy_url=None,
+        api_proxy_mode="direct",
+        api_proxy_url=None,
         api_key=None,
         c5_user_id=None,
         c5_nick_name=None,
@@ -47,13 +49,16 @@ def test_repository_can_update_account(tmp_path):
     updated = repository.update_account(
         "a1",
         remark_name="新备注",
-        proxy_mode="custom",
-        proxy_url="http://127.0.0.1:8080",
+        browser_proxy_mode="custom",
+        browser_proxy_url="http://127.0.0.1:8080",
+        api_proxy_mode="custom",
+        api_proxy_url="http://127.0.0.1:8080",
         api_key="abc123",
     )
 
     assert updated.remark_name == "新备注"
-    assert updated.proxy_url == "http://127.0.0.1:8080"
+    assert updated.browser_proxy_url == "http://127.0.0.1:8080"
+    assert updated.api_proxy_url == "http://127.0.0.1:8080"
     assert updated.api_key == "abc123"
 
 

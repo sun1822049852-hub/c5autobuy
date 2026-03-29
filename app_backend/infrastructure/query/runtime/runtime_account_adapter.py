@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import unquote
@@ -79,7 +80,7 @@ class RuntimeAccountAdapter:
     async def get_global_session(self, force_new: bool = False):
         if not self.login_status:
             return None
-        if force_new or self._global_session is None or self._global_session.closed:
+        if force_new or self._session_requires_refresh(self._global_session):
             await self.close_global_session()
             self._global_session = self._create_session(
                 limit=30,
@@ -92,7 +93,7 @@ class RuntimeAccountAdapter:
     async def get_api_session(self, force_new: bool = False):
         if not self.has_api_key():
             return None
-        if force_new or self._api_session is None or self._api_session.closed:
+        if force_new or self._session_requires_refresh(self._api_session):
             await self.close_api_session()
             self._api_session = self._create_session(
                 limit=15,
@@ -103,13 +104,11 @@ class RuntimeAccountAdapter:
         return self._api_session
 
     async def close_global_session(self) -> None:
-        if self._global_session is not None and not self._global_session.closed:
-            await self._global_session.close()
+        await self._close_session(self._global_session)
         self._global_session = None
 
     async def close_api_session(self) -> None:
-        if self._api_session is not None and not self._api_session.closed:
-            await self._api_session.close()
+        await self._close_session(self._api_session)
         self._api_session = None
 
     async def handle_account_not_login(self, account_id: str) -> None:
@@ -154,6 +153,66 @@ class RuntimeAccountAdapter:
             if part.key == key and part.value:
                 return part.value
         return None
+
+    @classmethod
+    def _session_requires_refresh(cls, session) -> bool:
+        if session is None:
+            return True
+        if getattr(session, "closed", False):
+            return True
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return False
+        session_loop = cls._session_loop(session)
+        if session_loop is None:
+            return False
+        if cls._loop_is_closed(session_loop):
+            return True
+        return session_loop is not current_loop
+
+    @classmethod
+    async def _close_session(cls, session) -> None:
+        if session is None or getattr(session, "closed", False):
+            return
+        session_loop = cls._session_loop(session)
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
+
+        if session_loop is not None and current_loop is not None and session_loop is not current_loop:
+            if cls._loop_is_closed(session_loop):
+                return
+            is_running = getattr(session_loop, "is_running", None)
+            if callable(is_running) and is_running():
+                try:
+                    future = asyncio.run_coroutine_threadsafe(session.close(), session_loop)
+                    future.result(timeout=1.0)
+                except Exception:
+                    return
+            return
+
+        try:
+            await session.close()
+        except RuntimeError as exc:
+            if "Event loop is closed" in str(exc):
+                return
+            raise
+
+    @staticmethod
+    def _session_loop(session):
+        return getattr(session, "_loop", None)
+
+    @staticmethod
+    def _loop_is_closed(loop) -> bool:
+        is_closed = getattr(loop, "is_closed", None)
+        if not callable(is_closed):
+            return False
+        try:
+            return bool(is_closed())
+        except Exception:
+            return False
 
     def _parse_cookie_parts(self) -> list[_CookiePart]:
         cookie_raw = getattr(self._account, "cookie_raw", None) or ""

@@ -9,8 +9,10 @@ def build_account(account_id: str, default_name: str) -> Account:
         account_id=account_id,
         default_name=default_name,
         remark_name=None,
-        proxy_mode="direct",
-        proxy_url=None,
+        browser_proxy_mode="direct",
+        browser_proxy_url=None,
+        api_proxy_mode="direct",
+        api_proxy_url=None,
         api_key=None,
         c5_user_id=None,
         c5_nick_name=None,
@@ -49,8 +51,10 @@ async def test_query_mode_switches_are_saved_as_account_level_preferences(client
         "/accounts",
         json={
             "remark_name": "账号A",
-            "proxy_mode": "direct",
-            "proxy_url": None,
+            "browser_proxy_mode": "direct",
+            "browser_proxy_url": None,
+            "api_proxy_mode": "direct",
+            "api_proxy_url": None,
             "api_key": None,
         },
     )
@@ -78,8 +82,10 @@ async def test_query_mode_reenable_clears_manual_disable_reasons(client):
         "/accounts",
         json={
             "remark_name": "账号A",
-            "proxy_mode": "direct",
-            "proxy_url": None,
+            "browser_proxy_mode": "direct",
+            "browser_proxy_url": None,
+            "api_proxy_mode": "direct",
+            "api_proxy_url": None,
             "api_key": "key-123",
         },
     )

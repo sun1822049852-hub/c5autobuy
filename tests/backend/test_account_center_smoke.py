@@ -60,25 +60,35 @@ async def test_account_center_smoke_flow(app, client):
     login_response = await client.post(f"/accounts/{account_id}/login")
     assert login_response.status_code == 202
     task_payload = await _wait_for_task(client, login_response.json()["task_id"], "succeeded")
-    assert task_payload["result"]["account_id"] == account_id
+    final_account_id = task_payload["result"]["account_id"]
+    assert final_account_id != account_id
 
-    detail_response = await client.get(f"/accounts/{account_id}")
+    source_response = await client.get(f"/accounts/{account_id}")
+    assert source_response.status_code == 200
+    source_payload = source_response.json()
+    assert source_payload["api_key"] == "updated-api"
+    assert source_payload["purchase_capability_state"] == "unbound"
+    assert source_payload["c5_user_id"] is None
+
+    detail_response = await client.get(f"/accounts/{final_account_id}")
     assert detail_response.status_code == 200
     detail_payload = detail_response.json()
-    assert detail_payload["api_key"] == "updated-api"
+    assert detail_payload["api_key"] is None
     assert detail_payload["purchase_capability_state"] == "bound"
     assert detail_payload["purchase_pool_state"] == "not_connected"
     assert detail_payload["c5_user_id"] == "70007"
 
-    clear_response = await client.post(f"/accounts/{account_id}/purchase-capability/clear")
+    clear_response = await client.post(f"/accounts/{final_account_id}/purchase-capability/clear")
     assert clear_response.status_code == 200
     cleared_payload = clear_response.json()
-    assert cleared_payload["api_key"] == "updated-api"
+    assert cleared_payload["api_key"] is None
     assert cleared_payload["purchase_capability_state"] == "unbound"
     assert cleared_payload["c5_user_id"] is None
 
     delete_response = await client.delete(f"/accounts/{account_id}")
     assert delete_response.status_code == 204
+    final_delete_response = await client.delete(f"/accounts/{final_account_id}")
+    assert final_delete_response.status_code == 204
 
     list_response = await client.get("/accounts")
     assert list_response.status_code == 200

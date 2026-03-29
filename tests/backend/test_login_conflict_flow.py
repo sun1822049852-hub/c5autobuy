@@ -8,6 +8,12 @@ from app_backend.infrastructure.purchase.runtime.runtime_events import Inventory
 from app_backend.infrastructure.browser_runtime.login_adapter import LoginCapture
 
 
+class _NoopAccountBalanceService:
+    async def refresh_after_login(self, account_id: str, *, wait_for_api_key: bool = True) -> dict:
+        return {"account_id": account_id, "wait_for_api_key": wait_for_api_key}
+
+
+
 async def _wait_for_task(client, task_id: str, target_state: str) -> dict:
     for _ in range(50):
         response = await client.get(f"/tasks/{task_id}")
@@ -98,6 +104,7 @@ async def test_login_task_with_same_c5_user_updates_existing_account(app, client
             )
 
     app.state.login_adapter = FakeLoginAdapter()
+    app.state.account_balance_service = _NoopAccountBalanceService()
     account = await _create_account(
         client,
         remark_name="原账号",
@@ -137,6 +144,7 @@ async def test_login_task_enters_conflict_state_for_different_c5_user(app, clien
             )
 
     app.state.login_adapter = FakeLoginAdapter()
+    app.state.account_balance_service = _NoopAccountBalanceService()
     account = await _create_account(
         client,
         remark_name="旧账号",
@@ -176,6 +184,7 @@ async def test_resolve_login_conflict_create_new_account_keeps_old_account(app, 
             )
 
     app.state.login_adapter = FakeLoginAdapter()
+    app.state.account_balance_service = _NoopAccountBalanceService()
     account = await _create_account(
         client,
         remark_name="保留旧账号",
@@ -236,6 +245,7 @@ async def test_resolve_login_conflict_cancel_discards_staged_bundle(app, client)
             )
 
     app.state.login_adapter = FakeLoginAdapter()
+    app.state.account_balance_service = _NoopAccountBalanceService()
     account = await _create_account(
         client,
         remark_name="取消旧账号",
@@ -283,6 +293,7 @@ async def test_resolve_login_conflict_create_new_account_refreshes_inventory_whe
         )
     )
     app.state.login_adapter = FakeLoginAdapter()
+    app.state.account_balance_service = _NoopAccountBalanceService()
     app.state.purchase_runtime_service._inventory_refresh_gateway_factory = lambda: refresh_gateway
     account = await _create_account(
         client,
@@ -330,6 +341,7 @@ async def test_resolve_login_conflict_replace_with_new_account_recreates_account
             )
 
     app.state.login_adapter = FakeLoginAdapter()
+    app.state.account_balance_service = _NoopAccountBalanceService()
     account = await _create_account(
         client,
         remark_name="将被替换",
@@ -381,6 +393,7 @@ async def test_resolve_login_conflict_replace_with_new_account_deletes_old_activ
             )
 
     app.state.login_adapter = FakeLoginAdapter()
+    app.state.account_balance_service = _NoopAccountBalanceService()
     account = await _create_account(
         client,
         remark_name="将被替换",
@@ -439,6 +452,7 @@ async def test_resolve_login_conflict_replace_with_new_account_keeps_success_whe
 
     refresh_gateway = _RecordingRefreshGateway(RuntimeError("inventory refresh boom"))
     app.state.login_adapter = FakeLoginAdapter()
+    app.state.account_balance_service = _NoopAccountBalanceService()
     app.state.purchase_runtime_service._inventory_refresh_gateway_factory = lambda: refresh_gateway
     account = await _create_account(
         client,
@@ -493,6 +507,7 @@ async def test_login_task_on_api_only_account_routes_to_existing_c5_account_and_
     )
     watch_service = _RecordingOpenApiBindingSyncService()
     app.state.login_adapter = FakeLoginAdapter()
+    app.state.account_balance_service = _NoopAccountBalanceService()
     app.state.purchase_runtime_service._inventory_refresh_gateway_factory = lambda: refresh_gateway
     app.state.open_api_binding_sync_service = watch_service
 
@@ -583,6 +598,7 @@ async def test_login_task_on_api_only_account_creates_new_logged_in_account_with
     )
     watch_service = _RecordingOpenApiBindingSyncService()
     app.state.login_adapter = FakeLoginAdapter()
+    app.state.account_balance_service = _NoopAccountBalanceService()
     app.state.purchase_runtime_service._inventory_refresh_gateway_factory = lambda: refresh_gateway
     app.state.open_api_binding_sync_service = watch_service
 

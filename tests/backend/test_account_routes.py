@@ -1,15 +1,21 @@
 from app_backend.domain.enums.account_states import PurchaseCapabilityState
 
 
+def _account_payload(*, remark_name, browser_proxy_mode="direct", browser_proxy_url=None, api_proxy_mode="direct", api_proxy_url=None, api_key=None):
+    return {
+        "remark_name": remark_name,
+        "browser_proxy_mode": browser_proxy_mode,
+        "browser_proxy_url": browser_proxy_url,
+        "api_proxy_mode": api_proxy_mode,
+        "api_proxy_url": api_proxy_url,
+        "api_key": api_key,
+    }
+
+
 async def test_post_accounts_creates_account(client):
     response = await client.post(
         "/accounts",
-        json={
-            "remark_name": "测试备注",
-            "proxy_mode": "direct",
-            "proxy_url": None,
-            "api_key": "key-123",
-        },
+        json=_account_payload(remark_name="测试备注", api_key="key-123"),
     )
 
     assert response.status_code == 201
@@ -29,30 +35,29 @@ async def test_post_accounts_creates_account(client):
 async def test_post_accounts_treats_blank_custom_proxy_as_direct(client):
     response = await client.post(
         "/accounts",
-        json={
-            "remark_name": "测试备注",
-            "proxy_mode": "custom",
-            "proxy_url": "   ",
-            "api_key": None,
-        },
+        json=_account_payload(
+            remark_name="测试备注",
+            browser_proxy_mode="custom",
+            browser_proxy_url="   ",
+            api_proxy_mode="custom",
+            api_proxy_url="   ",
+            api_key=None,
+        ),
     )
 
     assert response.status_code == 201
     payload = response.json()
-    assert payload["proxy_mode"] == "direct"
-    assert payload["proxy_url"] is None
+    assert payload["browser_proxy_mode"] == "direct"
+    assert payload["browser_proxy_url"] is None
+    assert payload["api_proxy_mode"] == "direct"
+    assert payload["api_proxy_url"] is None
     assert payload["api_key"] is None
 
 
 async def test_get_accounts_returns_created_accounts(client):
     await client.post(
         "/accounts",
-        json={
-            "remark_name": "账号A",
-            "proxy_mode": "direct",
-            "proxy_url": None,
-            "api_key": None,
-        },
+        json=_account_payload(remark_name="账号A", api_key=None),
     )
 
     response = await client.get("/accounts")
@@ -66,71 +71,61 @@ async def test_get_accounts_returns_created_accounts(client):
 async def test_patch_account_updates_allowed_fields(client):
     created = await client.post(
         "/accounts",
-        json={
-            "remark_name": None,
-            "proxy_mode": "direct",
-            "proxy_url": None,
-            "api_key": None,
-        },
+        json=_account_payload(remark_name=None, api_key=None),
     )
     account_id = created.json()["account_id"]
 
     response = await client.patch(
         f"/accounts/{account_id}",
-        json={
-            "remark_name": "新备注",
-            "proxy_mode": "custom",
-            "proxy_url": "http://127.0.0.1:8080",
-            "api_key": "new-key",
-        },
+        json=_account_payload(
+            remark_name="新备注",
+            browser_proxy_mode="custom",
+            browser_proxy_url="http://127.0.0.1:8080",
+            api_proxy_mode="custom",
+            api_proxy_url="http://127.0.0.1:8080",
+            api_key="new-key",
+        ),
     )
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["remark_name"] == "新备注"
-    assert payload["proxy_url"] == "http://127.0.0.1:8080"
+    assert payload["browser_proxy_url"] == "http://127.0.0.1:8080"
+    assert payload["api_proxy_url"] == "http://127.0.0.1:8080"
     assert payload["api_key"] == "new-key"
 
 
 async def test_patch_account_normalizes_scheme_less_proxy_and_auth(client):
     created = await client.post(
         "/accounts",
-        json={
-            "remark_name": None,
-            "proxy_mode": "direct",
-            "proxy_url": None,
-            "api_key": None,
-        },
+        json=_account_payload(remark_name=None, api_key=None),
     )
     account_id = created.json()["account_id"]
 
     response = await client.patch(
         f"/accounts/{account_id}",
-        json={
-            "remark_name": None,
-            "proxy_mode": "custom",
-            "proxy_url": "user:pass@127.0.0.1:8080",
-            "api_key": None,
-        },
+        json=_account_payload(
+            remark_name=None,
+            browser_proxy_mode="custom",
+            browser_proxy_url="user:pass@127.0.0.1:8080",
+            api_proxy_mode="custom",
+            api_proxy_url="user:pass@127.0.0.1:8080",
+            api_key=None,
+        ),
     )
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["proxy_mode"] == "custom"
-    assert payload["proxy_url"] == "http://user:pass@127.0.0.1:8080"
+    assert payload["browser_proxy_mode"] == "custom"
+    assert payload["browser_proxy_url"] == "http://user:pass@127.0.0.1:8080"
+    assert payload["api_proxy_mode"] == "custom"
+    assert payload["api_proxy_url"] == "http://user:pass@127.0.0.1:8080"
 
 
 async def test_patch_account_query_modes_updates_api_and_browser_flags(client):
     created = await client.post(
         "/accounts",
-        json={
-            "remark_name": "账号A",
-            "browser_proxy_mode": "direct",
-            "browser_proxy_url": None,
-            "api_proxy_mode": "direct",
-            "api_proxy_url": None,
-            "api_key": None,
-        },
+        json=_account_payload(remark_name="账号A", api_key=None),
     )
     account_id = created.json()["account_id"]
 
@@ -156,14 +151,7 @@ async def test_patch_account_query_modes_updates_api_and_browser_flags(client):
 async def test_patch_account_query_modes_supports_partial_browser_toggle(client):
     created = await client.post(
         "/accounts",
-        json={
-            "remark_name": "账号A",
-            "browser_proxy_mode": "direct",
-            "browser_proxy_url": None,
-            "api_proxy_mode": "direct",
-            "api_proxy_url": None,
-            "api_key": "key-123",
-        },
+        json=_account_payload(remark_name="账号A", api_key="key-123"),
     )
     account_id = created.json()["account_id"]
 
@@ -195,14 +183,7 @@ async def test_patch_account_query_modes_refreshes_query_runtime_accounts(client
     app.state.query_runtime_service = FakeQueryRuntimeService()
     created = await client.post(
         "/accounts",
-        json={
-            "remark_name": "账号A",
-            "browser_proxy_mode": "direct",
-            "browser_proxy_url": None,
-            "api_proxy_mode": "direct",
-            "api_proxy_url": None,
-            "api_key": "key-123",
-        },
+        json=_account_payload(remark_name="账号A", api_key="key-123"),
     )
     account_id = created.json()["account_id"]
 
@@ -221,12 +202,7 @@ async def test_patch_account_query_modes_refreshes_query_runtime_accounts(client
 async def test_clear_purchase_capability_keeps_api_key(client, app):
     created = await client.post(
         "/accounts",
-        json={
-            "remark_name": "账号A",
-            "proxy_mode": "direct",
-            "proxy_url": None,
-            "api_key": "key-123",
-        },
+        json=_account_payload(remark_name="账号A", api_key="key-123"),
     )
     account_id = created.json()["account_id"]
     repository = app.state.account_repository
@@ -251,12 +227,7 @@ async def test_clear_purchase_capability_keeps_api_key(client, app):
 async def test_delete_account_removes_record(client):
     created = await client.post(
         "/accounts",
-        json={
-            "remark_name": "账号A",
-            "proxy_mode": "direct",
-            "proxy_url": None,
-            "api_key": None,
-        },
+        json=_account_payload(remark_name="账号A", api_key=None),
     )
     account_id = created.json()["account_id"]
 
@@ -270,12 +241,7 @@ async def test_delete_account_removes_record(client):
 async def test_delete_account_removes_active_session_bundle(app, client):
     created = await client.post(
         "/accounts",
-        json={
-            "remark_name": "账号A",
-            "proxy_mode": "direct",
-            "proxy_url": None,
-            "api_key": None,
-        },
+        json=_account_payload(remark_name="账号A", api_key=None),
     )
     account_id = created.json()["account_id"]
     bundle_repository = app.state.account_session_bundle_repository
