@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 export function AccountProxyDialog({
   account,
   open,
+  isOpeningBindingPage = false,
   onClose,
   onOpenBindingPage,
   onSubmit,
@@ -59,8 +60,13 @@ export function AccountProxyDialog({
             </div>
             <span className="form-hint">以已登录浏览器打开绑定页后显示的白名单 IP 为准。当前出口 IP：{account.api_public_ip || "未获取IP"}</span>
             <div className="surface-actions">
-              <button className="ghost-button" type="button" onClick={() => onOpenBindingPage?.(account)}>
-                添加白名单
+              <button
+                className="ghost-button"
+                disabled={isOpeningBindingPage}
+                type="button"
+                onClick={() => onOpenBindingPage?.(account)}
+              >
+                {isOpeningBindingPage ? "正在打开..." : "添加白名单"}
               </button>
             </div>
           </div>

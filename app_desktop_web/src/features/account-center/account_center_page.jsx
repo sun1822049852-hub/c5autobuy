@@ -33,6 +33,7 @@ export function AccountCenterPage({ client }) {
     deleteAccount,
     filteredRows,
     isLoading,
+    isOpeningBindingPage,
     loadError,
     loginDrawerAccount,
     openApiKeyDialog,
@@ -159,6 +160,7 @@ export function AccountCenterPage({ client }) {
       />
       <AccountProxyDialog
         account={proxyDialogAccount}
+        isOpeningBindingPage={isOpeningBindingPage}
         open={Boolean(proxyDialogAccount)}
         onClose={closeProxyDialog}
         onOpenBindingPage={openAccountOpenApiBindingPage}

@@ -868,6 +868,43 @@ describe("account center editing flows", () => {
     });
   });
 
+  it("debounces repeated open binding clicks while the request is still pending", async () => {
+    const harness = createFetchHarness();
+    const pendingOpenResolvers = [];
+    const fetchImpl = vi.fn((input, options = {}) => {
+      const url = new URL(input);
+      if (url.pathname === "/accounts/a-1/open-api/open") {
+        return new Promise((resolve) => {
+          pendingOpenResolvers.push(() => resolve(jsonResponse({
+            launched: true,
+            account_id: "a-1",
+          })));
+        });
+      }
+      return harness.fetchImpl(input, options);
+    });
+    installDesktopApp(fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await screen.findByText("账号 A");
+
+    await user.click(screen.getByRole("button", { name: "编辑API IP 账号 A" }));
+    await screen.findByRole("heading", { name: "API IP 设置" });
+    const openButton = screen.getByRole("button", { name: "添加白名单" });
+
+    await user.click(openButton);
+    await user.click(openButton);
+
+    expect(fetchImpl.mock.calls.filter(([input]) => new URL(input).pathname === "/accounts/a-1/open-api/open")).toHaveLength(1);
+
+    pendingOpenResolvers[0]?.();
+    await waitFor(() => {
+      expect(openButton).not.toBeDisabled();
+    });
+  });
+
   it("refreshes the open api ip dialog when whitelist rows change", async () => {
     const harness = createFetchHarness();
     installDesktopApp(harness.fetchImpl);

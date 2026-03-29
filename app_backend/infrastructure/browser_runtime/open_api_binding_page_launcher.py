@@ -10,6 +10,10 @@ from pathlib import Path
 from app_backend.infrastructure.browser_runtime.account_browser_profile_store import (
     AccountBrowserProfileStore,
 )
+from app_backend.infrastructure.browser_runtime.cdp_session_reader import (
+    read_attached_session,
+    read_open_api_page_state,
+)
 from app_backend.infrastructure.browser_runtime.edge_launch_support import (
     build_edge_launch_command,
     reserve_debug_port,
@@ -118,6 +122,7 @@ class OpenApiBindingPageLauncher:
             )
             self._schedule_cleanup(
                 account_id=account_id,
+                debugger_address=debugger_address,
                 session_root=session_root,
                 cleanup_callbacks=cleanup_callbacks,
                 process=browser_process,
@@ -164,13 +169,18 @@ class OpenApiBindingPageLauncher:
         self,
         *,
         account_id: str | None,
+        debugger_address: str | None,
         session_root: Path,
         cleanup_callbacks: list,
         process,
         remove_session_root: bool,
     ) -> None:
         def _cleanup() -> None:
+            persist_allowed: bool | None = None
             while process is not None and process.poll() is None:
+                probe_result = _probe_session_persist_allowed(debugger_address)
+                if probe_result is not None:
+                    persist_allowed = probe_result
                 time.sleep(1.0)
             self._run_cleanup_callbacks(cleanup_callbacks)
             normalized_account_id = str(account_id or "").strip()
@@ -180,6 +190,15 @@ class OpenApiBindingPageLauncher:
                     if isinstance(active_launch, dict) and active_launch.get("process") is process:
                         self._active_launches.pop(normalized_account_id, None)
             if remove_session_root and self._profile_store is not None and str(account_id or "").strip():
+                if persist_allowed is False:
+                    self._append_debug_log(
+                        "persist_skipped_invalid_session",
+                        {
+                            "account_id": account_id,
+                            "debugger_address": debugger_address,
+                        },
+                    )
+                    return
                 try:
                     self._profile_store.persist_session(str(account_id), session_root)
                 except Exception:
@@ -212,4 +231,38 @@ class OpenApiBindingPageLauncher:
                 handle.write(json.dumps(record, ensure_ascii=False) + "\n")
         except Exception:
             return
+
+
+def _probe_session_persist_allowed(debugger_address: str | None) -> bool | None:
+    normalized_debugger_address = str(debugger_address or "").strip()
+    if not normalized_debugger_address:
+        return None
+
+    try:
+        payload = read_attached_session(normalized_debugger_address)
+    except Exception:
+        try:
+            page_state = read_open_api_page_state(normalized_debugger_address)
+        except Exception:
+            return None
+        href = str(page_state.get("href") or "").strip().lower()
+        if _is_login_page_url(href):
+            return False
+        return None
+
+    target_url = str(payload.get("target_url") or "").strip().lower()
+    cookie_raw = str(payload.get("cookie_raw") or "").strip()
+    if _is_login_page_url(target_url):
+        return False
+    if "NC5_accessToken=" not in cookie_raw:
+        return False
+    return True
+
+
+def _is_login_page_url(url: str | None) -> bool:
+    normalized = str(url or "").strip().lower()
+    return (
+        "c5game.com/login" in normalized
+        or "c5game.com/user/login" in normalized
+    )
 

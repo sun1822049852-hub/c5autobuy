@@ -36,6 +36,27 @@ class _FakeProfileStore:
         return self.root / f"profile-{account_id}"
 
 
+class _ImmediateThread:
+    def __init__(self, *, target, name=None, daemon=None) -> None:
+        self._target = target
+
+    def start(self) -> None:
+        self._target()
+
+
+class _SequenceProcess:
+    def __init__(self, poll_results: list[int | None]) -> None:
+        self._poll_results = list(poll_results)
+
+    def poll(self):
+        if len(self._poll_results) > 1:
+            return self._poll_results.pop(0)
+        return self._poll_results[0]
+
+    def kill(self):
+        self._poll_results = [0]
+
+
 def test_open_api_binding_page_launcher_uses_absolute_launch_paths(monkeypatch, tmp_path: Path):
     from app_backend.infrastructure.browser_runtime.open_api_binding_page_launcher import (
         OpenApiBindingPageLauncher,
@@ -181,3 +202,48 @@ def test_open_api_binding_page_launcher_relaunches_after_previous_process_exits(
     assert second["debugger_address"] == "127.0.0.1:9772"
     assert len(captured_commands) == 2
     assert profile_store.clone_calls == ["a-1", "a-1"]
+
+
+def test_open_api_binding_page_launcher_skips_persist_for_login_redirected_session(monkeypatch, tmp_path: Path):
+    from app_backend.infrastructure.browser_runtime.open_api_binding_page_launcher import (
+        OpenApiBindingPageLauncher,
+    )
+
+    monkeypatch.chdir(tmp_path)
+    profile_store = _FakeProfileStore(tmp_path / "profiles")
+    launcher = OpenApiBindingPageLauncher(runtime=_RelativeRuntime(), profile_store=profile_store)
+    process = _SequenceProcess([None, 0])
+
+    monkeypatch.setattr(
+        "app_backend.infrastructure.browser_runtime.open_api_binding_page_launcher.reserve_debug_port",
+        lambda: 9771,
+    )
+    monkeypatch.setattr(
+        "app_backend.infrastructure.browser_runtime.open_api_binding_page_launcher.wait_for_debugger_port",
+        lambda port, process: None,
+    )
+    monkeypatch.setattr(
+        "app_backend.infrastructure.browser_runtime.open_api_binding_page_launcher.subprocess.Popen",
+        lambda command: process,
+    )
+    monkeypatch.setattr(
+        "app_backend.infrastructure.browser_runtime.open_api_binding_page_launcher.threading.Thread",
+        _ImmediateThread,
+    )
+    monkeypatch.setattr(
+        "app_backend.infrastructure.browser_runtime.open_api_binding_page_launcher.read_attached_session",
+        lambda debugger_address: {
+            "target_url": "https://www.c5game.com/login",
+            "cookie_raw": "",
+        },
+        raising=False,
+    )
+
+    launcher.launch(
+        account_id="a-1",
+        profile_root="data/app-private/browser-sessions/account-1",
+        profile_directory="Default",
+        proxy_url=None,
+    )
+
+    assert profile_store.persist_calls == []

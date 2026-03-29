@@ -407,6 +407,7 @@ export function useAccountCenterPage({ client }) {
   const [apiKeyDialogAccount, setApiKeyDialogAccount] = useState(null);
   const [browserProxyDialogAccount, setBrowserProxyDialogAccount] = useState(null);
   const [proxyDialogAccount, setProxyDialogAccount] = useState(null);
+  const [openingBindingAccountIds, setOpeningBindingAccountIds] = useState({});
   const [purchaseDrawerState, setPurchaseDrawerState] = useState({
     account: null,
     detail: null,
@@ -414,6 +415,7 @@ export function useAccountCenterPage({ client }) {
     isRefreshing: false,
     open: false,
   });
+  const openingBindingAccountIdsRef = useRef(new Set());
   const [loginDrawerAccount, setLoginDrawerAccount] = useState(null);
   const loginDrawerAccountRef = useRef(null);
   const loginTaskLogKeysRef = useRef(new Set());
@@ -801,10 +803,31 @@ export function useAccountCenterPage({ client }) {
       setContextMenu(null);
     },
     openAccountOpenApiBindingPage: async (account) => {
+      const accountId = String(account?.account_id || "");
       setContextMenu(null);
-      return handleAction(async () => {
-        await client.openAccountOpenApiBindingPage(account.account_id);
-      }, `已打开 API 绑定页：${getDisplayName(account)}`);
+      if (!accountId || openingBindingAccountIdsRef.current.has(accountId)) {
+        return null;
+      }
+      openingBindingAccountIdsRef.current.add(accountId);
+      setOpeningBindingAccountIds((current) => ({
+        ...current,
+        [accountId]: true,
+      }));
+      try {
+        return await handleAction(async () => {
+          await client.openAccountOpenApiBindingPage(accountId);
+        }, `已打开 API 绑定页：${getDisplayName(account)}`);
+      } finally {
+        openingBindingAccountIdsRef.current.delete(accountId);
+        setOpeningBindingAccountIds((current) => {
+          if (!current[accountId]) {
+            return current;
+          }
+          const next = { ...current };
+          delete next[accountId];
+          return next;
+        });
+      }
     },
     syncAccountOpenApi: async (account) => {
       setContextMenu(null);
@@ -822,6 +845,9 @@ export function useAccountCenterPage({ client }) {
       setContextMenu(null);
     },
     openPurchaseStatus,
+    isOpeningBindingPage: Boolean(
+      proxyDialogAccount && openingBindingAccountIds[String(proxyDialogAccount.account_id || "")]
+    ),
     overviewCards,
     proxyDialogAccount,
     purchaseDrawerState,
