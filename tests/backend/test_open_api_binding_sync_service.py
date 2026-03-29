@@ -280,8 +280,8 @@ def test_open_api_binding_sync_service_writes_api_key_before_public_ip_fetch():
     from app_backend.infrastructure.browser_runtime.open_api_binding_sync_service import OpenApiBindingSyncService
 
     account = _build_account()
-    account.api_key = "api-key-1"
-    account.api_ip_allow_list = "36.138.220.178"
+    account.api_key = None
+    account.api_ip_allow_list = None
     repository = _MemoryRepository(account)
 
     def slow_public_ip_fetcher(proxy_url: str | None) -> str | None:
@@ -292,7 +292,19 @@ def test_open_api_binding_sync_service_writes_api_key_before_public_ip_fetch():
         public_ip_fetcher=slow_public_ip_fetcher,
     )
 
-    outcome = service.sync_account_now("a-1", final=False)
+    outcome = service.sync_account_now(
+        "a-1",
+        final=False,
+        partner_payload_override={
+            "success": True,
+            "data": {
+                "apiInfo": {
+                    "key": "api-key-1",
+                    "ipAllowList": "36.138.220.178",
+                },
+            },
+        },
+    )
 
     assert outcome["updated"] is True
     assert len(repository.updates) >= 2
@@ -327,6 +339,29 @@ def test_open_api_binding_sync_service_mismatch_is_display_only():
     assert updated.api_query_disabled_reason is None
     assert updated.new_api_enabled is True
     assert updated.fast_api_enabled is True
+
+
+def test_open_api_binding_sync_service_skips_rewriting_identical_account_state():
+    from app_backend.infrastructure.browser_runtime.open_api_binding_sync_service import OpenApiBindingSyncService
+
+    account = _build_account()
+    account.api_key = "api-key-1"
+    account.api_ip_allow_list = "36.138.220.178"
+    repository = _MemoryRepository(account)
+    service = OpenApiBindingSyncService(
+        account_repository=repository,
+        public_ip_fetcher=lambda proxy_url: "162.128.182.254",
+    )
+
+    first_outcome = service.sync_account_now("a-1", final=False)
+    first_update_count = len(repository.updates)
+
+    second_outcome = service.sync_account_now("a-1", final=False)
+
+    assert first_outcome["updated"] is True
+    assert first_update_count >= 1
+    assert second_outcome == {"matched": False, "updated": False}
+    assert len(repository.updates) == first_update_count
 
 
 def test_open_api_binding_sync_service_writes_browser_public_ip_for_direct_connection():

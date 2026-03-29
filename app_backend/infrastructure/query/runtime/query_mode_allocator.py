@@ -29,6 +29,10 @@ class QueryModeAllocator:
             self._has_initialized_bindings = False
             self._shared_pointer = 0
 
+    def sync_query_items(self, query_items: list[QueryItem]) -> None:
+        with self._lock:
+            self._sync_query_items_locked(query_items)
+
     async def reserve_next(
         self,
         worker: object,
@@ -80,12 +84,16 @@ class QueryModeAllocator:
     def apply_query_item_runtime(self, query_item: QueryItem) -> bool:
         item_id = str(query_item.query_item_id)
         with self._lock:
+            next_items = list(self._query_items)
             for index, current_item in enumerate(self._query_items):
                 if str(current_item.query_item_id) != item_id:
                     continue
-                self._query_items[index] = query_item
+                next_items[index] = query_item
+                self._sync_query_items_locked(next_items)
                 return True
-        return False
+            next_items.append(query_item)
+            self._sync_query_items_locked(next_items)
+            return True
 
     def apply_target_actual_counts(
         self,
@@ -192,6 +200,23 @@ class QueryModeAllocator:
             "shared_worker_ids": list(unbound_worker_ids),
             "shared_item_ids": shared_item_ids,
         }
+
+    def _sync_query_items_locked(self, query_items: list[QueryItem]) -> None:
+        self._query_items = list(query_items)
+        valid_item_ids = {
+            str(query_item.query_item_id)
+            for query_item in self._query_items
+        }
+        self._dedicated_bindings = {
+            worker_id: item_id
+            for worker_id, item_id in self._dedicated_bindings.items()
+            if item_id in valid_item_ids
+        }
+        if not self._query_items:
+            self._shared_pointer = 0
+            self._has_initialized_bindings = False
+            return
+        self._shared_pointer %= len(self._query_items)
 
     def _seed_initial_bindings_locked(
         self,

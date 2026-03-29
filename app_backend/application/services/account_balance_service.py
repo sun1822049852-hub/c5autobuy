@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import Future, ThreadPoolExecutor
 import json
 import time
 from collections import OrderedDict
@@ -22,6 +23,7 @@ except ModuleNotFoundError:  # pragma: no cover - optional in some unit tests
 
 OpenApiFetcher = Callable[[object], Awaitable[float]]
 BalanceFetcher = Callable[[object], Awaitable[float]]
+InFlightRefresh = asyncio.Task[dict[str, object]] | Future[dict[str, object]]
 
 
 class AccountBalanceService:
@@ -42,6 +44,7 @@ class AccountBalanceService:
         api_key_wait_seconds: float = 10.0,
         api_key_poll_interval_seconds: float = 0.5,
         xsign_wrapper: Any | None = None,
+        background_executor: ThreadPoolExecutor | None = None,
     ) -> None:
         self._account_repository = account_repository
         self._account_update_hub = account_update_hub
@@ -53,7 +56,11 @@ class AccountBalanceService:
         self._xsign_wrapper = xsign_wrapper
         self._openapi_fetcher = openapi_fetcher or self._fetch_openapi_balance
         self._browser_balance_fetcher = browser_balance_fetcher or self._fetch_browser_balance
-        self._inflight: dict[str, asyncio.Task[dict[str, object]]] = {}
+        self._background_executor = background_executor or ThreadPoolExecutor(
+            max_workers=2,
+            thread_name_prefix="account-balance-refresh",
+        )
+        self._inflight: dict[str, InFlightRefresh] = {}
 
     async def refresh_after_login(
         self,
@@ -74,9 +81,17 @@ class AccountBalanceService:
         task = self._inflight.get(account_id)
         if task is not None and not task.done():
             return False
-        loop = asyncio.get_running_loop()
-        self._inflight[account_id] = loop.create_task(self._run_refresh(account_id, force=False, wait_for_api_key=False))
-        self._inflight[account_id].add_done_callback(lambda _: self._inflight.pop(account_id, None))
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            task = self._background_executor.submit(
+                asyncio.run,
+                self._run_refresh(account_id, force=False, wait_for_api_key=False),
+            )
+        else:
+            task = loop.create_task(self._run_refresh(account_id, force=False, wait_for_api_key=False))
+        self._inflight[account_id] = task
+        task.add_done_callback(lambda _: self._inflight.pop(account_id, None))
         return True
 
     async def refresh_account(
@@ -88,11 +103,17 @@ class AccountBalanceService:
     ) -> dict[str, object]:
         task = self._inflight.get(account_id)
         if task is not None and not task.done():
-            return await task
+            return await self._await_inflight(task)
         task = asyncio.create_task(self._run_refresh(account_id, force=force, wait_for_api_key=wait_for_api_key))
         self._inflight[account_id] = task
         task.add_done_callback(lambda _: self._inflight.pop(account_id, None))
         return await task
+
+    @staticmethod
+    async def _await_inflight(task: InFlightRefresh) -> dict[str, object]:
+        if isinstance(task, asyncio.Task):
+            return await task
+        return await asyncio.wrap_future(task)
 
     async def _run_refresh(
         self,

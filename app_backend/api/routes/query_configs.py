@@ -52,13 +52,13 @@ def _query_runtime_service(request: Request):
 
 
 @router.get("", response_model=list[QueryConfigResponse])
-async def list_query_configs(request: Request) -> list[QueryConfigResponse]:
+def list_query_configs(request: Request) -> list[QueryConfigResponse]:
     use_case = ListQueryConfigsUseCase(_repository(request))
     return [QueryConfigResponse.model_validate(config) for config in use_case.execute()]
 
 
 @router.post("", response_model=QueryConfigResponse, status_code=status.HTTP_201_CREATED)
-async def create_query_config(
+def create_query_config(
     payload: QueryConfigCreateRequest,
     request: Request,
 ) -> QueryConfigResponse:
@@ -68,13 +68,13 @@ async def create_query_config(
 
 
 @router.get("/capacity-summary", response_model=QueryCapacitySummaryResponse)
-async def get_query_capacity_summary(request: Request) -> QueryCapacitySummaryResponse:
+def get_query_capacity_summary(request: Request) -> QueryCapacitySummaryResponse:
     use_case = GetQueryCapacitySummaryUseCase(QueryModeCapacityService(_account_repository(request)))
     return QueryCapacitySummaryResponse.model_validate(use_case.execute())
 
 
 @router.get("/{config_id}", response_model=QueryConfigResponse)
-async def get_query_config(config_id: str, request: Request) -> QueryConfigResponse:
+def get_query_config(config_id: str, request: Request) -> QueryConfigResponse:
     config = GetQueryConfigUseCase(_repository(request)).execute(config_id)
     if config is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Query config not found")
@@ -82,7 +82,7 @@ async def get_query_config(config_id: str, request: Request) -> QueryConfigRespo
 
 
 @router.patch("/{config_id}", response_model=QueryConfigResponse)
-async def update_query_config(
+def update_query_config(
     config_id: str,
     payload: QueryConfigUpdateRequest,
     request: Request,
@@ -100,7 +100,7 @@ async def update_query_config(
 
 
 @router.delete("/{config_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_query_config(config_id: str, request: Request) -> None:
+def delete_query_config(config_id: str, request: Request) -> None:
     use_case = DeleteQueryConfigUseCase(_repository(request))
     try:
         use_case.execute(config_id)
@@ -166,7 +166,7 @@ async def update_query_item(
     "/{config_id}/items/{query_item_id}/apply-runtime",
     response_model=QueryItemRuntimeApplyResponse,
 )
-async def apply_query_item_runtime(
+def apply_query_item_runtime(
     config_id: str,
     query_item_id: str,
     request: Request,
@@ -183,7 +183,7 @@ async def apply_query_item_runtime(
 
 
 @router.delete("/{config_id}/items/{query_item_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_query_item(
+def delete_query_item(
     config_id: str,
     query_item_id: str,
     request: Request,
@@ -215,7 +215,7 @@ async def refresh_query_item_detail(
 
 
 @router.patch("/{config_id}/modes/{mode_type}", response_model=QueryModeSettingResponse)
-async def update_query_mode_setting(
+def update_query_mode_setting(
     config_id: str,
     mode_type: str,
     payload: QueryModeSettingUpdateRequest,

@@ -19,7 +19,7 @@ def _stats_repository(request: Request):
 
 
 @router.get("/query-items", response_model=QueryItemStatsResponse)
-async def get_query_item_stats(
+def get_query_item_stats(
     request: Request,
     range_mode: str = Query(...),
     date: str | None = Query(None),
@@ -40,7 +40,7 @@ async def get_query_item_stats(
 
 
 @router.get("/account-capability", response_model=AccountCapabilityStatsResponse)
-async def get_account_capability_stats(
+def get_account_capability_stats(
     request: Request,
     range_mode: str = Query(...),
     date: str | None = Query(None),

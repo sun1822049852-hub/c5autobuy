@@ -65,6 +65,18 @@ class QueryItemScheduler:
             for query_item in self._query_items
         }
 
+    def sync_query_items(self, query_items: list[QueryItem]) -> None:
+        previous_available_at = getattr(self, "_available_at", {})
+        self._query_items = list(query_items)
+        self._available_at = {
+            str(query_item.query_item_id): float(previous_available_at.get(str(query_item.query_item_id), 0.0))
+            for query_item in self._query_items
+        }
+        if not self._query_items:
+            self._pointer = 0
+            return
+        self._pointer = int(getattr(self, "_pointer", 0)) % len(self._query_items)
+
     def apply_mode_setting(self, mode_setting) -> None:
         self.apply_item_cooldown_settings(
             item_min_cooldown_seconds=getattr(mode_setting, "item_min_cooldown_seconds", 0.5),

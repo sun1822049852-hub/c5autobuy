@@ -81,6 +81,9 @@ describe("query system client", () => {
       if (url.pathname === "/query-runtime/stop" && method === "POST") {
         return jsonResponse({ running: false });
       }
+      if (url.pathname === "/query-runtime/configs/cfg-1/apply-config" && method === "POST") {
+        return jsonResponse({ running: true, config_id: "cfg-1", item_rows: [] });
+      }
 
       throw new Error(`Unhandled request: ${method} ${url.pathname}`);
     });
@@ -96,6 +99,7 @@ describe("query system client", () => {
     const runtimeStatus = await client.getQueryRuntimeStatus();
     const started = await client.startQueryRuntime("cfg-1");
     const stopped = await client.stopQueryRuntime();
+    const applied = await client.applyQueryRuntimeConfig("cfg-1");
     const created = await client.createQueryConfig({ name: "配置 B", description: "desc" });
     await client.deleteQueryConfig("cfg-2");
     const createdItem = await client.addQueryItem("cfg-1", {
@@ -121,6 +125,7 @@ describe("query system client", () => {
     expect(runtimeStatus.running).toBe(false);
     expect(started).toEqual({ running: true, config_id: "cfg-1" });
     expect(stopped).toEqual({ running: false });
+    expect(applied).toEqual({ running: true, config_id: "cfg-1", item_rows: [] });
     expect(created.config_id).toBe("cfg-2");
     expect(createdItem.query_item_id).toBe("item-1");
     expect(updatedItem.detail_min_wear).toBe(0.05);
@@ -137,6 +142,7 @@ describe("query system client", () => {
       { body: null, method: "GET", pathname: "/query-runtime/status" },
       { body: { config_id: "cfg-1" }, method: "POST", pathname: "/query-runtime/start" },
       { body: {}, method: "POST", pathname: "/query-runtime/stop" },
+      { body: {}, method: "POST", pathname: "/query-runtime/configs/cfg-1/apply-config" },
       { body: { description: "desc", name: "配置 B" }, method: "POST", pathname: "/query-configs" },
       { body: null, method: "DELETE", pathname: "/query-configs/cfg-2" },
       {

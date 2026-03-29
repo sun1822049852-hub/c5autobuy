@@ -19,7 +19,23 @@ function buildHttpError({ message, method, path, status }) {
 }
 
 
-export function createHttpClient({ baseUrl, fetchImpl } = {}) {
+function buildTimeoutError({ method, path, timeoutMs }) {
+  const error = buildHttpError({
+    message: `请求超时，请检查本地后端是否卡死 (${timeoutMs}ms)`,
+    method,
+    path,
+    status: 408,
+  });
+  error.isTimeout = true;
+  return error;
+}
+
+
+export function createHttpClient({
+  baseUrl,
+  fetchImpl,
+  requestTimeoutMs = 10000,
+} = {}) {
   const resolvedFetch = fetchImpl ?? globalThis.fetch;
 
   if (typeof resolvedFetch !== "function") {
@@ -27,14 +43,60 @@ export function createHttpClient({ baseUrl, fetchImpl } = {}) {
   }
 
   async function request(path, options = {}) {
-    const response = await resolvedFetch(buildUrl(baseUrl, path), {
-      method: "GET",
+    const method = String(options.method ?? "GET").toUpperCase();
+    const timeoutMs = Number(options.timeoutMs ?? requestTimeoutMs);
+    const controller = typeof AbortController === "function"
+      ? new AbortController()
+      : null;
+    let timeoutId = null;
+    let abortListener = null;
+
+    if (controller && options.signal) {
+      if (options.signal.aborted) {
+        controller.abort();
+      } else if (typeof options.signal.addEventListener === "function") {
+        abortListener = () => controller.abort();
+        options.signal.addEventListener("abort", abortListener, { once: true });
+      }
+    }
+
+    const fetchPromise = resolvedFetch(buildUrl(baseUrl, path), {
+      method,
       headers: {
         Accept: "application/json",
         ...options.headers,
       },
       ...options,
+      signal: controller?.signal ?? options.signal,
     });
+
+    let response;
+    try {
+      response = await (
+        Number.isFinite(timeoutMs) && timeoutMs > 0
+          ? Promise.race([
+            fetchPromise,
+            new Promise((_, reject) => {
+              timeoutId = globalThis.setTimeout(() => {
+                controller?.abort();
+                reject(buildTimeoutError({
+                  method,
+                  path,
+                  timeoutMs,
+                }));
+              }, timeoutMs);
+            }),
+          ])
+          : fetchPromise
+      );
+    } finally {
+      if (timeoutId !== null) {
+        globalThis.clearTimeout(timeoutId);
+      }
+      if (abortListener && typeof options.signal?.removeEventListener === "function") {
+        options.signal.removeEventListener("abort", abortListener);
+      }
+    }
 
     if (!response.ok) {
       const message = typeof response.text === "function"
@@ -42,7 +104,7 @@ export function createHttpClient({ baseUrl, fetchImpl } = {}) {
         : `HTTP ${response.status}`;
       throw buildHttpError({
         message: message || `HTTP ${response.status}`,
-        method: String(options.method ?? "GET").toUpperCase(),
+        method,
         path,
         status: response.status,
       });

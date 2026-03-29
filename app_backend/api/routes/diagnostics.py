@@ -21,7 +21,7 @@ def _task_manager(request: Request):
 
 
 @router.get("/sidebar", response_model=SidebarDiagnosticsResponse)
-async def get_sidebar_diagnostics(request: Request) -> SidebarDiagnosticsResponse:
+def get_sidebar_diagnostics(request: Request) -> SidebarDiagnosticsResponse:
     payload = GetSidebarDiagnosticsUseCase(
         _query_runtime_service(request),
         _purchase_runtime_service(request),

@@ -381,6 +381,35 @@ function createFetchHarness({
       return delayedJsonResponse(createdItem, 201, saveDelayMs);
     }
 
+    if (url.pathname === "/query-runtime/configs/cfg-1/apply-config" && method === "POST") {
+      return delayedJsonResponse({
+        running: true,
+        config_id: "cfg-1",
+        config_name: detail.name,
+        message: "运行中",
+        account_count: 3,
+        started_at: "2026-03-19T11:00:00",
+        stopped_at: null,
+        total_query_count: 0,
+        total_found_count: 0,
+        modes: {},
+        group_rows: [],
+        recent_events: [],
+        item_rows: detail.items.map((item) => ({
+          query_item_id: item.query_item_id,
+          item_name: item.item_name,
+          max_price: item.max_price,
+          min_wear: item.min_wear,
+          max_wear: item.max_wear,
+          detail_min_wear: item.detail_min_wear,
+          detail_max_wear: item.detail_max_wear,
+          manual_paused: item.manual_paused,
+          query_count: 0,
+          modes: {},
+        })),
+      }, 200, saveDelayMs);
+    }
+
     throw new Error(`Unhandled request: ${method} ${url.pathname}`);
   });
 
@@ -573,6 +602,11 @@ describe("query system editing", () => {
             method: "POST",
             pathname: "/query-configs/cfg-1/items",
           }),
+          expect.objectContaining({
+            body: {},
+            method: "POST",
+            pathname: "/query-runtime/configs/cfg-1/apply-config",
+          }),
         ]),
       );
 
@@ -644,6 +678,35 @@ describe("query system editing", () => {
       expect(
         harness.calls.some(
           (call) => call.method === "DELETE" && call.pathname === "/query-configs/cfg-1/items/item-1",
+        ),
+      ).toBe(true);
+    });
+  });
+
+  it("applies the whole runtime config when deleting all items from a running config", async () => {
+    const harness = createFetchHarness();
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    await openQuerySystem(user);
+
+    await user.click(screen.getByRole("button", { name: "切换商品删除模式" }));
+    await user.click(screen.getByRole("button", { name: "删除商品 AK-47 | Redline" }));
+    await user.click(screen.getByRole("button", { name: "删除商品 AWP | Asiimov" }));
+    await user.click(screen.getByRole("button", { name: "删除商品 M4A1-S | Blue Phosphor" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("region", { name: "商品 AK-47 | Redline" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("region", { name: "商品 AWP | Asiimov" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("region", { name: "商品 M4A1-S | Blue Phosphor" })).not.toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "保存到当前配置" }));
+
+    await waitFor(() => {
+      expect(
+        harness.calls.some(
+          (call) => call.method === "POST" && call.pathname === "/query-runtime/configs/cfg-1/apply-config",
         ),
       ).toBe(true);
     });

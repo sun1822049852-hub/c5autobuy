@@ -135,8 +135,35 @@ class QueryTaskRuntime:
         if self._mode_runners and not applied:
             raise RuntimeError("query item runtime not refreshed")
 
+    def apply_config(self, config: QueryConfig) -> None:
+        self._config = config
+        next_query_items = list(config.items)
+        for runner in self._mode_runners:
+            sync_query_items = getattr(runner, "sync_query_items", None)
+            if callable(sync_query_items):
+                sync_query_items(next_query_items)
+
+        mode_by_type = {
+            str(mode.mode_type): mode
+            for mode in config.mode_settings
+        }
+        for runner in self._mode_runners:
+            mode_type = str(getattr(runner, "mode_type", "") or "")
+            mode_setting = mode_by_type.get(mode_type)
+            if mode_setting is None:
+                continue
+            apply_mode_setting = getattr(runner, "apply_mode_setting", None)
+            if callable(apply_mode_setting):
+                apply_mode_setting(mode_setting)
+
     def apply_manual_allocations(self, *, config: QueryConfig, items: list[dict[str, object]]) -> None:
         self._config = config
+        next_query_items = list(config.items)
+        for runner in self._mode_runners:
+            sync_query_items = getattr(runner, "sync_query_items", None)
+            if callable(sync_query_items):
+                sync_query_items(next_query_items)
+
         mode_targets: dict[str, dict[str, int]] = {}
         for raw_item in items:
             if not isinstance(raw_item, dict):

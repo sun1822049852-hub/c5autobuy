@@ -521,6 +521,38 @@ async def test_update_query_runtime_manual_allocations_returns_runtime_snapshot(
     assert response.json()["item_rows"][0]["modes"]["new_api"]["actual_dedicated_count"] == 2
 
 
+async def test_apply_query_runtime_config_returns_runtime_snapshot(client, app):
+    class FakeQueryRuntimeService:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def apply_runtime_config(self, *, config_id: str) -> dict[str, object]:
+            self.calls.append(config_id)
+            return {
+                "running": True,
+                "config_id": config_id,
+                "config_name": "查询配置A",
+                "message": "运行中",
+                "account_count": 1,
+                "started_at": "2026-03-22T12:00:00",
+                "stopped_at": None,
+                "total_query_count": 0,
+                "total_found_count": 0,
+                "modes": {},
+                "group_rows": [],
+                "recent_events": [],
+                "item_rows": [],
+            }
+
+    app.state.query_runtime_service = FakeQueryRuntimeService()
+
+    response = await client.post("/query-runtime/configs/cfg-1/apply-config")
+
+    assert response.status_code == 200
+    assert app.state.query_runtime_service.calls == ["cfg-1"]
+    assert response.json()["config_id"] == "cfg-1"
+
+
 async def test_update_query_runtime_manual_allocations_returns_404_for_missing_config(client, app):
     class FakeQueryRuntimeService:
         def apply_manual_allocations(self, *, config_id: str, items: list[dict[str, object]]) -> dict[str, object]:

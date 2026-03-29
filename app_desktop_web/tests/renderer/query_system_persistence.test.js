@@ -9,16 +9,18 @@ describe("query system persistence", () => {
     const client = {
       addQueryItem: vi.fn(async (...args) => {
         operations.push(["add", ...args]);
+        return { query_item_id: "item-created" };
       }),
       deleteQueryItem: vi.fn(async (...args) => {
         operations.push(["delete", ...args]);
       }),
       updateQueryItem: vi.fn(async (...args) => {
         operations.push(["update", ...args]);
+        return { query_item_id: args[1] };
       }),
     };
 
-    await persistQueryConfigDraft({
+    const result = await persistQueryConfigDraft({
       client,
       sourceConfig: {
         config_id: "cfg-1",
@@ -75,6 +77,11 @@ describe("query system persistence", () => {
           },
         ],
       },
+    });
+
+    expect(result).toEqual({
+      deletedAnyItem: true,
+      persistedQueryItemIds: ["item-existing", "item-created"],
     });
 
     expect(operations).toEqual([

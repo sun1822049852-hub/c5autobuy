@@ -18,7 +18,7 @@ def _balance_service(request: Request):
 
 
 @router.get("/accounts", response_model=list[AccountCenterAccountResponse])
-async def list_account_center_accounts(request: Request) -> list[AccountCenterAccountResponse]:
+def list_account_center_accounts(request: Request) -> list[AccountCenterAccountResponse]:
     use_case = ListAccountCenterAccountsUseCase(_runtime_service(request))
     rows = [AccountCenterAccountResponse.model_validate(row) for row in use_case.execute()]
     balance_service = _balance_service(request)
@@ -32,7 +32,7 @@ async def list_account_center_accounts(request: Request) -> list[AccountCenterAc
 
 
 @router.get("/accounts/{account_id}", response_model=AccountCenterAccountResponse)
-async def get_account_center_account(account_id: str, request: Request) -> AccountCenterAccountResponse:
+def get_account_center_account(account_id: str, request: Request) -> AccountCenterAccountResponse:
     use_case = GetAccountCenterAccountUseCase(_runtime_service(request))
     row = use_case.execute(account_id)
     if row is None:

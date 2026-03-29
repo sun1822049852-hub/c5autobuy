@@ -615,6 +615,93 @@ async def test_query_mode_allocator_released_dedicated_workers_fall_back_to_shar
     assert rows["item-2"]["status"] == "dedicated"
 
 
+def test_query_task_runtime_apply_query_item_runtime_can_add_new_item():
+    from app_backend.infrastructure.query.runtime.query_task_runtime import QueryTaskRuntime
+
+    before_config = build_config("cfg-1")
+    after_config = build_config("cfg-1")
+    item_two = build_config("cfg-1").items[0]
+    item_two.query_item_id = "item-2"
+    item_two.external_item_id = "item-2"
+    item_two.item_name = "商品-2"
+    item_two.market_hash_name = "Test Item 2"
+    item_two.product_url = "https://www.c5game.com/csgo/730/asset/item-2"
+    set_mode_target(item_two, "new_api", 1)
+    after_config.items.append(item_two)
+
+    runtime = QueryTaskRuntime(
+        before_config,
+        [build_account("a1", api_key="api-1")],
+    )
+
+    runtime.apply_query_item_runtime(config=after_config, query_item_id="item-2")
+    snapshot = runtime.snapshot()
+    rows = {
+        row["query_item_id"]: row
+        for row in snapshot["item_rows"]
+    }
+
+    assert rows["item-2"]["modes"]["new_api"]["target_dedicated_count"] == 1
+    assert rows["item-2"]["modes"]["new_api"]["actual_dedicated_count"] == 1
+
+
+def test_query_task_runtime_apply_manual_allocations_can_target_new_item():
+    from app_backend.infrastructure.query.runtime.query_task_runtime import QueryTaskRuntime
+
+    before_config = build_config("cfg-1")
+    after_config = build_config("cfg-1")
+    item_two = build_config("cfg-1").items[0]
+    item_two.query_item_id = "item-2"
+    item_two.external_item_id = "item-2"
+    item_two.item_name = "商品-2"
+    item_two.market_hash_name = "Test Item 2"
+    item_two.product_url = "https://www.c5game.com/csgo/730/asset/item-2"
+    set_mode_target(item_two, "new_api", 1)
+    after_config.items.append(item_two)
+
+    runtime = QueryTaskRuntime(
+        before_config,
+        [build_account("a1", api_key="api-1")],
+    )
+
+    runtime.apply_manual_allocations(
+        config=after_config,
+        items=[
+            {
+                "query_item_id": "item-2",
+                "mode_type": "new_api",
+                "target_actual_count": 1,
+            }
+        ],
+    )
+    snapshot = runtime.snapshot()
+    rows = {
+        row["query_item_id"]: row
+        for row in snapshot["item_rows"]
+    }
+
+    assert rows["item-2"]["modes"]["new_api"]["target_dedicated_count"] == 1
+    assert rows["item-2"]["modes"]["new_api"]["actual_dedicated_count"] == 1
+
+
+def test_query_task_runtime_apply_config_can_clear_all_items():
+    from app_backend.infrastructure.query.runtime.query_task_runtime import QueryTaskRuntime
+
+    before_config = build_config("cfg-1")
+    after_config = build_config("cfg-1")
+    after_config.items = []
+
+    runtime = QueryTaskRuntime(
+        before_config,
+        [build_account("a1", api_key="api-1")],
+    )
+
+    runtime.apply_config(after_config)
+    snapshot = runtime.snapshot()
+
+    assert snapshot["item_rows"] == []
+
+
 def test_query_task_runtime_builds_one_query_item_scheduler_per_mode():
     from app_backend.infrastructure.query.runtime.query_task_runtime import QueryTaskRuntime
 
@@ -1868,6 +1955,82 @@ def test_runtime_service_apply_query_item_runtime_reports_failed_after_save_when
     }
     assert len(created_runtimes) == 1
     assert created_runtimes[0].stopped is False
+
+
+def test_runtime_service_apply_runtime_config_replaces_live_runtime_items_without_stop():
+    from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
+
+    before_config = build_config("cfg-1")
+    after_config = build_config("cfg-1")
+    after_config.items = []
+    repository = MultiQueryConfigRepository([before_config])
+    purchase_service = FakePurchaseRuntimeService()
+    created_runtimes: list[FakeRuntime] = []
+
+    class FakeRuntimeWithApplyConfig(FakeRuntime):
+        def __init__(self, config, accounts) -> None:
+            super().__init__(config, accounts)
+            self.apply_config_calls: list[dict[str, object]] = []
+            created_runtimes.append(self)
+
+        def apply_config(self, config) -> None:
+            self.apply_config_calls.append({
+                "config_id": config.config_id,
+                "item_count": len(config.items),
+            })
+            self.config = config
+
+        def snapshot(self) -> dict:
+            return {
+                "running": self.started and not self.stopped,
+                "config_id": self.config.config_id,
+                "config_name": self.config.name,
+                "message": "运行中" if self.started and not self.stopped else "未运行",
+                "account_count": len(self.accounts),
+                "started_at": None,
+                "stopped_at": None,
+                "total_query_count": 0,
+                "total_found_count": 0,
+                "modes": {},
+                "group_rows": [],
+                "recent_events": [],
+                "item_rows": [
+                    {
+                        "query_item_id": item.query_item_id,
+                        "item_name": item.item_name,
+                        "max_price": item.max_price,
+                        "min_wear": item.min_wear,
+                        "max_wear": item.max_wear,
+                        "detail_min_wear": item.detail_min_wear,
+                        "detail_max_wear": item.detail_max_wear,
+                        "manual_paused": item.manual_paused,
+                        "query_count": 0,
+                        "modes": {},
+                    }
+                    for item in self.config.items
+                ],
+            }
+
+    service = QueryRuntimeService(
+        query_config_repository=repository,
+        account_repository=FakeAccountRepository([build_account("a1", api_key="api-1")]),
+        runtime_factory=lambda config, accounts: FakeRuntimeWithApplyConfig(config, accounts),
+        purchase_runtime_service=purchase_service,
+    )
+
+    started, message = service.start(config_id="cfg-1")
+    repository.replace_config(after_config)
+    snapshot = service.apply_runtime_config(config_id="cfg-1")
+
+    assert started is True
+    assert message == "查询任务已启动"
+    assert len(created_runtimes) == 1
+    assert created_runtimes[0].stopped is False
+    assert created_runtimes[0].apply_config_calls == [{
+        "config_id": "cfg-1",
+        "item_count": 0,
+    }]
+    assert snapshot["item_rows"] == []
 
 
 def test_runtime_service_reuses_runtime_account_adapter_after_purchase_pause_and_recovery(monkeypatch):

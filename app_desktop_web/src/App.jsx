@@ -41,7 +41,9 @@ export function App() {
     apiBaseUrl: bootstrapConfig.apiBaseUrl,
     pollIntervalMs: 25,
   }));
-  const diagnostics = useSidebarDiagnostics(client);
+  const diagnostics = useSidebarDiagnostics(client, {
+    enabled: activeItem === "diagnostics",
+  });
 
   const handleQuerySystemLeaveStateChange = useCallback((nextState) => {
     setQuerySystemLeaveState(nextState || EMPTY_QUERY_SYSTEM_LEAVE_STATE);

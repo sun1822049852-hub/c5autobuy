@@ -540,6 +540,9 @@ export function useQuerySystemPage({ client }) {
         sourceConfig,
         draftConfig,
       });
+      if (isCurrentConfigRuntimeActive) {
+        await client.applyQueryRuntimeConfig(draftConfig.config_id);
+      }
 
       await refreshConfigList();
       const refreshed = await loadConfigDetail(draftConfig.config_id);

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime
+import time
 
 import pytest
 
@@ -245,3 +246,38 @@ async def test_account_balance_service_waits_for_api_key_before_falling_back():
     assert updated.balance_source == "openapi"
     assert openapi_calls == ["late-api-key"]
     assert browser_calls == []
+
+
+def test_account_balance_service_maybe_schedule_refresh_works_without_running_loop():
+    from app_backend.application.services.account_balance_service import AccountBalanceService
+
+    repository = FakeRepository(build_account(api_key="api-key-1"))
+    openapi_calls: list[str] = []
+
+    async def fake_openapi_fetcher(account: Account, *, proxy_url: str | None) -> float:
+        openapi_calls.append(account.account_id)
+        return 77.7
+
+    service = AccountBalanceService(
+        account_repository=repository,
+        openapi_fetcher=fake_openapi_fetcher,
+        browser_balance_fetcher=None,
+        now_provider=lambda: datetime(2026, 3, 29, 12, 8, 0),
+        random_seconds_provider=lambda: 300,
+    )
+
+    scheduled = service.maybe_schedule_refresh("a-1")
+
+    assert scheduled is True
+    deadline = time.time() + 1.0
+    while time.time() < deadline:
+      updated = repository.get_account("a-1")
+      if updated is not None and updated.balance_amount == 77.7:
+          break
+      time.sleep(0.01)
+
+    updated = repository.get_account("a-1")
+    assert updated is not None
+    assert updated.balance_amount == 77.7
+    assert updated.balance_source == "openapi"
+    assert openapi_calls == ["a-1"]

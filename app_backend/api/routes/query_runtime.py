@@ -26,13 +26,13 @@ def _refresh_service(request: Request):
 
 
 @router.get("/status", response_model=QueryRuntimeStatusResponse)
-async def get_query_runtime_status(request: Request) -> QueryRuntimeStatusResponse:
+def get_query_runtime_status(request: Request) -> QueryRuntimeStatusResponse:
     use_case = GetQueryRuntimeStatusUseCase(_runtime_service(request))
     return QueryRuntimeStatusResponse.model_validate(use_case.execute())
 
 
 @router.post("/start", response_model=QueryRuntimeStatusResponse)
-async def start_query_runtime(
+def start_query_runtime(
     payload: QueryRuntimeStartRequest,
     request: Request,
 ) -> QueryRuntimeStatusResponse:
@@ -62,7 +62,7 @@ async def prepare_query_runtime(
 
 
 @router.post("/stop", response_model=QueryRuntimeStatusResponse)
-async def stop_query_runtime(request: Request) -> QueryRuntimeStatusResponse:
+def stop_query_runtime(request: Request) -> QueryRuntimeStatusResponse:
     runtime_service = _runtime_service(request)
     stopped, message = StopQueryRuntimeUseCase(runtime_service).execute()
     if not stopped:
@@ -71,7 +71,7 @@ async def stop_query_runtime(request: Request) -> QueryRuntimeStatusResponse:
 
 
 @router.put("/configs/{config_id}/manual-assignments", response_model=QueryRuntimeStatusResponse)
-async def update_query_runtime_manual_allocations(
+def update_query_runtime_manual_allocations(
     config_id: str,
     payload: QueryRuntimeManualAllocationRequest,
     request: Request,
@@ -82,6 +82,22 @@ async def update_query_runtime_manual_allocations(
             config_id=config_id,
             items=[item.model_dump() for item in payload.items],
         )
+    except KeyError as exc:
+        detail = exc.args[0] if exc.args else "查询配置不存在"
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=detail) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    return QueryRuntimeStatusResponse.model_validate(snapshot)
+
+
+@router.post("/configs/{config_id}/apply-config", response_model=QueryRuntimeStatusResponse)
+def apply_query_runtime_config(
+    config_id: str,
+    request: Request,
+) -> QueryRuntimeStatusResponse:
+    runtime_service = _runtime_service(request)
+    try:
+        snapshot = runtime_service.apply_runtime_config(config_id=config_id)
     except KeyError as exc:
         detail = exc.args[0] if exc.args else "查询配置不存在"
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=detail) from exc

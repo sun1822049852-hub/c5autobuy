@@ -123,20 +123,32 @@ class ModeRunner:
                     eligible=self._is_eligible_account(latest_account),
                 )
 
+    def sync_query_items(self, query_items: list[QueryItem]) -> None:
+        self._query_items = list(query_items or [])
+        self._item_query_counts = {
+            str(query_item.query_item_id): int(self._item_query_counts.get(str(query_item.query_item_id), 0))
+            for query_item in self._query_items
+        }
+        sync_query_items = getattr(self._query_item_scheduler, "sync_query_items", None)
+        if callable(sync_query_items):
+            sync_query_items(self._query_items)
+        sync_allocator_items = getattr(self._query_mode_allocator, "sync_query_items", None)
+        if callable(sync_allocator_items):
+            sync_allocator_items(self._query_items)
+
     def apply_query_item_runtime(self, query_item: QueryItem) -> bool:
         item_id = str(query_item.query_item_id)
-        applied = False
-        for index, current_item in enumerate(self._query_items):
+        next_items = list(self._query_items)
+        for index, current_item in enumerate(next_items):
             if str(current_item.query_item_id) != item_id:
                 continue
-            self._query_items[index] = query_item
-            applied = True
-            break
+            next_items[index] = query_item
+            self.sync_query_items(next_items)
+            return True
 
-        apply_runtime = getattr(self._query_mode_allocator, "apply_query_item_runtime", None)
-        if callable(apply_runtime):
-            applied = bool(apply_runtime(query_item)) or applied
-        return applied
+        next_items.append(query_item)
+        self.sync_query_items(next_items)
+        return True
 
     def apply_mode_setting(self, mode_setting: QueryModeSetting) -> None:
         self._mode_setting = mode_setting

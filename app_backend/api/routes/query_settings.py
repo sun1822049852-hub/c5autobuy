@@ -51,13 +51,13 @@ def _serialize_response(settings, *, warnings: list[str] | None = None) -> Query
 
 
 @router.get("", response_model=QuerySettingsResponse)
-async def get_query_settings(request: Request) -> QuerySettingsResponse:
+def get_query_settings(request: Request) -> QuerySettingsResponse:
     settings = GetQuerySettingsUseCase(_repository(request)).execute()
     return _serialize_response(settings)
 
 
 @router.put("", response_model=QuerySettingsResponse)
-async def update_query_settings(
+def update_query_settings(
     payload: QuerySettingsUpdateRequest,
     request: Request,
 ) -> QuerySettingsResponse:

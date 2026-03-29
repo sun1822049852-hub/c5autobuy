@@ -242,6 +242,27 @@ function createFetchHarness({ snapshots } = {}) {
 
 
 describe("diagnostics page", () => {
+  it("does not poll diagnostics until the diagnostics page is opened", async () => {
+    const fetchImpl = createFetchHarness();
+    installDesktopApp(fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await screen.findByRole("button", { name: "账号中心" });
+
+    expect(
+      fetchImpl.mock.calls.some(([input]) => new URL(input).pathname === "/diagnostics/sidebar"),
+    ).toBe(false);
+
+    await user.click(screen.getByRole("button", { name: "通用诊断" }));
+
+    await screen.findByRole("complementary", { name: "通用诊断面板" });
+    expect(
+      fetchImpl.mock.calls.some(([input]) => new URL(input).pathname === "/diagnostics/sidebar"),
+    ).toBe(true);
+  });
+
   it("moves diagnostics into a dedicated page instead of rendering a persistent shell sidebar", async () => {
     installDesktopApp(createFetchHarness());
     const user = userEvent.setup();
@@ -279,27 +300,26 @@ describe("diagnostics page", () => {
       snapshots: [initialSnapshot, laterSnapshot],
     }));
 
-    vi.useFakeTimers();
+    render(<App />);
 
-    try {
-      render(<App />);
+    expect(screen.getByRole("button", { name: "账号中心" })).toBeInTheDocument();
 
-      expect(screen.getByRole("button", { name: "账号中心" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "通用诊断" }));
+    const panel = await screen.findByRole("complementary", { name: "通用诊断面板" });
 
-      await act(async () => {
-        vi.advanceTimersByTime(1600);
-        await Promise.resolve();
-      });
-
-      fireEvent.click(screen.getByRole("button", { name: "通用诊断" }));
-      const panel = screen.getByRole("complementary", { name: "通用诊断面板" });
-
+    await waitFor(() => {
       expect(within(panel).getByText("查询事件-1")).toBeInTheDocument();
-      expect(within(panel).getByText("HTTP 401")).toBeInTheDocument();
-      expect(within(panel).getByText("GET /openapi/query")).toBeInTheDocument();
-      expect(within(panel).getByText("原始返回：not login")).toBeInTheDocument();
-    } finally {
-      vi.useRealTimers();
-    }
+    });
+
+    await act(async () => {
+      await new Promise((resolve) => {
+        window.setTimeout(resolve, 1600);
+      });
+    });
+
+    expect(within(panel).getByText("查询事件-1")).toBeInTheDocument();
+    expect(within(panel).getByText("HTTP 401")).toBeInTheDocument();
+    expect(within(panel).getByText("GET /openapi/query")).toBeInTheDocument();
+    expect(within(panel).getByText("原始返回：not login")).toBeInTheDocument();
   });
 });

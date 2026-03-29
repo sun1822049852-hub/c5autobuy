@@ -308,6 +308,9 @@ export function createAccountCenterClient({
     async applyQueryItemRuntime(configId, queryItemId) {
       return http.postJson(`/query-configs/${configId}/items/${queryItemId}/apply-runtime`, {});
     },
+    async applyQueryRuntimeConfig(configId) {
+      return http.postJson(`/query-runtime/configs/${configId}/apply-config`, {});
+    },
     async submitQueryRuntimeManualAllocations(configId, payload) {
       return http.putJson(`/query-runtime/configs/${configId}/manual-assignments`, payload);
     },

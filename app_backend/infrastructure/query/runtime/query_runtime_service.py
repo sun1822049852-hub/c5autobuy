@@ -268,6 +268,31 @@ class QueryRuntimeService:
         apply_manual_allocations(config=config, items=list(items))
         return self.get_status()
 
+    def apply_runtime_config(self, *, config_id: str) -> dict[str, object]:
+        config = self._query_config_repository.get_config(config_id)
+        if config is None:
+            raise KeyError("查询配置不存在")
+        config = self._resolve_runtime_config(config)
+
+        with self._state_lock:
+            active_config_id = self._get_active_config_id_locked()
+            runtime_is_running = self._has_running_runtime_locked()
+            runtime = self._runtime if runtime_is_running else None
+            pending_resume = self._has_pending_resume_state()
+            if active_config_id != config_id:
+                raise ValueError("当前配置未在运行，无法热应用整份配置")
+            if not runtime_is_running:
+                if pending_resume:
+                    self._pending_resume_config_name = getattr(config, "name", None)
+                    return self.get_status()
+                raise ValueError("当前配置未在运行，无法热应用整份配置")
+
+        apply_config = getattr(runtime, "apply_config", None)
+        if not callable(apply_config):
+            raise ValueError("当前运行时不支持整份配置热应用")
+        apply_config(config)
+        return self.get_status()
+
     def apply_query_settings(self) -> None:
         with self._state_lock:
             active_config_id = self._get_active_config_id_locked()

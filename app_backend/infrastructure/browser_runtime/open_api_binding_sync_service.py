@@ -98,11 +98,14 @@ class OpenApiBindingSyncService:
         api_key, allow_list = _extract_partner_info(partner_payload)
         early_changes: dict[str, object] = {}
         if api_key or allow_list:
-            early_changes = _build_account_changes(
-                account=account,
-                api_key=api_key,
-                allow_list=allow_list,
-                public_ip=None,
+            early_changes = _select_account_changes(
+                account,
+                _build_account_changes(
+                    account=account,
+                    api_key=api_key,
+                    allow_list=allow_list,
+                    public_ip=None,
+                ),
             )
         if early_changes:
             account = self._account_repository.update_account(account_id, **early_changes)
@@ -133,16 +136,15 @@ class OpenApiBindingSyncService:
                 "payload_summary": _summarize_partner_payload(partner_payload),
             },
         )
-        changes = _build_account_changes(
-            account=account,
-            api_key=api_key,
-            allow_list=allow_list,
-            public_ip=public_ip,
+        changes = _select_account_changes(
+            account,
+            _build_account_changes(
+                account=account,
+                api_key=api_key,
+                allow_list=allow_list,
+                public_ip=public_ip,
+            ),
         )
-        changes = {
-            key: value for key, value in changes.items()
-            if early_changes.get(key) != value
-        }
         if not changes:
             self._append_debug_log("sync_no_changes", {"account_id": account_id, "matched": matched})
             return {"matched": matched, "updated": False}
@@ -425,9 +427,7 @@ def _build_account_changes(
     allow_list: str | None,
     public_ip: str | None,
 ) -> dict[str, object]:
-    changes: dict[str, object] = {
-        "updated_at": datetime.now().isoformat(timespec="seconds"),
-    }
+    changes: dict[str, object] = {}
     if api_key:
         changes["api_key"] = api_key
     if allow_list is not None:
@@ -445,6 +445,18 @@ def _build_account_changes(
         elif browser_proxy_url is not None and browser_proxy_url == api_proxy_url and api_proxy_mode != "direct":
             changes["browser_public_ip"] = public_ip
     return changes
+
+
+def _select_account_changes(account, changes: dict[str, object]) -> dict[str, object]:
+    meaningful_changes = {
+        key: value
+        for key, value in changes.items()
+        if getattr(account, key, None) != value
+    }
+    if not meaningful_changes:
+        return {}
+    meaningful_changes["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    return meaningful_changes
 
 
 def _summarize_partner_payload(payload: dict[str, object] | None) -> dict[str, object]:

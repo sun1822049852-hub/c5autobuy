@@ -45,7 +45,7 @@ def _purchase_ui_preferences_repository(request: Request):
 
 
 @router.get("/status", response_model=PurchaseRuntimeStatusResponse)
-async def get_purchase_runtime_status(request: Request) -> PurchaseRuntimeStatusResponse:
+def get_purchase_runtime_status(request: Request) -> PurchaseRuntimeStatusResponse:
     use_case = GetPurchaseRuntimeStatusUseCase(
         _runtime_service(request),
         _query_runtime_service(request),
@@ -54,7 +54,7 @@ async def get_purchase_runtime_status(request: Request) -> PurchaseRuntimeStatus
 
 
 @router.get("/ui-preferences", response_model=PurchaseRuntimeUiPreferencesResponse)
-async def get_purchase_runtime_ui_preferences(request: Request) -> PurchaseRuntimeUiPreferencesResponse:
+def get_purchase_runtime_ui_preferences(request: Request) -> PurchaseRuntimeUiPreferencesResponse:
     use_case = GetPurchaseUiPreferencesUseCase(
         _purchase_ui_preferences_repository(request),
         _query_config_repository(request),
@@ -63,7 +63,7 @@ async def get_purchase_runtime_ui_preferences(request: Request) -> PurchaseRunti
 
 
 @router.put("/ui-preferences", response_model=PurchaseRuntimeUiPreferencesResponse)
-async def update_purchase_runtime_ui_preferences(
+def update_purchase_runtime_ui_preferences(
     payload: PurchaseRuntimeUiPreferencesRequest,
     request: Request,
 ) -> PurchaseRuntimeUiPreferencesResponse:
@@ -80,7 +80,7 @@ async def update_purchase_runtime_ui_preferences(
 
 
 @router.get("/accounts/{account_id}/inventory", response_model=PurchaseRuntimeInventoryDetailResponse)
-async def get_purchase_runtime_inventory_detail(
+def get_purchase_runtime_inventory_detail(
     account_id: str,
     request: Request,
 ) -> PurchaseRuntimeInventoryDetailResponse:
@@ -92,7 +92,7 @@ async def get_purchase_runtime_inventory_detail(
 
 
 @router.post("/accounts/{account_id}/inventory/refresh", response_model=PurchaseRuntimeInventoryDetailResponse)
-async def refresh_purchase_runtime_inventory_detail(
+def refresh_purchase_runtime_inventory_detail(
     account_id: str,
     request: Request,
 ) -> PurchaseRuntimeInventoryDetailResponse:
@@ -104,7 +104,7 @@ async def refresh_purchase_runtime_inventory_detail(
 
 
 @router.post("/start", response_model=PurchaseRuntimeStatusResponse)
-async def start_purchase_runtime(
+def start_purchase_runtime(
     payload: PurchaseRuntimeStartRequest,
     request: Request,
 ) -> PurchaseRuntimeStatusResponse:
@@ -121,7 +121,7 @@ async def start_purchase_runtime(
 
 
 @router.post("/stop", response_model=PurchaseRuntimeStatusResponse)
-async def stop_purchase_runtime(request: Request) -> PurchaseRuntimeStatusResponse:
+def stop_purchase_runtime(request: Request) -> PurchaseRuntimeStatusResponse:
     runtime_service = _runtime_service(request)
     query_runtime_service = _query_runtime_service(request)
     stopped, message = StopPurchaseRuntimeUseCase(query_runtime_service).execute()
