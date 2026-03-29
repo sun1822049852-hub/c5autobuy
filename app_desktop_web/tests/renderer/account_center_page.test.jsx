@@ -237,7 +237,7 @@ beforeEach(() => {
 });
 
 describe("account center page", () => {
-  it("patches only the pushed account row after websocket updates", async () => {
+  it("keeps purchase status derived fields when patching a pushed account row", async () => {
     class FakeWebSocket {
       static instances = [];
 
@@ -264,13 +264,47 @@ describe("account center page", () => {
     window.WebSocket = FakeWebSocket;
 
     const initialRows = accountRows();
-    const updatedAccount = {
+    const updatedAccountCenterRow = {
       ...initialRows[0],
       api_key: "api-a-updated",
       api_public_ip: "8.8.8.8",
       api_proxy_display: "8.8.8.8",
       browser_public_ip: "8.8.8.8",
       browser_proxy_display: "8.8.8.8",
+      purchase_status_code: "selected_warehouse",
+      purchase_status_text: "更新主仓",
+      selected_warehouse_text: "更新主仓",
+      selected_steam_id: "steam-1-updated",
+    };
+    const updatedRawAccount = {
+      account_id: "a-1",
+      default_name: "默认 A",
+      remark_name: "账号 A",
+      display_name: "账号 A",
+      browser_proxy_mode: "direct",
+      browser_proxy_url: null,
+      api_proxy_mode: "direct",
+      api_proxy_url: null,
+      api_key: "api-a-updated",
+      c5_user_id: "10001",
+      c5_nick_name: "Nick A",
+      cookie_raw: "NC5_accessToken=token",
+      purchase_capability_state: "bound",
+      purchase_pool_state: "active",
+      last_login_at: "2026-03-27T19:59:00",
+      last_error: null,
+      created_at: "2026-03-27T19:00:00",
+      updated_at: "2026-03-27T20:00:00",
+      purchase_disabled: false,
+      purchase_recovery_due_at: null,
+      new_api_enabled: true,
+      fast_api_enabled: true,
+      token_enabled: true,
+      api_query_disabled_reason: null,
+      browser_query_disabled_reason: null,
+      api_ip_allow_list: null,
+      browser_public_ip: "8.8.8.8",
+      api_public_ip: "8.8.8.8",
     };
     const fetchImpl = vi.fn(async (input, options = {}) => {
       const url = new URL(input);
@@ -283,10 +317,17 @@ describe("account center page", () => {
         };
       }
 
+      if (url.pathname === "/account-center/accounts/a-1" && method === "GET") {
+        return {
+          ok: true,
+          json: async () => updatedAccountCenterRow,
+        };
+      }
+
       if (url.pathname === "/accounts/a-1" && method === "GET") {
         return {
           ok: true,
-          json: async () => updatedAccount,
+          json: async () => updatedRawAccount,
         };
       }
 
@@ -315,8 +356,9 @@ describe("account center page", () => {
     await waitFor(() => {
       expect(screen.getAllByText("8.8.8.8").length).toBeGreaterThan(0);
     });
+    expect(screen.getByRole("button", { name: "配置购买状态 账号 A" })).toHaveTextContent("更新主仓");
     expect(fetchImpl).toHaveBeenCalledWith(
-      "http://127.0.0.1:8123/accounts/a-1",
+      "http://127.0.0.1:8123/account-center/accounts/a-1",
       expect.objectContaining({ method: "GET" }),
     );
     const listCallsAfterPush = fetchImpl.mock.calls.filter(([input, options = {}]) => {

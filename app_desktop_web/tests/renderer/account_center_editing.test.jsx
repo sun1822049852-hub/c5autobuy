@@ -196,6 +196,14 @@ function createFetchHarness() {
       return jsonResponse(rows);
     }
 
+    const accountCenterMatch = url.pathname.match(/^\/account-center\/accounts\/([^/]+)$/);
+    if (accountCenterMatch && method === "GET") {
+      const row = rows.find((candidate) => candidate.account_id === accountCenterMatch[1]);
+      return row
+        ? jsonResponse(row)
+        : jsonResponse({ detail: "Account not found" }, 404);
+    }
+
     if (url.pathname === "/accounts" && method === "POST") {
       const nextAccountId = `a-${rows.length + 1}`;
       const createdRow = {
@@ -357,6 +365,17 @@ function createFetchHarness() {
             : inventory
         )),
       };
+      rows = rows.map((row) => (
+        row.account_id === accountId
+          ? {
+            ...row,
+            purchase_status_code: "selected_warehouse",
+            purchase_status_text: "主仓一号",
+            selected_steam_id: "steam-1",
+            selected_warehouse_text: "主仓一号",
+          }
+          : row
+      ));
       return jsonResponse(inventoryMap[accountId]);
     }
 
@@ -804,6 +823,44 @@ describe("account center editing flows", () => {
     await user.click(screen.getByRole("button", { name: /^日志 \d+$/ }));
     const logDialog = await screen.findByRole("dialog", { name: "日志" });
     expect(within(logDialog).getByText("已更新购买配置：账号 A")).toBeInTheDocument();
+  });
+
+  it("syncs the table purchase status after manually refreshing inventory", async () => {
+    const harness = createFetchHarness();
+    harness.setRows((currentRows) => currentRows.map((row) => (
+      row.account_id === "a-1"
+        ? {
+          ...row,
+          purchase_status_code: "inventory_full",
+          purchase_status_text: "库存已满",
+          selected_steam_id: null,
+          selected_warehouse_text: null,
+        }
+        : row
+    )));
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    const purchaseButton = await screen.findByRole("button", { name: "配置购买状态 账号 A" });
+    expect(purchaseButton).toHaveTextContent("库存已满");
+
+    await user.click(purchaseButton);
+    const purchaseDrawer = await screen.findByRole("complementary", { name: "购买配置" });
+    await user.click(within(purchaseDrawer).getByRole("button", { name: "手动刷新仓库" }));
+
+    await waitFor(() => {
+      expect(purchaseButton).toHaveTextContent("主仓一号");
+    });
+    expect(harness.calls).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          method: "GET",
+          pathname: "/account-center/accounts/a-1",
+        }),
+      ]),
+    );
   });
 
   it("auto syncs whitelist after api proxy change", async () => {

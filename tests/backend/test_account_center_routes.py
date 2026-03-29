@@ -229,6 +229,35 @@ async def test_account_center_accounts_route_prefers_runtime_selected_inventory_
     assert response.json()[0]["purchase_status_text"] == "运行时主仓"
 
 
+async def test_account_center_single_account_route_returns_computed_purchase_status(client, app):
+    app.state.account_repository.create_account(
+        _build_account(
+            "single-ready",
+            remark_name="单账号可买",
+            c5_nick_name="单账号平台号",
+            api_key="api-single-ready",
+        )
+    )
+    app.state.purchase_runtime_service._inventory_snapshot_repository.save(
+        account_id="single-ready",
+        selected_steam_id="steam-single",
+        inventories=[
+            {"steamId": "steam-single", "nickname": "单账号主仓", "inventory_num": 860, "inventory_max": 1000},
+        ],
+        refreshed_at="2026-03-16T20:10:00",
+        last_error=None,
+    )
+
+    response = await client.get("/account-center/accounts/single-ready")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["account_id"] == "single-ready"
+    assert payload["purchase_status_code"] == "selected_warehouse"
+    assert payload["purchase_status_text"] == "单账号主仓"
+    assert payload["selected_warehouse_text"] == "单账号主仓"
+
+
 async def test_update_purchase_config_route_updates_purchase_disabled_and_selected_inventory(client, app):
     app.state.account_repository.create_account(
         _build_account(

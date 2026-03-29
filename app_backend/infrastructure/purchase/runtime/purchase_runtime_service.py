@@ -200,6 +200,13 @@ class PurchaseRuntimeService:
             rows.append(self._build_account_center_row(account, runtime_account=runtime_account))
         return rows
 
+    def get_account_center_account(self, account_id: str) -> dict[str, object] | None:
+        account = self._find_account(account_id)
+        if account is None:
+            return None
+        runtime_account = self._runtime_account_map().get(str(getattr(account, "account_id", "") or ""))
+        return self._build_account_center_row(account, runtime_account=runtime_account)
+
     def update_account_purchase_config(
         self,
         *,

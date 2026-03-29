@@ -555,13 +555,12 @@ export function useAccountCenterPage({ client }) {
             ));
             continue;
           }
-          const nextAccount = normalizeAccountCenterRow(await client.getAccount(accountId));
-          if (cancelled) {
-            return;
-          }
-          setRows((currentRows) => upsertAccountRow(currentRows, nextAccount));
-          if (loginDrawerAccountRef.current?.account_id === accountId) {
-            setLoginDrawerAccount(buildLoginDrawerAccount(nextAccount));
+          try {
+            await refreshAccountCenterRow(accountId);
+          } catch {
+            if (cancelled) {
+              return;
+            }
           }
         }
       } catch {
@@ -592,6 +591,19 @@ export function useAccountCenterPage({ client }) {
     } finally {
       setIsLoading(false);
     }
+  }
+
+  async function refreshAccountCenterRow(accountId) {
+    if (!accountId || typeof client.getAccountCenterAccount !== "function") {
+      return null;
+    }
+
+    const nextAccount = normalizeAccountCenterRow(await client.getAccountCenterAccount(accountId));
+    setRows((currentRows) => upsertAccountRow(currentRows, nextAccount));
+    if (loginDrawerAccountRef.current?.account_id === accountId) {
+      setLoginDrawerAccount(buildLoginDrawerAccount(nextAccount));
+    }
+    return nextAccount;
   }
 
   async function handleAction(action, successMessageBuilder) {
@@ -982,9 +994,15 @@ export function useAccountCenterPage({ client }) {
 
       try {
         const detail = await client.refreshPurchaseRuntimeInventoryDetail(account.account_id);
+        let nextAccount = account;
+        try {
+          nextAccount = await refreshAccountCenterRow(account.account_id) ?? account;
+        } catch (syncError) {
+          appendErrorLog(`同步购买状态失败：${toErrorMessage(syncError)}`, getErrorMeta(syncError));
+        }
         setPurchaseDrawerState((current) => ({
           ...current,
-          account,
+          account: nextAccount,
           detail,
           isLoading: false,
           isRefreshing: false,

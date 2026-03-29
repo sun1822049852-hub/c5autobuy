@@ -206,6 +206,11 @@ export function createAccountCenterClient({
         method: "GET",
       });
     },
+    async getAccountCenterAccount(accountId) {
+      return http.getJson(`/account-center/accounts/${accountId}`, {
+        method: "GET",
+      });
+    },
     async getAccount(accountId) {
       return http.getJson(`/accounts/${accountId}`, {
         method: "GET",
