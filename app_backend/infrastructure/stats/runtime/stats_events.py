@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(slots=True)
@@ -40,6 +40,7 @@ class QueryHitStatsEvent:
     item_name: str | None
     product_url: str | None
     matched_count: int
+    product_ids: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)

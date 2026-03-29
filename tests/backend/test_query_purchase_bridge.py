@@ -274,8 +274,11 @@ async def test_mode_runner_emits_query_execution_and_hit_stats_events():
                 query_item_name=query_item.item_name,
                 message="query completed",
                 match_count=2,
-                product_list=[{"productId": "p-1", "price": 88.0, "actRebateAmount": 0}],
-                total_price=88.0,
+                product_list=[
+                    {"productId": "p-1", "price": 88.0, "actRebateAmount": 0},
+                    {"productId": "p-2", "price": 89.0, "actRebateAmount": 0},
+                ],
+                total_price=177.0,
                 total_wear_sum=0.1234,
                 latency_ms=12.0,
                 error=None,
@@ -297,6 +300,7 @@ async def test_mode_runner_emits_query_execution_and_hit_stats_events():
     assert isinstance(stats_sink.events[1], QueryHitStatsEvent)
     assert stats_sink.events[0].query_item_id == "item-1"
     assert stats_sink.events[1].matched_count == 2
+    assert stats_sink.events[1].product_ids == ["p-1", "p-2"]
 
 
 async def test_mode_runner_spreads_initial_assignments_before_reusing_the_same_item():

@@ -234,6 +234,15 @@ class QueryItemStatsDailyRecord(Base):
     updated_at: Mapped[str] = mapped_column(Text, nullable=False)
 
 
+class QueryMatchedProductRecord(Base):
+    __tablename__ = "query_matched_products"
+
+    runtime_session_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    query_item_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    product_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    first_seen_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+
 class QueryItemRuleStatsTotalRecord(Base):
     __tablename__ = "query_item_rule_stats_total"
 

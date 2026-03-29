@@ -8,6 +8,7 @@ from sqlalchemy.orm import sessionmaker
 from app_backend.infrastructure.db.models import (
     AccountCapabilityStatsDailyRecord,
     AccountCapabilityStatsTotalRecord,
+    QueryMatchedProductRecord,
     QueryItemRuleStatsDailyRecord,
     QueryItemRuleStatsTotalRecord,
     QueryItemStatsDailyRecord,
@@ -69,19 +70,30 @@ class SqliteStatsRepository:
         if matched_count <= 0:
             return
         mode_type = self._get_str(event, "mode_type")
+        product_ids = self._extract_query_hit_product_ids(event)
+        can_precisely_dedupe = bool(product_ids) and bool(self._get_str(event, "query_item_id"))
         with self._session_factory() as session:
+            unique_hit_count = self._count_unique_query_hit_products(
+                session,
+                event,
+                timestamp=timestamp,
+            )
+            applied_hit_count = unique_hit_count if can_precisely_dedupe else matched_count
+            if applied_hit_count <= 0:
+                session.commit()
+                return
             total_row = self._ensure_query_item_total(session, event, timestamp=timestamp)
             daily_row = self._ensure_query_item_daily(session, event, stat_date=stat_date, timestamp=timestamp)
-            total_row.matched_product_count += matched_count
-            daily_row.matched_product_count += matched_count
-            self._increment_source_counter(total_row, mode_type, matched_count)
-            self._increment_source_counter(daily_row, mode_type, matched_count)
+            total_row.matched_product_count += applied_hit_count
+            daily_row.matched_product_count += applied_hit_count
+            self._increment_source_counter(total_row, mode_type, applied_hit_count)
+            self._increment_source_counter(daily_row, mode_type, applied_hit_count)
             total_row.last_hit_at = self._latest_timestamp(total_row.last_hit_at, timestamp)
 
             rule_total = self._ensure_query_item_rule_total(session, event, timestamp=timestamp)
             rule_daily = self._ensure_query_item_rule_daily(session, event, stat_date=stat_date, timestamp=timestamp)
-            rule_total.matched_product_count += matched_count
-            rule_daily.matched_product_count += matched_count
+            rule_total.matched_product_count += applied_hit_count
+            rule_daily.matched_product_count += applied_hit_count
             session.commit()
 
     def apply_purchase_create_order_event(self, event: object) -> None:
@@ -286,13 +298,82 @@ class SqliteStatsRepository:
         return str(status or "").lower() in {"success", "payment_success_no_items"}
 
     @staticmethod
-    def _increment_source_counter(row: QueryItemStatsTotalRecord | QueryItemStatsDailyRecord, mode_type: str, count: int) -> None:
+    def _increment_source_counter(
+        row: QueryItemStatsTotalRecord | QueryItemStatsDailyRecord,
+        mode_type: str,
+        count: int,
+    ) -> None:
         if mode_type == "new_api":
             row.new_api_hit_count += count
         elif mode_type == "fast_api":
             row.fast_api_hit_count += count
         else:
             row.browser_hit_count += count
+
+    def _count_unique_query_hit_products(
+        self,
+        session,
+        event: object,
+        *,
+        timestamp: str,
+    ) -> int:
+        product_ids = self._extract_query_hit_product_ids(event)
+        query_item_id = self._get_str(event, "query_item_id")
+        if not product_ids or not query_item_id:
+            return 0
+
+        runtime_session_id = self._normalize_runtime_session_id(getattr(event, "runtime_session_id", None))
+        unique_count = 0
+        for product_id in product_ids:
+            row = session.get(
+                QueryMatchedProductRecord,
+                {
+                    "runtime_session_id": runtime_session_id,
+                    "query_item_id": query_item_id,
+                    "product_id": product_id,
+                },
+            )
+            if row is not None:
+                continue
+            session.add(
+                QueryMatchedProductRecord(
+                    runtime_session_id=runtime_session_id,
+                    query_item_id=query_item_id,
+                    product_id=product_id,
+                    first_seen_at=timestamp,
+                )
+            )
+            unique_count += 1
+        return unique_count
+
+    @staticmethod
+    def _extract_query_hit_product_ids(event: object) -> list[str]:
+        raw_product_ids = getattr(event, "product_ids", None)
+        if not isinstance(raw_product_ids, list):
+            raw_product_list = getattr(event, "product_list", None)
+            if isinstance(raw_product_list, list):
+                raw_product_ids = [
+                    product.get("productId")
+                    for product in raw_product_list
+                    if isinstance(product, dict)
+                ]
+            else:
+                raw_product_ids = []
+
+        product_ids: list[str] = []
+        seen: set[str] = set()
+        for raw_product_id in raw_product_ids:
+            product_id = str(raw_product_id or "").strip()
+            if not product_id or product_id in seen:
+                continue
+            seen.add(product_id)
+            product_ids.append(product_id)
+        return product_ids
+
+    @staticmethod
+    def _normalize_runtime_session_id(value: object) -> str:
+        text = str(value or "").strip()
+        return text or "__default__"
 
     def _ensure_query_item_total(self, session, event: object, *, timestamp: str) -> QueryItemStatsTotalRecord:
         external_item_id = self._get_str(event, "external_item_id")
@@ -347,7 +428,13 @@ class SqliteStatsRepository:
         self._update_item_snapshots(row, event, timestamp=timestamp)
         return row
 
-    def _ensure_query_item_rule_total(self, session, event: object, *, timestamp: str) -> QueryItemRuleStatsTotalRecord:
+    def _ensure_query_item_rule_total(
+        self,
+        session,
+        event: object,
+        *,
+        timestamp: str,
+    ) -> QueryItemRuleStatsTotalRecord:
         external_item_id = self._get_str(event, "external_item_id")
         rule_fingerprint = self._get_str(event, "rule_fingerprint")
         row = session.get(

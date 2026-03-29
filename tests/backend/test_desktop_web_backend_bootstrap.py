@@ -83,6 +83,7 @@ def test_create_app_creates_stats_and_ui_preference_tables(tmp_path: Path):
     assert "purchase_ui_preferences" in table_names
     assert "query_item_stats_total" in table_names
     assert "query_item_stats_daily" in table_names
+    assert "query_matched_products" in table_names
     assert "query_item_rule_stats_total" in table_names
     assert "query_item_rule_stats_daily" in table_names
     assert "account_capability_stats_total" in table_names

@@ -147,6 +147,104 @@ def test_stats_repository_accumulates_query_item_total_daily_and_range_views(tmp
     assert _to_source_counts(range_row) == {"new_api": 2, "fast_api": 1}
 
 
+def test_stats_repository_deduplicates_query_hits_by_runtime_session_query_item_and_product_id(tmp_path):
+    engine = build_engine(tmp_path / "app.db")
+    create_schema(engine)
+    repository = SqliteStatsRepository(build_session_factory(engine))
+
+    repository.apply_query_hit_event(
+        SimpleNamespace(
+            timestamp="2026-03-21T18:00:01",
+            runtime_session_id="run-1",
+            query_config_id="cfg-1",
+            query_item_id="item-1",
+            external_item_id="ext-1",
+            item_name="AK-47 | Redline",
+            product_url="https://example.com/items/ext-1",
+            rule_fingerprint="fp-1",
+            detail_min_wear=0.12,
+            detail_max_wear=0.3,
+            max_price=123.45,
+            mode_type="new_api",
+            account_id="a1",
+            account_display_name="账号-A",
+            matched_count=2,
+            product_ids=["p-1", "p-2"],
+        )
+    )
+    repository.apply_query_hit_event(
+        SimpleNamespace(
+            timestamp="2026-03-21T18:00:02",
+            runtime_session_id="run-1",
+            query_config_id="cfg-1",
+            query_item_id="item-1",
+            external_item_id="ext-1",
+            item_name="AK-47 | Redline",
+            product_url="https://example.com/items/ext-1",
+            rule_fingerprint="fp-1",
+            detail_min_wear=0.12,
+            detail_max_wear=0.3,
+            max_price=123.45,
+            mode_type="fast_api",
+            account_id="a2",
+            account_display_name="账号-B",
+            matched_count=1,
+            product_ids=["p-1"],
+        )
+    )
+    repository.apply_query_hit_event(
+        SimpleNamespace(
+            timestamp="2026-03-21T18:00:03",
+            runtime_session_id="run-1",
+            query_config_id="cfg-1",
+            query_item_id="item-1",
+            external_item_id="ext-1",
+            item_name="AK-47 | Redline",
+            product_url="https://example.com/items/ext-1",
+            rule_fingerprint="fp-1",
+            detail_min_wear=0.12,
+            detail_max_wear=0.3,
+            max_price=123.45,
+            mode_type="fast_api",
+            account_id="a2",
+            account_display_name="账号-B",
+            matched_count=1,
+            product_ids=["p-3"],
+        )
+    )
+    repository.apply_query_hit_event(
+        SimpleNamespace(
+            timestamp="2026-03-21T18:00:04",
+            runtime_session_id="run-2",
+            query_config_id="cfg-1",
+            query_item_id="item-1",
+            external_item_id="ext-1",
+            item_name="AK-47 | Redline",
+            product_url="https://example.com/items/ext-1",
+            rule_fingerprint="fp-1",
+            detail_min_wear=0.12,
+            detail_max_wear=0.3,
+            max_price=123.45,
+            mode_type="fast_api",
+            account_id="a2",
+            account_display_name="账号-B",
+            matched_count=1,
+            product_ids=["p-1"],
+        )
+    )
+
+    total_row = _find_row(repository.list_query_item_stats(range_mode="total"), external_item_id="ext-1")
+    day_row = _find_row(
+        repository.list_query_item_stats(range_mode="day", date="2026-03-21"),
+        external_item_id="ext-1",
+    )
+
+    assert total_row["matched_product_count"] == 4
+    assert _to_source_counts(total_row) == {"new_api": 2, "fast_api": 2}
+    assert day_row["matched_product_count"] == 4
+    assert _to_source_counts(day_row) == {"new_api": 2, "fast_api": 2}
+
+
 def test_stats_repository_accumulates_account_capability_by_mode_phase_and_range(tmp_path):
     engine = build_engine(tmp_path / "app.db")
     create_schema(engine)

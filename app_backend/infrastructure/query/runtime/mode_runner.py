@@ -527,7 +527,26 @@ class ModeRunner:
             item_name=getattr(event, "query_item_name", None),
             product_url=getattr(event, "product_url", None),
             matched_count=int(getattr(event, "match_count", 0) or 0),
+            product_ids=self._collect_product_ids(event),
         )
+
+    @staticmethod
+    def _collect_product_ids(event: QueryExecutionEvent) -> list[str]:
+        product_list = getattr(event, "product_list", None)
+        if not isinstance(product_list, list):
+            return []
+
+        product_ids: list[str] = []
+        seen: set[str] = set()
+        for product in product_list:
+            if not isinstance(product, dict):
+                continue
+            product_id = str(product.get("productId") or "").strip()
+            if not product_id or product_id in seen:
+                continue
+            seen.add(product_id)
+            product_ids.append(product_id)
+        return product_ids
 
     def _build_group_rows(self, worker_snapshots: list[dict[str, object]], *, in_window: bool) -> list[dict[str, object]]:
         rows: list[dict[str, object]] = []
