@@ -15,7 +15,8 @@ export function QueryItemTable({
       <div className="query-item-table__header">
         <div className="query-item-table__column-grid">
           <div className="query-item-table__column query-item-table__column--name">商品名</div>
-          <div className="query-item-table__column">价格</div>
+          <div className="query-item-table__column">市场价</div>
+          <div className="query-item-table__column">扫货价</div>
           <div className="query-item-table__column">磨损</div>
           <div className="query-item-table__column">new_api</div>
           <div className="query-item-table__column">fast_api</div>

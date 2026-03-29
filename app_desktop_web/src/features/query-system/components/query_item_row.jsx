@@ -27,9 +27,17 @@ export function QueryItemRow({
       <div className="query-item-row__content">
         <div className="query-item-row__name">{displayName}</div>
         <button
-          className="query-item-row__value"
+          className="query-item-row__value query-item-row__value--market-price"
           type="button"
-          aria-label={`修改价格 ${displayName}`}
+          aria-label={`查看市场价 ${displayName}`}
+          onClick={() => onEditItem(item.query_item_id)}
+        >
+          {formatValue(item.last_market_price)}
+        </button>
+        <button
+          className="query-item-row__value query-item-row__value--price"
+          type="button"
+          aria-label={`修改扫货价 ${displayName}`}
           onClick={() => onEditItem(item.query_item_id)}
         >
           {formatValue(item.max_price)}

@@ -200,6 +200,10 @@ describe("query system page", () => {
     expect(screen.getByText("new_api 2")).toBeInTheDocument();
     expect(screen.getByText("token 3")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "添加商品" })).toBeInTheDocument();
+    expect(screen.getByText("商品名")).toBeInTheDocument();
+    expect(screen.getByText("市场价")).toBeInTheDocument();
+    expect(screen.getByText("扫货价")).toBeInTheDocument();
+    expect(screen.getByText("磨损")).toBeInTheDocument();
   });
 
   it("creates and deletes configs through centered dialogs", async () => {

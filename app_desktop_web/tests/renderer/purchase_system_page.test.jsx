@@ -702,7 +702,7 @@ describe("purchase system page", () => {
     await user.click(await screen.findByRole("button", { name: "扫货系统" }));
 
     const itemToggle = screen.getByRole("button", { name: "AK-47 | Redline" });
-    expect(within(itemToggle).getByText("价格 <= 123.45")).toBeInTheDocument();
+    expect(within(itemToggle).getByText("扫货价 <= 123.45")).toBeInTheDocument();
     expect(within(itemToggle).getByText("磨损 0.12 ~ 0.3")).toBeInTheDocument();
     expect(within(itemToggle).getByText("查询次数")).toBeInTheDocument();
     expect(within(itemToggle).getByText("命中")).toBeInTheDocument();

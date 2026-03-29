@@ -409,33 +409,36 @@ describe("query system editing", () => {
     const itemOne = await screen.findByRole("region", { name: "商品 AK-47 | Redline" });
     const itemTwo = screen.getByRole("region", { name: "商品 AWP | Asiimov" });
 
-    expect(within(itemOne).getByRole("button", { name: "修改价格 AK-47 | Redline" })).toHaveTextContent("199");
+    expect(within(itemOne).getByRole("button", { name: "查看市场价 AK-47 | Redline" })).toHaveTextContent("188.88");
+    expect(within(itemOne).getByRole("button", { name: "修改扫货价 AK-47 | Redline" })).toHaveTextContent("199");
     expect(within(itemOne).getByRole("button", { name: "修改磨损 AK-47 | Redline" })).toHaveTextContent("0.1 ~ 0.25");
     expect(within(itemOne).getByRole("button", { name: "修改 new_api AK-47 | Redline" })).toHaveTextContent("专属中 1/1");
+    expect(within(itemTwo).getByRole("button", { name: "查看市场价 AWP | Asiimov" })).toHaveTextContent("955.55");
+    expect(within(itemTwo).getByRole("button", { name: "修改扫货价 AWP | Asiimov" })).toHaveTextContent("999");
     expect(within(itemTwo).getByRole("button", { name: "修改 fast_api AWP | Asiimov" })).toHaveTextContent("无可用账号 0/1");
     const itemThree = screen.getByRole("region", { name: "商品 M4A1-S | Blue Phosphor" });
     expect(within(itemThree).getByRole("button", { name: "修改 new_api M4A1-S | Blue Phosphor" })).toHaveTextContent("手动暂停");
     expect(within(itemThree).getByRole("button", { name: "修改 token M4A1-S | Blue Phosphor" })).toHaveTextContent("手动暂停");
 
-    await user.click(within(itemOne).getByRole("button", { name: "修改价格 AK-47 | Redline" }));
+    await user.click(within(itemOne).getByRole("button", { name: "修改扫货价 AK-47 | Redline" }));
     const editorOne = await screen.findByRole("dialog", { name: "编辑商品" });
 
     expect(within(editorOne).getByText("天然磨损范围 0.1 ~ 0.7")).toBeInTheDocument();
     expect(within(editorOne).getByLabelText("配置最小磨损")).toHaveValue(0.1);
     expect(within(editorOne).getByLabelText("配置最大磨损")).toHaveValue(0.25);
-    expect(within(editorOne).getByLabelText("最高价格")).toHaveValue(199);
+    expect(within(editorOne).getByLabelText("扫货价")).toHaveValue(199);
     expect(within(editorOne).getByLabelText("new_api 专属目标")).toHaveValue(1);
     expect(within(editorOne).getByText("new_api 还可分配 2")).toBeInTheDocument();
     await user.click(within(editorOne).getByRole("button", { name: "取消" }));
 
-    await user.click(within(itemTwo).getByRole("button", { name: "修改价格 AWP | Asiimov" }));
+    await user.click(within(itemTwo).getByRole("button", { name: "修改扫货价 AWP | Asiimov" }));
     const editorTwo = await screen.findByRole("dialog", { name: "编辑商品" });
     const itemTwoNewApi = within(editorTwo).getByLabelText("new_api 专属目标");
     await user.clear(itemTwoNewApi);
     await user.type(itemTwoNewApi, "1");
     await user.click(within(editorTwo).getByRole("button", { name: "应用修改" }));
 
-    await user.click(within(itemOne).getByRole("button", { name: "修改价格 AK-47 | Redline" }));
+    await user.click(within(itemOne).getByRole("button", { name: "修改扫货价 AK-47 | Redline" }));
     const editorOneAgain = await screen.findByRole("dialog", { name: "编辑商品" });
     expect(within(editorOneAgain).getByText("new_api 还可分配 1")).toBeInTheDocument();
   });
@@ -450,14 +453,14 @@ describe("query system editing", () => {
       await openQuerySystem(user);
 
       const itemOne = await screen.findByRole("region", { name: "商品 AK-47 | Redline" });
-      await user.click(within(itemOne).getByRole("button", { name: "修改价格 AK-47 | Redline" }));
+      await user.click(within(itemOne).getByRole("button", { name: "修改扫货价 AK-47 | Redline" }));
       const editorOne = await screen.findByRole("dialog", { name: "编辑商品" });
 
       const minWearInput = within(editorOne).getByLabelText("配置最小磨损");
       await user.clear(minWearInput);
       await user.type(minWearInput, "0.12");
 
-      const maxPriceInput = within(editorOne).getByLabelText("最高价格");
+      const maxPriceInput = within(editorOne).getByLabelText("扫货价");
       await user.clear(maxPriceInput);
       await user.type(maxPriceInput, "188");
       await user.click(within(editorOne).getByLabelText("手动暂停"));
@@ -498,7 +501,7 @@ describe("query system editing", () => {
       await user.clear(panelMaxWear);
       await user.type(panelMaxWear, "0.18");
 
-      const panelMaxPrice = within(createPanel).getByLabelText("最高价格");
+      const panelMaxPrice = within(createPanel).getByLabelText("扫货价");
       await user.clear(panelMaxPrice);
       await user.type(panelMaxPrice, "888");
 
@@ -595,7 +598,7 @@ describe("query system editing", () => {
     await openQuerySystem(user);
 
     const itemTwo = await screen.findByRole("region", { name: "商品 AWP | Asiimov" });
-    await user.click(within(itemTwo).getByRole("button", { name: "修改价格 AWP | Asiimov" }));
+    await user.click(within(itemTwo).getByRole("button", { name: "修改扫货价 AWP | Asiimov" }));
     const editorTwo = await screen.findByRole("dialog", { name: "编辑商品" });
     const itemTwoNewApi = within(editorTwo).getByLabelText("new_api 专属目标");
     await user.clear(itemTwoNewApi);
@@ -654,9 +657,9 @@ describe("query system editing", () => {
     await openQuerySystem(user);
 
     const itemOne = await screen.findByRole("region", { name: "商品 AK-47 | Redline" });
-    await user.click(within(itemOne).getByRole("button", { name: "修改价格 AK-47 | Redline" }));
+    await user.click(within(itemOne).getByRole("button", { name: "修改扫货价 AK-47 | Redline" }));
     const editorOne = await screen.findByRole("dialog", { name: "编辑商品" });
-    const maxPriceInput = within(editorOne).getByLabelText("最高价格");
+    const maxPriceInput = within(editorOne).getByLabelText("扫货价");
     await user.clear(maxPriceInput);
     await user.type(maxPriceInput, "233");
     await user.click(within(editorOne).getByRole("button", { name: "应用修改" }));
@@ -687,9 +690,9 @@ describe("query system editing", () => {
     await openQuerySystem(user);
 
     const itemOne = await screen.findByRole("region", { name: "商品 AK-47 | Redline" });
-    await user.click(within(itemOne).getByRole("button", { name: "修改价格 AK-47 | Redline" }));
+    await user.click(within(itemOne).getByRole("button", { name: "修改扫货价 AK-47 | Redline" }));
     const editorOne = await screen.findByRole("dialog", { name: "编辑商品" });
-    const maxPriceInput = within(editorOne).getByLabelText("最高价格");
+    const maxPriceInput = within(editorOne).getByLabelText("扫货价");
     await user.clear(maxPriceInput);
     await user.type(maxPriceInput, "211");
     await user.click(within(editorOne).getByRole("button", { name: "应用修改" }));

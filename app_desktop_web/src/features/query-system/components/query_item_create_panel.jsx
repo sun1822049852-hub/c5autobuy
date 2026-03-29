@@ -122,14 +122,14 @@ export function QueryItemCreatePanel({
             </label>
 
             <label className="form-field">
-              <span className="form-label">最高价格</span>
+              <span className="form-label">扫货价</span>
               <input
                 className="form-input"
                 type="number"
                 min="0"
                 step="0.01"
                 value={draft.maxPrice}
-                aria-label="最高价格"
+                aria-label="扫货价"
                 onChange={(event) => onFieldChange("maxPrice", event.target.value)}
               />
             </label>

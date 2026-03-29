@@ -51,7 +51,7 @@ export function PurchaseItemPanel({
             {isPreview ? (
               <div className="purchase-item-panel__summary-line purchase-item-panel__summary-line--preview">展示样例</div>
             ) : null}
-            <div className="purchase-item-panel__summary-line">价格 &lt;= {row.max_price ?? "-"}</div>
+            <div className="purchase-item-panel__summary-line">扫货价 &lt;= {row.max_price ?? "-"}</div>
             <div className="purchase-item-panel__summary-line">磨损 {wearText}</div>
           </div>
           <div className="purchase-item-panel__stats">
