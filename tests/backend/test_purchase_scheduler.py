@@ -65,3 +65,42 @@ def test_purchase_scheduler_can_clear_backlog_batches():
 
     assert cleared == 2
     assert scheduler.queue_size() == 0
+
+
+def test_purchase_scheduler_claims_idle_accounts_per_bucket_limit():
+    scheduler = PurchaseScheduler()
+
+    for index in range(2):
+        scheduler.register_account(f"b1-{index}", available=True, bucket_key="bucket-1")
+    for index in range(3):
+        scheduler.register_account(f"b2-{index}", available=True, bucket_key="bucket-2")
+    for index in range(6):
+        scheduler.register_account(f"b3-{index}", available=True, bucket_key="bucket-3")
+    for index in range(8):
+        scheduler.register_account(f"b4-{index}", available=True, bucket_key="bucket-4")
+
+    claimed = scheduler.claim_idle_accounts_by_bucket(limit_per_bucket=4)
+
+    assert len(claimed) == 13
+    assert sum(1 for account_id in claimed if account_id.startswith("b1-")) == 2
+    assert sum(1 for account_id in claimed if account_id.startswith("b2-")) == 3
+    assert sum(1 for account_id in claimed if account_id.startswith("b3-")) == 4
+    assert sum(1 for account_id in claimed if account_id.startswith("b4-")) == 4
+    assert scheduler.account_status("b4-0")["busy"] is True
+
+
+def test_purchase_scheduler_second_claim_uses_remaining_idle_accounts():
+    scheduler = PurchaseScheduler()
+
+    for index in range(6):
+        scheduler.register_account(f"b1-{index}", available=True, bucket_key="bucket-1")
+    for index in range(8):
+        scheduler.register_account(f"b2-{index}", available=True, bucket_key="bucket-2")
+
+    first = scheduler.claim_idle_accounts_by_bucket(limit_per_bucket=4)
+    second = scheduler.claim_idle_accounts_by_bucket(limit_per_bucket=4)
+
+    assert len(first) == 8
+    assert len(second) == 6
+    assert sum(1 for account_id in second if account_id.startswith("b1-")) == 2
+    assert sum(1 for account_id in second if account_id.startswith("b2-")) == 4

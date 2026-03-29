@@ -17,6 +17,7 @@ from app_backend.infrastructure.query.runtime.api_key_status import (
 from app_backend.infrastructure.purchase.runtime.account_purchase_worker import AccountPurchaseWorker
 from app_backend.infrastructure.purchase.runtime.inventory_state import InventoryState
 from app_backend.infrastructure.purchase.runtime.purchase_hit_inbox import PurchaseHitInbox
+from app_backend.infrastructure.purchase.runtime.proxy_bucket import normalize_proxy_bucket_key
 from app_backend.infrastructure.purchase.runtime.purchase_scheduler import PurchaseScheduler
 from app_backend.infrastructure.purchase.runtime.purchase_execution_gateway import PurchaseExecutionGateway
 from app_backend.infrastructure.purchase.runtime.purchase_stats_aggregator import PurchaseStatsAggregator
@@ -46,6 +47,7 @@ class PurchaseRuntimeService:
         stats_sink=None,
     ) -> None:
         self._account_repository = account_repository
+        self._settings_repository = settings_repository
         self._inventory_snapshot_repository = inventory_snapshot_repository
         self._inventory_refresh_gateway_factory = inventory_refresh_gateway_factory
         self._recovery_delay_seconds_provider = recovery_delay_seconds_provider
@@ -303,6 +305,7 @@ class PurchaseRuntimeService:
                 accounts,
                 None,
                 account_repository=self._account_repository,
+                settings_repository=self._settings_repository,
                 inventory_snapshot_repository=self._inventory_snapshot_repository,
                 inventory_refresh_gateway_factory=self._inventory_refresh_gateway_factory,
                 recovery_delay_seconds_provider=self._recovery_delay_seconds_provider,
@@ -904,6 +907,7 @@ class PurchaseRuntimeService:
         _legacy_settings=None,
         *,
         account_repository=None,
+        settings_repository=None,
         inventory_snapshot_repository=None,
         inventory_refresh_gateway_factory: InventoryRefreshGatewayFactory | None = None,
         recovery_delay_seconds_provider: RecoveryDelaySecondsProvider | None = None,
@@ -914,6 +918,7 @@ class PurchaseRuntimeService:
             accounts,
             _legacy_settings,
             account_repository=account_repository,
+            settings_repository=settings_repository,
             inventory_snapshot_repository=inventory_snapshot_repository,
             inventory_refresh_gateway_factory=inventory_refresh_gateway_factory,
             recovery_delay_seconds_provider=recovery_delay_seconds_provider,
@@ -930,6 +935,7 @@ class _RuntimeAccountState:
     capability_state: str
     pool_state: str
     purchase_disabled: bool = False
+    busy: bool = False
     last_error: str | None = None
     total_purchased_count: int = 0
     inventory_refreshed_at: str | None = None
@@ -953,6 +959,7 @@ class _DefaultPurchaseRuntime:
         _legacy_settings=None,
         *,
         account_repository=None,
+        settings_repository=None,
         inventory_snapshot_repository=None,
         inventory_refresh_gateway_factory: InventoryRefreshGatewayFactory | None,
         recovery_delay_seconds_provider: RecoveryDelaySecondsProvider | None,
@@ -961,6 +968,7 @@ class _DefaultPurchaseRuntime:
     ) -> None:
         self._accounts = list(accounts)
         self._account_repository = account_repository
+        self._settings_repository = settings_repository
         self._inventory_snapshot_repository = inventory_snapshot_repository
         self._inventory_refresh_gateway_factory = inventory_refresh_gateway_factory
         self._recovery_delay_seconds_provider = (
@@ -983,6 +991,9 @@ class _DefaultPurchaseRuntime:
         self._drain_signal = threading.Event()
         self._drain_stop_signal = threading.Event()
         self._drain_thread: threading.Thread | None = None
+        self._dispatch_threads: list[threading.Thread] = []
+        self._state_lock = threading.RLock()
+        self._dispatch_generation = 0
         self._stats_aggregator = PurchaseStatsAggregator()
 
     def set_availability_callbacks(
@@ -997,6 +1008,7 @@ class _DefaultPurchaseRuntime:
     def start(self) -> None:
         self._cancel_all_recovery_checks()
         self._running = True
+        self._dispatch_generation += 1
         self._started_at = datetime.now().isoformat(timespec="seconds")
         self._stopped_at = None
         self._recent_events = []
@@ -1016,9 +1028,9 @@ class _DefaultPurchaseRuntime:
         self._active_account_count = self._scheduler.active_account_count()
         self._drain_stop_signal = threading.Event()
         self._drain_signal = threading.Event()
-        self._start_drain_worker()
 
     def stop(self) -> None:
+        self._dispatch_generation += 1
         self._running = False
         self._cancel_all_recovery_checks()
         self._drain_stop_signal.set()
@@ -1027,6 +1039,10 @@ class _DefaultPurchaseRuntime:
         if drain_thread is not None and drain_thread.is_alive():
             drain_thread.join(timeout=0.2)
         self._drain_thread = None
+        for dispatch_thread in list(self._dispatch_threads):
+            if dispatch_thread.is_alive():
+                dispatch_thread.join(timeout=0.2)
+        self._dispatch_threads = []
         self._stats_aggregator.stop()
         self._stopped_at = datetime.now().isoformat(timespec="seconds")
 
@@ -1043,8 +1059,10 @@ class _DefaultPurchaseRuntime:
             and current_stats.get("query_config_id") == query_config_id
         ):
             return
+        self._dispatch_generation += 1
         self._hit_inbox = PurchaseHitInbox()
         self._scheduler.clear_queue()
+        self._recent_events = []
         self._stats_aggregator.reset(
             runtime_session_id=runtime_session_id,
             query_config_id=query_config_id,
@@ -1065,10 +1083,20 @@ class _DefaultPurchaseRuntime:
         if batch is None:
             self._push_event(hit, status="duplicate_filtered", message="重复命中已忽略")
             return {"accepted": False, "status": "duplicate_filtered"}
+        claimed_account_ids = self._scheduler.claim_idle_accounts_by_bucket(
+            limit_per_bucket=self._get_per_batch_ip_fanout_limit(),
+        )
+        if not claimed_account_ids:
+            self._push_event(hit, status="ignored_all_busy", message="当前没有空闲购买账号，命中已忽略")
+            return {"accepted": False, "status": "ignored_all_busy"}
 
-        self._scheduler.submit(batch)
-        self._push_event(hit, status="queued", message="已转入购买")
-        self._signal_drain_worker()
+        for account_id in claimed_account_ids:
+            self._start_account_dispatch(account_id, batch)
+        self._push_event(
+            hit,
+            status="queued",
+            message=f"已派发 {len(claimed_account_ids)} 个购买账号",
+        )
         return {"accepted": True, "status": "queued"}
 
     def snapshot(self) -> dict[str, object]:
@@ -1275,7 +1303,11 @@ class _DefaultPurchaseRuntime:
                 recovery_due_at=recovery_due_at,
             )
             self._account_states[account_id] = state
-            self._scheduler.register_account(account_id, available=available)
+            self._scheduler.register_account(
+                account_id,
+                available=available,
+                bucket_key=self._account_bucket_key(account),
+            )
             if state.pool_state == PurchasePoolState.PAUSED_NO_INVENTORY and not state.purchase_disabled:
                 self._schedule_recovery_check(state.account_id)
             if should_persist_snapshot:
@@ -1325,26 +1357,10 @@ class _DefaultPurchaseRuntime:
             return None
         return int(selected_inventory.get("inventory_max", 1000))
 
-    async def _drain_scheduler(self) -> None:
-        while self._scheduler.queue_size() > 0:
-            account_id = self._scheduler.select_next_account_id()
-            if not account_id:
-                return
-            state = self._account_states.get(account_id)
-            if state is None:
-                self._scheduler.mark_unavailable(account_id, reason="missing_account_state")
-                continue
-
-            try:
-                batch = self._scheduler.pop_next_batch()
-            except IndexError:
-                return
-            outcome = await state.worker.process(batch)
-            self._apply_worker_outcome(state, batch, outcome)
-
     def _apply_worker_outcome(self, state: _RuntimeAccountState, batch, outcome) -> None:
         state.capability_state = outcome.capability_state
         state.pool_state = outcome.pool_state
+        state.busy = False
         state.last_error = outcome.error
         stats_status = str(outcome.status)
         if outcome.status == "success":
@@ -1543,6 +1559,75 @@ class _DefaultPurchaseRuntime:
             self._scheduler.mark_no_inventory(state.account_id)
             self._schedule_recovery_check(state.account_id)
         self._handle_active_account_count_change(previous_active_account_count)
+
+    def _get_per_batch_ip_fanout_limit(self) -> int:
+        repository = getattr(self, "_settings_repository", None)
+        if repository is None:
+            return 1
+        get_settings = getattr(repository, "get", None)
+        if not callable(get_settings):
+            return 1
+        try:
+            settings = get_settings()
+        except Exception:
+            return 1
+        purchase_settings = dict(getattr(settings, "purchase_settings_json", {}) or {})
+        try:
+            return max(int(purchase_settings.get("per_batch_ip_fanout_limit", 1) or 1), 1)
+        except (TypeError, ValueError):
+            return 1
+
+    @staticmethod
+    def _account_bucket_key(account: object) -> str:
+        return normalize_proxy_bucket_key(
+            proxy_mode=str(getattr(account, "browser_proxy_mode", "") or "direct"),
+            proxy_url=getattr(account, "browser_proxy_url", None),
+        )
+
+    def _start_account_dispatch(self, account_id: str, batch) -> None:
+        state = self._account_states.get(account_id)
+        if state is None:
+            self._scheduler.mark_unavailable(account_id, reason="missing_account_state")
+            return
+        state.busy = True
+        dispatch_generation = self._dispatch_generation
+
+        def runner() -> None:
+            try:
+                outcome = _run_coroutine_sync(state.worker.process(batch))
+            except Exception as exc:  # pragma: no cover - defensive background worker guard
+                outcome = PurchaseWorkerOutcome(
+                    status="exception",
+                    purchased_count=0,
+                    submitted_count=len(list(getattr(batch, "product_list", []) or [])),
+                    selected_steam_id=state.inventory_state.selected_steam_id,
+                    pool_state=state.pool_state,
+                    capability_state=state.capability_state,
+                    requires_remote_refresh=False,
+                    error=str(exc),
+                )
+            try:
+                with self._state_lock:
+                    if dispatch_generation != self._dispatch_generation:
+                        return
+                    self._apply_worker_outcome(state, batch, outcome)
+            finally:
+                self._scheduler.release_account(account_id)
+                current_thread = threading.current_thread()
+                with self._state_lock:
+                    self._dispatch_threads = [
+                        dispatch_thread
+                        for dispatch_thread in self._dispatch_threads
+                        if dispatch_thread is not current_thread
+                    ]
+
+        dispatch_thread = threading.Thread(
+            target=runner,
+            name=f"purchase-dispatch-{account_id}",
+            daemon=True,
+        )
+        self._dispatch_threads.append(dispatch_thread)
+        dispatch_thread.start()
 
     def _handle_active_account_count_change(self, previous_active_account_count: int) -> None:
         current_active_account_count = self._scheduler.active_account_count()

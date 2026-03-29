@@ -41,11 +41,16 @@ class RuntimeAccountAdapter:
         self.current_user_id = str(getattr(account, "account_id"))
         self.current_account_name = getattr(account, "display_name", None) or getattr(account, "default_name", None)
         self.login_status = self.get_x_access_token() is not None
-        self.account_proxies = {self.current_user_id: self._api_proxy_url_or_none}
+        self.account_proxies = {self.current_user_id: self._browser_proxy_url_or_none}
 
     @property
     def _api_proxy_url_or_none(self) -> str | None:
         proxy_url = getattr(self._account, "api_proxy_url", None)
+        return proxy_url or None
+
+    @property
+    def _browser_proxy_url_or_none(self) -> str | None:
+        proxy_url = getattr(self._account, "browser_proxy_url", None)
         return proxy_url or None
 
     def get_account_id(self) -> str:
@@ -83,6 +88,7 @@ class RuntimeAccountAdapter:
         if force_new or self._session_requires_refresh(self._global_session):
             await self.close_global_session()
             self._global_session = self._create_session(
+                proxy_url=self._browser_proxy_url_or_none,
                 limit=30,
                 limit_per_host=5,
                 timeout_total=30,
@@ -96,6 +102,7 @@ class RuntimeAccountAdapter:
         if force_new or self._session_requires_refresh(self._api_session):
             await self.close_api_session()
             self._api_session = self._create_session(
+                proxy_url=self._api_proxy_url_or_none,
                 limit=15,
                 limit_per_host=3,
                 timeout_total=20,
@@ -118,6 +125,7 @@ class RuntimeAccountAdapter:
     def _create_session(
         self,
         *,
+        proxy_url: str | None,
         limit: int,
         limit_per_host: int,
         timeout_total: float,
@@ -135,7 +143,7 @@ class RuntimeAccountAdapter:
         try:
             return aiohttp.ClientSession(
                 connector=connector,
-                proxy=self._api_proxy_url_or_none,
+                proxy=proxy_url,
                 timeout=timeout,
                 cookie_jar=None,
             )
@@ -145,7 +153,7 @@ class RuntimeAccountAdapter:
                 timeout=timeout,
                 cookie_jar=None,
             )
-            setattr(session, "_default_proxy", self._api_proxy_url_or_none)
+            setattr(session, "_default_proxy", proxy_url)
             return session
 
     def _get_cookie_value(self, key: str) -> str | None:

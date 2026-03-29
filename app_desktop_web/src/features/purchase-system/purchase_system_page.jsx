@@ -4,6 +4,7 @@ import { PurchaseAccountMonitorModal } from "./components/purchase_account_monit
 import { PurchaseConfigSelectorDialog } from "./components/purchase_config_selector_dialog.jsx";
 import { PurchaseItemPanel } from "./components/purchase_item_panel.jsx";
 import { PurchaseRecentEventsModal } from "./components/purchase_recent_events_modal.jsx";
+import { PurchaseSettingsPanel } from "./components/purchase_settings_panel.jsx";
 import { QuerySettingsModal } from "./components/query_settings_modal.jsx";
 import { PurchaseRuntimeActions } from "./components/purchase_runtime_actions.jsx";
 import { PurchaseRuntimeHeader } from "./components/purchase_runtime_header.jsx";
@@ -85,10 +86,15 @@ export function PurchaseSystemPage({ bootstrapConfig, client, onLeaveStateChange
     onOpenQuerySettings,
     onOpenRecentEvents,
     onCloseQuerySettings,
+    onPurchaseSettingsChange,
     onQuerySettingsChange,
     onRuntimeAction,
+    onSavePurchaseSettings,
     onSaveQuerySettings,
     onSubmitRuntimeDrafts,
+    purchaseSettingsDraft,
+    purchaseSettingsError,
+    isPurchaseSettingsSaving,
     querySettingsDraft,
     querySettingsError,
     querySettingsWarnings,
@@ -124,6 +130,16 @@ export function PurchaseSystemPage({ bootstrapConfig, client, onLeaveStateChange
       ) : null}
 
       <div className="purchase-system-page__layout">
+        <aside className="purchase-system-page__side-stack">
+          <PurchaseSettingsPanel
+            error={purchaseSettingsError}
+            fanoutLimit={purchaseSettingsDraft?.per_batch_ip_fanout_limit || "1"}
+            isPending={isPurchaseSettingsSaving}
+            isSaving={Boolean(purchaseSettingsDraft?.is_dirty)}
+            onFanoutLimitChange={onPurchaseSettingsChange}
+            onSave={onSavePurchaseSettings}
+          />
+        </aside>
         <section className="purchase-system-page__items-panel" aria-label="配置商品列表">
           <PurchaseRuntimeHeader
             activeQueryConfig={activeQueryConfig}

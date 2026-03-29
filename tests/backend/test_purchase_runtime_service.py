@@ -7,15 +7,23 @@ from app_backend.domain.models.account import Account
 from app_backend.infrastructure.purchase.runtime.runtime_events import PurchaseExecutionResult
 
 
-def build_account(account_id: str, *, bound: bool = True) -> Account:
+def build_account(
+    account_id: str,
+    *,
+    bound: bool = True,
+    browser_proxy_mode: str = "direct",
+    browser_proxy_url: str | None = None,
+    api_proxy_mode: str = "direct",
+    api_proxy_url: str | None = None,
+) -> Account:
     return Account(
         account_id=account_id,
         default_name=f"账号-{account_id}",
         remark_name=None,
-        browser_proxy_mode="direct",
-        browser_proxy_url=None,
-        api_proxy_mode="direct",
-        api_proxy_url=None,
+        browser_proxy_mode=browser_proxy_mode,
+        browser_proxy_url=browser_proxy_url,
+        api_proxy_mode=api_proxy_mode,
+        api_proxy_url=api_proxy_url,
         api_key=None,
         c5_user_id="10001" if bound else None,
         c5_nick_name="购买账号" if bound else None,
@@ -55,8 +63,24 @@ class FakeAccountRepository:
 
 
 class FakeSettingsRepository:
-    def __init__(self, *_args, **_kwargs) -> None:
-        pass
+    def __init__(self, purchase_settings=None) -> None:
+        self._purchase_settings = {
+            "per_batch_ip_fanout_limit": 1,
+        }
+        if isinstance(purchase_settings, dict):
+            self._purchase_settings.update(purchase_settings)
+
+    def get(self):
+        return type(
+            "RuntimeSettings",
+            (),
+            {
+                "settings_id": "default",
+                "query_settings_json": {},
+                "purchase_settings_json": dict(self._purchase_settings),
+                "updated_at": None,
+            },
+        )()
 
 
 class FakeRuntime:
@@ -913,6 +937,9 @@ def test_purchase_runtime_service_exposes_item_hit_source_summary():
             "mode_type": "new_api",
         }
     )
+    assert first == {"accepted": True, "status": "queued"}
+    assert wait_until(lambda: service.get_status()["purchase_success_count"] == 2)
+
     second = service.accept_query_hit(
         {
             "query_config_id": "cfg-1",
@@ -933,7 +960,6 @@ def test_purchase_runtime_service_exposes_item_hit_source_summary():
         }
     )
 
-    assert first == {"accepted": True, "status": "queued"}
     assert second == {"accepted": True, "status": "queued"}
     assert wait_until(lambda: service.get_status()["purchase_success_count"] == 3)
     snapshot = service.get_status()
@@ -1038,6 +1064,7 @@ def test_purchase_runtime_service_old_runtime_session_results_are_ignored_after_
             runtime_session_id="run-2",
         )
         gateway.release.set()
+        time.sleep(0.3)
 
         assert wait_until(lambda: service.get_status()["runtime_session_id"] == "run-2")
         snapshot = service.get_status()
@@ -1045,9 +1072,67 @@ def test_purchase_runtime_service_old_runtime_session_results_are_ignored_after_
         assert snapshot["matched_product_count"] == 0
         assert snapshot["purchase_success_count"] == 0
         assert snapshot["purchase_failed_count"] == 0
+        assert snapshot["recent_events"] == []
     finally:
         gateway.release.set()
         service.stop()
+
+
+def test_purchase_runtime_service_ignores_old_dispatch_results_after_stop():
+    from app_backend.infrastructure.purchase.runtime.purchase_runtime_service import PurchaseRuntimeService
+
+    account_repository = FakeAccountRepository([build_account("a1")])
+    snapshot_repository = FakeInventorySnapshotRepository(
+        {
+            "a1": type(
+                "Snapshot",
+                (),
+                {
+                    "account_id": "a1",
+                    "selected_steam_id": "steam-1",
+                    "inventories": [
+                        {
+                            "steamId": "steam-1",
+                            "nickname": "主仓",
+                            "inventory_num": 910,
+                            "inventory_max": 1000,
+                        },
+                    ],
+                    "refreshed_at": "2026-03-16T20:00:00",
+                    "last_error": None,
+                },
+            )()
+        }
+    )
+    gateway = BlockingExecutionGateway(PurchaseExecutionResult.success(purchased_count=1))
+    service = PurchaseRuntimeService(
+        account_repository=account_repository,
+        settings_repository=FakeSettingsRepository(),
+        inventory_snapshot_repository=snapshot_repository,
+        execution_gateway_factory=lambda: gateway,
+    )
+    service.start()
+    runtime = service._runtime
+
+    service.accept_query_hit(
+        {
+            "external_item_id": "1380979899390261111",
+            "query_item_name": "AK",
+            "product_url": "https://www.c5game.com/csgo/730/asset/1380979899390261111",
+            "product_list": [{"productId": "p-1", "price": 88.0, "actRebateAmount": 0}],
+            "total_price": 88.0,
+            "total_wear_sum": 0.1234,
+            "mode_type": "new_api",
+        }
+    )
+    assert wait_until(gateway.started.is_set)
+
+    service.stop()
+    gateway.release.set()
+    time.sleep(0.3)
+
+    assert runtime._total_purchased_count == 0
+    assert all(event.get("status") != "success" for event in runtime._recent_events)
 
 
 def test_purchase_runtime_service_consumes_queued_hit_and_updates_runtime_snapshot():
@@ -1585,6 +1670,129 @@ def test_purchase_runtime_service_rejects_hit_after_last_account_becomes_unavail
     assert snapshot["queue_size"] == 0
     assert snapshot["purchase_failed_count"] == 0
     assert snapshot["recent_events"][0]["status"] == "ignored_no_available_accounts"
+
+
+def test_purchase_runtime_service_fans_out_one_batch_across_idle_accounts_per_bucket_limit():
+    from app_backend.infrastructure.purchase.runtime.purchase_runtime_service import PurchaseRuntimeService
+
+    accounts = [
+        build_account("b1-1", browser_proxy_mode="custom", browser_proxy_url="http://bucket-1"),
+        build_account("b1-2", browser_proxy_mode="custom", browser_proxy_url="http://bucket-1"),
+        build_account("b2-1", browser_proxy_mode="custom", browser_proxy_url="http://bucket-2"),
+        build_account("b2-2", browser_proxy_mode="custom", browser_proxy_url="http://bucket-2"),
+        build_account("b2-3", browser_proxy_mode="custom", browser_proxy_url="http://bucket-2"),
+    ]
+    snapshot_repository = FakeInventorySnapshotRepository(
+        {
+            account.account_id: type(
+                "Snapshot",
+                (),
+                {
+                    "account_id": account.account_id,
+                    "selected_steam_id": f"steam-{account.account_id}",
+                    "inventories": [
+                        {"steamId": f"steam-{account.account_id}", "inventory_num": 910, "inventory_max": 1000},
+                    ],
+                    "refreshed_at": "2026-03-16T20:00:00",
+                    "last_error": None,
+                },
+            )()
+            for account in accounts
+        }
+    )
+    gateway = BlockingExecutionGateway(PurchaseExecutionResult.success(purchased_count=1))
+    service = PurchaseRuntimeService(
+        account_repository=FakeAccountRepository(accounts),
+        settings_repository=FakeSettingsRepository({"per_batch_ip_fanout_limit": 2}),
+        inventory_snapshot_repository=snapshot_repository,
+        execution_gateway_factory=lambda: gateway,
+    )
+    service.start()
+
+    try:
+        result = service.accept_query_hit(
+            {
+                "external_item_id": "1380979899390261111",
+                "query_item_name": "AK",
+                "product_url": "https://www.c5game.com/csgo/730/asset/1380979899390261111",
+                "product_list": [{"productId": "p-1", "price": 88.0, "actRebateAmount": 0}],
+                "total_price": 88.0,
+                "total_wear_sum": 0.1234,
+                "mode_type": "new_api",
+            }
+        )
+
+        assert result == {"accepted": True, "status": "queued"}
+        assert wait_until(lambda: len(gateway.calls) == 4)
+    finally:
+        gateway.release.set()
+        service.stop()
+
+
+def test_purchase_runtime_service_next_batch_uses_remaining_idle_accounts_in_same_bucket():
+    from app_backend.infrastructure.purchase.runtime.purchase_runtime_service import PurchaseRuntimeService
+
+    accounts = [
+        build_account(f"b1-{index}", browser_proxy_mode="custom", browser_proxy_url="http://bucket-1")
+        for index in range(6)
+    ]
+    snapshot_repository = FakeInventorySnapshotRepository(
+        {
+            account.account_id: type(
+                "Snapshot",
+                (),
+                {
+                    "account_id": account.account_id,
+                    "selected_steam_id": f"steam-{account.account_id}",
+                    "inventories": [
+                        {"steamId": f"steam-{account.account_id}", "inventory_num": 910, "inventory_max": 1000},
+                    ],
+                    "refreshed_at": "2026-03-16T20:00:00",
+                    "last_error": None,
+                },
+            )()
+            for account in accounts
+        }
+    )
+    gateway = BlockingExecutionGateway(PurchaseExecutionResult.success(purchased_count=1))
+    service = PurchaseRuntimeService(
+        account_repository=FakeAccountRepository(accounts),
+        settings_repository=FakeSettingsRepository({"per_batch_ip_fanout_limit": 4}),
+        inventory_snapshot_repository=snapshot_repository,
+        execution_gateway_factory=lambda: gateway,
+    )
+    service.start()
+
+    try:
+        first = service.accept_query_hit(
+            {
+                "external_item_id": "1380979899390261111",
+                "query_item_name": "AK",
+                "product_url": "https://www.c5game.com/csgo/730/asset/1380979899390261111",
+                "product_list": [{"productId": "p-1", "price": 88.0, "actRebateAmount": 0}],
+                "total_price": 88.0,
+                "total_wear_sum": 0.1111,
+                "mode_type": "new_api",
+            }
+        )
+        second = service.accept_query_hit(
+            {
+                "external_item_id": "1380979899390261111",
+                "query_item_name": "AK",
+                "product_url": "https://www.c5game.com/csgo/730/asset/1380979899390261111",
+                "product_list": [{"productId": "p-2", "price": 89.0, "actRebateAmount": 0}],
+                "total_price": 89.0,
+                "total_wear_sum": 0.2222,
+                "mode_type": "new_api",
+            }
+        )
+
+        assert first == {"accepted": True, "status": "queued"}
+        assert second == {"accepted": True, "status": "queued"}
+        assert wait_until(lambda: len(gateway.calls) == 6)
+    finally:
+        gateway.release.set()
+        service.stop()
 
 
 def test_purchase_runtime_service_purchase_disable_removes_account_from_pool_without_global_disable():

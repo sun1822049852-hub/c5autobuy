@@ -2,7 +2,7 @@
 
 import "@testing-library/jest-dom/vitest";
 
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -406,11 +406,16 @@ function createFetchHarness({
   capacitySummary = buildCapacitySummary(),
   configDetails,
   initialStatus,
+  initialPurchaseRuntimeSettings = { per_batch_ip_fanout_limit: 1, updated_at: null },
   initialQuerySettings = QUERY_SETTINGS,
   initialUiPreferences = { selected_config_id: null, updated_at: null },
   queryConfigs = QUERY_CONFIGS,
 } = {}) {
   let purchaseRuntimeStatus = initialStatus || buildPurchaseRuntimeStatus();
+  let purchaseRuntimeSettings = {
+    per_batch_ip_fanout_limit: initialPurchaseRuntimeSettings?.per_batch_ip_fanout_limit ?? 1,
+    updated_at: initialPurchaseRuntimeSettings?.updated_at ?? null,
+  };
   let querySettings = JSON.parse(JSON.stringify(initialQuerySettings));
   let purchaseUiPreferences = {
     selected_config_id: initialUiPreferences?.selected_config_id ?? null,
@@ -445,6 +450,16 @@ function createFetchHarness({
         updated_at: "2026-03-22T11:00:00",
       };
       return jsonResponse(purchaseUiPreferences);
+    }
+    if (url.pathname === "/runtime-settings/purchase" && method === "GET") {
+      return jsonResponse(purchaseRuntimeSettings);
+    }
+    if (url.pathname === "/runtime-settings/purchase" && method === "PUT") {
+      purchaseRuntimeSettings = {
+        per_batch_ip_fanout_limit: body?.per_batch_ip_fanout_limit ?? purchaseRuntimeSettings.per_batch_ip_fanout_limit,
+        updated_at: "2026-03-29T12:00:00",
+      };
+      return jsonResponse(purchaseRuntimeSettings);
     }
     if (url.pathname === "/query-configs" && method === "GET") {
       return jsonResponse(queryConfigs);
@@ -731,7 +746,38 @@ describe("purchase system page", () => {
     expect(screen.queryByText("查询账号B / api高速查询器")).not.toBeInTheDocument();
     expect(screen.queryByText("后续在这里展示 query worker / mode 来源摘要。")).not.toBeInTheDocument();
 
-    expect(screen.queryByRole("region", { name: "购买账号启用设置" })).not.toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "购买设置" })).toBeInTheDocument();
+  });
+
+  it("shows purchase fanout settings and saves the global per-batch limit", async () => {
+    const harness = createFetchHarness({
+      initialPurchaseRuntimeSettings: { per_batch_ip_fanout_limit: 1, updated_at: null },
+    });
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "扫货系统" }));
+
+    const panel = await screen.findByRole("region", { name: "购买设置" });
+    const input = within(panel).getByLabelText("单批次单IP并发购买数");
+    expect(input).toHaveValue(1);
+
+    fireEvent.change(input, { target: { value: "4" } });
+    await user.click(within(panel).getByRole("button", { name: "保存购买设置" }));
+
+    await waitFor(() => {
+      expect(harness.calls).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            body: { per_batch_ip_fanout_limit: 4 },
+            method: "PUT",
+            pathname: "/runtime-settings/purchase",
+          }),
+        ]),
+      );
+    });
+    expect(within(panel).getByLabelText("单批次单IP并发购买数")).toHaveValue(4);
   });
 
   it("opens recent events and account details as independent floating modals", async () => {

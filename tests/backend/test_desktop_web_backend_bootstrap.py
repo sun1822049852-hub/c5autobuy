@@ -68,6 +68,7 @@ def test_create_app_keeps_account_center_services_wired(tmp_path: Path):
     assert app.state.stats_pipeline is not None
     assert getattr(app.state.purchase_runtime_service._stats_sink, "__self__", None) is app.state.stats_pipeline
     assert getattr(app.state.purchase_runtime_service._stats_sink, "__name__", "") == "enqueue"
+    assert app.state.purchase_runtime_service._settings_repository is app.state.runtime_settings_repository
     assert getattr(app.state.query_runtime_service._stats_sink, "__self__", None) is app.state.stats_pipeline
     assert getattr(app.state.query_runtime_service._stats_sink, "__name__", "") == "enqueue"
 
@@ -81,6 +82,7 @@ def test_create_app_creates_stats_and_ui_preference_tables(tmp_path: Path):
     table_names = set(inspector.get_table_names())
 
     assert "purchase_ui_preferences" in table_names
+    assert "runtime_settings" in table_names
     assert "query_item_stats_total" in table_names
     assert "query_item_stats_daily" in table_names
     assert "query_matched_products" in table_names

@@ -1,57 +1,50 @@
 export function PurchaseSettingsPanel({
-  enabledAccountIds,
+  error,
+  fanoutLimit,
   isPending,
   isSaving,
   onSave,
-  onToggleAccount,
-  rows,
+  onFanoutLimitChange,
 }) {
-  const enabledIds = new Set((enabledAccountIds || []).map((item) => String(item)));
-
   return (
-    <section aria-label="购买账号启用设置" className="purchase-settings-panel">
+    <section aria-label="购买设置" className="purchase-settings-panel">
       <div className="purchase-settings-panel__header">
         <div>
-          <h2 className="purchase-settings-panel__title">购买账号启用设置</h2>
-          <p className="purchase-settings-panel__subtitle">勾选后账号会参与购买池，取消勾选会保存为禁用购买能力。</p>
+          <h2 className="purchase-settings-panel__title">购买设置</h2>
+          <p className="purchase-settings-panel__subtitle">控制单批次命中在每个购买 IP 下最多派发多少个当前空闲账号参与购买。</p>
         </div>
       </div>
 
-      {(rows || []).length ? (
-        <div className="purchase-settings-panel__list">
-          {rows.map((row) => {
-            const accountId = String(row.account_id);
-            return (
-              <label key={accountId} className="purchase-settings-panel__row">
-                <input
-                  checked={enabledIds.has(accountId)}
-                  disabled={isPending}
-                  type="checkbox"
-                  onChange={() => {
-                    onToggleAccount?.(accountId);
-                  }}
-                />
-                <span className="purchase-settings-panel__row-label">
-                  {row.display_name || accountId}
-                </span>
-              </label>
-            );
-          })}
-        </div>
-      ) : (
-        <div className="purchase-settings-panel__empty">当前没有可配置的购买账号。</div>
-      )}
+      <label className="form-field purchase-settings-panel__field" htmlFor="purchase-fanout-limit">
+        <span className="form-label">单批次单IP并发购买数</span>
+        <input
+          id="purchase-fanout-limit"
+          aria-label="单批次单IP并发购买数"
+          className="form-input"
+          disabled={isPending}
+          min="1"
+          step="1"
+          type="number"
+          value={fanoutLimit}
+          onChange={(event) => {
+            onFanoutLimitChange?.(event.target.value);
+          }}
+        />
+        <span className="form-hint">默认值为 1。每个购买 IP 在一次命中批次里最多派发这么多个当前空闲账号。</span>
+      </label>
+
+      {error ? <div className="purchase-settings-panel__error">{error}</div> : null}
 
       <div className="purchase-settings-panel__actions">
         <button
           className="accent-button"
-          disabled={isPending || !rows?.length || !isSaving}
+          disabled={isPending || !isSaving}
           type="button"
           onClick={() => {
             onSave?.();
           }}
         >
-          {isPending ? "保存中..." : "保存账号购买配置"}
+          {isPending ? "保存中..." : "保存购买设置"}
         </button>
       </div>
     </section>

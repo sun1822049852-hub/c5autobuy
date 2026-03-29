@@ -259,10 +259,18 @@ export function createAccountCenterClient({
         method: "GET",
       });
     },
+    async getPurchaseRuntimeSettings() {
+      return http.getJson("/runtime-settings/purchase", {
+        method: "GET",
+      });
+    },
     async updatePurchaseUiPreferences(selectedConfigId) {
       return http.putJson("/purchase-runtime/ui-preferences", {
         selected_config_id: selectedConfigId ?? null,
       });
+    },
+    async updatePurchaseRuntimeSettings(payload) {
+      return http.putJson("/runtime-settings/purchase", payload);
     },
     async getQueryItemStats(params = {}) {
       return http.getJson(`/stats/query-items${buildStatsQueryString(params)}`, {

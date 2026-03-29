@@ -198,6 +198,15 @@ class PurchaseUiPreferenceRecord(Base):
     updated_at: Mapped[str] = mapped_column(Text, nullable=False)
 
 
+class RuntimeSettingsRecord(Base):
+    __tablename__ = "runtime_settings"
+
+    settings_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    query_settings_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    purchase_settings_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    updated_at: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 class QueryItemStatsTotalRecord(Base):
     __tablename__ = "query_item_stats_total"
 

@@ -1865,7 +1865,7 @@ textarea,
 
 .purchase-system-page__layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
   gap: 16px;
   min-height: 0;
   align-items: start;
@@ -1999,6 +1999,15 @@ textarea,
 
 .purchase-settings-panel__subtitle {
   margin: 6px 0 0;
+}
+
+.purchase-settings-panel__field {
+  margin-top: 16px;
+}
+
+.purchase-settings-panel__error {
+  margin-top: 12px;
+  color: #ffb4b4;
 }
 
 .purchase-settings-panel__list {

@@ -38,6 +38,7 @@ def create_schema(engine: Engine) -> None:
         QueryItemStatsTotalRecord,
         QueryModeSettingRecord,
         QuerySettingsModeRecord,
+        RuntimeSettingsRecord,
     )
 
     Base.metadata.create_all(
@@ -53,6 +54,7 @@ def create_schema(engine: Engine) -> None:
             QueryModeSettingRecord.__table__,
             QuerySettingsModeRecord.__table__,
             PurchaseUiPreferenceRecord.__table__,
+            RuntimeSettingsRecord.__table__,
             QueryItemStatsTotalRecord.__table__,
             QueryItemStatsDailyRecord.__table__,
             QueryMatchedProductRecord.__table__,

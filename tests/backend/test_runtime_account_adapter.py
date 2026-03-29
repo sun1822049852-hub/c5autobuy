@@ -28,7 +28,11 @@ class _FakeSession:
         self.closed = True
 
 
-def _build_account():
+def _build_account(
+    *,
+    browser_proxy_url: str = "http://browser.proxy:9001",
+    api_proxy_url: str = "http://api.proxy:9002",
+):
     from app_backend.domain.models.account import Account
 
     return Account(
@@ -36,9 +40,9 @@ def _build_account():
         default_name="账号-a1",
         remark_name=None,
         browser_proxy_mode="custom",
-        browser_proxy_url="http://127.0.0.1:9000",
+        browser_proxy_url=browser_proxy_url,
         api_proxy_mode="custom",
-        api_proxy_url="http://127.0.0.1:9000",
+        api_proxy_url=api_proxy_url,
         api_key="api-1",
         c5_user_id=None,
         c5_nick_name=None,
@@ -112,3 +116,25 @@ async def test_runtime_account_adapter_recreates_global_session_when_bound_loop_
     assert len(created_sessions) == 1
     assert session is created_sessions[0]
     assert adapter._global_session is created_sessions[0]
+
+
+async def test_runtime_account_adapter_uses_browser_proxy_for_global_session(monkeypatch):
+    from app_backend.infrastructure.query.runtime.runtime_account_adapter import RuntimeAccountAdapter
+
+    adapter = RuntimeAccountAdapter(
+        _build_account(
+            browser_proxy_url="http://browser.proxy:9001",
+            api_proxy_url="http://api.proxy:9002",
+        )
+    )
+    created_calls: list[dict[str, object]] = []
+
+    def fake_create_session(**kwargs):
+        created_calls.append(dict(kwargs))
+        return _FakeSession(loop=asyncio.get_running_loop())
+
+    monkeypatch.setattr(adapter, "_create_session", fake_create_session)
+
+    await adapter.get_global_session(force_new=True)
+
+    assert created_calls[0]["proxy_url"] == "http://browser.proxy:9001"

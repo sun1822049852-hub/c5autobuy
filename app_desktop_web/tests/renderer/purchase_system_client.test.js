@@ -208,6 +208,45 @@ describe("purchase system client", () => {
     expect(updatedPreferences.selected_config_id).toBe("cfg-2");
   });
 
+  it("loads and updates purchase runtime settings", async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ per_batch_ip_fanout_limit: 1, updated_at: null }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ per_batch_ip_fanout_limit: 4, updated_at: "2026-03-29T12:00:00" }),
+      });
+    const client = createAccountCenterClient({
+      apiBaseUrl: "http://127.0.0.1:8123",
+      fetchImpl,
+    });
+
+    const currentSettings = await client.getPurchaseRuntimeSettings();
+    const updatedSettings = await client.updatePurchaseRuntimeSettings({
+      per_batch_ip_fanout_limit: 4,
+    });
+
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      1,
+      "http://127.0.0.1:8123/runtime-settings/purchase",
+      expect.objectContaining({
+        method: "GET",
+      }),
+    );
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      2,
+      "http://127.0.0.1:8123/runtime-settings/purchase",
+      expect.objectContaining({
+        method: "PUT",
+        body: JSON.stringify({ per_batch_ip_fanout_limit: 4 }),
+      }),
+    );
+    expect(currentSettings.per_batch_ip_fanout_limit).toBe(1);
+    expect(updatedSettings.per_batch_ip_fanout_limit).toBe(4);
+  });
+
   it("loads query item stats with only the provided range params", async () => {
     const fetchImpl = vi.fn().mockResolvedValue({
       ok: true,

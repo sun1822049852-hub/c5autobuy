@@ -26,6 +26,12 @@ const EMPTY_UI_PREFERENCES = {
   updated_at: null,
 };
 
+const EMPTY_PURCHASE_SETTINGS_DRAFT = {
+  per_batch_ip_fanout_limit: "1",
+  is_dirty: false,
+  updated_at: null,
+};
+
 const EMPTY_CONFIG_LEAVE_PROMPT = {
   error: "",
   isOpen: false,
@@ -66,6 +72,19 @@ function parseDecimalInput(value) {
   }
   const nextValue = Number(value);
   return Number.isFinite(nextValue) ? nextValue : Number.NaN;
+}
+
+
+function normalizePurchaseSettingsDraft(settings) {
+  const rawLimit = Number(settings?.per_batch_ip_fanout_limit ?? 1);
+  const normalizedLimit = Number.isFinite(rawLimit) && rawLimit >= 1
+    ? Math.trunc(rawLimit)
+    : 1;
+  return {
+    per_batch_ip_fanout_limit: String(normalizedLimit),
+    is_dirty: false,
+    updated_at: settings?.updated_at ?? null,
+  };
 }
 
 
@@ -561,6 +580,9 @@ export function usePurchaseSystemPage({ client }) {
   const [isActionPending, setIsActionPending] = useState(false);
   const [isSubmittingDrafts, setIsSubmittingDrafts] = useState(false);
   const [loadError, setLoadError] = useState("");
+  const [purchaseSettingsDraft, setPurchaseSettingsDraft] = useState(EMPTY_PURCHASE_SETTINGS_DRAFT);
+  const [purchaseSettingsError, setPurchaseSettingsError] = useState("");
+  const [isPurchaseSettingsSaving, setIsPurchaseSettingsSaving] = useState(false);
   const [querySettingsDraft, setQuerySettingsDraft] = useState(null);
   const [querySettingsWarnings, setQuerySettingsWarnings] = useState([]);
   const [querySettingsError, setQuerySettingsError] = useState("");
@@ -632,6 +654,38 @@ export function usePurchaseSystemPage({ client }) {
     }
   }
 
+  function onPurchaseSettingsChange(value) {
+    setPurchaseSettingsDraft((currentDraft) => ({
+      ...currentDraft,
+      per_batch_ip_fanout_limit: value,
+      is_dirty: true,
+    }));
+    setPurchaseSettingsError("");
+  }
+
+  async function onSavePurchaseSettings() {
+    const limit = Number(purchaseSettingsDraft?.per_batch_ip_fanout_limit ?? "");
+    if (!Number.isInteger(limit) || limit < 1) {
+      setPurchaseSettingsError("单批次单IP并发购买数必须大于等于 1");
+      return false;
+    }
+
+    setIsPurchaseSettingsSaving(true);
+    try {
+      const savedSettings = await client.updatePurchaseRuntimeSettings({
+        per_batch_ip_fanout_limit: limit,
+      });
+      setPurchaseSettingsDraft(normalizePurchaseSettingsDraft(savedSettings));
+      setPurchaseSettingsError("");
+      return true;
+    } catch (error) {
+      setPurchaseSettingsError(toErrorMessage(error));
+      return false;
+    } finally {
+      setIsPurchaseSettingsSaving(false);
+    }
+  }
+
   function closeQuerySettings() {
     if (isQuerySettingsSaving) {
       return;
@@ -684,10 +738,11 @@ export function usePurchaseSystemPage({ client }) {
     async function loadPage() {
       setIsLoading(true);
       try {
-        const [nextStatus, nextConfigs, nextUiPreferences] = await Promise.all([
+        const [nextStatus, nextConfigs, nextUiPreferences, nextPurchaseSettings] = await Promise.all([
           client.getPurchaseRuntimeStatus(),
           client.listQueryConfigs(),
           client.getPurchaseUiPreferences(),
+          client.getPurchaseRuntimeSettings(),
         ]);
         if (!active) {
           return;
@@ -698,6 +753,8 @@ export function usePurchaseSystemPage({ client }) {
         const normalizedUiPreferences = normalizeUiPreferences(nextUiPreferences);
         setStatus(normalizedStatus);
         setConfigList(normalizedConfigs);
+        setPurchaseSettingsDraft(normalizePurchaseSettingsDraft(nextPurchaseSettings));
+        setPurchaseSettingsError("");
         setLoadError("");
 
         const preferredConfigId = resolvePersistedConfigId(normalizedConfigs, normalizedUiPreferences)
@@ -1076,12 +1133,17 @@ export function usePurchaseSystemPage({ client }) {
     },
     onOpenAccountDetails: accountMonitorModal.onOpen,
     onOpenConfigDialog: openConfigDialog,
+    onPurchaseSettingsChange,
     onOpenQuerySettings: openQuerySettings,
     onOpenRecentEvents: recentEventsModal.onOpen,
+    onSavePurchaseSettings,
     onQuerySettingsChange,
     onRuntimeAction,
     onSaveQuerySettings,
     onSubmitRuntimeDrafts,
+    purchaseSettingsDraft,
+    purchaseSettingsError,
+    isPurchaseSettingsSaving,
     querySettingsDraft,
     querySettingsError,
     querySettingsWarnings,
