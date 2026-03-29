@@ -54,6 +54,11 @@ class SqliteAccountRepository:
                 api_ip_allow_list=account.api_ip_allow_list,
                 browser_public_ip=account.browser_public_ip,
                 api_public_ip=account.api_public_ip,
+                balance_amount=account.balance_amount,
+                balance_source=account.balance_source,
+                balance_updated_at=account.balance_updated_at,
+                balance_refresh_after_at=account.balance_refresh_after_at,
+                balance_last_error=account.balance_last_error,
             )
             session.add(row)
             session.commit()
@@ -130,4 +135,9 @@ class SqliteAccountRepository:
             api_ip_allow_list=getattr(row, "api_ip_allow_list", None),
             browser_public_ip=getattr(row, "browser_public_ip", None),
             api_public_ip=getattr(row, "api_public_ip", None),
+            balance_amount=getattr(row, "balance_amount", None),
+            balance_source=getattr(row, "balance_source", None),
+            balance_updated_at=getattr(row, "balance_updated_at", None),
+            balance_refresh_after_at=getattr(row, "balance_refresh_after_at", None),
+            balance_last_error=getattr(row, "balance_last_error", None),
         )

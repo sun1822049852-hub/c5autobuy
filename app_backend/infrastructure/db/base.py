@@ -158,6 +158,16 @@ def _ensure_account_columns(engine: Engine) -> None:
             connection.execute(text("ALTER TABLE accounts ADD COLUMN browser_public_ip TEXT"))
         if "api_public_ip" not in existing_columns:
             connection.execute(text("ALTER TABLE accounts ADD COLUMN api_public_ip TEXT"))
+        if "balance_amount" not in existing_columns:
+            connection.execute(text("ALTER TABLE accounts ADD COLUMN balance_amount FLOAT"))
+        if "balance_source" not in existing_columns:
+            connection.execute(text("ALTER TABLE accounts ADD COLUMN balance_source TEXT"))
+        if "balance_updated_at" not in existing_columns:
+            connection.execute(text("ALTER TABLE accounts ADD COLUMN balance_updated_at TEXT"))
+        if "balance_refresh_after_at" not in existing_columns:
+            connection.execute(text("ALTER TABLE accounts ADD COLUMN balance_refresh_after_at TEXT"))
+        if "balance_last_error" not in existing_columns:
+            connection.execute(text("ALTER TABLE accounts ADD COLUMN balance_last_error TEXT"))
 
 
 def _rebuild_accounts_table_for_dual_proxy(engine: Engine, *, existing_columns: set[str]) -> None:
@@ -197,7 +207,12 @@ def _rebuild_accounts_table_for_dual_proxy(engine: Engine, *, existing_columns: 
                     browser_query_disabled_reason TEXT,
                     api_ip_allow_list TEXT,
                     browser_public_ip TEXT,
-                    api_public_ip TEXT
+                    api_public_ip TEXT,
+                    balance_amount FLOAT,
+                    balance_source TEXT,
+                    balance_updated_at TEXT,
+                    balance_refresh_after_at TEXT,
+                    balance_last_error TEXT
                 )
                 """
             )
@@ -232,7 +247,12 @@ def _rebuild_accounts_table_for_dual_proxy(engine: Engine, *, existing_columns: 
                     browser_query_disabled_reason,
                     api_ip_allow_list,
                     browser_public_ip,
-                    api_public_ip
+                    api_public_ip,
+                    balance_amount,
+                    balance_source,
+                    balance_updated_at,
+                    balance_refresh_after_at,
+                    balance_last_error
                 )
                 SELECT
                     account_id,
@@ -269,7 +289,12 @@ def _rebuild_accounts_table_for_dual_proxy(engine: Engine, *, existing_columns: 
                     {_expr("browser_query_disabled_reason", "NULL")},
                     {_expr("api_ip_allow_list", "NULL")},
                     {_expr("browser_public_ip", _expr("proxy_public_ip", "NULL"))},
-                    {_expr("api_public_ip", _expr("proxy_public_ip", "NULL"))}
+                    {_expr("api_public_ip", _expr("proxy_public_ip", "NULL"))},
+                    {_expr("balance_amount", "NULL")},
+                    {_expr("balance_source", "NULL")},
+                    {_expr("balance_updated_at", "NULL")},
+                    {_expr("balance_refresh_after_at", "NULL")},
+                    {_expr("balance_last_error", "NULL")}
                 FROM accounts
                 """
             )
@@ -294,6 +319,13 @@ def _rebuild_accounts_table_without_disabled(engine: Engine, *, existing_columns
         ),
         "api_ip_allow_list": "api_ip_allow_list" if "api_ip_allow_list" in existing_columns else "NULL",
         "proxy_public_ip": "proxy_public_ip" if "proxy_public_ip" in existing_columns else "NULL",
+        "balance_amount": "balance_amount" if "balance_amount" in existing_columns else "NULL",
+        "balance_source": "balance_source" if "balance_source" in existing_columns else "NULL",
+        "balance_updated_at": "balance_updated_at" if "balance_updated_at" in existing_columns else "NULL",
+        "balance_refresh_after_at": (
+            "balance_refresh_after_at" if "balance_refresh_after_at" in existing_columns else "NULL"
+        ),
+        "balance_last_error": "balance_last_error" if "balance_last_error" in existing_columns else "NULL",
     }
 
     with engine.begin() as connection:
@@ -325,7 +357,12 @@ def _rebuild_accounts_table_without_disabled(engine: Engine, *, existing_columns
                     api_query_disabled_reason TEXT,
                     browser_query_disabled_reason TEXT,
                     api_ip_allow_list TEXT,
-                    proxy_public_ip TEXT
+                    proxy_public_ip TEXT,
+                    balance_amount FLOAT,
+                    balance_source TEXT,
+                    balance_updated_at TEXT,
+                    balance_refresh_after_at TEXT,
+                    balance_last_error TEXT
                 )
                 """
             )
@@ -357,7 +394,12 @@ def _rebuild_accounts_table_without_disabled(engine: Engine, *, existing_columns
                     api_query_disabled_reason,
                     browser_query_disabled_reason,
                     api_ip_allow_list,
-                    proxy_public_ip
+                    proxy_public_ip,
+                    balance_amount,
+                    balance_source,
+                    balance_updated_at,
+                    balance_refresh_after_at,
+                    balance_last_error
                 )
                 SELECT
                     account_id,
@@ -383,7 +425,12 @@ def _rebuild_accounts_table_without_disabled(engine: Engine, *, existing_columns
                     {column_expr["api_query_disabled_reason"]},
                     {column_expr["browser_query_disabled_reason"]},
                     {column_expr["api_ip_allow_list"]},
-                    {column_expr["proxy_public_ip"]}
+                    {column_expr["proxy_public_ip"]},
+                    {column_expr["balance_amount"]},
+                    {column_expr["balance_source"]},
+                    {column_expr["balance_updated_at"]},
+                    {column_expr["balance_refresh_after_at"]},
+                    {column_expr["balance_last_error"]}
                 FROM accounts
                 """
             )

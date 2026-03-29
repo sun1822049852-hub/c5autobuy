@@ -36,6 +36,11 @@ class AccountRecord(Base):
     api_ip_allow_list: Mapped[str | None] = mapped_column(Text, nullable=True)
     browser_public_ip: Mapped[str | None] = mapped_column(Text, nullable=True)
     api_public_ip: Mapped[str | None] = mapped_column(Text, nullable=True)
+    balance_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    balance_source: Mapped[str | None] = mapped_column(Text, nullable=True)
+    balance_updated_at: Mapped[str | None] = mapped_column(Text, nullable=True)
+    balance_refresh_after_at: Mapped[str | None] = mapped_column(Text, nullable=True)
+    balance_last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class AccountSessionBundleRecord(Base):

@@ -158,6 +158,7 @@ async def run_login_task(
     bundle_repository,
     purchase_runtime_service=None,
     open_api_binding_sync_service=None,
+    account_balance_service=None,
 ) -> None:
     account = repository.get_account(account_id)
     if account is None:
@@ -268,6 +269,20 @@ async def run_login_task(
             result=result,
             source_account=source_account,
         )
+        if account_balance_service is not None:
+            try:
+                wait_for_api_key = bool(result.session_payload.get("debugger_address"))
+                try:
+                    await account_balance_service.refresh_after_login(
+                        updated.account_id,
+                        wait_for_api_key=wait_for_api_key,
+                    )
+                except TypeError as exc:
+                    if "wait_for_api_key" not in str(exc):
+                        raise
+                    await account_balance_service.refresh_after_login(updated.account_id)
+            except Exception:
+                pass
         task_manager.set_result(
             task_id,
             {

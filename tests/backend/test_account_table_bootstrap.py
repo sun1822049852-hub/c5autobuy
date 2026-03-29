@@ -16,6 +16,11 @@ def test_create_schema_builds_accounts_table(tmp_path):
     assert "disabled" not in account_columns
     assert "purchase_disabled" in account_columns
     assert "purchase_recovery_due_at" in account_columns
+    assert "balance_amount" in account_columns
+    assert "balance_source" in account_columns
+    assert "balance_updated_at" in account_columns
+    assert "balance_refresh_after_at" in account_columns
+    assert "balance_last_error" in account_columns
 
 
 def test_create_schema_rebuilds_legacy_accounts_table_without_disabled_column(tmp_path):

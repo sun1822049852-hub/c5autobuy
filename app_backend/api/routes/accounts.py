@@ -171,6 +171,7 @@ async def start_login_task(account_id: str, request: Request) -> TaskResponse:
         _bundle_repository(request),
         request.app.state.purchase_runtime_service,
         request.app.state.open_api_binding_sync_service,
+        request.app.state.account_balance_service,
     )
     try:
         task = use_case.execute(account_id)

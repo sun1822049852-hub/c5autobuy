@@ -59,6 +59,7 @@ from app_backend.infrastructure.browser_runtime.open_api_binding_page_launcher i
     OpenApiBindingPageLauncher,
 )
 from app_backend.application.use_cases.delete_account import DeleteAccountUseCase
+from app_backend.application.services.account_balance_service import AccountBalanceService
 from app_backend.workers.manager.task_manager import TaskManager
 
 
@@ -100,6 +101,10 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         ).execute,
         poll_interval_seconds=1.0,
         debug_log_path=database_path.parent / "runtime" / "open_api_binding_debug.runtime.jsonl",
+    )
+    account_balance_service = AccountBalanceService(
+        account_repository=repository,
+        account_update_hub=account_update_hub,
     )
     query_runtime_service = QueryRuntimeService(
         query_config_repository=query_config_repository,
@@ -157,6 +162,7 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     app.state.query_item_detail_refresh_service = query_item_detail_refresh_service
     app.state.open_api_binding_sync_service = open_api_binding_sync_service
     app.state.open_api_binding_page_launcher = open_api_binding_page_launcher
+    app.state.account_balance_service = account_balance_service
     app.state.stats_repository = stats_repository
     app.state.stats_pipeline = stats_pipeline
 

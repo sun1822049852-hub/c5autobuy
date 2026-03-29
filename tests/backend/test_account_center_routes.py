@@ -9,6 +9,11 @@ def _build_account(
     remark_name: str | None = None,
     c5_nick_name: str | None = None,
     api_key: str | None = None,
+    balance_amount: float | None = None,
+    balance_source: str | None = None,
+    balance_updated_at: str | None = None,
+    balance_refresh_after_at: str | None = None,
+    balance_last_error: str | None = None,
     purchase_capability_state: str = "bound",
     purchase_pool_state: str = "not_connected",
     purchase_disabled: bool = False,
@@ -35,6 +40,11 @@ def _build_account(
         updated_at="2026-03-16T20:00:00",
         purchase_disabled=purchase_disabled,
         purchase_recovery_due_at=purchase_recovery_due_at,
+        balance_amount=balance_amount,
+        balance_source=balance_source,
+        balance_updated_at=balance_updated_at,
+        balance_refresh_after_at=balance_refresh_after_at,
+        balance_last_error=balance_last_error,
     )
 
 
@@ -256,6 +266,31 @@ async def test_account_center_single_account_route_returns_computed_purchase_sta
     assert payload["purchase_status_code"] == "selected_warehouse"
     assert payload["purchase_status_text"] == "单账号主仓"
     assert payload["selected_warehouse_text"] == "单账号主仓"
+
+
+async def test_account_center_accounts_route_returns_cached_balance_fields(client, app):
+    app.state.account_repository.create_account(
+        _build_account(
+            "balance-ready",
+            remark_name="余额账号",
+            api_key="api-balance",
+            balance_amount=234.56,
+            balance_source="openapi",
+            balance_updated_at="2026-03-29T12:00:00",
+            balance_refresh_after_at="2026-03-29T12:09:00",
+            balance_last_error=None,
+        )
+    )
+
+    response = await client.get("/account-center/accounts")
+
+    assert response.status_code == 200
+    row = response.json()[0]
+    assert row["balance_amount"] == 234.56
+    assert row["balance_source"] == "openapi"
+    assert row["balance_updated_at"] == "2026-03-29T12:00:00"
+    assert row["balance_refresh_after_at"] == "2026-03-29T12:09:00"
+    assert row["balance_last_error"] is None
 
 
 async def test_update_purchase_config_route_updates_purchase_disabled_and_selected_inventory(client, app):

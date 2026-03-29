@@ -5,6 +5,14 @@ function getDisplayName(row) {
 }
 
 
+function formatBalance(value) {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return "未获取";
+  }
+  return value.toFixed(2);
+}
+
+
 function getQueryTone(statusCode, reasonCode) {
   if (statusCode === "enabled") {
     return "is-good";
@@ -66,7 +74,7 @@ function renderBody({
   if (isLoading) {
     return (
       <tr>
-        <td className="account-table__empty" colSpan={6} style={NO_SELECT_STYLE}>正在加载账号列表...</td>
+        <td className="account-table__empty" colSpan={7} style={NO_SELECT_STYLE}>正在加载账号列表...</td>
       </tr>
     );
   }
@@ -74,7 +82,7 @@ function renderBody({
   if (loadError) {
     return (
       <tr>
-        <td className="account-table__empty" colSpan={6} style={NO_SELECT_STYLE}>加载失败：{loadError}</td>
+        <td className="account-table__empty" colSpan={7} style={NO_SELECT_STYLE}>加载失败：{loadError}</td>
       </tr>
     );
   }
@@ -82,7 +90,7 @@ function renderBody({
   if (!rows.length) {
     return (
       <tr>
-        <td className="account-table__empty" colSpan={6} style={NO_SELECT_STYLE}>没有符合条件的账号</td>
+        <td className="account-table__empty" colSpan={7} style={NO_SELECT_STYLE}>没有符合条件的账号</td>
       </tr>
     );
   }
@@ -194,6 +202,11 @@ function renderBody({
             </div>
           </button>
         </td>
+        <td>
+          <div className="account-table__nickname">
+            <span className="account-table__nickname-main">{formatBalance(row.balance_amount)}</span>
+          </div>
+        </td>
       </tr>
     );
   });
@@ -224,6 +237,7 @@ export function AccountTable({
           <th scope="col" style={NO_SELECT_STYLE}>购买状态</th>
           <th scope="col" style={NO_SELECT_STYLE}>账号代理</th>
           <th scope="col" style={NO_SELECT_STYLE}>API代理</th>
+          <th scope="col" style={NO_SELECT_STYLE}>余额</th>
         </tr>
       </thead>
       <tbody>

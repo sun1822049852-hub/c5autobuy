@@ -14,6 +14,7 @@ class StartLoginTaskUseCase:
         bundle_repository,
         purchase_runtime_service=None,
         open_api_binding_sync_service=None,
+        account_balance_service=None,
     ) -> None:
         self._repository = repository
         self._task_manager = task_manager
@@ -21,6 +22,7 @@ class StartLoginTaskUseCase:
         self._bundle_repository = bundle_repository
         self._purchase_runtime_service = purchase_runtime_service
         self._open_api_binding_sync_service = open_api_binding_sync_service
+        self._account_balance_service = account_balance_service
 
     def execute(self, account_id: str):
         account = self._repository.get_account(account_id)
@@ -38,6 +40,7 @@ class StartLoginTaskUseCase:
                 bundle_repository=self._bundle_repository,
                 purchase_runtime_service=self._purchase_runtime_service,
                 open_api_binding_sync_service=self._open_api_binding_sync_service,
+                account_balance_service=self._account_balance_service,
             )
         )
         return task

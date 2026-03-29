@@ -22,8 +22,16 @@ async def test_login_task_starts_open_api_binding_watch_after_success(app, clien
         def schedule_account_watch(self, account_id: str, debugger_address: str | None = None) -> None:
             self.calls.append((account_id, debugger_address))
 
+    class FakeAccountBalanceService:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        async def refresh_after_login(self, account_id: str) -> None:
+            self.calls.append(account_id)
+
     app.state.login_adapter = FakeLoginAdapter()
     app.state.open_api_binding_sync_service = FakeOpenApiBindingSyncService()
+    app.state.account_balance_service = FakeAccountBalanceService()
 
     create_response = await client.post(
         "/accounts",
@@ -50,3 +58,4 @@ async def test_login_task_starts_open_api_binding_watch_after_success(app, clien
         raise AssertionError("login task did not succeed in time")
 
     assert app.state.open_api_binding_sync_service.calls == [(account_id, "127.0.0.1:9222")]
+    assert app.state.account_balance_service.calls == [account_id]

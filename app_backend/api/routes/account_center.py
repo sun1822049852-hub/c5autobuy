@@ -13,10 +13,22 @@ def _runtime_service(request: Request):
     return request.app.state.purchase_runtime_service
 
 
+def _balance_service(request: Request):
+    return getattr(request.app.state, "account_balance_service", None)
+
+
 @router.get("/accounts", response_model=list[AccountCenterAccountResponse])
 async def list_account_center_accounts(request: Request) -> list[AccountCenterAccountResponse]:
     use_case = ListAccountCenterAccountsUseCase(_runtime_service(request))
-    return [AccountCenterAccountResponse.model_validate(row) for row in use_case.execute()]
+    rows = [AccountCenterAccountResponse.model_validate(row) for row in use_case.execute()]
+    balance_service = _balance_service(request)
+    if balance_service is not None:
+        for row in rows:
+            try:
+                balance_service.maybe_schedule_refresh(row.account_id)
+            except RuntimeError:
+                continue
+    return rows
 
 
 @router.get("/accounts/{account_id}", response_model=AccountCenterAccountResponse)
@@ -25,4 +37,10 @@ async def get_account_center_account(account_id: str, request: Request) -> Accou
     row = use_case.execute(account_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
+    balance_service = _balance_service(request)
+    if balance_service is not None:
+        try:
+            balance_service.maybe_schedule_refresh(account_id)
+        except RuntimeError:
+            pass
     return AccountCenterAccountResponse.model_validate(row)

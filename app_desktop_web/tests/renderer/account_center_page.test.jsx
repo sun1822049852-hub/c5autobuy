@@ -50,6 +50,11 @@ function accountRows() {
       api_proxy_url: null,
       api_proxy_display: "39.71.213.149",
       api_public_ip: "39.71.213.149",
+      balance_amount: 609.43,
+      balance_source: "openapi",
+      balance_updated_at: "2026-03-29T12:00:00",
+      balance_refresh_after_at: "2026-03-29T12:09:00",
+      balance_last_error: null,
       purchase_status_code: "selected_warehouse",
       purchase_status_text: "steam-1",
     },
@@ -78,6 +83,11 @@ function accountRows() {
       api_proxy_url: "http://127.0.0.1:9000",
       api_proxy_display: "http://127.0.0.1:9000",
       api_public_ip: "127.0.0.1",
+      balance_amount: null,
+      balance_source: null,
+      balance_updated_at: null,
+      balance_refresh_after_at: null,
+      balance_last_error: "browser balance failed",
       purchase_status_code: "not_logged_in",
       purchase_status_text: "未登录",
     },
@@ -106,6 +116,11 @@ function accountRows() {
       api_proxy_url: "socks5://127.0.0.1:9900",
       api_proxy_display: "socks5://127.0.0.1:9900",
       api_public_ip: "39.71.213.149",
+      balance_amount: 88.8,
+      balance_source: "browser_session",
+      balance_updated_at: "2026-03-29T12:03:00",
+      balance_refresh_after_at: "2026-03-29T12:12:00",
+      balance_last_error: null,
       purchase_status_code: "inventory_full",
       purchase_status_text: "库存已满",
     },
@@ -468,6 +483,7 @@ describe("account center page", () => {
     expect(screen.getByRole("columnheader", { name: "购买状态" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "账号代理" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "API代理" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "余额" })).toBeInTheDocument();
     expect(screen.getAllByText("39.71.213.149").length).toBeGreaterThan(0);
 
     expect(screen.queryByLabelText("状态带")).not.toBeInTheDocument();
@@ -479,6 +495,9 @@ describe("account center page", () => {
     expect(screen.getByText("账号 B")).toBeInTheDocument();
     expect(screen.getByText("账号 C")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "切换 API 查询 账号 C" })).toHaveTextContent("IP失效");
+    expect(screen.getByText("609.43")).toBeInTheDocument();
+    expect(screen.getByText("88.80")).toBeInTheDocument();
+    expect(screen.getByText("未获取")).toBeInTheDocument();
 
     const toolbar = screen.getByRole("searchbox", { name: "搜索账号" }).closest(".account-page__toolbar");
     expect(toolbar).toHaveClass("account-page__toolbar--compact");

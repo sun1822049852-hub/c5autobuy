@@ -33,6 +33,11 @@ class AccountCenterAccountResponse(BaseModel):
     api_ip_allow_list: str | None = None
     browser_public_ip: str | None = None
     api_public_ip: str | None = None
+    balance_amount: float | None = None
+    balance_source: str | None = None
+    balance_updated_at: str | None = None
+    balance_refresh_after_at: str | None = None
+    balance_last_error: str | None = None
     purchase_capability_state: str
     purchase_pool_state: str
     purchase_disabled: bool
