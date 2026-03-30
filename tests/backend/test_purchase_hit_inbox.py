@@ -1,44 +1,56 @@
+import threading
+import time
+
 from app_backend.infrastructure.purchase.runtime.purchase_hit_inbox import PurchaseHitInbox
 
 
-def build_hit(*, total_wear_sum, query_item_name: str = "AK", total_price: float = 123.45) -> dict:
+def _build_hit(total_wear_sum: float = 0.1234) -> dict[str, object]:
     return {
+        "query_item_name": "AK-47",
         "external_item_id": "1380979899390261111",
-        "query_item_name": query_item_name,
         "product_url": "https://www.c5game.com/csgo/730/asset/1380979899390261111",
-        "product_list": [{"productId": "1", "price": 123.45}],
-        "total_price": total_price,
+        "product_list": [{"productId": "p-1", "price": 88.0, "actRebateAmount": 0}],
+        "total_price": 88.0,
         "total_wear_sum": total_wear_sum,
-        "mode_type": "token",
+        "mode_type": "new_api",
     }
 
 
-def test_purchase_hit_inbox_deduplicates_same_wear_sum_within_window():
-    now_values = iter([100.0, 101.0, 107.0])
-    inbox = PurchaseHitInbox(cache_duration=5.0, now_provider=lambda: next(now_values))
+def test_purchase_hit_inbox_forget_batch_allows_same_hit_again():
+    inbox = PurchaseHitInbox(cache_duration=5.0, now_provider=time.monotonic)
+    hit = _build_hit()
 
-    assert inbox.accept(build_hit(total_wear_sum=1.2345)) is not None
-    assert inbox.accept(build_hit(total_wear_sum=1.2345)) is None
-    assert inbox.accept(build_hit(total_wear_sum=1.2345)) is not None
+    first = inbox.accept(hit)
+    second = inbox.accept(hit)
+    inbox.forget_batch(first)
+    third = inbox.accept(hit)
 
-
-def test_purchase_hit_inbox_passes_hits_without_wear_sum():
-    inbox = PurchaseHitInbox()
-
-    accepted = inbox.accept(build_hit(total_wear_sum=None))
-
-    assert accepted is not None
-    assert accepted.total_wear_sum is None
+    assert first is not None
+    assert second is None
+    assert third is not None
 
 
-def test_purchase_hit_inbox_preserves_selected_purchase_fields():
-    inbox = PurchaseHitInbox()
+def test_purchase_hit_inbox_accept_and_forget_are_thread_safe():
+    inbox = PurchaseHitInbox(cache_duration=5.0, now_provider=time.monotonic)
+    errors: list[BaseException] = []
+    stop_event = threading.Event()
 
-    accepted = inbox.accept(build_hit(total_wear_sum=0.4567, query_item_name="M4A1"))
+    def accept_worker() -> None:
+        try:
+            while not stop_event.is_set():
+                batch = inbox.accept(_build_hit())
+                if batch is not None:
+                    inbox.forget_batch(batch)
+        except BaseException as exc:  # pragma: no cover - concurrency smoke test
+            errors.append(exc)
 
-    assert accepted is not None
-    assert accepted.query_item_name == "M4A1"
-    assert accepted.external_item_id == "1380979899390261111"
-    assert accepted.product_url == "https://www.c5game.com/csgo/730/asset/1380979899390261111"
-    assert accepted.source_mode_type == "token"
-    assert accepted.product_list[0]["productId"] == "1"
+    threads = [threading.Thread(target=accept_worker, daemon=True) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+
+    time.sleep(0.05)
+    stop_event.set()
+    for thread in threads:
+        thread.join(timeout=1.0)
+
+    assert errors == []

@@ -26,7 +26,16 @@ class PurchaseExecutionGateway:
     def __init__(self, *, xsign_wrapper: Any | None = None) -> None:
         self._xsign_wrapper = xsign_wrapper
 
-    async def execute(self, *, account, batch, selected_steam_id: str) -> PurchaseExecutionResult:
+    async def execute(
+        self,
+        *,
+        account,
+        batch,
+        selected_steam_id: str,
+        on_execute_started=None,
+    ) -> PurchaseExecutionResult:
+        if callable(on_execute_started):
+            on_execute_started()
         runtime_account = account if isinstance(account, RuntimeAccountAdapter) else RuntimeAccountAdapter(account)
         item_id = str(getattr(batch, "external_item_id", None) or "")
         product_url = str(getattr(batch, "product_url", None) or "")

@@ -29,8 +29,10 @@ class PurchaseScheduler:
         with self._lock:
             self._queue.append(batch)
 
-    def pop_next_batch(self) -> PurchaseHitBatch:
+    def pop_next_batch(self) -> PurchaseHitBatch | None:
         with self._lock:
+            if not self._queue:
+                return None
             return self._queue.popleft()
 
     def queue_size(self) -> int:
@@ -38,8 +40,11 @@ class PurchaseScheduler:
             return len(self._queue)
 
     def clear_queue(self) -> int:
+        return len(self.clear_queue_batches())
+
+    def clear_queue_batches(self) -> list[PurchaseHitBatch]:
         with self._lock:
-            cleared = len(self._queue)
+            cleared = list(self._queue)
             self._queue.clear()
             return cleared
 
@@ -130,3 +135,61 @@ class PurchaseScheduler:
     def account_status(self, account_id: str) -> dict[str, object]:
         with self._lock:
             return dict(self._account_status[account_id])
+
+    def drop_expired_batches(
+        self,
+        *,
+        now: float | None = None,
+        max_wait_seconds: float | None = None,
+    ) -> list[PurchaseHitBatch]:
+        with self._lock:
+            return self._drop_expired_locked(now=now, max_wait_seconds=max_wait_seconds)
+
+    def next_expiration_delay(
+        self,
+        *,
+        now: float | None = None,
+        max_wait_seconds: float | None = None,
+    ) -> float | None:
+        if max_wait_seconds is None or max_wait_seconds <= 0:
+            return None
+
+        current_time = float(now) if now is not None else None
+        with self._lock:
+            if not self._queue:
+                return None
+            batch = self._queue[0]
+            enqueued_at = getattr(batch, "enqueued_at", None)
+            if enqueued_at is None:
+                return None
+            if current_time is None:
+                import time
+
+                current_time = time.monotonic()
+            delay = float(enqueued_at) + float(max_wait_seconds) - float(current_time)
+            return max(delay, 0.0)
+
+    def _drop_expired_locked(
+        self,
+        *,
+        now: float | None,
+        max_wait_seconds: float | None,
+    ) -> list[PurchaseHitBatch]:
+        if max_wait_seconds is None or max_wait_seconds <= 0:
+            return []
+
+        current_time = float(now) if now is not None else None
+        removed: list[PurchaseHitBatch] = []
+        while self._queue:
+            batch = self._queue[0]
+            enqueued_at = getattr(batch, "enqueued_at", None)
+            if enqueued_at is None:
+                break
+            if current_time is None:
+                import time
+
+                current_time = time.monotonic()
+            if current_time - float(enqueued_at) < float(max_wait_seconds):
+                break
+            removed.append(self._queue.popleft())
+        return removed

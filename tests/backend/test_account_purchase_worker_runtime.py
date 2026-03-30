@@ -7,6 +7,7 @@ from app_backend.infrastructure.purchase.runtime.runtime_events import (
     PurchaseHitBatch,
 )
 from app_backend.infrastructure.purchase.runtime.account_purchase_worker import AccountPurchaseWorker
+from app_backend.infrastructure.query.runtime.runtime_account_adapter import RuntimeAccountAdapter
 
 
 def build_account(account_id: str = "a1") -> Account:
@@ -57,10 +58,16 @@ class SpyGateway:
         self._result = result
         self.calls: list[dict[str, object]] = []
 
-    async def execute(self, *, account, batch, selected_steam_id: str):
+    async def execute(self, *, account, batch, selected_steam_id: str, **_kwargs):
+        account_id = getattr(account, "account_id", None)
+        if account_id is None:
+            get_account_id = getattr(account, "get_account_id", None)
+            if callable(get_account_id):
+                account_id = get_account_id()
         self.calls.append(
             {
-                "account_id": account.account_id,
+                "account": account,
+                "account_id": account_id,
                 "selected_steam_id": selected_steam_id,
                 "query_item_name": batch.query_item_name,
             }
@@ -68,7 +75,7 @@ class SpyGateway:
         return self._result
 
 
-def test_account_purchase_worker_updates_inventory_on_success():
+def test_account_purchase_worker_leaves_inventory_commit_to_runtime_on_success():
     inventory_state = build_inventory_state()
     gateway = SpyGateway(PurchaseExecutionResult.success(purchased_count=2))
     worker = AccountPurchaseWorker(
@@ -83,7 +90,7 @@ def test_account_purchase_worker_updates_inventory_on_success():
     assert outcome.purchased_count == 2
     assert outcome.selected_steam_id == "s1"
     assert inventory_state.selected_inventory is not None
-    assert inventory_state.selected_inventory["inventory_num"] == 912
+    assert inventory_state.selected_inventory["inventory_num"] == 910
 
 
 def test_account_purchase_worker_marks_auth_invalid_without_inventory_refresh():
@@ -144,3 +151,21 @@ def test_account_purchase_worker_passes_selected_steam_id_to_execution_gateway()
     asyncio.run(worker.process(build_batch()))
 
     assert gateway.calls[0]["selected_steam_id"] == "s1"
+
+
+def test_account_purchase_worker_reuses_provided_runtime_account_across_runs():
+    inventory_state = build_inventory_state()
+    gateway = SpyGateway(PurchaseExecutionResult.success(purchased_count=1))
+    shared_runtime_account = RuntimeAccountAdapter(build_account())
+    worker = AccountPurchaseWorker(
+        account=build_account(),
+        inventory_state=inventory_state,
+        execution_gateway=gateway,
+        runtime_account=shared_runtime_account,
+    )
+
+    asyncio.run(worker.process(build_batch()))
+    asyncio.run(worker.process(build_batch()))
+
+    assert gateway.calls[0]["account"] is shared_runtime_account
+    assert gateway.calls[1]["account"] is shared_runtime_account

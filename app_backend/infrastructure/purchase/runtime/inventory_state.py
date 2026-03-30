@@ -36,16 +36,27 @@ class InventoryState:
         self._refresh_available_inventories()
         self.selected_steam_id = self.available_inventories[0]["steamId"] if self.available_inventories else None
 
-    def apply_purchase_success(self, *, purchased_count: int) -> InventoryTransition:
-        selected_inventory = self.selected_inventory
-        if selected_inventory is None:
+    def apply_purchase_success(
+        self,
+        *,
+        purchased_count: int,
+        selected_steam_id: str | None = None,
+    ) -> InventoryTransition:
+        target_steam_id = str(selected_steam_id or self.selected_steam_id or "").strip() or None
+        target_inventory = None
+        if target_steam_id is not None:
+            for inventory in self._inventories:
+                if inventory.get("steamId") == target_steam_id:
+                    target_inventory = inventory
+                    break
+        if target_inventory is None:
             return InventoryTransition(
                 requires_remote_refresh=True,
                 became_unavailable=True,
                 switched_inventory=False,
             )
 
-        selected_inventory["inventory_num"] = int(selected_inventory.get("inventory_num", 0)) + int(purchased_count)
+        target_inventory["inventory_num"] = int(target_inventory.get("inventory_num", 0)) + int(purchased_count)
         previous_selected_steam_id = self.selected_steam_id
         self._refresh_available_inventories()
 

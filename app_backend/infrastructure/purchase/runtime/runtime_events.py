@@ -19,6 +19,7 @@ class PurchaseHitBatch:
     detail_min_wear: float | None = None
     detail_max_wear: float | None = None
     max_price: float | None = None
+    enqueued_at: float | None = None
 
 
 @dataclass(slots=True)
