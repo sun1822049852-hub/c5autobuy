@@ -583,6 +583,7 @@ export function usePurchaseSystemPage({ client }) {
   const [purchaseSettingsDraft, setPurchaseSettingsDraft] = useState(EMPTY_PURCHASE_SETTINGS_DRAFT);
   const [purchaseSettingsError, setPurchaseSettingsError] = useState("");
   const [isPurchaseSettingsSaving, setIsPurchaseSettingsSaving] = useState(false);
+  const [isPurchaseSettingsOpen, setIsPurchaseSettingsOpen] = useState(false);
   const [querySettingsDraft, setQuerySettingsDraft] = useState(null);
   const [querySettingsWarnings, setQuerySettingsWarnings] = useState([]);
   const [querySettingsError, setQuerySettingsError] = useState("");
@@ -691,7 +692,21 @@ export function usePurchaseSystemPage({ client }) {
       return;
     }
     setIsQuerySettingsOpen(false);
+    setIsPurchaseSettingsOpen(false);
     setQuerySettingsError("");
+  }
+
+  function openPurchaseSettings() {
+    setIsPurchaseSettingsOpen(true);
+    setPurchaseSettingsError("");
+  }
+
+  function closePurchaseSettings() {
+    if (isPurchaseSettingsSaving) {
+      return;
+    }
+    setIsPurchaseSettingsOpen(false);
+    setPurchaseSettingsError("");
   }
 
   function onQuerySettingsChange(modeType, field, value) {
@@ -1110,6 +1125,7 @@ export function usePurchaseSystemPage({ client }) {
     isQuerySettingsLoading,
     isQuerySettingsOpen,
     isQuerySettingsSaving,
+    isPurchaseSettingsOpen,
     isRecentEventsOpen: recentEventsModal.isOpen,
     isAccountMonitorOpen: accountMonitorModal.isOpen,
     isSubmitDisabled: !hasUnsavedRuntimeDrafts || !isSelectedConfigRunning || isSubmittingDrafts,
@@ -1119,6 +1135,7 @@ export function usePurchaseSystemPage({ client }) {
     configLeavePromptError: configLeavePrompt.error,
     onCloseAccountMonitor: accountMonitorModal.onClose,
     onCloseConfigDialog: closeConfigDialog,
+    onClosePurchaseSettings: closePurchaseSettings,
     onCloseQuerySettings: closeQuerySettings,
     onCloseRecentEvents: recentEventsModal.onClose,
     onConfigDialogSelect: setSelectorDraftId,
@@ -1133,6 +1150,7 @@ export function usePurchaseSystemPage({ client }) {
     },
     onOpenAccountDetails: accountMonitorModal.onOpen,
     onOpenConfigDialog: openConfigDialog,
+    onOpenPurchaseSettings: openPurchaseSettings,
     onPurchaseSettingsChange,
     onOpenQuerySettings: openQuerySettings,
     onOpenRecentEvents: recentEventsModal.onOpen,

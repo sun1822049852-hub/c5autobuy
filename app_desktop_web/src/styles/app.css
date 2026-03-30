@@ -1820,6 +1820,13 @@ textarea,
   color: var(--text-soft);
 }
 
+.query-settings-modal__header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
 .query-settings-modal__toggle-row {
   display: flex;
   flex-wrap: wrap;
@@ -1865,8 +1872,8 @@ textarea,
 
 .purchase-system-page__layout {
   display: grid;
-  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
-  gap: 16px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
   min-height: 0;
   align-items: start;
 }
@@ -1999,6 +2006,14 @@ textarea,
 
 .purchase-settings-panel__subtitle {
   margin: 6px 0 0;
+}
+
+.purchase-settings-modal {
+  width: min(560px, 100%);
+}
+
+.purchase-settings-modal .purchase-settings-panel {
+  margin-top: 18px;
 }
 
 .purchase-settings-panel__field {

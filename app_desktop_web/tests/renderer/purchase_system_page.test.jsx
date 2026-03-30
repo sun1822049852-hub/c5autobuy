@@ -746,10 +746,10 @@ describe("purchase system page", () => {
     expect(screen.queryByText("查询账号B / api高速查询器")).not.toBeInTheDocument();
     expect(screen.queryByText("后续在这里展示 query worker / mode 来源摘要。")).not.toBeInTheDocument();
 
-    expect(screen.getByRole("region", { name: "购买设置" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "购买设置" })).not.toBeInTheDocument();
   });
 
-  it("shows purchase fanout settings and saves the global per-batch limit", async () => {
+  it("opens purchase settings from query settings and saves the global per-batch limit", async () => {
     const harness = createFetchHarness({
       initialPurchaseRuntimeSettings: { per_batch_ip_fanout_limit: 1, updated_at: null },
     });
@@ -759,7 +759,11 @@ describe("purchase system page", () => {
     render(<App />);
     await user.click(await screen.findByRole("button", { name: "扫货系统" }));
 
-    const panel = await screen.findByRole("region", { name: "购买设置" });
+    const commandDeck = screen.getByRole("region", { name: "扫货运行控制台" });
+    await user.click(within(commandDeck).getByRole("button", { name: "购买设置" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "购买设置" });
+    const panel = within(dialog).getByRole("region", { name: "购买设置" });
     const input = within(panel).getByLabelText("单批次单IP并发购买数");
     expect(input).toHaveValue(1);
 
@@ -778,6 +782,7 @@ describe("purchase system page", () => {
       );
     });
     expect(within(panel).getByLabelText("单批次单IP并发购买数")).toHaveValue(4);
+    expect(screen.getByRole("dialog", { name: "购买设置" })).toBeInTheDocument();
   });
 
   it("opens recent events and account details as independent floating modals", async () => {

@@ -3,8 +3,10 @@ export function PurchaseRuntimeHeader({
   configActionLabel,
   displayConfigName,
   isLoading,
+  isPurchaseSettingsLoading,
   isQuerySettingsLoading,
   onOpenConfigDialog,
+  onOpenPurchaseSettings,
   onOpenQuerySettings,
   runtimeMessage,
   totalPurchasedCount,
@@ -23,6 +25,17 @@ export function PurchaseRuntimeHeader({
       </div>
 
       <div className="purchase-runtime-header__inline-actions">
+        <button
+          className="ghost-button purchase-runtime-header__config-button"
+          disabled={isPurchaseSettingsLoading}
+          type="button"
+          onClick={() => {
+            onOpenPurchaseSettings?.();
+          }}
+        >
+          {isPurchaseSettingsLoading ? "加载设置..." : "购买设置"}
+        </button>
+
         <button
           className="ghost-button purchase-runtime-header__config-button"
           disabled={isQuerySettingsLoading}

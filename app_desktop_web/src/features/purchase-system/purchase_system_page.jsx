@@ -64,6 +64,7 @@ export function PurchaseSystemPage({ bootstrapConfig, client, onLeaveStateChange
     isConfigLeavePromptOpen,
     isConfigLeavePromptSaving,
     isLoading,
+    isPurchaseSettingsOpen,
     isQuerySettingsLoading,
     isQuerySettingsOpen,
     isQuerySettingsSaving,
@@ -74,6 +75,7 @@ export function PurchaseSystemPage({ bootstrapConfig, client, onLeaveStateChange
     loadError,
     onCloseAccountMonitor,
     onCloseConfigDialog,
+    onClosePurchaseSettings,
     onCloseRecentEvents,
     onConfigDialogSelect,
     onConfirmConfigDialog,
@@ -83,6 +85,7 @@ export function PurchaseSystemPage({ bootstrapConfig, client, onLeaveStateChange
     onIncreaseAllocation,
     onOpenAccountDetails,
     onOpenConfigDialog,
+    onOpenPurchaseSettings,
     onOpenQuerySettings,
     onOpenRecentEvents,
     onCloseQuerySettings,
@@ -130,24 +133,16 @@ export function PurchaseSystemPage({ bootstrapConfig, client, onLeaveStateChange
       ) : null}
 
       <div className="purchase-system-page__layout">
-        <aside className="purchase-system-page__side-stack">
-          <PurchaseSettingsPanel
-            error={purchaseSettingsError}
-            fanoutLimit={purchaseSettingsDraft?.per_batch_ip_fanout_limit || "1"}
-            isPending={isPurchaseSettingsSaving}
-            isSaving={Boolean(purchaseSettingsDraft?.is_dirty)}
-            onFanoutLimitChange={onPurchaseSettingsChange}
-            onSave={onSavePurchaseSettings}
-          />
-        </aside>
         <section className="purchase-system-page__items-panel" aria-label="配置商品列表">
           <PurchaseRuntimeHeader
             activeQueryConfig={activeQueryConfig}
             configActionLabel={configActionLabel}
             displayConfigName={configDisplayName}
             isLoading={isLoading}
+            isPurchaseSettingsLoading={isPurchaseSettingsSaving}
             isQuerySettingsLoading={isQuerySettingsLoading}
             onOpenConfigDialog={onOpenConfigDialog}
+            onOpenPurchaseSettings={onOpenPurchaseSettings}
             onOpenQuerySettings={onOpenQuerySettings}
             runtimeMessage={runtimeMessage}
             totalPurchasedCount={totalPurchasedCount}
@@ -200,6 +195,44 @@ export function PurchaseSystemPage({ bootstrapConfig, client, onLeaveStateChange
         onSave={onSaveQuerySettings}
         warnings={querySettingsWarnings}
       />
+
+      {isPurchaseSettingsOpen ? (
+        <div
+          className="surface-backdrop"
+          role="presentation"
+          onClick={(event) => {
+            if (event.target === event.currentTarget && !isPurchaseSettingsSaving) {
+              onClosePurchaseSettings?.();
+            }
+          }}
+        >
+          <section aria-label="购买设置" className="dialog-surface purchase-settings-modal" role="dialog">
+            <div className="surface-header">
+              <div>
+                <h2 className="surface-title">购买设置</h2>
+                <p className="surface-subtitle">控制单批次命中在每个购买 IP 下最多派发多少个当前空闲账号参与购买。</p>
+              </div>
+              <button
+                className="ghost-button"
+                disabled={isPurchaseSettingsSaving}
+                type="button"
+                onClick={onClosePurchaseSettings}
+              >
+                关闭
+              </button>
+            </div>
+
+            <PurchaseSettingsPanel
+              error={purchaseSettingsError}
+              fanoutLimit={purchaseSettingsDraft?.per_batch_ip_fanout_limit || "1"}
+              isPending={isPurchaseSettingsSaving}
+              isSaving={Boolean(purchaseSettingsDraft?.is_dirty)}
+              onFanoutLimitChange={onPurchaseSettingsChange}
+              onSave={onSavePurchaseSettings}
+            />
+          </section>
+        </div>
+      ) : null}
 
       <PurchaseRecentEventsModal
         events={recentEvents}
