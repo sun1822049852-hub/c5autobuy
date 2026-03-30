@@ -4,8 +4,13 @@ const DEFAULT_BOOTSTRAP_CONFIG = {
 };
 
 
+function getDesktopApp() {
+  return globalThis.window?.desktopApp ?? null;
+}
+
+
 export function getDesktopBootstrapConfig() {
-  const desktopApp = globalThis.window?.desktopApp;
+  const desktopApp = getDesktopApp();
 
   if (!desktopApp || typeof desktopApp.getBootstrapConfig !== "function") {
     return DEFAULT_BOOTSTRAP_CONFIG;
@@ -15,4 +20,14 @@ export function getDesktopBootstrapConfig() {
     ...DEFAULT_BOOTSTRAP_CONFIG,
     ...desktopApp.getBootstrapConfig(),
   };
+}
+
+
+export function sendDesktopRendererDiagnostic(payload) {
+  const desktopApp = getDesktopApp();
+  if (!desktopApp || typeof desktopApp.logRendererDiagnostic !== "function") {
+    return false;
+  }
+  desktopApp.logRendererDiagnostic(payload);
+  return true;
 }

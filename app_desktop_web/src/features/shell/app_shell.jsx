@@ -34,7 +34,7 @@ const NAV_ITEMS = [
 ];
 
 
-export function AppShell({ activeItem, children, onSelect }) {
+export function AppShell({ activeItem, children, onSelect, reloadNotice = null }) {
   return (
     <div className="app-shell">
       <aside className="app-shell__sidebar" aria-label="主导航">
@@ -66,7 +66,17 @@ export function AppShell({ activeItem, children, onSelect }) {
           ))}
         </nav>
       </aside>
-      <main className="app-shell__content">{children}</main>
+      <main className="app-shell__content">
+        {reloadNotice ? (
+          <section className="app-shell__reload-notice" role="status">
+            <span className="app-shell__reload-notice-title">Renderer Reload</span>
+            <span className="app-shell__reload-notice-text">
+              检测到界面已重新加载，已尝试恢复到「{reloadNotice.activeItemLabel}」视图。
+            </span>
+          </section>
+        ) : null}
+        {children}
+      </main>
     </div>
   );
 }

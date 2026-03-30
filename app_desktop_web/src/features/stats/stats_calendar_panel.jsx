@@ -1,17 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 
 import {
+  createTodayDateString,
   formatStatsDayDisplay,
 } from "./stats_shared.js";
 
 
 const WEEKDAY_LABELS = ["日", "一", "二", "三", "四", "五", "六"];
-
-
-function createTodayDateString() {
-  return new Date().toISOString().slice(0, 10);
-}
-
 
 function normalizeDateString(value) {
   const candidate = String(value || "").trim();

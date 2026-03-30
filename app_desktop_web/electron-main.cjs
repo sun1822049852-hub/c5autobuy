@@ -2,6 +2,7 @@ const path = require("node:path");
 const net = require("node:net");
 
 const { app, BrowserWindow, ipcMain } = require("electron");
+const { appendRendererDiagnostic } = require("./renderer_diagnostics_logger.cjs");
 
 
 const projectRoot = path.resolve(__dirname, "..");
@@ -131,6 +132,14 @@ async function bootstrapApplication() {
 
 ipcMain.on("desktop:get-bootstrap-config", (event) => {
   event.returnValue = bootstrapConfig;
+});
+
+ipcMain.on("desktop:log-renderer-diagnostic", (_event, payload) => {
+  try {
+    appendRendererDiagnostic(payload, { appApi: app });
+  } catch (error) {
+    console.error("Failed to append renderer diagnostic", error);
+  }
 });
 
 app.whenReady().then(bootstrapApplication);

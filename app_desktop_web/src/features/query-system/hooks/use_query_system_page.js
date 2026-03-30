@@ -20,6 +20,7 @@ import {
   validateDraftConfig,
 } from "../query_system_models.js";
 import { persistQueryConfigDraft } from "../query_system_persistence.js";
+import { readQuerySystemViewState, writeQuerySystemViewState } from "../../shell/app_shell_state.js";
 
 
 const EMPTY_RUNTIME_STATUS = {
@@ -43,6 +44,16 @@ function toErrorMessage(error) {
 
 function cloneValue(value) {
   return JSON.parse(JSON.stringify(value));
+}
+
+
+function resolvePersistedConfigId(configs) {
+  const persistedConfigId = readQuerySystemViewState().selectedConfigId;
+  if (!persistedConfigId) {
+    return null;
+  }
+
+  return configs.find((config) => String(config?.config_id || "") === persistedConfigId)?.config_id || null;
 }
 
 
@@ -87,6 +98,7 @@ export function useQuerySystemPage({ client }) {
     setSourceConfig(normalized);
     setDraftConfig(cloneValue(normalized));
     setSelectedConfigId(configId);
+    writeQuerySystemViewState({ selectedConfigId: configId });
     setHasUnsavedChanges(false);
     setSaveError("");
     setEditingItemId(null);
@@ -120,11 +132,15 @@ export function useQuerySystemPage({ client }) {
         setCapacitySummary(nextCapacitySummary);
         setRuntimeStatus(nextRuntimeStatus);
 
-        const preferredConfigId = nextRuntimeStatus.config_id || nextConfigs[0]?.config_id || null;
+        const preferredConfigId = resolvePersistedConfigId(nextConfigs)
+          || nextRuntimeStatus.config_id
+          || nextConfigs[0]?.config_id
+          || null;
         if (!preferredConfigId) {
           setSelectedConfigId(null);
           setSourceConfig(null);
           setDraftConfig(null);
+          writeQuerySystemViewState({ selectedConfigId: null });
           return;
         }
 
@@ -306,6 +322,7 @@ export function useQuerySystemPage({ client }) {
         setSelectedConfigId(null);
         setSourceConfig(null);
         setDraftConfig(null);
+        writeQuerySystemViewState({ selectedConfigId: null });
         setHasUnsavedChanges(false);
         setSaveError("");
       } else {

@@ -1,7 +1,12 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { createAccountCenterClient } from "./api/account_center_client.js";
 import { getDesktopBootstrapConfig } from "./desktop/bridge.js";
+import {
+  buildUnhandledRejectionDetails,
+  buildWindowErrorDetails,
+  logRendererDiagnostic,
+} from "./desktop/renderer_diagnostics.js";
 import { AccountCapabilityStatsPage } from "./features/account-capability-stats/account_capability_stats_page.jsx";
 import { AccountCenterPage } from "./features/account-center/account_center_page.jsx";
 import { DiagnosticsPanel } from "./features/diagnostics/diagnostics_panel.jsx";
@@ -10,6 +15,12 @@ import { PurchaseSystemPage } from "./features/purchase-system/purchase_system_p
 import { QueryStatsPage } from "./features/query-stats/query_stats_page.jsx";
 import { QuerySystemPage } from "./features/query-system/query_system_page.jsx";
 import { AppShell } from "./features/shell/app_shell.jsx";
+import {
+  initializeRendererReloadNotice,
+  readAppShellState,
+  updateRendererActiveItem,
+  writeAppShellState,
+} from "./features/shell/app_shell_state.js";
 import { UnsavedChangesDialog } from "./features/shell/unsaved_changes_dialog.jsx";
 
 
@@ -32,8 +43,12 @@ const EMPTY_NAV_PROMPT = {
 
 
 export function App() {
+  const [initialAppShellState] = useState(() => readAppShellState());
   const [bootstrapConfig] = useState(() => getDesktopBootstrapConfig());
-  const [activeItem, setActiveItem] = useState("account-center");
+  const [activeItem, setActiveItem] = useState(initialAppShellState.activeItem);
+  const [reloadNotice] = useState(() => initializeRendererReloadNotice({
+    activeItem: initialAppShellState.activeItem,
+  }));
   const [navPrompt, setNavPrompt] = useState(EMPTY_NAV_PROMPT);
   const [querySystemLeaveState, setQuerySystemLeaveState] = useState(EMPTY_QUERY_SYSTEM_LEAVE_STATE);
   const [purchaseSystemLeaveState, setPurchaseSystemLeaveState] = useState(EMPTY_PURCHASE_SYSTEM_LEAVE_STATE);
@@ -51,6 +66,44 @@ export function App() {
 
   const handlePurchaseSystemLeaveStateChange = useCallback((nextState) => {
     setPurchaseSystemLeaveState(nextState || EMPTY_PURCHASE_SYSTEM_LEAVE_STATE);
+  }, []);
+
+  useEffect(() => {
+    writeAppShellState({ activeItem });
+    updateRendererActiveItem(activeItem);
+  }, [activeItem]);
+
+  useEffect(() => {
+    logRendererDiagnostic("renderer_navigation_state", {
+      activeItem,
+    });
+  }, [activeItem]);
+
+  useEffect(() => {
+    if (!reloadNotice) {
+      return;
+    }
+    logRendererDiagnostic("renderer_reload_detected", reloadNotice);
+  }, [reloadNotice]);
+
+  useEffect(() => {
+    function handleWindowError(event) {
+      logRendererDiagnostic("renderer_window_error", buildWindowErrorDetails(event));
+      event.preventDefault?.();
+    }
+
+    function handleUnhandledRejection(event) {
+      logRendererDiagnostic("renderer_unhandled_rejection", buildUnhandledRejectionDetails(event));
+      event.preventDefault?.();
+    }
+
+    globalThis.window?.addEventListener("error", handleWindowError);
+    globalThis.window?.addEventListener("unhandledrejection", handleUnhandledRejection);
+
+    return () => {
+      globalThis.window?.removeEventListener("error", handleWindowError);
+      globalThis.window?.removeEventListener("unhandledrejection", handleUnhandledRejection);
+    };
   }, []);
 
   const activeLeaveState = activeItem === "query-system"
@@ -117,6 +170,7 @@ export function App() {
       <AppShell
         activeItem={activeItem}
         onSelect={handleSelectItem}
+        reloadNotice={reloadNotice}
       >
         {activeItem === "query-system" ? (
           <QuerySystemPage

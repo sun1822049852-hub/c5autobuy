@@ -161,8 +161,31 @@ textarea,
 }
 
 .app-shell__content {
+  display: grid;
+  gap: 12px;
   min-width: 0;
   min-height: 0;
+}
+
+.app-shell__reload-notice {
+  display: grid;
+  gap: 4px;
+  padding: 14px 16px;
+  border: 1px solid rgba(220, 164, 76, 0.26);
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(220, 164, 76, 0.14), rgba(255, 255, 255, 0.03));
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.22);
+}
+
+.app-shell__reload-notice-title {
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--accent-strong);
+}
+
+.app-shell__reload-notice-text {
+  color: var(--text-main);
 }
 
 .diagnostics-panel {

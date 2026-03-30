@@ -4,9 +4,14 @@ import "@testing-library/jest-dom/vitest";
 
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "../../src/App.jsx";
+
+
+function createTodayDateString() {
+  return new Date().toISOString().slice(0, 10);
+}
 
 
 function jsonResponse(payload, status = 200) {
@@ -91,32 +96,43 @@ function createFetchHarness() {
 
 
 describe("account capability stats page", () => {
-  it("switches to the account capability page and renders account performance cells", async () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-03-25T12:00:00Z"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("switches to the account capability page and defaults to today's account performance cells", async () => {
     const harness = createFetchHarness();
     installDesktopApp(harness.fetchImpl);
     const user = userEvent.setup();
+    const today = createTodayDateString();
 
     render(<App />);
     await user.click(await screen.findByRole("button", { name: "账号能力统计" }));
 
     const table = await screen.findByRole("table", { name: "账号能力统计表" });
     expect(within(table).getByText("购买账号-A")).toBeInTheDocument();
-    expect(within(table).getByText("182ms · 34次")).toBeInTheDocument();
-    expect(within(table).getByText("91ms · 18次")).toBeInTheDocument();
+    expect(within(table).getByText("182ms · 12次")).toBeInTheDocument();
+    expect(within(table).getByText("--")).toBeInTheDocument();
     expect(within(table).getByText("340ms · 4次")).toBeInTheDocument();
-    expect(within(table).getByText("520ms · 7次")).toBeInTheDocument();
-    expect(within(table).getByText("810ms · 7次")).toBeInTheDocument();
+    expect(within(table).getByText("520ms · 3次")).toBeInTheDocument();
+    expect(within(table).getByText("810ms · 3次")).toBeInTheDocument();
 
     expect(harness.calls).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           method: "GET",
           pathname: "/stats/account-capability",
-          search: "?range_mode=total",
+          search: `?range_mode=day&date=${today}`,
         }),
       ]),
     );
 
+    expect(screen.getByRole("button", { name: "打开统计时间选择" })).toHaveTextContent(`${today} 00:00:00`);
     const statsTable = screen.getByRole("table", { name: "账号能力统计表" });
     expect(statsTable.closest(".stats-page")).toHaveClass("stats-page--compact");
   });

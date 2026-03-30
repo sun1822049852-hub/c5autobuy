@@ -4,9 +4,14 @@ import "@testing-library/jest-dom/vitest";
 
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "../../src/App.jsx";
+
+
+function createTodayDateString() {
+  return new Date().toISOString().slice(0, 10);
+}
 
 
 function jsonResponse(payload, status = 200) {
@@ -122,32 +127,42 @@ function createFetchHarness() {
 
 
 describe("query stats page", () => {
-  it("switches to the query stats page and renders aggregated item stats", async () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-03-25T12:00:00Z"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("switches to the query stats page and defaults to today's item stats", async () => {
     const harness = createFetchHarness();
     installDesktopApp(harness.fetchImpl);
     const user = userEvent.setup();
+    const today = createTodayDateString();
 
     render(<App />);
     await user.click(await screen.findByRole("button", { name: "查询统计" }));
 
     const table = await screen.findByRole("table", { name: "查询统计表" });
     expect(within(table).getByText("AK-47 | Redline")).toBeInTheDocument();
-    expect(within(table).getByText("12")).toBeInTheDocument();
-    expect(within(table).getByText("5")).toBeInTheDocument();
+    expect(within(table).getByText("4")).toBeInTheDocument();
     expect(within(table).getByText("2")).toBeInTheDocument();
-    expect(within(table).getByText("3")).toBeInTheDocument();
-    expect(within(table).getByText("api查询器 3 · api高速查询器 2")).toBeInTheDocument();
+    expect(within(table).getAllByText("1")).toHaveLength(2);
+    expect(within(table).getByText("api查询器 2")).toBeInTheDocument();
 
     expect(harness.calls).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           method: "GET",
           pathname: "/stats/query-items",
-          search: "?range_mode=total",
+          search: `?range_mode=day&date=${today}`,
         }),
       ]),
     );
 
+    expect(screen.getByRole("button", { name: "打开统计时间选择" })).toHaveTextContent(`${today} 00:00:00`);
     expect(table.closest(".stats-page")).toHaveClass("stats-page--compact");
   });
 
@@ -246,6 +261,7 @@ describe("query stats page", () => {
   });
 
   it("shows raw http details when query stats loading fails with an unhandled backend string", async () => {
+    const today = createTodayDateString();
     installDesktopApp(vi.fn(async (input, options = {}) => {
       const url = new URL(input);
       const method = String(options.method ?? "GET").toUpperCase();
@@ -272,7 +288,7 @@ describe("query stats page", () => {
     const errorPanel = await screen.findByRole("alert");
     expect(within(errorPanel).getByText("not login")).toBeInTheDocument();
     expect(within(errorPanel).getByText("HTTP 401")).toBeInTheDocument();
-    expect(within(errorPanel).getByText("GET /stats/query-items?range_mode=total")).toBeInTheDocument();
+    expect(within(errorPanel).getByText(`GET /stats/query-items?range_mode=day&date=${today}`)).toBeInTheDocument();
     expect(within(errorPanel).getByText("原始返回：not login")).toBeInTheDocument();
   });
 });

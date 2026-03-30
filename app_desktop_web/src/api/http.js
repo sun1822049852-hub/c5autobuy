@@ -50,6 +50,8 @@ export function createHttpClient({
       : null;
     let timeoutId = null;
     let abortListener = null;
+    let timeoutError = null;
+    let didTimeout = false;
 
     if (controller && options.signal) {
       if (options.signal.aborted) {
@@ -78,17 +80,24 @@ export function createHttpClient({
             fetchPromise,
             new Promise((_, reject) => {
               timeoutId = globalThis.setTimeout(() => {
-                controller?.abort();
-                reject(buildTimeoutError({
+                timeoutError = buildTimeoutError({
                   method,
                   path,
                   timeoutMs,
-                }));
+                });
+                didTimeout = true;
+                controller?.abort();
+                reject(timeoutError);
               }, timeoutMs);
             }),
           ])
           : fetchPromise
       );
+    } catch (error) {
+      if (didTimeout && timeoutError) {
+        throw timeoutError;
+      }
+      throw error;
     } finally {
       if (timeoutId !== null) {
         globalThis.clearTimeout(timeoutId);

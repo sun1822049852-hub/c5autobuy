@@ -5,14 +5,10 @@ import {
   StatsRangePickerPanel,
 } from "./stats_calendar_panel.jsx";
 import {
+  createTodayDateString,
   formatStatsDayDisplay,
   formatStatsRangeDisplay,
 } from "./stats_shared.js";
-
-
-function createTodayDateString() {
-  return new Date().toISOString().slice(0, 10);
-}
 
 
 function formatDateString(date) {
