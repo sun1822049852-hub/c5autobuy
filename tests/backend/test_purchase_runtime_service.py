@@ -842,6 +842,7 @@ def test_purchase_runtime_service_queues_hit_while_account_busy_and_dispatches_a
         settings_repository=FakeSettingsRepository(),
         inventory_snapshot_repository=snapshot_repository,
         execution_gateway_factory=lambda: gateway,
+        max_inflight_per_account=1,
     )
     service.start()
 
@@ -886,6 +887,70 @@ def test_purchase_runtime_service_queues_hit_while_account_busy_and_dispatches_a
         service.stop()
 
 
+def test_purchase_runtime_service_allows_three_inflight_tasks_per_account_before_queueing():
+    from app_backend.infrastructure.purchase.runtime.purchase_runtime_service import PurchaseRuntimeService
+
+    snapshot_repository = FakeInventorySnapshotRepository(
+        {
+            "a1": type(
+                "Snapshot",
+                (),
+                {
+                    "account_id": "a1",
+                    "selected_steam_id": "steam-1",
+                    "inventories": [
+                        {"steamId": "steam-1", "nickname": "主仓", "inventory_num": 910, "inventory_max": 1000},
+                    ],
+                    "refreshed_at": "2026-03-16T20:00:00",
+                    "last_error": None,
+                },
+            )()
+        }
+    )
+    gateway = BlockingExecutionGateway(PurchaseExecutionResult.success(purchased_count=1))
+    service = PurchaseRuntimeService(
+        account_repository=FakeAccountRepository([build_account("a1")]),
+        settings_repository=FakeSettingsRepository(),
+        inventory_snapshot_repository=snapshot_repository,
+        execution_gateway_factory=lambda: gateway,
+        max_inflight_per_account=3,
+    )
+    service.start()
+
+    try:
+        results = []
+        for index in range(4):
+            results.append(
+                service.accept_query_hit(
+                    {
+                        "external_item_id": f"13809798993902611{index}",
+                        "query_item_name": f"AK-{index + 1}",
+                        "product_url": f"https://www.c5game.com/csgo/730/asset/13809798993902611{index}",
+                        "product_list": [{"productId": f"p-{index + 1}", "price": 88.0 + index, "actRebateAmount": 0}],
+                        "total_price": 88.0 + index,
+                        "total_wear_sum": 0.1234 + index,
+                        "mode_type": "new_api",
+                    }
+                )
+            )
+
+        assert results[:3] == [{"accepted": True, "status": "queued"}] * 3
+        assert results[3] == {"accepted": True, "status": "queued"}
+        assert wait_until(lambda: len(gateway.calls) == 3)
+
+        snapshot = service.get_status()
+        assert snapshot["queue_size"] == 1
+        assert snapshot["active_account_count"] == 1
+
+        gateway.release.set()
+
+        assert wait_until(lambda: service.get_status()["total_purchased_count"] == 4)
+        assert len(gateway.calls) == 4
+    finally:
+        gateway.release.set()
+        service.stop()
+
+
 def test_purchase_runtime_service_drops_queued_hit_after_timeout():
     from app_backend.infrastructure.purchase.runtime.purchase_runtime_service import PurchaseRuntimeService
 
@@ -912,6 +977,7 @@ def test_purchase_runtime_service_drops_queued_hit_after_timeout():
         settings_repository=FakeSettingsRepository(),
         inventory_snapshot_repository=snapshot_repository,
         execution_gateway_factory=lambda: gateway,
+        max_inflight_per_account=1,
         queued_hit_timeout_seconds=0.05,
     )
     service.start()
@@ -1460,6 +1526,166 @@ def test_purchase_runtime_service_ignores_old_dispatch_results_after_stop():
     assert all(event.get("status") != "success" for event in runtime._recent_events)
 
 
+def test_purchase_runtime_service_stop_does_not_start_later_runner_jobs():
+    from app_backend.infrastructure.purchase.runtime.purchase_runtime_service import PurchaseRuntimeService
+    from app_backend.infrastructure.purchase.runtime.runtime_events import PurchaseHitBatch
+
+    account_repository = FakeAccountRepository([build_account("a1")])
+    snapshot_repository = FakeInventorySnapshotRepository(
+        {
+            "a1": type(
+                "Snapshot",
+                (),
+                {
+                    "account_id": "a1",
+                    "selected_steam_id": "steam-1",
+                    "inventories": [
+                        {
+                            "steamId": "steam-1",
+                            "nickname": "主仓",
+                            "inventory_num": 910,
+                            "inventory_max": 1000,
+                        },
+                    ],
+                    "refreshed_at": "2026-03-16T20:00:00",
+                    "last_error": None,
+                },
+            )()
+        }
+    )
+    gateway = BlockingExecutionGateway(PurchaseExecutionResult.success(purchased_count=1))
+    service = PurchaseRuntimeService(
+        account_repository=account_repository,
+        settings_repository=FakeSettingsRepository(),
+        inventory_snapshot_repository=snapshot_repository,
+        execution_gateway_factory=lambda: gateway,
+        max_inflight_per_account=1,
+    )
+    service.start()
+    runtime = service._runtime
+
+    first_batch = PurchaseHitBatch(
+        query_item_name="AK-1",
+        external_item_id="1380979899390261111",
+        product_url="https://www.c5game.com/csgo/730/asset/1380979899390261111",
+        product_list=[{"productId": "p-1", "price": 88.0, "actRebateAmount": 0}],
+        total_price=88.0,
+        total_wear_sum=0.1234,
+        source_mode_type="new_api",
+    )
+    second_batch = PurchaseHitBatch(
+        query_item_name="AK-2",
+        external_item_id="1380979899390262222",
+        product_url="https://www.c5game.com/csgo/730/asset/1380979899390262222",
+        product_list=[{"productId": "p-2", "price": 89.0, "actRebateAmount": 0}],
+        total_price=89.0,
+        total_wear_sum=0.2234,
+        source_mode_type="new_api",
+    )
+
+    runtime._start_account_dispatch("a1", first_batch)
+    assert wait_until(gateway.started.is_set)
+    runtime._start_account_dispatch("a1", second_batch)
+
+    service.stop()
+    gateway.release.set()
+    time.sleep(0.3)
+
+    assert len(gateway.calls) == 1
+    assert gateway.calls[0]["query_item_name"] == "AK-1"
+    assert runtime._total_purchased_count == 0
+    assert all(event.get("query_item_name") != "AK-2" for event in runtime._recent_events)
+
+
+def test_purchase_runtime_service_stop_ignores_stale_auth_invalid_from_old_runtime():
+    from app_backend.infrastructure.purchase.runtime.purchase_runtime_service import PurchaseRuntimeService
+
+    account_repository = FakeAccountRepository([build_account("a1")])
+    snapshot_repository = FakeInventorySnapshotRepository(
+        {
+            "a1": type(
+                "Snapshot",
+                (),
+                {
+                    "account_id": "a1",
+                    "selected_steam_id": "steam-1",
+                    "inventories": [
+                        {
+                            "steamId": "steam-1",
+                            "nickname": "主仓",
+                            "inventory_num": 910,
+                            "inventory_max": 1000,
+                        },
+                    ],
+                    "refreshed_at": "2026-03-16T20:00:00",
+                    "last_error": None,
+                },
+            )()
+        }
+    )
+    old_gateway = BlockingExecutionGateway(PurchaseExecutionResult.auth_invalid("Not login"))
+    new_gateway = BlockingExecutionGateway(PurchaseExecutionResult.success(purchased_count=1))
+    gateways = [old_gateway, new_gateway]
+    service = PurchaseRuntimeService(
+        account_repository=account_repository,
+        settings_repository=FakeSettingsRepository(),
+        inventory_snapshot_repository=snapshot_repository,
+        execution_gateway_factory=lambda: gateways.pop(0),
+        max_inflight_per_account=1,
+    )
+    service.start()
+
+    try:
+        accepted = service.accept_query_hit(
+            {
+                "external_item_id": "1380979899390261111",
+                "query_item_name": "AK-OLD",
+                "product_url": "https://www.c5game.com/csgo/730/asset/1380979899390261111",
+                "product_list": [{"productId": "p-1", "price": 88.0, "actRebateAmount": 0}],
+                "total_price": 88.0,
+                "total_wear_sum": 0.1234,
+                "mode_type": "new_api",
+            }
+        )
+        assert accepted == {"accepted": True, "status": "queued"}
+        assert wait_until(old_gateway.started.is_set)
+
+        service.stop()
+        restarted, _ = service.start()
+        assert restarted is True
+        assert wait_until(lambda: service.get_status()["active_account_count"] == 1)
+
+        old_gateway.release.set()
+        time.sleep(0.2)
+
+        next_hit = service.accept_query_hit(
+            {
+                "external_item_id": "1380979899390262222",
+                "query_item_name": "AK-NEW",
+                "product_url": "https://www.c5game.com/csgo/730/asset/1380979899390262222",
+                "product_list": [{"productId": "p-2", "price": 89.0, "actRebateAmount": 0}],
+                "total_price": 89.0,
+                "total_wear_sum": 0.2234,
+                "mode_type": "new_api",
+            }
+        )
+        assert next_hit == {"accepted": True, "status": "queued"}
+        assert wait_until(new_gateway.started.is_set)
+
+        new_gateway.release.set()
+
+        assert wait_until(lambda: service.get_status()["total_purchased_count"] == 1)
+        snapshot = service.get_status()
+        assert snapshot["accounts"][0]["purchase_capability_state"] == "bound"
+        assert snapshot["accounts"][0]["purchase_pool_state"] == "active"
+        assert snapshot["active_account_count"] == 1
+        assert account_repository.get_account("a1").purchase_capability_state == "bound"
+    finally:
+        old_gateway.release.set()
+        new_gateway.release.set()
+        service.stop()
+
+
 def test_purchase_runtime_service_consumes_queued_hit_and_updates_runtime_snapshot():
     from app_backend.infrastructure.purchase.runtime.purchase_runtime_service import PurchaseRuntimeService
 
@@ -1614,6 +1840,7 @@ def test_purchase_runtime_service_inflight_purchase_updates_original_inventory_a
         settings_repository=FakeSettingsRepository(),
         inventory_snapshot_repository=snapshot_repository,
         execution_gateway_factory=lambda: gateway,
+        max_inflight_per_account=1,
     )
     service.start()
 
@@ -1818,6 +2045,7 @@ def test_purchase_runtime_service_bind_query_runtime_session_does_not_carry_old_
         settings_repository=FakeSettingsRepository(),
         inventory_snapshot_repository=snapshot_repository,
         execution_gateway_factory=lambda: gateway,
+        max_inflight_per_account=1,
     )
     service.start()
     runtime = service._runtime
@@ -1903,6 +2131,7 @@ def test_purchase_runtime_service_bind_query_runtime_session_blocks_old_batch_be
         settings_repository=FakeSettingsRepository(),
         inventory_snapshot_repository=snapshot_repository,
         execution_gateway_factory=lambda: gateway,
+        max_inflight_per_account=1,
     )
     service.start()
     runtime = service._runtime
@@ -2097,6 +2326,7 @@ def test_purchase_runtime_service_stop_closes_reused_global_session(monkeypatch)
         settings_repository=FakeSettingsRepository(),
         inventory_snapshot_repository=snapshot_repository,
         execution_gateway_factory=lambda: gateway,
+        max_inflight_per_account=1,
     )
     service.start()
 
@@ -2151,6 +2381,7 @@ def test_purchase_runtime_service_final_expiry_check_blocks_boundary_dispatch(mo
         inventory_snapshot_repository=snapshot_repository,
         execution_gateway_factory=lambda: gateway,
         queued_hit_timeout_seconds=0.05,
+        max_inflight_per_account=1,
     )
     service.start()
     runtime = service._runtime
@@ -2245,7 +2476,7 @@ def test_purchase_runtime_service_drain_retries_after_expired_head_and_dispatche
 
         assert first == "retry"
         assert second == "dispatched"
-        assert len(gateway.calls) == 1
+        assert wait_until(lambda: len(gateway.calls) == 1)
         assert gateway.calls[0]["query_item_name"] == "AK-NEW"
     finally:
         service.stop()
@@ -2278,6 +2509,7 @@ def test_purchase_runtime_service_stale_success_outcome_cannot_override_auth_inv
         settings_repository=FakeSettingsRepository(),
         inventory_snapshot_repository=snapshot_repository,
         execution_gateway_factory=lambda: gateway,
+        max_inflight_per_account=1,
     )
     service.start()
     runtime = service._runtime
@@ -2825,6 +3057,90 @@ def test_purchase_runtime_service_inflight_success_does_not_reactivate_auth_inva
         service.stop()
 
 
+def test_purchase_runtime_service_auth_invalid_skips_later_runner_jobs():
+    from app_backend.infrastructure.purchase.runtime.purchase_runtime_service import PurchaseRuntimeService
+    from app_backend.infrastructure.purchase.runtime.runtime_events import InventoryRefreshResult
+    from app_backend.infrastructure.purchase.runtime.runtime_events import PurchaseHitBatch
+
+    snapshot_repository = FakeInventorySnapshotRepository(
+        {
+            "a1": type(
+                "Snapshot",
+                (),
+                {
+                    "account_id": "a1",
+                    "selected_steam_id": "steam-1",
+                    "inventories": [
+                        {"steamId": "steam-1", "nickname": "主仓", "inventory_num": 910, "inventory_max": 1000},
+                    ],
+                    "refreshed_at": "2026-03-16T20:00:00",
+                    "last_error": None,
+                },
+            )()
+        }
+    )
+    refresh_gateway = StubInventoryRefreshGateway(
+        InventoryRefreshResult.success(
+            inventories=[
+                {"steamId": "steam-recovered", "nickname": "主仓", "inventory_num": 910, "inventory_max": 1000},
+            ]
+        )
+    )
+    gateway = BlockingExecutionGateway(PurchaseExecutionResult.success(purchased_count=1))
+    service = PurchaseRuntimeService(
+        account_repository=FakeAccountRepository([build_account("a1")]),
+        settings_repository=FakeSettingsRepository(),
+        inventory_snapshot_repository=snapshot_repository,
+        inventory_refresh_gateway_factory=lambda: refresh_gateway,
+        execution_gateway_factory=lambda: gateway,
+        max_inflight_per_account=1,
+    )
+    service.start()
+    runtime = service._runtime
+
+    first_batch = PurchaseHitBatch(
+        query_item_name="AK-1",
+        external_item_id="1380979899390261111",
+        product_url="https://www.c5game.com/csgo/730/asset/1380979899390261111",
+        product_list=[{"productId": "p-1", "price": 88.0, "actRebateAmount": 0}],
+        total_price=88.0,
+        total_wear_sum=0.1234,
+        source_mode_type="new_api",
+    )
+    second_batch = PurchaseHitBatch(
+        query_item_name="AK-2",
+        external_item_id="1380979899390262222",
+        product_url="https://www.c5game.com/csgo/730/asset/1380979899390262222",
+        product_list=[{"productId": "p-2", "price": 89.0, "actRebateAmount": 0}],
+        total_price=89.0,
+        total_wear_sum=0.2234,
+        source_mode_type="new_api",
+    )
+
+    try:
+        runtime._start_account_dispatch("a1", first_batch)
+        assert wait_until(gateway.started.is_set)
+        runtime._start_account_dispatch("a1", second_batch)
+
+        service.mark_account_auth_invalid(account_id="a1", error="Not login")
+        gateway.release.set()
+        time.sleep(0.3)
+        detail = service.refresh_account_inventory_detail("a1")
+        assert detail is not None
+        time.sleep(0.2)
+
+        snapshot = service.get_status()
+        assert len(gateway.calls) == 1
+        assert gateway.calls[0]["query_item_name"] == "AK-1"
+        assert snapshot["accounts"][0]["purchase_capability_state"] == "bound"
+        assert snapshot["accounts"][0]["purchase_pool_state"] == "active"
+        assert snapshot["active_account_count"] == 1
+        assert all(event.get("query_item_name") != "AK-2" for event in snapshot["recent_events"])
+    finally:
+        gateway.release.set()
+        service.stop()
+
+
 def test_purchase_runtime_service_does_not_leave_backlog_when_last_account_invalidates_during_enqueue(monkeypatch):
     from app_backend.infrastructure.purchase.runtime.purchase_runtime_service import PurchaseRuntimeService
 
@@ -2940,6 +3256,7 @@ def test_purchase_runtime_service_clears_queued_hits_when_last_account_becomes_u
         settings_repository=FakeSettingsRepository(),
         inventory_snapshot_repository=snapshot_repository,
         execution_gateway_factory=lambda: gateway,
+        max_inflight_per_account=1,
     )
     service.start()
 
@@ -3074,6 +3391,7 @@ def test_purchase_runtime_service_next_batch_uses_remaining_idle_accounts_in_sam
         settings_repository=FakeSettingsRepository({"per_batch_ip_fanout_limit": 4}),
         inventory_snapshot_repository=snapshot_repository,
         execution_gateway_factory=lambda: gateway,
+        max_inflight_per_account=1,
     )
     service.start()
 

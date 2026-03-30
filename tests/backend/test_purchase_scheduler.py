@@ -104,3 +104,26 @@ def test_purchase_scheduler_second_claim_uses_remaining_idle_accounts():
     assert len(second) == 6
     assert sum(1 for account_id in second if account_id.startswith("b1-")) == 2
     assert sum(1 for account_id in second if account_id.startswith("b2-")) == 4
+
+
+def test_purchase_scheduler_allows_multiple_inflight_tasks_per_account_until_capacity():
+    scheduler = PurchaseScheduler()
+    scheduler.register_account("a1", available=True, max_inflight=3)
+
+    first = scheduler.claim_idle_accounts_by_bucket(limit_per_bucket=1)
+    second = scheduler.claim_idle_accounts_by_bucket(limit_per_bucket=1)
+    third = scheduler.claim_idle_accounts_by_bucket(limit_per_bucket=1)
+    fourth = scheduler.claim_idle_accounts_by_bucket(limit_per_bucket=1)
+
+    assert first == ["a1"]
+    assert second == ["a1"]
+    assert third == ["a1"]
+    assert fourth == []
+    assert scheduler.account_status("a1")["inflight_count"] == 3
+    assert scheduler.account_status("a1")["busy"] is True
+
+    scheduler.release_account("a1")
+
+    assert scheduler.account_status("a1")["inflight_count"] == 2
+    assert scheduler.account_status("a1")["busy"] is False
+    assert scheduler.claim_idle_accounts_by_bucket(limit_per_bucket=1) == ["a1"]

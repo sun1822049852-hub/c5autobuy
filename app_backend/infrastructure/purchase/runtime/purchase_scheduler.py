@@ -14,11 +14,21 @@ class PurchaseScheduler:
         self._current_index = 0
         self._lock = threading.RLock()
 
-    def register_account(self, account_id: str, *, available: bool, bucket_key: str = "direct") -> None:
+    def register_account(
+        self,
+        account_id: str,
+        *,
+        available: bool,
+        bucket_key: str = "direct",
+        max_inflight: int = 1,
+    ) -> None:
         with self._lock:
+            inflight_limit = max(int(max_inflight), 1)
             self._account_status[account_id] = {
                 "available": bool(available),
                 "busy": False,
+                "inflight_count": 0,
+                "max_inflight": inflight_limit,
                 "bucket_key": str(bucket_key or "direct"),
                 "disabled_reason": None if available else "no_available_inventory",
             }
@@ -65,7 +75,10 @@ class PurchaseScheduler:
                 account_id = self._available_account_ids[self._current_index]
                 self._current_index = (self._current_index + 1) % len(self._available_account_ids)
                 checked += 1
-                if not bool(self._account_status.get(account_id, {}).get("busy")):
+                status = self._account_status.get(account_id, {})
+                inflight_count = int(status.get("inflight_count", 0) or 0)
+                max_inflight = max(int(status.get("max_inflight", 1) or 1), 1)
+                if inflight_count < max_inflight:
                     return account_id
             return None
 
@@ -96,7 +109,9 @@ class PurchaseScheduler:
             status = self._account_status.setdefault(account_id, {})
             status["available"] = True
             status["disabled_reason"] = None
-            status["busy"] = False
+            inflight_count = int(status.get("inflight_count", 0) or 0)
+            max_inflight = max(int(status.get("max_inflight", 1) or 1), 1)
+            status["busy"] = inflight_count >= max_inflight
             if account_id not in self._available_account_ids:
                 self._available_account_ids.append(account_id)
 
@@ -105,7 +120,10 @@ class PurchaseScheduler:
             status = self._account_status.get(account_id)
             if status is None:
                 return
-            status["busy"] = False
+            inflight_count = max(int(status.get("inflight_count", 0) or 0) - 1, 0)
+            status["inflight_count"] = inflight_count
+            max_inflight = max(int(status.get("max_inflight", 1) or 1), 1)
+            status["busy"] = bool(status.get("available")) and inflight_count >= max_inflight
 
     def claim_idle_accounts_by_bucket(self, *, limit_per_bucket: int) -> list[str]:
         effective_limit = max(int(limit_per_bucket), 0)
@@ -116,7 +134,9 @@ class PurchaseScheduler:
             idle_by_bucket: dict[str, list[str]] = {}
             for account_id in self._available_account_ids:
                 status = self._account_status.get(account_id, {})
-                if not bool(status.get("available")) or bool(status.get("busy")):
+                inflight_count = int(status.get("inflight_count", 0) or 0)
+                max_inflight = max(int(status.get("max_inflight", 1) or 1), 1)
+                if not bool(status.get("available")) or inflight_count >= max_inflight:
                     continue
                 bucket_key = str(status.get("bucket_key") or "direct")
                 idle_by_bucket.setdefault(bucket_key, []).append(account_id)
@@ -124,7 +144,11 @@ class PurchaseScheduler:
             claimed: list[str] = []
             for account_ids in idle_by_bucket.values():
                 for account_id in account_ids[:effective_limit]:
-                    self._account_status[account_id]["busy"] = True
+                    status = self._account_status[account_id]
+                    inflight_count = int(status.get("inflight_count", 0) or 0) + 1
+                    status["inflight_count"] = inflight_count
+                    max_inflight = max(int(status.get("max_inflight", 1) or 1), 1)
+                    status["busy"] = inflight_count >= max_inflight
                     claimed.append(account_id)
             return claimed
 

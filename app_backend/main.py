@@ -65,11 +65,20 @@ from app_backend.infrastructure.browser_runtime.open_api_binding_page_launcher i
 from app_backend.application.use_cases.delete_account import DeleteAccountUseCase
 from app_backend.application.services.account_balance_service import AccountBalanceService
 from app_backend.workers.manager.task_manager import TaskManager
+from app_backend.infrastructure.request_diagnostics import RequestDiagnosticsMiddleware
 
 
-def create_app(db_path: Path | None = None) -> FastAPI:
+def create_app(
+    db_path: Path | None = None,
+    *,
+    request_diagnostics_log_path: Path | None = None,
+    request_diagnostics_slow_ms: float = 2_000,
+) -> FastAPI:
     database_path = db_path or Path("data/app.db")
     database_path.parent.mkdir(parents=True, exist_ok=True)
+    request_diagnostics_log_path = request_diagnostics_log_path or (
+        database_path.parent / "runtime" / "request_diagnostics.runtime.jsonl"
+    )
     engine = build_engine(database_path)
     create_schema(engine)
     session_factory = build_session_factory(engine)
@@ -151,6 +160,11 @@ def create_app(db_path: Path | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.add_middleware(
+        RequestDiagnosticsMiddleware,
+        log_path=request_diagnostics_log_path,
+        slow_ms=request_diagnostics_slow_ms,
+    )
     app.state.account_repository = repository
     app.state.account_session_bundle_repository = bundle_repository
     app.state.managed_browser_runtime = managed_browser_runtime
@@ -172,6 +186,8 @@ def create_app(db_path: Path | None = None) -> FastAPI:
     app.state.account_balance_service = account_balance_service
     app.state.stats_repository = stats_repository
     app.state.stats_pipeline = stats_pipeline
+    app.state.request_diagnostics_log_path = request_diagnostics_log_path
+    app.state.request_diagnostics_slow_ms = request_diagnostics_slow_ms
 
     app.include_router(account_center_routes.router)
     app.include_router(account_routes.router)

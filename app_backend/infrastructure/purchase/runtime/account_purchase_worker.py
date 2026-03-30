@@ -25,7 +25,13 @@ class AccountPurchaseWorker:
         self._should_process_generation = should_process_generation
         self._on_gateway_execute_start = on_gateway_execute_start
 
-    async def process(self, batch, *, generation: int | None = None) -> PurchaseWorkerOutcome:
+    async def process(
+        self,
+        batch,
+        *,
+        generation: int | None = None,
+        on_gateway_execute_start=None,
+    ) -> PurchaseWorkerOutcome:
         submitted_count = self._resolve_submitted_count(batch)
         selected_steam_id = self._inventory_state.selected_steam_id
         if not selected_steam_id:
@@ -64,7 +70,7 @@ class AccountPurchaseWorker:
             account=self._runtime_account,
             batch=batch,
             selected_steam_id=selected_steam_id,
-            on_execute_started=self._on_gateway_execute_start,
+            on_execute_started=on_gateway_execute_start or self._on_gateway_execute_start,
         )
         submitted_count = self._resolve_submitted_count(batch, result=result)
 

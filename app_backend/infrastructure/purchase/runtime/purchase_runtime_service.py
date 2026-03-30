@@ -46,17 +46,25 @@ class _DispatchJob:
 
 
 class _AccountDispatchRunner:
-    def __init__(self, *, account_id: str, worker: AccountPurchaseWorker, on_complete, should_process=None) -> None:
+    def __init__(
+        self,
+        *,
+        account_id: str,
+        worker: AccountPurchaseWorker,
+        on_complete,
+        should_process=None,
+        max_concurrent: int = 1,
+    ) -> None:
         self._account_id = str(account_id)
         self._worker = worker
         self._on_complete = on_complete
         self._should_process = should_process
+        self._max_concurrent = max(int(max_concurrent), 1)
         self._queue: Queue[object] = Queue()
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
-        self._current_task = None
-        self._current_phase = "idle"
+        self._active_tasks: dict[asyncio.Task, str] = {}
         self._state_lock = threading.Lock()
 
     def start(self) -> None:
@@ -73,14 +81,7 @@ class _AccountDispatchRunner:
     def stop(self, *, timeout: float = 0.2) -> None:
         self._stop_event.set()
         self._queue.put(_DISPATCH_STOP)
-        with self._state_lock:
-            loop = self._loop
-            task = self._current_task
-        if loop is not None and task is not None:
-            try:
-                loop.call_soon_threadsafe(task.cancel)
-            except RuntimeError:
-                pass
+        self.cancel_current_task()
         thread = self._thread
         if thread is not None and thread.is_alive():
             thread.join(timeout=timeout)
@@ -92,18 +93,42 @@ class _AccountDispatchRunner:
     def cancel_current_task(self) -> None:
         with self._state_lock:
             loop = self._loop
-            task = self._current_task
-            phase = self._current_phase
-        if loop is None or task is None or phase == "gateway":
+            cancellable_tasks = [
+                task
+                for task, phase in self._active_tasks.items()
+                if phase != "gateway"
+            ]
+        if loop is None or not cancellable_tasks:
             return
-        try:
-            loop.call_soon_threadsafe(task.cancel)
-        except RuntimeError:
-            return
+        for task in cancellable_tasks:
+            try:
+                loop.call_soon_threadsafe(task.cancel)
+            except RuntimeError:
+                return
 
-    def mark_gateway_execute_start(self) -> None:
+    def discard_pending_jobs(self) -> list[_DispatchJob]:
+        dropped_jobs: list[_DispatchJob] = []
+        stop_markers = 0
+        while True:
+            try:
+                queued_item = self._queue.get_nowait()
+            except Empty:
+                break
+            if queued_item is _DISPATCH_STOP:
+                stop_markers += 1
+                continue
+            if isinstance(queued_item, _DispatchJob):
+                dropped_jobs.append(queued_item)
+        for _ in range(stop_markers):
+            self._queue.put(_DISPATCH_STOP)
+        return dropped_jobs
+
+    def mark_gateway_execute_start(self, task: asyncio.Task | None) -> None:
+        if task is None:
+            return
         with self._state_lock:
-            self._current_phase = "gateway"
+            if task in self._active_tasks:
+                self._active_tasks[task] = "gateway"
 
     def _run(self) -> None:
         loop = asyncio.new_event_loop()
@@ -111,40 +136,7 @@ class _AccountDispatchRunner:
         with self._state_lock:
             self._loop = loop
         try:
-            while not self._stop_event.is_set():
-                try:
-                    job = self._queue.get(timeout=0.1)
-                except Empty:
-                    continue
-                if job is _DISPATCH_STOP:
-                    break
-
-                async def run_job():
-                    should_process = self._should_process
-                    if callable(should_process) and not should_process(int(job.generation)):
-                        return _DISPATCH_SKIPPED
-                    return await self._worker.process(job.batch, generation=int(job.generation))
-
-                try:
-                    task = loop.create_task(run_job())
-                    with self._state_lock:
-                        self._current_task = task
-                        self._current_phase = "processing"
-                    outcome = loop.run_until_complete(task)
-                except BaseException as exc:  # pragma: no cover - defensive background worker guard
-                    outcome = exc
-                finally:
-                    with self._state_lock:
-                        self._current_task = None
-                        self._current_phase = "idle"
-                if outcome is _DISPATCH_SKIPPED:
-                    outcome = None
-                self._on_complete(
-                    account_id=self._account_id,
-                    batch=job.batch,
-                    outcome=outcome,
-                    generation=job.generation,
-                )
+            loop.run_until_complete(self._run_async())
         finally:
             try:
                 loop.run_until_complete(self._worker.cleanup())
@@ -152,7 +144,69 @@ class _AccountDispatchRunner:
                 pass
             with self._state_lock:
                 self._loop = None
+                self._active_tasks = {}
             loop.close()
+
+    async def _run_async(self) -> None:
+        running_tasks: set[asyncio.Task] = set()
+
+        def track_job(job: _DispatchJob) -> bool:
+            if job is _DISPATCH_STOP:
+                self._stop_event.set()
+                return False
+            task = asyncio.create_task(self._run_job(job))
+            running_tasks.add(task)
+            with self._state_lock:
+                self._active_tasks[task] = "processing"
+            task.add_done_callback(lambda done_task, current_job=job: self._handle_job_result(done_task, current_job))
+            return True
+
+        while True:
+            if not self._stop_event.is_set():
+                while len(running_tasks) < self._max_concurrent:
+                    try:
+                        job = self._queue.get_nowait()
+                    except Empty:
+                        break
+                    if not track_job(job):
+                        break
+
+            if self._stop_event.is_set() and not running_tasks:
+                return
+
+            if running_tasks:
+                done, _ = await asyncio.wait(running_tasks, timeout=0.05, return_when=asyncio.FIRST_COMPLETED)
+                running_tasks.difference_update(done)
+                continue
+
+            await asyncio.sleep(0.05)
+
+    async def _run_job(self, job: _DispatchJob):
+        should_process = self._should_process
+        if callable(should_process) and not should_process(int(job.generation)):
+            return _DISPATCH_SKIPPED
+        current_task = asyncio.current_task()
+        return await self._worker.process(
+            job.batch,
+            generation=int(job.generation),
+            on_gateway_execute_start=lambda: self.mark_gateway_execute_start(current_task),
+        )
+
+    def _handle_job_result(self, task: asyncio.Task, job: _DispatchJob) -> None:
+        with self._state_lock:
+            self._active_tasks.pop(task, None)
+        try:
+            outcome = task.result()
+        except BaseException as exc:  # pragma: no cover - defensive background worker guard
+            outcome = exc
+        if outcome is _DISPATCH_SKIPPED:
+            outcome = None
+        self._on_complete(
+            account_id=self._account_id,
+            batch=job.batch,
+            outcome=outcome,
+            generation=job.generation,
+        )
 
 
 class PurchaseRuntimeService:
@@ -166,6 +220,7 @@ class PurchaseRuntimeService:
         recovery_delay_seconds_provider: RecoveryDelaySecondsProvider | None = None,
         execution_gateway_factory: ExecutionGatewayFactory | None = None,
         runtime_factory: RuntimeFactory | None = None,
+        max_inflight_per_account: int = 3,
         queued_hit_timeout_seconds: float = 2.0,
         stats_sink=None,
     ) -> None:
@@ -176,6 +231,7 @@ class PurchaseRuntimeService:
         self._recovery_delay_seconds_provider = recovery_delay_seconds_provider
         self._execution_gateway_factory = execution_gateway_factory or PurchaseExecutionGateway
         self._runtime_factory = runtime_factory or self._build_default_runtime
+        self._max_inflight_per_account = max(int(max_inflight_per_account), 1)
         self._queued_hit_timeout_seconds = max(float(queued_hit_timeout_seconds), 0.0)
         self._stats_sink = stats_sink
         self._runtime = None
@@ -434,6 +490,7 @@ class PurchaseRuntimeService:
                 inventory_refresh_gateway_factory=self._inventory_refresh_gateway_factory,
                 recovery_delay_seconds_provider=self._recovery_delay_seconds_provider,
                 execution_gateway_factory=self._execution_gateway_factory,
+                max_inflight_per_account=self._max_inflight_per_account,
                 queued_hit_timeout_seconds=self._queued_hit_timeout_seconds,
                 stats_sink=self._stats_sink,
             )
@@ -480,6 +537,7 @@ class PurchaseRuntimeService:
                 "inventory_refresh_gateway_factory",
                 "recovery_delay_seconds_provider",
                 "execution_gateway_factory",
+                "max_inflight_per_account",
                 "queued_hit_timeout_seconds",
                 "stats_sink",
             }:
@@ -1059,6 +1117,7 @@ class PurchaseRuntimeService:
         inventory_refresh_gateway_factory: InventoryRefreshGatewayFactory | None = None,
         recovery_delay_seconds_provider: RecoveryDelaySecondsProvider | None = None,
         execution_gateway_factory: ExecutionGatewayFactory | None = None,
+        max_inflight_per_account: int = 3,
         queued_hit_timeout_seconds: float = 2.0,
         stats_sink=None,
     ):
@@ -1071,6 +1130,7 @@ class PurchaseRuntimeService:
             inventory_refresh_gateway_factory=inventory_refresh_gateway_factory,
             recovery_delay_seconds_provider=recovery_delay_seconds_provider,
             execution_gateway_factory=execution_gateway_factory or PurchaseExecutionGateway,
+            max_inflight_per_account=max_inflight_per_account,
             queued_hit_timeout_seconds=queued_hit_timeout_seconds,
             stats_sink=stats_sink,
         )
@@ -1113,6 +1173,7 @@ class _DefaultPurchaseRuntime:
         inventory_refresh_gateway_factory: InventoryRefreshGatewayFactory | None,
         recovery_delay_seconds_provider: RecoveryDelaySecondsProvider | None,
         execution_gateway_factory: ExecutionGatewayFactory,
+        max_inflight_per_account: int,
         queued_hit_timeout_seconds: float,
         stats_sink=None,
     ) -> None:
@@ -1125,6 +1186,7 @@ class _DefaultPurchaseRuntime:
             recovery_delay_seconds_provider or self._default_recovery_delay_seconds
         )
         self._execution_gateway_factory = execution_gateway_factory
+        self._max_inflight_per_account = max(int(max_inflight_per_account), 1)
         self._queued_hit_timeout_seconds = max(float(queued_hit_timeout_seconds), 0.0)
         self._stats_sink = stats_sink
         self._running = False
@@ -1390,6 +1452,14 @@ class _DefaultPurchaseRuntime:
             setattr(state.account, "purchase_capability_state", state.capability_state)
             setattr(state.account, "purchase_pool_state", state.pool_state)
             setattr(state.account, "last_error", state.last_error)
+            dispatch_runner = self._dispatch_runners.get(account_id)
+            dropped_jobs: list[_DispatchJob] = []
+            if dispatch_runner is not None:
+                dispatch_runner.cancel_current_task()
+                dropped_jobs = dispatch_runner.discard_pending_jobs()
+            for _ in dropped_jobs:
+                self._scheduler.release_account(account_id)
+            self._forget_batches([job.batch for job in dropped_jobs])
             self._sync_scheduler_state(state)
             self._persist_inventory_snapshot(state, last_error=state.last_error)
             self._sync_account_repository_state(state)
@@ -1462,7 +1532,10 @@ class _DefaultPurchaseRuntime:
                 inventory_state=inventory_state,
                 execution_gateway=self._execution_gateway_factory(),
                 runtime_account=RuntimeAccountAdapter(account),
-                should_process_generation=self._should_process_generation,
+                should_process_generation=lambda generation, current_account_id=account_id: self._should_process_account_dispatch(
+                    current_account_id,
+                    generation,
+                ),
             )
             state = _RuntimeAccountState(
                 account=account,
@@ -1480,15 +1553,19 @@ class _DefaultPurchaseRuntime:
                 account_id=account_id,
                 worker=state.worker,
                 on_complete=self._finish_account_dispatch,
-                should_process=self._should_process_generation,
+                should_process=lambda generation, current_account_id=account_id: self._should_process_account_dispatch(
+                    current_account_id,
+                    generation,
+                ),
+                max_concurrent=self._max_inflight_per_account,
             )
-            state.worker._on_gateway_execute_start = dispatch_runner.mark_gateway_execute_start
             dispatch_runner.start()
             self._dispatch_runners[account_id] = dispatch_runner
             self._scheduler.register_account(
                 account_id,
                 available=available,
                 bucket_key=self._account_bucket_key(account),
+                max_inflight=self._max_inflight_per_account,
             )
             if state.pool_state == PurchasePoolState.PAUSED_NO_INVENTORY and not state.purchase_disabled:
                 self._schedule_recovery_check(state.account_id)
@@ -1809,6 +1886,7 @@ class _DefaultPurchaseRuntime:
                 and isinstance(normalized_outcome, PurchaseWorkerOutcome)
                 and normalized_outcome.status == "auth_invalid"
                 and int(generation) != self._dispatch_generation
+                and self._running
             ):
                 self._apply_stale_auth_invalid_outcome(state, normalized_outcome)
                 normalized_outcome = None
@@ -2258,9 +2336,18 @@ class _DefaultPurchaseRuntime:
                 self._start_account_dispatch(account_id, batch)
             return "dispatched"
 
-    def _should_process_generation(self, generation: int) -> bool:
+    def _should_process_account_dispatch(self, account_id: str, generation: int) -> bool:
         with self._state_lock:
-            return int(generation) == self._dispatch_generation
+            if not self._running or int(generation) != self._dispatch_generation:
+                return False
+            state = self._account_states.get(account_id)
+            if state is None:
+                return False
+            if state.purchase_disabled:
+                return False
+            if state.capability_state != PurchaseCapabilityState.BOUND:
+                return False
+            return state.pool_state == PurchasePoolState.ACTIVE
 
     def _drop_expired_backlog(self) -> int:
         dropped_batches = self._scheduler.drop_expired_batches(
