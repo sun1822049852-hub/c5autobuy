@@ -2,6 +2,7 @@ import asyncio
 import threading
 import time
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 
 from app_backend.domain.models.account import Account
 from app_backend.infrastructure.purchase.runtime.runtime_events import PurchaseExecutionResult
@@ -301,6 +302,27 @@ class StubInventoryRefreshGateway:
         return self._results[0]
 
 
+class ImmediateDispatchWorker:
+    def __init__(self) -> None:
+        self.started = threading.Event()
+        self.calls: list[dict[str, object]] = []
+
+    async def process(self, batch, *, generation: int | None = None, on_gateway_execute_start=None):
+        if callable(on_gateway_execute_start):
+            on_gateway_execute_start()
+        self.calls.append(
+            {
+                "query_item_name": getattr(batch, "query_item_name", None),
+                "generation": generation,
+            }
+        )
+        self.started.set()
+        return {"status": "ok"}
+
+    async def cleanup(self) -> None:
+        return None
+
+
 def wait_until(predicate, *, timeout: float = 1.0, interval: float = 0.01) -> bool:
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -308,6 +330,36 @@ def wait_until(predicate, *, timeout: float = 1.0, interval: float = 0.01) -> bo
             return True
         time.sleep(interval)
     return predicate()
+
+
+def test_account_dispatch_runner_wakes_immediately_when_idle():
+    from app_backend.infrastructure.purchase.runtime.purchase_runtime_service import _AccountDispatchRunner
+
+    worker = ImmediateDispatchWorker()
+    completed: list[dict[str, object]] = []
+    runner = _AccountDispatchRunner(
+        account_id="a1",
+        worker=worker,
+        on_complete=lambda **payload: completed.append(payload),
+    )
+    runner.start()
+
+    try:
+        assert wait_until(lambda: runner._thread is not None and runner._thread.is_alive(), interval=0.001)
+
+        # Let the runner settle into its idle wait path before submitting work.
+        time.sleep(0.02)
+
+        runner.submit(
+            batch=SimpleNamespace(query_item_name="AK-47"),
+            generation=1,
+        )
+
+        assert wait_until(worker.started.is_set, timeout=0.02, interval=0.001)
+        assert wait_until(lambda: len(completed) == 1, timeout=0.1, interval=0.001)
+        assert completed[0]["account_id"] == "a1"
+    finally:
+        runner.stop()
 
 
 class FakeReusableSession:

@@ -64,6 +64,7 @@ class _AccountDispatchRunner:
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._wakeup_event: asyncio.Event | None = None
         self._active_tasks: dict[asyncio.Task, str] = {}
         self._state_lock = threading.Lock()
 
@@ -81,6 +82,7 @@ class _AccountDispatchRunner:
     def stop(self, *, timeout: float = 0.2) -> None:
         self._stop_event.set()
         self._queue.put(_DISPATCH_STOP)
+        self._notify_loop()
         self.cancel_current_task()
         thread = self._thread
         if thread is not None and thread.is_alive():
@@ -89,6 +91,7 @@ class _AccountDispatchRunner:
 
     def submit(self, *, batch, generation: int) -> None:
         self._queue.put(_DispatchJob(batch=batch, generation=int(generation)))
+        self._notify_loop()
 
     def cancel_current_task(self) -> None:
         with self._state_lock:
@@ -130,6 +133,17 @@ class _AccountDispatchRunner:
             if task in self._active_tasks:
                 self._active_tasks[task] = "gateway"
 
+    def _notify_loop(self) -> None:
+        with self._state_lock:
+            loop = self._loop
+            wakeup_event = self._wakeup_event
+        if loop is None or wakeup_event is None:
+            return
+        try:
+            loop.call_soon_threadsafe(wakeup_event.set)
+        except RuntimeError:
+            return
+
     def _run(self) -> None:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -149,6 +163,9 @@ class _AccountDispatchRunner:
 
     async def _run_async(self) -> None:
         running_tasks: set[asyncio.Task] = set()
+        wakeup_event = asyncio.Event()
+        with self._state_lock:
+            self._wakeup_event = wakeup_event
 
         def track_job(job: _DispatchJob) -> bool:
             if job is _DISPATCH_STOP:
@@ -161,25 +178,55 @@ class _AccountDispatchRunner:
             task.add_done_callback(lambda done_task, current_job=job: self._handle_job_result(done_task, current_job))
             return True
 
-        while True:
-            if not self._stop_event.is_set():
-                while len(running_tasks) < self._max_concurrent:
-                    try:
-                        job = self._queue.get_nowait()
-                    except Empty:
-                        break
-                    if not track_job(job):
-                        break
+        try:
+            while True:
+                if not self._stop_event.is_set():
+                    while len(running_tasks) < self._max_concurrent:
+                        try:
+                            job = self._queue.get_nowait()
+                        except Empty:
+                            break
+                        if not track_job(job):
+                            break
 
-            if self._stop_event.is_set() and not running_tasks:
-                return
+                if self._stop_event.is_set() and not running_tasks:
+                    return
 
-            if running_tasks:
-                done, _ = await asyncio.wait(running_tasks, timeout=0.05, return_when=asyncio.FIRST_COMPLETED)
+                waiters: set[asyncio.Task] = set(running_tasks)
+                wakeup_waiter: asyncio.Task | None = None
+                should_wait_for_wakeup = (
+                    not self._stop_event.is_set()
+                    and len(running_tasks) < self._max_concurrent
+                    and self._queue.empty()
+                )
+                if should_wait_for_wakeup:
+                    if wakeup_event.is_set():
+                        wakeup_event.clear()
+                        continue
+                    wakeup_waiter = asyncio.create_task(wakeup_event.wait())
+                    waiters.add(wakeup_waiter)
+
+                if not waiters:
+                    await wakeup_event.wait()
+                    wakeup_event.clear()
+                    continue
+
+                done, _ = await asyncio.wait(waiters, return_when=asyncio.FIRST_COMPLETED)
                 running_tasks.difference_update(done)
-                continue
 
-            await asyncio.sleep(0.05)
+                if wakeup_waiter is not None:
+                    if wakeup_waiter in done:
+                        wakeup_event.clear()
+                    else:
+                        wakeup_waiter.cancel()
+                        try:
+                            await wakeup_waiter
+                        except asyncio.CancelledError:
+                            pass
+        finally:
+            with self._state_lock:
+                if self._wakeup_event is wakeup_event:
+                    self._wakeup_event = None
 
     async def _run_job(self, job: _DispatchJob):
         should_process = self._should_process
