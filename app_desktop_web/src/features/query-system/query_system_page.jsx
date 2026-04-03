@@ -10,7 +10,7 @@ import { QueryWorkbenchHeader } from "./components/query_workbench_header.jsx";
 import { useQuerySystemPage } from "./hooks/use_query_system_page.js";
 
 
-export function QuerySystemPage({ bootstrapConfig, client, onLeaveStateChange }) {
+export function QuerySystemPage({ bootstrapConfig, client, isActive, onLeaveStateChange }) {
   const {
     addDraftItem,
     capacityModes,
@@ -26,6 +26,7 @@ export function QuerySystemPage({ bootstrapConfig, client, onLeaveStateChange })
     currentConfig,
     currentStatusText,
     deleteConfigTarget,
+    discardDraftChanges,
     deleteDraftItem,
     editDialogRemainingByMode,
     editItemDraft,
@@ -61,14 +62,19 @@ export function QuerySystemPage({ bootstrapConfig, client, onLeaveStateChange })
     applyEditItem,
     toggleConfigDeleteMode,
     toggleItemDeleteMode,
-  } = useQuerySystemPage({ client });
+  } = useQuerySystemPage({ client, isActive });
   const saveConfigRef = useRef(saveConfig);
+  const discardDraftChangesRef = useRef(discardDraftChanges);
 
   saveConfigRef.current = saveConfig;
+  discardDraftChangesRef.current = discardDraftChanges;
 
   useEffect(() => {
     onLeaveStateChange?.({
       canPromptOnLeave: Boolean(currentConfig) && hasUnsavedChanges && !saveBarError,
+      requestDiscard() {
+        return discardDraftChangesRef.current();
+      },
       requestSave() {
         return saveConfigRef.current();
       },

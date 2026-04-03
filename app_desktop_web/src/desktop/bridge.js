@@ -1,6 +1,8 @@
 const DEFAULT_BOOTSTRAP_CONFIG = {
+  backendMode: "embedded",
   apiBaseUrl: "http://127.0.0.1:8000",
-  backendStatus: "unknown",
+  backendStatus: "starting",
+  runtimeWebSocketUrl: "",
 };
 
 

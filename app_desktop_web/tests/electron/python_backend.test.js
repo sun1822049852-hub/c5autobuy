@@ -131,6 +131,35 @@ describe("python backend manager", () => {
     }));
   });
 
+  it("drains backend stdout so the access log pipe cannot block the backend loop", async () => {
+    const stdoutListeners = new Map();
+    const fakeChild = {
+      once: vi.fn(),
+      stdout: {
+        on: vi.fn((eventName, handler) => {
+          stdoutListeners.set(eventName, handler);
+        }),
+      },
+      kill: vi.fn(),
+    };
+    const spawnProcess = vi.fn(() => fakeChild);
+    const fetchImpl = vi.fn().mockResolvedValue({ ok: true });
+
+    await startPythonBackend({
+      projectRoot: "C:/demo/project",
+      dbPath: "C:/demo/project/data/app.db",
+      portProvider: () => 8234,
+      pythonExecutable: "C:/demo/project/.venv/Scripts/python.exe",
+      spawnProcess,
+      fetchImpl,
+      pollIntervalMs: 1,
+      timeoutMs: 50,
+    });
+
+    expect(fakeChild.stdout.on).toHaveBeenCalledWith("data", expect.any(Function));
+    expect(stdoutListeners.has("data")).toBe(true);
+  });
+
   it("kills python and throws when health check times out", async () => {
     vi.useFakeTimers();
 

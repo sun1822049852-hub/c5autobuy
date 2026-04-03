@@ -44,6 +44,10 @@ def _purchase_ui_preferences_repository(request: Request):
     return request.app.state.purchase_ui_preferences_repository
 
 
+def _runtime_update_hub(request: Request):
+    return request.app.state.runtime_update_hub
+
+
 @router.get("/status", response_model=PurchaseRuntimeStatusResponse)
 def get_purchase_runtime_status(request: Request) -> PurchaseRuntimeStatusResponse:
     use_case = GetPurchaseRuntimeStatusUseCase(
@@ -76,7 +80,12 @@ def update_purchase_runtime_ui_preferences(
     except KeyError as exc:
         detail = exc.args[0] if exc.args else "查询配置不存在"
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=detail) from exc
-    return PurchaseRuntimeUiPreferencesResponse.model_validate(preferences)
+    response = PurchaseRuntimeUiPreferencesResponse.model_validate(preferences)
+    _runtime_update_hub(request).publish(
+        event="purchase_ui_preferences.updated",
+        payload=response.model_dump(mode="json"),
+    )
+    return response
 
 
 @router.get("/accounts/{account_id}/inventory", response_model=PurchaseRuntimeInventoryDetailResponse)

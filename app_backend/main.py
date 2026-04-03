@@ -8,6 +8,7 @@ import uvicorn
 
 from app_backend.api.routes import account_center as account_center_routes
 from app_backend.api.routes import accounts as account_routes
+from app_backend.api.routes import app_bootstrap as app_bootstrap_routes
 from app_backend.api.routes import diagnostics as diagnostics_routes
 from app_backend.api.routes import purchase_runtime as purchase_runtime_routes
 from app_backend.api.routes import query_configs as query_config_routes
@@ -19,8 +20,10 @@ from app_backend.api.routes import stats as stats_routes
 from app_backend.api.routes import tasks as task_routes
 from app_backend.api.websocket import tasks as task_websocket_routes
 from app_backend.api.websocket import accounts as account_websocket_routes
+from app_backend.api.websocket import runtime as runtime_websocket_routes
 from app_backend.infrastructure.db.base import build_engine, build_session_factory, create_schema
 from app_backend.infrastructure.events import AccountUpdateHub
+from app_backend.infrastructure.events.runtime_update_hub import RuntimeUpdateHub
 from app_backend.infrastructure.purchase.runtime.inventory_refresh_gateway import (
     InventoryRefreshGateway,
 )
@@ -99,12 +102,14 @@ def create_app(
     stats_pipeline = StatsPipeline(repository=stats_repository)
     stats_pipeline.start()
     account_update_hub = AccountUpdateHub()
+    runtime_update_hub = RuntimeUpdateHub()
     purchase_runtime_service = PurchaseRuntimeService(
         account_repository=repository,
         settings_repository=runtime_settings_repository,
         inventory_snapshot_repository=inventory_snapshot_repository,
         inventory_refresh_gateway_factory=InventoryRefreshGateway,
         stats_sink=stats_pipeline.enqueue,
+        runtime_update_hub=runtime_update_hub,
     )
     open_api_binding_sync_service = OpenApiBindingSyncService(
         account_repository=repository,
@@ -128,7 +133,9 @@ def create_app(
         purchase_runtime_service=purchase_runtime_service,
         open_api_binding_sync_service=open_api_binding_sync_service,
         stats_sink=stats_pipeline.enqueue,
+        runtime_update_hub=runtime_update_hub,
     )
+    purchase_runtime_service.set_query_runtime_service(query_runtime_service)
     task_manager = TaskManager()
     account_browser_profile_store = AccountBrowserProfileStore(runtime=managed_browser_runtime)
     login_adapter = BrowserLoginAdapter(
@@ -176,6 +183,7 @@ def create_app(
     app.state.query_runtime_service = query_runtime_service
     app.state.task_manager = task_manager
     app.state.account_update_hub = account_update_hub
+    app.state.runtime_update_hub = runtime_update_hub
     app.state.login_adapter = login_adapter
     app.state.account_browser_profile_store = account_browser_profile_store
     app.state.product_url_parser = product_url_parser
@@ -191,6 +199,7 @@ def create_app(
 
     app.include_router(account_center_routes.router)
     app.include_router(account_routes.router)
+    app.include_router(app_bootstrap_routes.router)
     app.include_router(diagnostics_routes.router)
     app.include_router(purchase_runtime_routes.router)
     app.include_router(query_config_routes.router)
@@ -202,6 +211,7 @@ def create_app(
     app.include_router(task_routes.router)
     app.include_router(task_websocket_routes.router)
     app.include_router(account_websocket_routes.router)
+    app.include_router(runtime_websocket_routes.router)
 
     @app.get("/health")
     async def health() -> dict[str, str]:

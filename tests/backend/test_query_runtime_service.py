@@ -2396,6 +2396,155 @@ def test_runtime_service_prefers_global_query_settings_over_legacy_config_mode_s
     assert runtime_mode_settings["token"].item_min_cooldown_seconds == 15.0
 
 
+def test_runtime_service_publishes_runtime_update_events_on_start_and_stop():
+    from app_backend.infrastructure.events.runtime_update_hub import RuntimeUpdateHub
+    from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
+
+    hub = RuntimeUpdateHub()
+    queue = hub.subscribe("*")
+    purchase_service = FakePurchaseRuntimeService()
+    service = QueryRuntimeService(
+        query_config_repository=FakeQueryConfigRepository(build_config("cfg-1")),
+        account_repository=FakeAccountRepository([build_account("a1", api_key="api-1")]),
+        runtime_factory=lambda config, accounts: FakeRuntime(config, accounts),
+        purchase_runtime_service=purchase_service,
+        runtime_update_hub=hub,
+    )
+
+    started, start_message = service.start(config_id="cfg-1")
+    start_event = queue.get_nowait()
+    stopped, stop_message = service.stop()
+    stop_event = queue.get_nowait()
+
+    assert started is True
+    assert start_message == "查询任务已启动"
+    assert start_event.version == 1
+    assert start_event.event == "query_runtime.updated"
+    assert start_event.payload["running"] is True
+    assert start_event.payload["config_id"] == "cfg-1"
+
+    assert stopped is True
+    assert stop_message == "查询任务已停止"
+    assert stop_event.version == 2
+    assert stop_event.event == "query_runtime.updated"
+    assert stop_event.payload["running"] is False
+    assert stop_event.payload["config_id"] is None
+
+
+def test_runtime_service_publishes_runtime_update_events_for_apply_and_runtime_events():
+    from app_backend.infrastructure.events.runtime_update_hub import RuntimeUpdateHub
+    from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
+
+    class MutableRuntime(FakeRuntime):
+        def __init__(self, config, accounts) -> None:
+            super().__init__(config, accounts)
+            self.message = "运行中"
+
+        def snapshot(self) -> dict:
+            snapshot = super().snapshot()
+            snapshot["message"] = self.message
+            snapshot["recent_events"] = []
+            return snapshot
+
+        def apply_manual_allocations(self, *, config, items) -> None:
+            self.message = f"allocations:{len(items)}"
+
+        def apply_config(self, config) -> None:
+            self.config = config
+            self.message = "config applied"
+
+        def apply_query_settings(self, *, config) -> None:
+            self.config = config
+            self.message = "settings applied"
+
+    hub = RuntimeUpdateHub()
+    queue = hub.subscribe("*")
+    service = QueryRuntimeService(
+        query_config_repository=FakeQueryConfigRepository(build_config("cfg-1")),
+        account_repository=FakeAccountRepository([build_account("a1", api_key="api-1")]),
+        runtime_factory=lambda config, accounts: MutableRuntime(config, accounts),
+        purchase_runtime_service=FakePurchaseRuntimeService(),
+        runtime_update_hub=hub,
+    )
+
+    started, _ = service.start(config_id="cfg-1")
+    start_event = queue.get_nowait()
+    manual_snapshot = service.apply_manual_allocations(
+        config_id="cfg-1",
+        items=[{"query_item_id": "item-1", "modes": {"new_api": {"target_dedicated_count": 1}}}],
+    )
+    manual_event = queue.get_nowait()
+    runtime_snapshot = service.apply_runtime_config(config_id="cfg-1")
+    config_event = queue.get_nowait()
+    service.apply_query_settings()
+    settings_event = queue.get_nowait()
+    service._handle_runtime_event(
+        {
+            "timestamp": "2026-03-18T12:00:00",
+            "level": "info",
+            "mode_type": "token",
+            "account_id": "a1",
+            "message": "query completed",
+        }
+    )
+    runtime_event = queue.get_nowait()
+
+    assert started is True
+    assert start_event.version == 1
+    assert manual_snapshot["message"] == "allocations:1"
+    assert manual_event.version == 2
+    assert manual_event.payload["message"] == "allocations:1"
+    assert runtime_snapshot["message"] == "config applied"
+    assert config_event.version == 3
+    assert config_event.payload["message"] == "config applied"
+    assert settings_event.version == 4
+    assert settings_event.payload["message"] == "settings applied"
+    assert runtime_event.version == 5
+    assert runtime_event.event == "query_runtime.updated"
+
+
+def test_runtime_service_refresh_runtime_accounts_publishes_runtime_update():
+    from app_backend.infrastructure.events.runtime_update_hub import RuntimeUpdateHub
+    from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
+
+    class RefreshableRuntime(FakeRuntime):
+        def __init__(self, config, accounts) -> None:
+            super().__init__(config, accounts)
+            self.accounts = list(accounts)
+
+        def refresh_accounts(self, accounts) -> None:
+            self.accounts = list(accounts)
+
+        def snapshot(self) -> dict:
+            snapshot = super().snapshot()
+            snapshot["account_count"] = len(self.accounts)
+            snapshot["recent_events"] = []
+            return snapshot
+
+    hub = RuntimeUpdateHub()
+    queue = hub.subscribe("*")
+    account_repository = FakeAccountRepository([build_account("a1", api_key="api-1")])
+    service = QueryRuntimeService(
+        query_config_repository=FakeQueryConfigRepository(build_config("cfg-1")),
+        account_repository=account_repository,
+        runtime_factory=lambda config, accounts: RefreshableRuntime(config, accounts),
+        purchase_runtime_service=FakePurchaseRuntimeService(),
+        runtime_update_hub=hub,
+    )
+
+    started, _ = service.start(config_id="cfg-1")
+    queue.get_nowait()
+    account_repository._accounts = []
+
+    service.refresh_runtime_accounts()
+    refresh_event = queue.get_nowait()
+
+    assert started is True
+    assert refresh_event.version == 2
+    assert refresh_event.event == "query_runtime.updated"
+    assert refresh_event.payload["account_count"] == 0
+
+
 def test_runtime_service_propagates_not_login_event_to_account_repository_and_purchase_runtime():
     from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
 

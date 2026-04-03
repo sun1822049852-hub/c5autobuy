@@ -6,7 +6,8 @@ import random
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from contextlib import nullcontext
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from inspect import Parameter, signature
 from queue import Empty, Queue
@@ -29,6 +30,8 @@ from app_backend.infrastructure.stats.runtime.stats_events import (
     PurchaseCreateOrderStatsEvent,
     PurchaseSubmitOrderStatsEvent,
 )
+from app_backend.application.use_cases.get_purchase_runtime_status import GetPurchaseRuntimeStatusUseCase
+from app_backend.api.schemas.purchase_runtime import PurchaseRuntimeStatusResponse
 
 RuntimeFactory = Callable[..., object]
 ExecutionGatewayFactory = Callable[[], object]
@@ -37,12 +40,14 @@ RecoveryDelaySecondsProvider = Callable[[], float]
 
 _DISPATCH_STOP = object()
 _DISPATCH_SKIPPED = object()
+_REMOTE_REFRESH_UNSET = object()
 
 
 @dataclass(slots=True)
 class _DispatchJob:
     batch: object
     generation: int
+    dispatch_key: tuple[int, int] | None = None
 
 
 class _AccountDispatchRunner:
@@ -90,7 +95,8 @@ class _AccountDispatchRunner:
         self._thread = None
 
     def submit(self, *, batch, generation: int) -> None:
-        self._queue.put(_DispatchJob(batch=batch, generation=int(generation)))
+        dispatch_key = (int(generation), id(batch))
+        self._queue.put(_DispatchJob(batch=batch, generation=int(generation), dispatch_key=dispatch_key))
         self._notify_loop()
 
     def cancel_current_task(self) -> None:
@@ -241,18 +247,18 @@ class _AccountDispatchRunner:
 
     def _handle_job_result(self, task: asyncio.Task, job: _DispatchJob) -> None:
         with self._state_lock:
-            self._active_tasks.pop(task, None)
+            phase = self._active_tasks.pop(task, None)
         try:
             outcome = task.result()
         except BaseException as exc:  # pragma: no cover - defensive background worker guard
-            outcome = exc
-        if outcome is _DISPATCH_SKIPPED:
-            outcome = None
+            cancelled_before_gateway = isinstance(exc, asyncio.CancelledError) and phase == "processing"
+            outcome = _DISPATCH_SKIPPED if cancelled_before_gateway else exc
         self._on_complete(
             account_id=self._account_id,
             batch=job.batch,
             outcome=outcome,
             generation=job.generation,
+            dispatch_key=job.dispatch_key,
         )
 
 
@@ -270,6 +276,8 @@ class PurchaseRuntimeService:
         max_inflight_per_account: int = 3,
         queued_hit_timeout_seconds: float = 2.0,
         stats_sink=None,
+        runtime_update_hub=None,
+        query_runtime_service=None,
     ) -> None:
         self._account_repository = account_repository
         self._settings_repository = settings_repository
@@ -281,41 +289,63 @@ class PurchaseRuntimeService:
         self._max_inflight_per_account = max(int(max_inflight_per_account), 1)
         self._queued_hit_timeout_seconds = max(float(queued_hit_timeout_seconds), 0.0)
         self._stats_sink = stats_sink
+        self._runtime_update_hub = runtime_update_hub
+        self._query_runtime_service = query_runtime_service
         self._runtime = None
         self._on_no_available_accounts = None
         self._on_accounts_available = None
+        self._runtime_update_pending = False
+        self._runtime_update_thread: threading.Thread | None = None
+        self._runtime_update_thread_lock = threading.Lock()
+        self._runtime_lifecycle_lock = threading.RLock()
 
     def start(self) -> tuple[bool, str]:
-        if self._has_running_runtime():
-            return False, "已有购买运行时在运行"
+        with self._runtime_lifecycle_lock:
+            if self._has_running_runtime():
+                return False, "已有购买运行时在运行"
 
-        accounts = list(self._account_repository.list_accounts())
-        runtime = self._create_runtime(accounts)
-        self._bind_runtime_callbacks(runtime)
-        runtime.start()
-        self._runtime = runtime
+            accounts = list(self._account_repository.list_accounts())
+            runtime = self._create_runtime(accounts)
+            self._bind_runtime_callbacks(runtime)
+            runtime.start()
+            self._runtime = runtime
+            self._publish_runtime_update()
         return True, "购买运行时已启动"
 
     def stop(self) -> tuple[bool, str]:
-        if not self._has_running_runtime():
-            self._runtime = None
-            return False, "当前没有运行中的购买运行时"
+        with self._runtime_lifecycle_lock:
+            if not self._has_running_runtime():
+                self._runtime = None
+                return False, "当前没有运行中的购买运行时"
 
-        self._runtime.stop()
-        self._runtime = None
+            runtime = self._runtime
+            if runtime is None:
+                self._runtime = None
+                return False, "当前没有运行中的购买运行时"
+            runtime.stop()
+            self._runtime = None
+            self._publish_runtime_update()
         return True, "购买运行时已停止"
 
     def get_status(self) -> dict[str, object]:
-        if not self._has_running_runtime():
+        runtime = self._runtime
+        if runtime is None:
             self._runtime = None
             return self._build_idle_snapshot()
-        snapshot = self._runtime.snapshot()
+        snapshot = self._snapshot_runtime_state(runtime)
+        if not bool(snapshot.get("running")):
+            if self._runtime is runtime:
+                self._runtime = None
+            return self._build_idle_snapshot()
         return self._normalize_snapshot(snapshot)
 
     def has_available_accounts(self) -> bool:
-        if not self._has_running_runtime():
+        runtime = self._runtime
+        if runtime is None:
             return False
-        snapshot = self._runtime.snapshot()
+        snapshot = self._snapshot_runtime_state(runtime)
+        if not bool(snapshot.get("running")):
+            return False
         return int(snapshot.get("active_account_count", 0)) > 0
 
     def register_availability_callbacks(
@@ -328,6 +358,9 @@ class PurchaseRuntimeService:
         self._on_accounts_available = on_accounts_available
         if self._runtime is not None:
             self._bind_runtime_callbacks(self._runtime)
+
+    def set_query_runtime_service(self, query_runtime_service) -> None:
+        self._query_runtime_service = query_runtime_service
 
     def get_account_inventory_detail(self, account_id: str) -> dict[str, object] | None:
         account = self._find_account(account_id)
@@ -407,7 +440,9 @@ class PurchaseRuntimeService:
                     refreshed_at=refreshed_at,
                     last_error=None,
                 )
-            return self._normalize_inventory_detail(detail_payload, account=account)
+            detail = self._normalize_inventory_detail(detail_payload, account=account)
+            self._publish_runtime_update()
+            return detail
 
         error = refresh_result.error
         if refresh_result.status == "auth_invalid" and error:
@@ -419,7 +454,9 @@ class PurchaseRuntimeService:
             setattr(account, "purchase_pool_state", PurchasePoolState.PAUSED_AUTH_INVALID)
         if error is not None:
             detail_payload["last_error"] = error
-        return self._normalize_inventory_detail(detail_payload, account=account)
+        detail = self._normalize_inventory_detail(detail_payload, account=account)
+        self._publish_runtime_update()
+        return detail
 
     def list_account_center_accounts(self) -> list[dict[str, object]]:
         runtime_accounts = self._runtime_account_map()
@@ -474,7 +511,9 @@ class PurchaseRuntimeService:
                 selected_steam_id=next_selected_steam_id,
             )
 
-        return self._build_account_center_row(updated_account)
+        row = self._build_account_center_row(updated_account)
+        self._publish_runtime_update()
+        return row
 
     def bind_query_runtime_session(
         self,
@@ -493,23 +532,26 @@ class PurchaseRuntimeService:
             query_config_name=query_config_name,
             runtime_session_id=runtime_session_id,
         )
+        self._publish_runtime_update()
 
     def accept_query_hit(self, hit: dict[str, object]) -> dict[str, object]:
         return _run_coroutine_sync(self.accept_query_hit_async(hit))
 
     async def accept_query_hit_async(self, hit: dict[str, object]) -> dict[str, object]:
-        if not self._has_running_runtime():
-            self._runtime = None
-            return {"accepted": False, "status": "ignored_not_running"}
+        with self._runtime_lifecycle_lock:
+            if not self._has_running_runtime():
+                self._runtime = None
+                return {"accepted": False, "status": "ignored_not_running"}
 
-        accept_query_hit = getattr(self._runtime, "accept_query_hit_async", None)
-        if callable(accept_query_hit):
-            return dict(await accept_query_hit(hit))
+            runtime = self._runtime
+            accept_query_hit = getattr(runtime, "accept_query_hit_async", None)
+            if callable(accept_query_hit):
+                return dict(await accept_query_hit(hit))
 
-        accept_query_hit = getattr(self._runtime, "accept_query_hit", None)
-        if not callable(accept_query_hit):
-            return {"accepted": False, "status": "ignored_not_supported"}
-        return dict(accept_query_hit(hit))
+            accept_query_hit = getattr(runtime, "accept_query_hit", None)
+            if not callable(accept_query_hit):
+                return {"accepted": False, "status": "ignored_not_supported"}
+            return dict(accept_query_hit(hit))
 
     def mark_account_auth_invalid(self, *, account_id: str, error: str | None = None) -> None:
         normalized_error = str(error or "Not login")
@@ -519,11 +561,33 @@ class PurchaseRuntimeService:
                 mark_account_auth_invalid(account_id=account_id, error=normalized_error)
                 return
         self._mark_account_auth_invalid_in_repository(account_id=account_id, error=normalized_error)
+        self._publish_runtime_update()
+
+    def _publish_runtime_update(self) -> None:
+        if self._runtime_update_hub is None:
+            return
+        try:
+            with self._runtime_lifecycle_lock:
+                payload = self._build_runtime_update_payload()
+                self._runtime_update_hub.publish(
+                    event="purchase_runtime.updated",
+                    payload=payload,
+                )
+        except Exception:
+            return
+
+    def _build_runtime_update_payload(self) -> dict[str, object]:
+        snapshot = GetPurchaseRuntimeStatusUseCase(
+            self,
+            self._query_runtime_service,
+        ).execute()
+        return PurchaseRuntimeStatusResponse.model_validate(snapshot).model_dump(mode="json")
 
     def _has_running_runtime(self) -> bool:
-        if self._runtime is None:
+        runtime = self._runtime
+        if runtime is None:
             return False
-        snapshot = self._runtime.snapshot()
+        snapshot = self._snapshot_runtime_state(runtime)
         return bool(snapshot.get("running"))
 
     def _create_runtime(self, accounts: list[object]):
@@ -550,6 +614,54 @@ class PurchaseRuntimeService:
                 on_no_available_accounts=self._notify_no_available_accounts,
                 on_accounts_available=self._notify_accounts_available,
             )
+        set_state_change_callback = getattr(runtime, "set_state_change_callback", None)
+        if callable(set_state_change_callback):
+            set_state_change_callback(self._schedule_runtime_update_publish)
+
+    def _schedule_runtime_update_publish(self) -> None:
+        if self._runtime_update_hub is None:
+            return
+        worker_to_start: threading.Thread | None = None
+        with self._runtime_update_thread_lock:
+            self._runtime_update_pending = True
+            worker = self._runtime_update_thread
+            if worker is None or not worker.is_alive():
+                worker = threading.Thread(
+                    target=self._drain_runtime_update_publishes,
+                    name="purchase-runtime-update-publisher",
+                    daemon=True,
+                )
+                self._runtime_update_thread = worker
+                worker_to_start = worker
+        if worker_to_start is not None:
+            worker_to_start.start()
+
+    def _drain_runtime_update_publishes(self) -> None:
+        while True:
+            with self._runtime_update_thread_lock:
+                if not self._runtime_update_pending:
+                    self._runtime_update_thread = None
+                    return
+                self._runtime_update_pending = False
+            try:
+                self._publish_runtime_update()
+            except Exception:
+                continue
+
+    @staticmethod
+    def _runtime_state_guard(runtime):
+        state_lock = getattr(runtime, "_state_lock", None)
+        if state_lock is None:
+            return nullcontext()
+        return state_lock
+
+    @classmethod
+    def _snapshot_runtime_state(cls, runtime) -> dict[str, object]:
+        with cls._runtime_state_guard(runtime):
+            snapshot = runtime.snapshot()
+        if not isinstance(snapshot, dict):
+            return {}
+        return snapshot
 
     def _notify_no_available_accounts(self) -> None:
         callback = self._on_no_available_accounts
@@ -943,12 +1055,14 @@ class PurchaseRuntimeService:
     ) -> bool:
         if not self._has_running_runtime() or self._runtime is None:
             return False
+        runtime = self._runtime
         account_states = getattr(self._runtime, "_account_states", None)
         if not isinstance(account_states, dict):
             return False
         state_lock = getattr(self._runtime, "_state_lock", None)
         if state_lock is None:
             return False
+        effects: _DispatchCompletionEffects | None = None
         with state_lock:
             state = account_states.get(account_id)
             if state is None:
@@ -984,10 +1098,20 @@ class PurchaseRuntimeService:
             else:
                 state.pool_state = PurchasePoolState.PAUSED_NO_INVENTORY
 
-            self._runtime._sync_scheduler_state(state)
-            self._runtime._persist_inventory_snapshot(state, last_error=state.last_error)
-            self._runtime._sync_account_repository_state(state)
-            return True
+            scheduler_effects = runtime._sync_scheduler_state(state)
+            effects = _DispatchCompletionEffects(
+                account_id=state.account_id,
+                expected_state_version=state.state_version,
+                expected_generation=getattr(runtime, "_dispatch_generation", None),
+                scheduler_effects=scheduler_effects,
+                snapshot_payload=runtime._build_inventory_snapshot_payload(state, last_error=state.last_error),
+                account_repository_payload=runtime._build_account_repository_payload(state),
+                notify_state_change=True,
+            )
+
+        if effects is not None:
+            runtime._run_dispatch_completion_effects(effects)
+        return True
 
     @staticmethod
     def _snapshot_rows_from_detail(inventory_detail: dict[str, object] | None) -> list[dict[str, object]]:
@@ -1015,6 +1139,7 @@ class PurchaseRuntimeService:
                 purchase_capability_state=PurchaseCapabilityState.EXPIRED,
                 purchase_pool_state=PurchasePoolState.PAUSED_AUTH_INVALID,
                 last_error=error,
+                purchase_recovery_due_at=None,
                 updated_at=datetime.now().isoformat(timespec="seconds"),
             )
         except Exception:
@@ -1196,6 +1321,7 @@ class _RuntimeAccountState:
     total_purchased_count: int = 0
     inventory_refreshed_at: str | None = None
     recovery_due_at: datetime | None = None
+    state_version: int = 0
 
     @property
     def account_id(self) -> str:
@@ -1204,6 +1330,37 @@ class _RuntimeAccountState:
     @property
     def display_name(self) -> str:
         return str(getattr(self.account, "display_name", None) or getattr(self.account, "default_name", "") or "")
+
+
+@dataclass(slots=True)
+class _SchedulerStateEffects:
+    should_signal_drain: bool = False
+    scheduler_event: dict[str, str] | None = None
+    notify_no_available_accounts: bool = False
+    notify_accounts_available: bool = False
+    cancel_recovery_account_ids: list[str] = field(default_factory=list)
+    schedule_recovery_account_ids: list[str] = field(default_factory=list)
+    clear_backlog_when_no_accounts: bool = False
+
+
+@dataclass(slots=True)
+class _DispatchCompletionEffects:
+    account_id: str | None = None
+    expected_state_version: int | None = None
+    expected_generation: int | None = None
+    scheduler_effects: _SchedulerStateEffects | None = None
+    snapshot_payload: dict[str, object] | None = None
+    account_repository_payload: dict[str, object] | None = None
+    stats_outcome_payload: dict[str, object] | None = None
+    stats_forward_payload: dict[str, object] | None = None
+    notify_state_change: bool = False
+
+
+@dataclass(slots=True)
+class _TrackedDispatchBatch:
+    batch: object | None = None
+    remaining_jobs: int = 0
+    had_non_skipped_outcome: bool = False
 
 
 class _DefaultPurchaseRuntime:
@@ -1245,8 +1402,10 @@ class _DefaultPurchaseRuntime:
         self._account_states: dict[str, _RuntimeAccountState] = {}
         self._total_purchased_count = 0
         self._recovery_timers: dict[str, threading.Timer] = {}
+        self._recovery_lock = threading.RLock()
         self._on_no_available_accounts = None
         self._on_accounts_available = None
+        self._state_change_callback = None
         self._active_account_count = 0
         self._drain_signal = threading.Event()
         self._drain_stop_signal = threading.Event()
@@ -1254,6 +1413,7 @@ class _DefaultPurchaseRuntime:
         self._dispatch_runners: dict[str, _AccountDispatchRunner] = {}
         self._state_lock = threading.RLock()
         self._dispatch_generation = 0
+        self._tracked_dispatch_batches: dict[tuple[int, int], _TrackedDispatchBatch] = {}
         self._stats_aggregator = PurchaseStatsAggregator()
 
     def set_availability_callbacks(
@@ -1264,6 +1424,9 @@ class _DefaultPurchaseRuntime:
     ) -> None:
         self._on_no_available_accounts = on_no_available_accounts
         self._on_accounts_available = on_accounts_available
+
+    def set_state_change_callback(self, callback) -> None:
+        self._state_change_callback = callback
 
     def start(self) -> None:
         self._cancel_all_recovery_checks()
@@ -1278,6 +1441,7 @@ class _DefaultPurchaseRuntime:
         self._total_purchased_count = 0
         self._recovery_timers = {}
         self._dispatch_runners = {}
+        self._tracked_dispatch_batches = {}
         self._stats_aggregator = PurchaseStatsAggregator()
         self._stats_aggregator.start()
         self._stats_aggregator.reset(
@@ -1292,11 +1456,14 @@ class _DefaultPurchaseRuntime:
         self._start_drain_worker()
 
     def stop(self) -> None:
-        self._dispatch_generation += 1
-        self._running = False
-        self._cancel_all_recovery_checks()
-        self._drain_stop_signal.set()
-        self._drain_signal.set()
+        with self._state_lock:
+            self._dispatch_generation += 1
+            for state in self._account_states.values():
+                state.state_version += 1
+            self._running = False
+            self._cancel_all_recovery_checks()
+            self._drain_stop_signal.set()
+            self._drain_signal.set()
         drain_thread = self._drain_thread
         if drain_thread is not None and drain_thread.is_alive():
             drain_thread.join(timeout=0.2)
@@ -1304,6 +1471,7 @@ class _DefaultPurchaseRuntime:
         for dispatch_runner in list(self._dispatch_runners.values()):
             dispatch_runner.stop(timeout=0.2)
         self._dispatch_runners = {}
+        self._tracked_dispatch_batches = {}
         self._stats_aggregator.stop()
         self._stopped_at = datetime.now().isoformat(timespec="seconds")
 
@@ -1336,6 +1504,13 @@ class _DefaultPurchaseRuntime:
 
     async def accept_query_hit_async(self, hit: dict[str, object]) -> dict[str, object]:
         with self._state_lock:
+            if not self._running:
+                self._push_event(
+                    hit,
+                    status="ignored_not_running",
+                    message="购买运行时未启动，命中已忽略",
+                )
+                return {"accepted": False, "status": "ignored_not_running"}
             if self._scheduler.active_account_count() <= 0:
                 self._push_event(
                     hit,
@@ -1367,12 +1542,28 @@ class _DefaultPurchaseRuntime:
                 self._push_event(hit, status="queued", message="当前购买账号忙碌，命中已进入等待队列")
                 return {"accepted": True, "status": "queued"}
 
-            for account_id in claimed_account_ids:
-                self._start_account_dispatch(account_id, batch)
+            started_account_ids = [
+                account_id
+                for account_id in claimed_account_ids
+                if self._start_account_dispatch(account_id, batch)
+            ]
+            if not started_account_ids:
+                if self._scheduler.active_account_count() <= 0:
+                    self._forget_batches([batch])
+                    self._push_event(
+                        hit,
+                        status="ignored_no_available_accounts",
+                        message="当前没有可用购买账号，命中已忽略",
+                    )
+                    return {"accepted": False, "status": "ignored_no_available_accounts"}
+                self._scheduler.submit(batch)
+                self._signal_drain_worker()
+                self._push_event(hit, status="queued", message="当前购买账号忙碌，命中已进入等待队列")
+                return {"accepted": True, "status": "queued"}
             self._push_event(
                 hit,
                 status="queued",
-                message=f"已派发 {len(claimed_account_ids)} 个购买账号",
+                message=f"已派发 {len(started_account_ids)} 个购买账号",
             )
             return {"accepted": True, "status": "queued"}
 
@@ -1430,46 +1621,70 @@ class _DefaultPurchaseRuntime:
         }
 
     def get_account_inventory_detail(self, account_id: str) -> dict[str, object] | None:
-        state = self._account_states.get(account_id)
-        if state is None:
-            return None
-        return self._build_account_inventory_detail(state)
-
-    def refresh_account_inventory_detail(self, account_id: str) -> dict[str, object] | None:
-        state = self._account_states.get(account_id)
-        if state is None:
-            return None
-
-        state.recovery_due_at = None
-        refresh_result = self._refresh_inventory_from_remote(state.account, state.inventory_state)
-        if refresh_result is None:
+        with self._state_lock:
+            state = self._account_states.get(account_id)
+            if state is None:
+                return None
             return self._build_account_inventory_detail(state)
 
-        if refresh_result.status == "success":
-            state.capability_state = PurchaseCapabilityState.BOUND
-            state.inventory_state.refresh_from_remote(list(refresh_result.inventories))
-            state.last_error = None
-            state.pool_state = (
-                PurchasePoolState.ACTIVE
-                if state.inventory_state.selected_steam_id is not None
-                else PurchasePoolState.PAUSED_NO_INVENTORY
-            )
-        elif refresh_result.status == "auth_invalid":
-            state.capability_state = PurchaseCapabilityState.EXPIRED
-            state.pool_state = PurchasePoolState.PAUSED_AUTH_INVALID
-            state.last_error = refresh_result.error
-        else:
-            if state.capability_state != PurchaseCapabilityState.EXPIRED:
-                state.capability_state = PurchaseCapabilityState.BOUND
-                state.pool_state = PurchasePoolState.PAUSED_NO_INVENTORY
-            else:
-                state.pool_state = PurchasePoolState.PAUSED_AUTH_INVALID
-            state.last_error = refresh_result.error
+    def refresh_account_inventory_detail(self, account_id: str) -> dict[str, object] | None:
+        effects: _DispatchCompletionEffects | None = None
+        with self._state_lock:
+            state = self._account_states.get(account_id)
+            if state is None:
+                return None
+            expected_state_version = state.state_version
+            state.recovery_due_at = None
+            account = state.account
+            inventory_state = state.inventory_state
 
-        self._sync_scheduler_state(state)
-        self._persist_inventory_snapshot(state, last_error=state.last_error)
-        self._sync_account_repository_state(state)
-        return self._build_account_inventory_detail(state)
+        refresh_result = self._refresh_inventory_from_remote(account, inventory_state)
+
+        with self._state_lock:
+            state = self._account_states.get(account_id)
+            if state is None:
+                return None
+            if state.state_version != expected_state_version:
+                return self._build_account_inventory_detail(state)
+            if refresh_result is None:
+                return self._build_account_inventory_detail(state)
+
+            if refresh_result.status == "success":
+                state.capability_state = PurchaseCapabilityState.BOUND
+                state.inventory_state.refresh_from_remote(list(refresh_result.inventories))
+                state.last_error = None
+                state.pool_state = (
+                    PurchasePoolState.ACTIVE
+                    if state.inventory_state.selected_steam_id is not None
+                    else PurchasePoolState.PAUSED_NO_INVENTORY
+                )
+            elif refresh_result.status == "auth_invalid":
+                state.capability_state = PurchaseCapabilityState.EXPIRED
+                state.pool_state = PurchasePoolState.PAUSED_AUTH_INVALID
+                state.last_error = refresh_result.error
+            else:
+                if state.capability_state != PurchaseCapabilityState.EXPIRED:
+                    state.capability_state = PurchaseCapabilityState.BOUND
+                    state.pool_state = PurchasePoolState.PAUSED_NO_INVENTORY
+                else:
+                    state.pool_state = PurchasePoolState.PAUSED_AUTH_INVALID
+                state.last_error = refresh_result.error
+
+            scheduler_effects = self._sync_scheduler_state(state)
+            effects = _DispatchCompletionEffects(
+                account_id=state.account_id,
+                expected_state_version=state.state_version,
+                expected_generation=self._dispatch_generation,
+                scheduler_effects=scheduler_effects,
+                snapshot_payload=self._build_inventory_snapshot_payload(state, last_error=state.last_error),
+                account_repository_payload=self._build_account_repository_payload(state),
+                notify_state_change=True,
+            )
+            detail = self._build_account_inventory_detail(state)
+
+        if effects is not None:
+            self._run_dispatch_completion_effects(effects)
+        return detail
 
     def _build_account_inventory_detail(self, state: _RuntimeAccountState) -> dict[str, object]:
         auto_refresh_due_at = self._format_recovery_due_at(state.recovery_due_at)
@@ -1488,11 +1703,13 @@ class _DefaultPurchaseRuntime:
         }
 
     def mark_account_auth_invalid(self, *, account_id: str, error: str | None = None) -> None:
+        effects: _DispatchCompletionEffects | None = None
+        dispatch_runner = None
+        normalized_error = str(error or "Not login")
         with self._state_lock:
             state = self._account_states.get(account_id)
             if state is None:
                 return
-            normalized_error = str(error or "Not login")
             state.capability_state = PurchaseCapabilityState.EXPIRED
             state.pool_state = PurchasePoolState.PAUSED_AUTH_INVALID
             state.last_error = normalized_error
@@ -1500,21 +1717,41 @@ class _DefaultPurchaseRuntime:
             setattr(state.account, "purchase_pool_state", state.pool_state)
             setattr(state.account, "last_error", state.last_error)
             dispatch_runner = self._dispatch_runners.get(account_id)
-            dropped_jobs: list[_DispatchJob] = []
-            if dispatch_runner is not None:
-                dispatch_runner.cancel_current_task()
-                dropped_jobs = dispatch_runner.discard_pending_jobs()
-            for _ in dropped_jobs:
-                self._scheduler.release_account(account_id)
-            self._forget_batches([job.batch for job in dropped_jobs])
-            self._sync_scheduler_state(state)
-            self._persist_inventory_snapshot(state, last_error=state.last_error)
-            self._sync_account_repository_state(state)
+            scheduler_effects = self._sync_scheduler_state(state)
+            effects = _DispatchCompletionEffects(
+                account_id=state.account_id,
+                expected_state_version=state.state_version,
+                expected_generation=self._dispatch_generation,
+                scheduler_effects=scheduler_effects,
+                snapshot_payload=self._build_inventory_snapshot_payload(state, last_error=state.last_error),
+                account_repository_payload=self._build_account_repository_payload(state),
+                notify_state_change=True,
+            )
             self._push_runtime_event(
                 state,
                 status="auth_invalid",
                 message=normalized_error or "登录已失效",
+                notify=False,
             )
+
+        dropped_jobs: list[_DispatchJob] = []
+        if dispatch_runner is not None:
+            dispatch_runner.cancel_current_task()
+            dropped_jobs = dispatch_runner.discard_pending_jobs()
+        for _ in dropped_jobs:
+            self._scheduler.release_account(account_id)
+        batches_to_forget: list[object] = []
+        with self._state_lock:
+            for job in dropped_jobs:
+                batches_to_forget.extend(
+                    self._forget_tracked_dispatch_locked(
+                        getattr(job, "dispatch_key", None),
+                        batch=getattr(job, "batch", None),
+                    )
+                )
+        self._forget_batches(batches_to_forget)
+        if effects is not None:
+            self._run_dispatch_completion_effects(effects)
 
     def _initialize_accounts(self) -> None:
         for account in self._accounts:
@@ -1663,7 +1900,28 @@ class _DefaultPurchaseRuntime:
             return None
         return int(selected_inventory.get("inventory_max", 1000))
 
-    def _apply_worker_outcome(self, state: _RuntimeAccountState, batch, outcome) -> None:
+    @staticmethod
+    def _success_requires_remote_reconcile(
+        state: _RuntimeAccountState,
+        outcome: PurchaseWorkerOutcome,
+    ) -> bool:
+        inventory_preview = state.inventory_state.clone()
+        transition = inventory_preview.apply_purchase_success(
+            purchased_count=int(outcome.purchased_count),
+            selected_steam_id=outcome.selected_steam_id,
+        )
+        return transition.requires_remote_refresh
+
+    def _apply_worker_outcome(
+        self,
+        state: _RuntimeAccountState,
+        batch,
+        outcome,
+        *,
+        reconcile_refresh_result: InventoryRefreshResult | None | object = _REMOTE_REFRESH_UNSET,
+    ) -> _DispatchCompletionEffects:
+        effects = _DispatchCompletionEffects()
+        effects.account_id = state.account_id
         state.capability_state = outcome.capability_state
         state.pool_state = outcome.pool_state
         state.busy = False
@@ -1687,32 +1945,36 @@ class _DefaultPurchaseRuntime:
                 event_status, event_message = self._reconcile_inventory_after_success(
                     state,
                     purchased_count=int(outcome.purchased_count),
+                    refresh_result=reconcile_refresh_result,
                 )
-            self._sync_scheduler_state(state)
-            self._persist_inventory_snapshot(state, last_error=state.last_error)
+            effects.scheduler_effects = self._sync_scheduler_state(state)
+            effects.snapshot_payload = self._build_inventory_snapshot_payload(state, last_error=state.last_error)
             self._push_event_from_batch(
                 batch,
                 status=event_status,
                 message=event_message,
+                notify=False,
             )
         elif outcome.status == "auth_invalid":
-            self._sync_scheduler_state(state)
-            self._persist_inventory_snapshot(state, last_error=outcome.error)
+            effects.scheduler_effects = self._sync_scheduler_state(state)
+            effects.snapshot_payload = self._build_inventory_snapshot_payload(state, last_error=outcome.error)
             self._push_event_from_batch(
                 batch,
                 status="auth_invalid",
                 message=outcome.error or "登录已失效",
                 debug_details=self._build_purchase_debug_details(outcome),
+                notify=False,
             )
         elif outcome.status == "no_inventory":
             stats_status = "paused_no_inventory"
-            self._sync_scheduler_state(state)
-            self._persist_inventory_snapshot(state, last_error=outcome.error)
+            effects.scheduler_effects = self._sync_scheduler_state(state)
+            effects.snapshot_payload = self._build_inventory_snapshot_payload(state, last_error=outcome.error)
             self._push_event_from_batch(
                 batch,
                 status="paused_no_inventory",
                 message=outcome.error or "没有可用仓库",
                 debug_details=self._build_purchase_debug_details(outcome),
+                notify=False,
             )
         else:
             self._push_event_from_batch(
@@ -1720,18 +1982,28 @@ class _DefaultPurchaseRuntime:
                 status=str(outcome.status),
                 message=outcome.error or "购买失败",
                 debug_details=self._build_purchase_debug_details(outcome),
+                notify=False,
             )
 
-        self._stats_aggregator.enqueue_outcome(
-            account_id=state.account_id,
-            batch=batch,
-            status=stats_status,
-            purchased_count=int(outcome.purchased_count),
-        )
-        self._forward_stats_events(state, batch=batch, outcome=outcome)
-        self._sync_account_repository_state(state)
+        effects.account_repository_payload = self._build_account_repository_payload(state)
+        effects.stats_outcome_payload = {
+            "account_id": state.account_id,
+            "batch": batch,
+            "status": stats_status,
+            "purchased_count": int(outcome.purchased_count),
+        }
+        effects.stats_forward_payload = {
+            "account_id": state.account_id,
+            "account_display_name": state.display_name,
+            "batch": batch,
+            "outcome": outcome,
+        }
+        effects.expected_generation = self._dispatch_generation
+        effects.expected_state_version = state.state_version
+        effects.notify_state_change = True
+        return effects
 
-    def _forward_stats_events(self, state: _RuntimeAccountState, *, batch, outcome) -> None:
+    def _forward_stats_events(self, *, account_id: str, account_display_name: str, batch, outcome) -> None:
         if self._stats_sink is None:
             return
 
@@ -1754,8 +2026,8 @@ class _DefaultPurchaseRuntime:
                     max_price=getattr(batch, "max_price", None),
                     item_name=str(getattr(batch, "query_item_name", "") or "") or None,
                     product_url=getattr(batch, "product_url", None),
-                    account_id=state.account_id,
-                    account_display_name=state.display_name,
+                    account_id=account_id,
+                    account_display_name=account_display_name,
                     create_order_latency_ms=float(create_order_latency_ms),
                     submitted_count=submitted_count,
                     status=create_status,
@@ -1781,8 +2053,8 @@ class _DefaultPurchaseRuntime:
                 max_price=getattr(batch, "max_price", None),
                 item_name=str(getattr(batch, "query_item_name", "") or "") or None,
                 product_url=getattr(batch, "product_url", None),
-                account_id=state.account_id,
-                account_display_name=state.display_name,
+                account_id=account_id,
+                account_display_name=account_display_name,
                 submit_order_latency_ms=float(submit_order_latency_ms),
                 submitted_count=submitted_count,
                 success_count=success_count,
@@ -1817,8 +2089,10 @@ class _DefaultPurchaseRuntime:
         state: _RuntimeAccountState,
         *,
         purchased_count: int,
+        refresh_result: InventoryRefreshResult | None | object = _REMOTE_REFRESH_UNSET,
     ) -> tuple[str, str]:
-        refresh_result = self._refresh_inventory_from_remote(state.account, state.inventory_state)
+        if refresh_result is _REMOTE_REFRESH_UNSET:
+            refresh_result = self._refresh_inventory_from_remote(state.account, state.inventory_state)
         if refresh_result is None:
             return self._success_event_for_state(state, purchased_count=purchased_count)
 
@@ -1852,8 +2126,9 @@ class _DefaultPurchaseRuntime:
             return "success", f"购买成功 {purchased_count} 件"
         return "paused_no_inventory", f"购买成功 {purchased_count} 件，当前没有可用仓库"
 
-    def _sync_scheduler_state(self, state: _RuntimeAccountState) -> None:
+    def _sync_scheduler_state(self, state: _RuntimeAccountState) -> _SchedulerStateEffects:
         previous_active_account_count = self._scheduler.active_account_count()
+        effects = _SchedulerStateEffects()
         if state.purchase_disabled:
             if state.pool_state == PurchasePoolState.PAUSED_NO_INVENTORY and state.capability_state == PurchaseCapabilityState.BOUND:
                 if state.recovery_due_at is None:
@@ -1861,24 +2136,42 @@ class _DefaultPurchaseRuntime:
             else:
                 state.recovery_due_at = None
             self._scheduler.mark_unavailable(state.account_id, reason="purchase_disabled")
-            self._cancel_recovery_check(state.account_id)
+            effects.cancel_recovery_account_ids.append(state.account_id)
         elif state.capability_state != PurchaseCapabilityState.BOUND:
             state.pool_state = PurchasePoolState.PAUSED_AUTH_INVALID
             self._scheduler.mark_unavailable(state.account_id, reason="auth_invalid")
-            self._cancel_recovery_check(state.account_id)
+            effects.cancel_recovery_account_ids.append(state.account_id)
             state.recovery_due_at = None
         elif state.pool_state == PurchasePoolState.ACTIVE:
             self._scheduler.mark_available(state.account_id)
-            self._cancel_recovery_check(state.account_id)
+            effects.cancel_recovery_account_ids.append(state.account_id)
             state.recovery_due_at = None
         elif state.pool_state == PurchasePoolState.PAUSED_AUTH_INVALID:
             self._scheduler.mark_unavailable(state.account_id, reason="auth_invalid")
-            self._cancel_recovery_check(state.account_id)
+            effects.cancel_recovery_account_ids.append(state.account_id)
             state.recovery_due_at = None
         else:
+            if state.recovery_due_at is None:
+                state.recovery_due_at = self._build_next_recovery_due_at()
             self._scheduler.mark_no_inventory(state.account_id)
-            self._schedule_recovery_check(state.account_id)
-        self._handle_active_account_count_change(previous_active_account_count)
+            effects.schedule_recovery_account_ids.append(state.account_id)
+        state.state_version += 1
+        active_effects = self._handle_active_account_count_change(previous_active_account_count)
+        effects.should_signal_drain = effects.should_signal_drain or active_effects.should_signal_drain
+        effects.notify_no_available_accounts = (
+            effects.notify_no_available_accounts or active_effects.notify_no_available_accounts
+        )
+        effects.notify_accounts_available = (
+            effects.notify_accounts_available or active_effects.notify_accounts_available
+        )
+        effects.clear_backlog_when_no_accounts = (
+            effects.clear_backlog_when_no_accounts or active_effects.clear_backlog_when_no_accounts
+        )
+        if active_effects.scheduler_event is not None:
+            effects.scheduler_event = active_effects.scheduler_event
+        effects.cancel_recovery_account_ids.extend(active_effects.cancel_recovery_account_ids)
+        effects.schedule_recovery_account_ids.extend(active_effects.schedule_recovery_account_ids)
+        return effects
 
     def _get_per_batch_ip_fanout_limit(self) -> int:
         repository = getattr(self, "_settings_repository", None)
@@ -1904,27 +2197,132 @@ class _DefaultPurchaseRuntime:
             proxy_url=getattr(account, "browser_proxy_url", None),
         )
 
-    def _start_account_dispatch(self, account_id: str, batch) -> None:
-        state = self._account_states.get(account_id)
-        if state is None:
-            self._scheduler.mark_unavailable(account_id, reason="missing_account_state")
-            return
-        state.busy = True
-        dispatch_runner = self._dispatch_runners.get(account_id)
-        if dispatch_runner is None:
-            self._scheduler.release_account(account_id)
-            self._scheduler.mark_unavailable(account_id, reason="missing_dispatch_runner")
-            return
-        dispatch_runner.submit(batch=batch, generation=self._dispatch_generation)
+    def _can_start_account_dispatch_locked(self, state: _RuntimeAccountState, generation: int) -> bool:
+        if not self._running or int(generation) != self._dispatch_generation:
+            return False
+        if state.purchase_disabled:
+            return False
+        if state.capability_state != PurchaseCapabilityState.BOUND:
+            return False
+        return state.pool_state == PurchasePoolState.ACTIVE
 
-    def _finish_account_dispatch(self, *, account_id: str, batch, outcome, generation: int) -> None:
+    def _finish_tracked_dispatch_locked(self, dispatch_key: tuple[int, int] | None, outcome) -> bool:
+        if dispatch_key is None:
+            return outcome is _DISPATCH_SKIPPED
+        tracked = self._tracked_dispatch_batches.get(dispatch_key)
+        if tracked is None:
+            return outcome is _DISPATCH_SKIPPED
+        if outcome is not _DISPATCH_SKIPPED:
+            tracked.had_non_skipped_outcome = True
+        tracked.remaining_jobs = max(int(tracked.remaining_jobs) - 1, 0)
+        if tracked.remaining_jobs > 0:
+            return False
+        self._tracked_dispatch_batches.pop(dispatch_key, None)
+        return outcome is _DISPATCH_SKIPPED and not tracked.had_non_skipped_outcome
+
+    def _forget_tracked_dispatch_locked(self, dispatch_key: tuple[int, int] | None, *, batch=None) -> list[object]:
+        if dispatch_key is None:
+            return [batch] if batch is not None else []
+        tracked = self._tracked_dispatch_batches.get(dispatch_key)
+        if tracked is None:
+            return [batch] if batch is not None else []
+        tracked.remaining_jobs = max(int(tracked.remaining_jobs) - 1, 0)
+        if tracked.remaining_jobs > 0:
+            return []
+        self._tracked_dispatch_batches.pop(dispatch_key, None)
+        if tracked.had_non_skipped_outcome:
+            return []
+        tracked_batch = tracked.batch if tracked.batch is not None else batch
+        return [tracked_batch] if tracked_batch is not None else []
+
+    def _prepare_backlog_clear_locked(self, leading_batches: list[object] | None = None) -> list[object] | None:
+        if self._scheduler.active_account_count() > 0:
+            return None
+        cleared_batches = list(leading_batches or [])
+        cleared_batches.extend(
+            self._scheduler.drop_expired_batches(
+                now=self._queue_now(),
+                max_wait_seconds=self._queued_hit_timeout_seconds,
+            )
+        )
+        cleared_batches.extend(self._scheduler.clear_queue_batches())
+        return cleared_batches
+
+    def _restore_or_drop_undispatched_batch(self, batch, *, generation: int) -> str:
+        cleared_batches: list[object] | None = None
+        with self._state_lock:
+            if not self._running or int(generation) != int(self._dispatch_generation):
+                action = "forgotten"
+            elif self._scheduler.active_account_count() > 0:
+                self._scheduler.requeue_batch_front(batch)
+                action = "requeued"
+            else:
+                cleared_batches = self._prepare_backlog_clear_locked([batch])
+                if cleared_batches is None:
+                    self._scheduler.requeue_batch_front(batch)
+                    action = "requeued"
+                else:
+                    self._forget_batches(cleared_batches)
+                    action = "cleared"
+        if action == "forgotten":
+            self._forget_batches([batch])
+            return "forgotten"
+        if action == "requeued":
+            self._signal_drain_worker()
+            return "requeued"
+        cleared = len(cleared_batches or [])
+        if cleared > 0:
+            with self._state_lock:
+                current_generation = self._running and int(generation) == int(self._dispatch_generation)
+            if current_generation:
+                self._push_scheduler_event(
+                    status="backlog_cleared_no_purchase_accounts",
+                    message=f"没有可用购买账号，已清空 {cleared} 条积压任务",
+                )
+        return "cleared"
+
+    def _start_account_dispatch(self, account_id: str, batch, *, generation: int | None = None) -> bool:
+        with self._state_lock:
+            state = self._account_states.get(account_id)
+            dispatch_generation = self._dispatch_generation if generation is None else int(generation)
+            if state is None:
+                self._scheduler.release_account(account_id)
+                self._scheduler.mark_unavailable(account_id, reason="missing_account_state")
+                return False
+            if not self._can_start_account_dispatch_locked(state, dispatch_generation):
+                self._scheduler.release_account(account_id)
+                return False
+            dispatch_runner = self._dispatch_runners.get(account_id)
+            if dispatch_runner is None:
+                self._scheduler.release_account(account_id)
+                self._scheduler.mark_unavailable(account_id, reason="missing_dispatch_runner")
+                return False
+            state.busy = True
+            dispatch_key = (dispatch_generation, id(batch))
+            tracked = self._tracked_dispatch_batches.setdefault(dispatch_key, _TrackedDispatchBatch())
+            if tracked.batch is None:
+                tracked.batch = batch
+            tracked.remaining_jobs += 1
+            dispatch_runner.submit(batch=batch, generation=dispatch_generation)
+            return True
+
+    def _finish_account_dispatch(self, *, account_id: str, batch, outcome, generation: int, dispatch_key=None) -> None:
         should_signal_drain = False
+        deferred_success_outcome: PurchaseWorkerOutcome | None = None
+        deferred_state_version: int | None = None
+        deferred_account = None
+        deferred_inventory_state = None
+        completion_effects: _DispatchCompletionEffects | None = None
+        should_restore_skipped_batch = False
         with self._state_lock:
             state = self._account_states.get(account_id)
             if state is not None:
                 state.busy = False
+            should_restore_skipped_batch = self._finish_tracked_dispatch_locked(dispatch_key, outcome)
 
             normalized_outcome = outcome
+            if outcome is _DISPATCH_SKIPPED:
+                normalized_outcome = None
             if isinstance(outcome, BaseException):
                 normalized_outcome = self._build_dispatch_exception_outcome(state, batch=batch, error=outcome)
 
@@ -1935,7 +2333,7 @@ class _DefaultPurchaseRuntime:
                 and int(generation) != self._dispatch_generation
                 and self._running
             ):
-                self._apply_stale_auth_invalid_outcome(state, normalized_outcome)
+                completion_effects = self._apply_stale_auth_invalid_outcome(state, normalized_outcome)
                 normalized_outcome = None
 
             if (
@@ -1954,32 +2352,80 @@ class _DefaultPurchaseRuntime:
                 and isinstance(normalized_outcome, PurchaseWorkerOutcome)
                 and int(generation) == self._dispatch_generation
             ):
-                self._apply_worker_outcome(state, batch, normalized_outcome)
+                if (
+                    normalized_outcome.status == "success"
+                    and self._success_requires_remote_reconcile(state, normalized_outcome)
+                ):
+                    deferred_success_outcome = normalized_outcome
+                    deferred_state_version = state.state_version
+                    deferred_account = state.account
+                    deferred_inventory_state = state.inventory_state
+                else:
+                    completion_effects = self._apply_worker_outcome(state, batch, normalized_outcome)
 
-            self._scheduler.release_account(account_id)
-            should_signal_drain = (
-                self._scheduler.queue_size()
-                > 0
-            )
+            if deferred_success_outcome is None:
+                self._scheduler.release_account(account_id)
+                should_signal_drain = self._scheduler.queue_size() > 0
+
+        if completion_effects is not None:
+            self._run_dispatch_completion_effects(completion_effects)
+
+        if deferred_success_outcome is not None:
+            refresh_result = self._refresh_inventory_from_remote(deferred_account, deferred_inventory_state)
+            with self._state_lock:
+                state = self._account_states.get(account_id)
+                if (
+                    state is not None
+                    and int(generation) == self._dispatch_generation
+                    and deferred_state_version is not None
+                    and state.state_version == deferred_state_version
+                    and state.capability_state == PurchaseCapabilityState.BOUND
+                ):
+                    completion_effects = self._apply_worker_outcome(
+                        state,
+                        batch,
+                        deferred_success_outcome,
+                        reconcile_refresh_result=refresh_result,
+                    )
+                self._scheduler.release_account(account_id)
+                should_signal_drain = self._scheduler.queue_size() > 0
+            if completion_effects is not None:
+                self._run_dispatch_completion_effects(completion_effects)
+
+        if should_restore_skipped_batch:
+            restore_result = self._restore_or_drop_undispatched_batch(batch, generation=int(generation))
+            if restore_result == "requeued":
+                should_signal_drain = False
 
         if should_signal_drain:
             self._signal_drain_worker()
 
-    def _apply_stale_auth_invalid_outcome(self, state: _RuntimeAccountState, outcome: PurchaseWorkerOutcome) -> None:
+    def _apply_stale_auth_invalid_outcome(
+        self,
+        state: _RuntimeAccountState,
+        outcome: PurchaseWorkerOutcome,
+    ) -> _DispatchCompletionEffects:
+        effects = _DispatchCompletionEffects()
+        effects.account_id = state.account_id
         state.capability_state = PurchaseCapabilityState.EXPIRED
         state.pool_state = PurchasePoolState.PAUSED_AUTH_INVALID
         state.last_error = outcome.error or state.last_error or "Not login"
         setattr(state.account, "purchase_capability_state", state.capability_state)
         setattr(state.account, "purchase_pool_state", state.pool_state)
         setattr(state.account, "last_error", state.last_error)
-        self._sync_scheduler_state(state)
-        self._persist_inventory_snapshot(state, last_error=state.last_error)
-        self._sync_account_repository_state(state)
+        effects.scheduler_effects = self._sync_scheduler_state(state)
+        effects.snapshot_payload = self._build_inventory_snapshot_payload(state, last_error=state.last_error)
+        effects.account_repository_payload = self._build_account_repository_payload(state)
         self._push_runtime_event(
             state,
             status="auth_invalid",
             message=state.last_error or "登录已失效",
+            notify=False,
         )
+        effects.expected_generation = self._dispatch_generation
+        effects.expected_state_version = state.state_version
+        effects.notify_state_change = True
+        return effects
 
     @staticmethod
     def _build_dispatch_exception_outcome(state: _RuntimeAccountState | None, *, batch, error: BaseException):
@@ -1996,25 +2442,89 @@ class _DefaultPurchaseRuntime:
             error=str(error),
         )
 
-    def _handle_active_account_count_change(self, previous_active_account_count: int) -> None:
+    def _handle_active_account_count_change(self, previous_active_account_count: int) -> _SchedulerStateEffects:
+        effects = _SchedulerStateEffects()
         current_active_account_count = self._scheduler.active_account_count()
         self._active_account_count = current_active_account_count
         if previous_active_account_count > 0 and current_active_account_count == 0:
-            self._drop_expired_backlog()
-            cleared_batches = self._scheduler.clear_queue_batches()
-            self._forget_batches(cleared_batches)
+            effects.clear_backlog_when_no_accounts = True
+            effects.notify_no_available_accounts = True
+            return effects
+        if previous_active_account_count == 0 and current_active_account_count > 0:
+            effects.should_signal_drain = self._scheduler.queue_size() > 0
+            effects.notify_accounts_available = True
+        return effects
+
+    def _run_scheduler_state_effects(
+        self,
+        effects: _SchedulerStateEffects | None,
+        *,
+        is_current=None,
+    ) -> None:
+        if effects is None:
+            return
+        current = is_current or (lambda: True)
+        if not current():
+            return
+        for account_id in list(dict.fromkeys(effects.cancel_recovery_account_ids)):
+            if not current():
+                return
+            self._cancel_recovery_check(account_id)
+        for account_id in list(dict.fromkeys(effects.schedule_recovery_account_ids)):
+            if not current():
+                return
+            self._schedule_recovery_check(account_id)
+        if effects.clear_backlog_when_no_accounts:
+            with self._state_lock:
+                if not current():
+                    return
+                cleared_batches = self._prepare_backlog_clear_locked()
+                if cleared_batches is not None:
+                    self._forget_batches(cleared_batches)
+            if cleared_batches is None:
+                return
             cleared = len(cleared_batches)
-            if cleared > 0:
+            if cleared > 0 and current():
                 self._push_scheduler_event(
                     status="backlog_cleared_no_purchase_accounts",
                     message=f"没有可用购买账号，已清空 {cleared} 条积压任务",
                 )
-            self._notify_no_available_accounts()
-            return
-        if previous_active_account_count == 0 and current_active_account_count > 0:
-            if self._scheduler.queue_size() > 0:
+        elif effects.scheduler_event is not None:
+            if not current():
+                return
+            self._push_scheduler_event(**effects.scheduler_event)
+        if effects.should_signal_drain:
+            if not current():
+                return
+            if self._scheduler.active_account_count() > 0:
                 self._signal_drain_worker()
-            self._notify_accounts_available()
+        if effects.notify_no_available_accounts:
+            if not current():
+                return
+            if self._scheduler.active_account_count() <= 0:
+                self._notify_no_available_accounts()
+        if effects.notify_accounts_available:
+            if not current():
+                return
+            if self._scheduler.active_account_count() > 0:
+                self._notify_accounts_available()
+
+    def _dispatch_completion_effects_are_current(self, effects: _DispatchCompletionEffects) -> bool:
+        account_id = effects.account_id
+        if not account_id:
+            return True
+        with self._state_lock:
+            state = self._account_states.get(account_id)
+            if state is None:
+                return False
+            if effects.expected_generation is not None and int(effects.expected_generation) != self._dispatch_generation:
+                return False
+            if (
+                effects.expected_state_version is not None
+                and int(effects.expected_state_version) != state.state_version
+            ):
+                return False
+            return True
 
     def _notify_no_available_accounts(self) -> None:
         callback = self._on_no_available_accounts
@@ -2035,101 +2545,150 @@ class _DefaultPurchaseRuntime:
             return
 
     def _schedule_recovery_check(self, account_id: str) -> None:
-        if not self._running:
-            return
-        state = self._account_states.get(account_id)
-        if state is None:
-            return
-        if state.pool_state != PurchasePoolState.PAUSED_NO_INVENTORY:
-            return
-        if state.capability_state != PurchaseCapabilityState.BOUND:
-            return
+        with self._state_lock:
+            if not self._running:
+                return
+            state = self._account_states.get(account_id)
+            if state is None:
+                return
+            if state.pool_state != PurchasePoolState.PAUSED_NO_INVENTORY:
+                return
+            if state.capability_state != PurchaseCapabilityState.BOUND:
+                return
+            if state.recovery_due_at is None:
+                state.recovery_due_at = self._build_next_recovery_due_at()
+            if state.purchase_disabled:
+                return
+            delay_seconds = max((state.recovery_due_at - datetime.now()).total_seconds(), 0.0)
 
         self._cancel_recovery_check(account_id)
-        if state.recovery_due_at is None:
-            state.recovery_due_at = self._build_next_recovery_due_at()
-        if state.purchase_disabled:
-            return
-        delay_seconds = max((state.recovery_due_at - datetime.now()).total_seconds(), 0.0)
         timer = threading.Timer(delay_seconds, self._run_recovery_check, args=(account_id,))
         timer.daemon = True
-        self._recovery_timers[account_id] = timer
+        with self._recovery_lock:
+            self._recovery_timers[account_id] = timer
         timer.start()
 
     def _cancel_recovery_check(self, account_id: str) -> None:
-        timer = self._recovery_timers.pop(account_id, None)
+        with self._recovery_lock:
+            timer = self._recovery_timers.pop(account_id, None)
         if timer is not None:
             timer.cancel()
 
     def _cancel_all_recovery_checks(self) -> None:
-        for account_id in list(self._recovery_timers.keys()):
+        with self._recovery_lock:
+            account_ids = list(self._recovery_timers.keys())
+        for account_id in account_ids:
             self._cancel_recovery_check(account_id)
 
     def _run_recovery_check(self, account_id: str) -> None:
-        self._recovery_timers.pop(account_id, None)
-        if not self._running:
-            return
+        with self._recovery_lock:
+            self._recovery_timers.pop(account_id, None)
+        effects: _DispatchCompletionEffects | None = None
+        with self._state_lock:
+            if not self._running:
+                return
 
-        state = self._account_states.get(account_id)
-        if state is None or state.pool_state != PurchasePoolState.PAUSED_NO_INVENTORY:
-            return
-        if state.purchase_disabled:
-            return
+            state = self._account_states.get(account_id)
+            if state is None or state.pool_state != PurchasePoolState.PAUSED_NO_INVENTORY:
+                return
+            if state.purchase_disabled:
+                return
 
-        state.recovery_due_at = None
-        refresh_result = self._refresh_inventory_from_remote(state.account, state.inventory_state)
-        if refresh_result is None:
-            self._schedule_recovery_check(account_id)
-            return
+            expected_state_version = state.state_version
+            state.recovery_due_at = None
+            account = state.account
+            inventory_state = state.inventory_state
 
-        if refresh_result.status == "success":
-            state.inventory_state.refresh_from_remote(list(refresh_result.inventories))
-            state.last_error = None
-            state.pool_state = (
-                PurchasePoolState.ACTIVE
-                if state.inventory_state.selected_steam_id is not None
-                else PurchasePoolState.PAUSED_NO_INVENTORY
-            )
-            self._sync_scheduler_state(state)
-            self._persist_inventory_snapshot(state, last_error=state.last_error)
-            self._sync_account_repository_state(state)
-            if state.pool_state == PurchasePoolState.ACTIVE:
+        refresh_result = self._refresh_inventory_from_remote(account, inventory_state)
+
+        with self._state_lock:
+            state = self._account_states.get(account_id)
+            if state is None:
+                return
+            if state.state_version != expected_state_version:
+                return
+            if refresh_result is None:
+                effects = _DispatchCompletionEffects(
+                    account_id=state.account_id,
+                    expected_state_version=state.state_version,
+                    expected_generation=self._dispatch_generation,
+                    scheduler_effects=_SchedulerStateEffects(
+                        schedule_recovery_account_ids=[account_id],
+                    ),
+                )
+            elif refresh_result.status == "success":
+                state.inventory_state.refresh_from_remote(list(refresh_result.inventories))
+                state.last_error = None
+                state.pool_state = (
+                    PurchasePoolState.ACTIVE
+                    if state.inventory_state.selected_steam_id is not None
+                    else PurchasePoolState.PAUSED_NO_INVENTORY
+                )
+                scheduler_effects = self._sync_scheduler_state(state)
+                effects = _DispatchCompletionEffects(
+                    account_id=state.account_id,
+                    expected_state_version=state.state_version,
+                    expected_generation=self._dispatch_generation,
+                    scheduler_effects=scheduler_effects,
+                    snapshot_payload=self._build_inventory_snapshot_payload(state, last_error=state.last_error),
+                    account_repository_payload=self._build_account_repository_payload(state),
+                    notify_state_change=True,
+                )
+                if state.pool_state == PurchasePoolState.ACTIVE:
+                    self._push_runtime_event(
+                        state,
+                        status="inventory_recovered",
+                        message="库存恢复，账号已重新入池",
+                        notify=False,
+                    )
+                else:
+                    self._push_runtime_event(
+                        state,
+                        status="recovery_waiting",
+                        message="恢复检查完成，仍无可用仓库",
+                        notify=False,
+                    )
+            elif refresh_result.status == "auth_invalid":
+                state.capability_state = PurchaseCapabilityState.EXPIRED
+                state.pool_state = PurchasePoolState.PAUSED_AUTH_INVALID
+                state.last_error = refresh_result.error
+                scheduler_effects = self._sync_scheduler_state(state)
+                effects = _DispatchCompletionEffects(
+                    account_id=state.account_id,
+                    expected_state_version=state.state_version,
+                    expected_generation=self._dispatch_generation,
+                    scheduler_effects=scheduler_effects,
+                    snapshot_payload=self._build_inventory_snapshot_payload(state, last_error=state.last_error),
+                    account_repository_payload=self._build_account_repository_payload(state),
+                    notify_state_change=True,
+                )
                 self._push_runtime_event(
                     state,
-                    status="inventory_recovered",
-                    message="库存恢复，账号已重新入池",
+                    status="auth_invalid",
+                    message=refresh_result.error or "登录已失效",
+                    notify=False,
                 )
             else:
+                state.last_error = refresh_result.error
+                scheduler_effects = self._sync_scheduler_state(state)
+                effects = _DispatchCompletionEffects(
+                    account_id=state.account_id,
+                    expected_state_version=state.state_version,
+                    expected_generation=self._dispatch_generation,
+                    scheduler_effects=scheduler_effects,
+                    snapshot_payload=self._build_inventory_snapshot_payload(state, last_error=state.last_error),
+                    account_repository_payload=self._build_account_repository_payload(state),
+                    notify_state_change=True,
+                )
                 self._push_runtime_event(
                     state,
                     status="recovery_waiting",
-                    message="恢复检查完成，仍无可用仓库",
+                    message=refresh_result.error or "恢复检查失败，等待下次重试",
+                    notify=False,
                 )
-            return
 
-        if refresh_result.status == "auth_invalid":
-            state.capability_state = PurchaseCapabilityState.EXPIRED
-            state.pool_state = PurchasePoolState.PAUSED_AUTH_INVALID
-            state.last_error = refresh_result.error
-            self._sync_scheduler_state(state)
-            self._persist_inventory_snapshot(state, last_error=state.last_error)
-            self._sync_account_repository_state(state)
-            self._push_runtime_event(
-                state,
-                status="auth_invalid",
-                message=refresh_result.error or "登录已失效",
-            )
-            return
-
-        state.last_error = refresh_result.error
-        self._sync_scheduler_state(state)
-        self._persist_inventory_snapshot(state, last_error=state.last_error)
-        self._sync_account_repository_state(state)
-        self._push_runtime_event(
-            state,
-            status="recovery_waiting",
-            message=refresh_result.error or "恢复检查失败，等待下次重试",
-        )
+        if effects is not None:
+            self._run_dispatch_completion_effects(effects)
 
     @staticmethod
     def _default_recovery_delay_seconds() -> float:
@@ -2155,41 +2714,79 @@ class _DefaultPurchaseRuntime:
         return value.isoformat()
 
     def _persist_inventory_snapshot(self, state: _RuntimeAccountState, *, last_error: str | None = None) -> None:
-        refreshed_at = datetime.now().isoformat(timespec="seconds")
-        state.inventory_refreshed_at = refreshed_at
-        if self._inventory_snapshot_repository is None:
-            return
-        self._inventory_snapshot_repository.save(
-            account_id=state.account_id,
-            selected_steam_id=state.inventory_state.selected_steam_id,
-            inventories=state.inventory_state.inventories,
-            refreshed_at=refreshed_at,
-            last_error=last_error,
-        )
+        payload = self._build_inventory_snapshot_payload(state, last_error=last_error)
+        self._persist_inventory_snapshot_payload(payload)
 
     def _sync_account_repository_state(self, state: _RuntimeAccountState) -> None:
-        if self._account_repository is None or not hasattr(self._account_repository, "update_account"):
+        payload = self._build_account_repository_payload(state)
+        self._sync_account_repository_payload(payload)
+
+    def _build_inventory_snapshot_payload(
+        self,
+        state: _RuntimeAccountState,
+        *,
+        last_error: str | None = None,
+    ) -> dict[str, object]:
+        refreshed_at = datetime.now().isoformat(timespec="seconds")
+        state.inventory_refreshed_at = refreshed_at
+        return {
+            "account_id": state.account_id,
+            "selected_steam_id": state.inventory_state.selected_steam_id,
+            "inventories": state.inventory_state.inventories,
+            "refreshed_at": refreshed_at,
+            "last_error": last_error,
+        }
+
+    def _persist_inventory_snapshot_payload(self, payload: dict[str, object]) -> None:
+        if self._inventory_snapshot_repository is None:
             return
+        self._inventory_snapshot_repository.save(**payload)
+
+    def _build_account_repository_payload(self, state: _RuntimeAccountState) -> dict[str, object]:
+        recovery_due_at = self._format_recovery_due_at(state.recovery_due_at)
+        updated_at = datetime.now().isoformat(timespec="seconds")
+        changes = {
+            "purchase_capability_state": state.capability_state,
+            "purchase_pool_state": state.pool_state,
+            "last_error": state.last_error,
+            "purchase_disabled": state.purchase_disabled,
+            "purchase_recovery_due_at": recovery_due_at,
+            "updated_at": updated_at,
+        }
         setattr(state.account, "purchase_capability_state", state.capability_state)
         setattr(state.account, "purchase_pool_state", state.pool_state)
         setattr(state.account, "last_error", state.last_error)
         setattr(state.account, "purchase_disabled", state.purchase_disabled)
-        recovery_due_at = self._format_recovery_due_at(state.recovery_due_at)
         setattr(state.account, "purchase_recovery_due_at", recovery_due_at)
+        return {"account_id": state.account_id, "changes": changes}
+
+    def _sync_account_repository_payload(self, payload: dict[str, object]) -> None:
+        if self._account_repository is None or not hasattr(self._account_repository, "update_account"):
+            return
         try:
-            self._account_repository.update_account(
-                state.account_id,
-                purchase_capability_state=state.capability_state,
-                purchase_pool_state=state.pool_state,
-                last_error=state.last_error,
-                purchase_disabled=state.purchase_disabled,
-                purchase_recovery_due_at=recovery_due_at,
-                updated_at=datetime.now().isoformat(timespec="seconds"),
-            )
+            self._account_repository.update_account(payload["account_id"], **dict(payload["changes"]))
         except Exception:
             return
 
-    def _push_runtime_event(self, state: _RuntimeAccountState, *, status: str, message: str) -> None:
+    def _run_dispatch_completion_effects(self, effects: _DispatchCompletionEffects) -> None:
+        if not self._dispatch_completion_effects_are_current(effects):
+            return
+        self._run_scheduler_state_effects(
+            effects.scheduler_effects,
+            is_current=lambda: self._dispatch_completion_effects_are_current(effects),
+        )
+        if effects.snapshot_payload is not None and self._dispatch_completion_effects_are_current(effects):
+            self._persist_inventory_snapshot_payload(effects.snapshot_payload)
+        if effects.account_repository_payload is not None and self._dispatch_completion_effects_are_current(effects):
+            self._sync_account_repository_payload(effects.account_repository_payload)
+        if effects.stats_outcome_payload is not None and self._dispatch_completion_effects_are_current(effects):
+            self._stats_aggregator.enqueue_outcome(**effects.stats_outcome_payload)
+        if effects.stats_forward_payload is not None and self._dispatch_completion_effects_are_current(effects):
+            self._forward_stats_events(**effects.stats_forward_payload)
+        if effects.notify_state_change and self._dispatch_completion_effects_are_current(effects):
+            self._notify_state_change()
+
+    def _push_runtime_event(self, state: _RuntimeAccountState, *, status: str, message: str, notify: bool = True) -> None:
         self._recent_events.insert(
             0,
             {
@@ -2212,6 +2809,8 @@ class _DefaultPurchaseRuntime:
             },
         )
         del self._recent_events[self._RECENT_EVENT_LIMIT :]
+        if notify:
+            self._notify_state_change()
 
     def _push_scheduler_event(self, *, status: str, message: str) -> None:
         self._recent_events.insert(
@@ -2236,6 +2835,7 @@ class _DefaultPurchaseRuntime:
             },
         )
         del self._recent_events[self._RECENT_EVENT_LIMIT :]
+        self._notify_state_change()
 
     @staticmethod
     def _build_purchase_debug_details(outcome) -> dict[str, object]:
@@ -2253,6 +2853,7 @@ class _DefaultPurchaseRuntime:
         status: str,
         message: str,
         debug_details: dict[str, object] | None = None,
+        notify: bool = True,
     ) -> None:
         details = debug_details or {}
         self._recent_events.insert(
@@ -2278,6 +2879,8 @@ class _DefaultPurchaseRuntime:
             },
         )
         del self._recent_events[self._RECENT_EVENT_LIMIT :]
+        if notify:
+            self._notify_state_change()
 
     def _push_event(self, hit: dict[str, object], *, status: str, message: str) -> None:
         self._recent_events.insert(
@@ -2303,6 +2906,16 @@ class _DefaultPurchaseRuntime:
             },
         )
         del self._recent_events[self._RECENT_EVENT_LIMIT :]
+        self._notify_state_change()
+
+    def _notify_state_change(self) -> None:
+        callback = self._state_change_callback
+        if not callable(callback):
+            return
+        try:
+            callback()
+        except Exception:
+            return
 
     def _start_drain_worker(self) -> None:
         if self._drain_thread is not None and self._drain_thread.is_alive():
@@ -2360,28 +2973,40 @@ class _DefaultPurchaseRuntime:
                     break
 
     async def _drain_scheduler(self) -> str:
-        with self._state_lock:
-            self._drop_expired_backlog()
-            claimed_account_ids = self._scheduler.claim_idle_accounts_by_bucket(
-                limit_per_bucket=self._get_per_batch_ip_fanout_limit(),
-            )
-            if not claimed_account_ids:
-                return "idle"
+        self._drop_expired_backlog()
+        claimed_account_ids = self._scheduler.claim_idle_accounts_by_bucket(
+            limit_per_bucket=self._get_per_batch_ip_fanout_limit(),
+        )
+        if not claimed_account_ids:
+            return "idle"
 
-            batch = self._scheduler.pop_next_batch()
-            if batch is None:
-                for account_id in claimed_account_ids:
-                    self._scheduler.release_account(account_id)
-                return "idle"
-            if self._batch_expired(batch):
-                self._forget_batches([batch])
-                for account_id in claimed_account_ids:
-                    self._scheduler.release_account(account_id)
-                return "retry"
-
+        batch = self._scheduler.pop_next_batch()
+        if batch is None:
             for account_id in claimed_account_ids:
-                self._start_account_dispatch(account_id, batch)
+                self._scheduler.release_account(account_id)
+            return "idle"
+        if self._batch_expired(batch):
+            self._forget_batches([batch])
+            for account_id in claimed_account_ids:
+                self._scheduler.release_account(account_id)
+            return "retry"
+
+        with self._state_lock:
+            dispatch_generation = self._dispatch_generation
+            batch_matches_current_session = self._batch_matches_current_session_locked(batch)
+        if not batch_matches_current_session:
+            self._forget_batches([batch])
+            for account_id in claimed_account_ids:
+                self._scheduler.release_account(account_id)
+            return "retry"
+        started_dispatch_count = 0
+        for account_id in claimed_account_ids:
+            if self._start_account_dispatch(account_id, batch, generation=dispatch_generation):
+                started_dispatch_count += 1
+        if started_dispatch_count > 0:
             return "dispatched"
+        restore_result = self._restore_or_drop_undispatched_batch(batch, generation=dispatch_generation)
+        return "retry" if restore_result == "requeued" else "idle"
 
     def _should_process_account_dispatch(self, account_id: str, generation: int) -> bool:
         with self._state_lock:
@@ -2412,6 +3037,17 @@ class _DefaultPurchaseRuntime:
         if enqueued_at is None:
             return False
         return (self._queue_now() - float(enqueued_at)) >= max_wait_seconds
+
+    def _batch_matches_current_session_locked(self, batch) -> bool:
+        current_stats = self._stats_aggregator.snapshot()
+        current_runtime_session_id = str(current_stats.get("runtime_session_id") or "") or None
+        current_query_config_id = str(current_stats.get("query_config_id") or "") or None
+        batch_runtime_session_id = str(getattr(batch, "runtime_session_id", "") or "") or None
+        batch_query_config_id = str(getattr(batch, "query_config_id", "") or "") or None
+        return (
+            current_runtime_session_id == batch_runtime_session_id
+            and current_query_config_id == batch_query_config_id
+        )
 
     def _forget_batches(self, batches: list[object]) -> None:
         forget_batches = getattr(self._hit_inbox, "forget_batches", None)

@@ -104,6 +104,9 @@ export async function startPythonBackend({
   const stderrChunks = [];
   let earlyExitError = null;
 
+  child.stdout?.on?.("data", () => {
+    // Drain uvicorn access logs so the stdout pipe cannot fill and block the backend loop.
+  });
   child.stderr?.on?.("data", (chunk) => {
     stderrChunks.push(Buffer.isBuffer(chunk) ? chunk.toString("utf-8") : String(chunk));
   });

@@ -4,6 +4,28 @@ import { createAccountCenterClient } from "../../src/api/account_center_client.j
 
 
 describe("account center client", () => {
+  it("loads app bootstrap snapshot from the remote shell endpoint", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ version: 3, query_system: {}, purchase_system: {} }),
+    });
+
+    const client = createAccountCenterClient({
+      apiBaseUrl: "http://127.0.0.1:8123",
+      fetchImpl,
+    });
+
+    const payload = await client.getAppBootstrap();
+
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "http://127.0.0.1:8123/app/bootstrap",
+      expect.objectContaining({
+        method: "GET",
+      }),
+    );
+    expect(payload).toEqual({ version: 3, query_system: {}, purchase_system: {} });
+  });
+
   it("loads account center rows from bootstrap api base url", async () => {
     const fetchImpl = vi.fn().mockResolvedValue({
       ok: true,

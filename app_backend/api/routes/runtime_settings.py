@@ -18,6 +18,10 @@ def _repository(request: Request):
     return request.app.state.runtime_settings_repository
 
 
+def _runtime_update_hub(request: Request):
+    return request.app.state.runtime_update_hub
+
+
 def _serialize_purchase_settings(settings) -> PurchaseRuntimeSettingsResponse:
     purchase_settings = dict(getattr(settings, "purchase_settings_json", {}) or {})
     return PurchaseRuntimeSettingsResponse.model_validate(
@@ -45,4 +49,9 @@ def update_purchase_runtime_settings(
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    return _serialize_purchase_settings(settings)
+    response = _serialize_purchase_settings(settings)
+    _runtime_update_hub(request).publish(
+        event="runtime_settings.updated",
+        payload=response.model_dump(mode="json"),
+    )
+    return response

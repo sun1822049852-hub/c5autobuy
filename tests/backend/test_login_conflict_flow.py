@@ -485,6 +485,69 @@ async def test_resolve_login_conflict_replace_with_new_account_keeps_success_whe
     ]
 
 
+async def test_login_task_on_regular_new_account_keeps_current_account_when_existing_c5_account_matches(
+    app,
+    client,
+):
+    class FakeLoginAdapter:
+        async def run_login(self, *, proxy_url: str | None, emit_state=None, account_id=None):
+            await emit_state("waiting_for_scan")
+            await emit_state("captured_login_info")
+            await emit_state("waiting_for_browser_close")
+            return {
+                "c5_user_id": "10001",
+                "c5_nick_name": "重复登录账号",
+                "cookie_raw": "foo=bar; NC5_accessToken=token-dup; NC5_deviceId=device-dup",
+            }
+
+    app.state.login_adapter = FakeLoginAdapter()
+    app.state.account_balance_service = _NoopAccountBalanceService()
+
+    existing = await _create_account(
+        client,
+        remark_name="老账号",
+        proxy_mode="custom",
+        proxy_url="http://127.0.0.1:9101",
+        api_key="api-old",
+    )
+    _bind_existing_account(app, existing["account_id"], c5_user_id="10001", c5_nick_name="旧绑定")
+
+    source = await _create_account(
+        client,
+        remark_name="新建空账号",
+        proxy_mode="direct",
+        proxy_url=None,
+        api_key=None,
+    )
+
+    start_response = await client.post(f"/accounts/{source['account_id']}/login")
+    task_payload = await _wait_for_task(client, start_response.json()["task_id"], "succeeded")
+
+    assert task_payload["result"]["account_id"] == source["account_id"]
+
+    existing_response = await client.get(f"/accounts/{existing['account_id']}")
+    existing_payload = existing_response.json()
+    assert existing_payload["remark_name"] == "老账号"
+    assert existing_payload["browser_proxy_url"] == "http://127.0.0.1:9101"
+    assert existing_payload["api_key"] == "api-old"
+    assert existing_payload["c5_nick_name"] == "旧绑定"
+    assert existing_payload["cookie_raw"] == "old=cookie"
+
+    source_response = await client.get(f"/accounts/{source['account_id']}")
+    source_payload = source_response.json()
+    assert source_payload["remark_name"] == "新建空账号"
+    assert source_payload["browser_proxy_mode"] == "direct"
+    assert source_payload["browser_proxy_url"] is None
+    assert source_payload["api_key"] is None
+    assert source_payload["c5_user_id"] == "10001"
+    assert source_payload["c5_nick_name"] == "重复登录账号"
+    assert source_payload["cookie_raw"] == "foo=bar; NC5_accessToken=token-dup; NC5_deviceId=device-dup"
+
+    active_bundle = app.state.account_session_bundle_repository.get_active_bundle(source["account_id"])
+    assert active_bundle is not None
+    assert active_bundle.bundle_id == task_payload["result"]["bundle_id"]
+
+
 async def test_login_task_on_api_only_account_routes_to_existing_c5_account_and_keeps_old_account_config(app, client):
     class FakeLoginAdapter:
         async def run_login(self, *, proxy_url: str | None, emit_state=None, account_id=None):

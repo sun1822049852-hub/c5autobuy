@@ -45,7 +45,7 @@ const PREVIEW_ITEM_ROWS = [
 ];
 
 
-export function PurchaseSystemPage({ bootstrapConfig, client, onLeaveStateChange }) {
+export function PurchaseSystemPage({ bootstrapConfig, client, isActive, onLeaveStateChange }) {
   const {
     activeQueryConfig,
     actionLabel,
@@ -106,14 +106,20 @@ export function PurchaseSystemPage({ bootstrapConfig, client, onLeaveStateChange
     runtimeMessage,
     selectedDialogConfigId,
     totalPurchasedCount,
-  } = usePurchaseSystemPage({ client });
+    discardRuntimeDrafts,
+  } = usePurchaseSystemPage({ client, isActive });
   const submitRuntimeDraftsRef = useRef(onSubmitRuntimeDrafts);
+  const discardRuntimeDraftsRef = useRef(discardRuntimeDrafts);
 
   submitRuntimeDraftsRef.current = onSubmitRuntimeDrafts;
+  discardRuntimeDraftsRef.current = discardRuntimeDrafts;
 
   useEffect(() => {
     onLeaveStateChange?.({
       canPromptOnLeave: hasUnsavedRuntimeDrafts,
+      requestDiscard() {
+        return discardRuntimeDraftsRef.current();
+      },
       requestSave() {
         return submitRuntimeDraftsRef.current();
       },

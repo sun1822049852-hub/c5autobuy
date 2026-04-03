@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 
+import {
+  useApplyPurchaseSystemServer,
+  usePatchPurchaseSystemUi,
+  usePurchaseSystemServer,
+  usePurchaseSystemServerHydrated,
+  usePurchaseSystemUi,
+} from "../../../runtime/use_app_runtime.js";
 import { useFloatingRuntimeModalState } from "./use_floating_runtime_modal_state.js";
 
 
@@ -433,6 +440,64 @@ function normalizeQueryConfigDetail(config) {
 }
 
 
+function normalizeConfigDetailsById(configDetailsById) {
+  if (!configDetailsById || typeof configDetailsById !== "object") {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(configDetailsById).map(([configId, detail]) => [
+      String(configId),
+      normalizeQueryConfigDetail(detail),
+    ]).filter(([, detail]) => Boolean(detail?.config_id)),
+  );
+}
+
+
+function hasOwnKey(value, key) {
+  return Boolean(value) && Object.prototype.hasOwnProperty.call(value, key);
+}
+
+
+function isRuntimeStatusHydrated(server) {
+  const runtimeStatus = server?.runtimeStatus;
+  return hasOwnKey(runtimeStatus, "message") || hasOwnKey(runtimeStatus, "queue_size");
+}
+
+
+function isUiPreferencesHydrated(server) {
+  const uiPreferences = server?.uiPreferences;
+  return hasOwnKey(uiPreferences, "selected_config_id") || hasOwnKey(uiPreferences, "updated_at");
+}
+
+
+function isRuntimeSettingsHydrated(server) {
+  return hasOwnKey(server?.runtimeSettings, "per_batch_ip_fanout_limit");
+}
+
+
+function isConfigListHydrated(ui) {
+  return Array.isArray(ui?.configList);
+}
+
+
+function resolveSelectedConfigId(configs, preferences, status, selectedConfigId) {
+  return getConfigById(configs, selectedConfigId)?.config_id
+    || resolvePersistedConfigId(configs, preferences)
+    || status.active_query_config?.config_id
+    || null;
+}
+
+
+function getConfigDetailById(configDetailsById, configId) {
+  if (!configId) {
+    return null;
+  }
+
+  return configDetailsById[configId] || null;
+}
+
+
 function getConfigById(configs, configId) {
   if (!configId) {
     return null;
@@ -568,11 +633,43 @@ function buildDraftPayloadItems(items, runtimeItemMap, manualAllocationDrafts) {
 }
 
 
-export function usePurchaseSystemPage({ client }) {
-  const [status, setStatus] = useState(EMPTY_STATUS);
-  const [configList, setConfigList] = useState([]);
-  const [selectedConfigId, setSelectedConfigId] = useState(null);
-  const [selectedConfigDetail, setSelectedConfigDetail] = useState(null);
+export function usePurchaseSystemPage({ client, isActive = true }) {
+  const purchaseServer = usePurchaseSystemServer();
+  const purchaseServerHydrated = usePurchaseSystemServerHydrated();
+  const purchaseUi = usePurchaseSystemUi();
+  const patchPurchaseUi = usePatchPurchaseSystemUi();
+  const applyPurchaseSystemServer = useApplyPurchaseSystemServer();
+
+  const status = useMemo(
+    () => normalizeStatus(purchaseServer?.runtimeStatus),
+    [purchaseServer?.runtimeStatus],
+  );
+  const configDetailsById = useMemo(
+    () => normalizeConfigDetailsById(purchaseUi?.configDetailsById),
+    [purchaseUi?.configDetailsById],
+  );
+  const configList = useMemo(
+    () => normalizeConfigList(purchaseUi?.configList),
+    [purchaseUi?.configList],
+  );
+  const uiPreferences = useMemo(
+    () => normalizeUiPreferences(purchaseServer?.uiPreferences),
+    [purchaseServer?.uiPreferences],
+  );
+  const selectedConfigId = useMemo(
+    () => resolveSelectedConfigId(
+      configList,
+      uiPreferences,
+      status,
+      purchaseUi?.selectedConfigId || null,
+    ),
+    [configList, purchaseUi?.selectedConfigId, status, uiPreferences],
+  );
+  const selectedConfigDetail = useMemo(
+    () => getConfigDetailById(configDetailsById, selectedConfigId),
+    [configDetailsById, selectedConfigId],
+  );
+
   const [selectorDraftId, setSelectorDraftId] = useState(null);
   const [manualAllocationDrafts, setManualAllocationDrafts] = useState({});
   const [isConfigDialogOpen, setIsConfigDialogOpen] = useState(false);
@@ -591,6 +688,15 @@ export function usePurchaseSystemPage({ client }) {
   const [isQuerySettingsLoading, setIsQuerySettingsLoading] = useState(false);
   const [isQuerySettingsSaving, setIsQuerySettingsSaving] = useState(false);
   const [configLeavePrompt, setConfigLeavePrompt] = useState(EMPTY_CONFIG_LEAVE_PROMPT);
+  const shouldFetchBootstrapStatus = !isRuntimeStatusHydrated(purchaseServer);
+  const shouldFetchBootstrapUiPreferences = !isUiPreferencesHydrated(purchaseServer);
+  const shouldFetchBootstrapRuntimeSettings = !isRuntimeSettingsHydrated(purchaseServer);
+  const shouldFetchBootstrapConfigList = !isConfigListHydrated(purchaseUi);
+  const shouldBootstrapPage = !purchaseServerHydrated
+    || shouldFetchBootstrapStatus
+    || shouldFetchBootstrapUiPreferences
+    || shouldFetchBootstrapRuntimeSettings
+    || shouldFetchBootstrapConfigList;
   const recentEventsModal = useFloatingRuntimeModalState({
     initialPosition: { x: 96, y: 84 },
     initialSize: { width: 680, height: 420 },
@@ -600,13 +706,28 @@ export function usePurchaseSystemPage({ client }) {
     initialSize: { width: 860, height: 460 },
   });
 
+  function applyConfigDetailToStore(configDetail) {
+    const normalizedDetail = normalizeQueryConfigDetail(configDetail);
+    if (!normalizedDetail?.config_id) {
+      return null;
+    }
+
+    patchPurchaseUi({
+      configDetailsById: {
+        [normalizedDetail.config_id]: normalizedDetail,
+      },
+    });
+
+    return normalizedDetail;
+  }
+
   async function refreshStatus({ silent = false } = {}) {
     if (!silent) {
       setIsLoading(true);
     }
     try {
       const nextStatus = await client.getPurchaseRuntimeStatus();
-      setStatus(normalizeStatus(nextStatus));
+      applyPurchaseSystemServer({ runtimeStatus: normalizeStatus(nextStatus) });
       setLoadError("");
     } catch (error) {
       setLoadError(toErrorMessage(error));
@@ -618,24 +739,25 @@ export function usePurchaseSystemPage({ client }) {
   }
 
   async function refreshConfigList() {
-    const nextConfigs = await client.listQueryConfigs();
-    const normalized = normalizeConfigList(nextConfigs);
-    setConfigList(normalized);
+    const normalized = normalizeConfigList(await client.listQueryConfigs());
+    patchPurchaseUi({ configList: normalized });
     return normalized;
   }
 
-  async function loadSelectedConfigDetail(configId) {
+  async function loadSelectedConfigDetail(configId, { resetManualDrafts = true } = {}) {
     if (!configId) {
-      setSelectedConfigId(null);
-      setSelectedConfigDetail(null);
-      setManualAllocationDrafts({});
+      patchPurchaseUi({ selectedConfigId: null });
+      if (resetManualDrafts) {
+        setManualAllocationDrafts({});
+      }
       return null;
     }
 
-    const detail = normalizeQueryConfigDetail(await client.getQueryConfig(configId));
-    setSelectedConfigId(configId);
-    setSelectedConfigDetail(detail);
-    setManualAllocationDrafts({});
+    const detail = applyConfigDetailToStore(await client.getQueryConfig(configId));
+    patchPurchaseUi({ selectedConfigId: configId });
+    if (resetManualDrafts) {
+      setManualAllocationDrafts({});
+    }
     return detail;
   }
 
@@ -675,6 +797,9 @@ export function usePurchaseSystemPage({ client }) {
     try {
       const savedSettings = await client.updatePurchaseRuntimeSettings({
         per_batch_ip_fanout_limit: limit,
+      });
+      applyPurchaseSystemServer({
+        runtimeSettings: savedSettings,
       });
       setPurchaseSettingsDraft(normalizePurchaseSettingsDraft(savedSettings));
       setPurchaseSettingsError("");
@@ -748,48 +873,124 @@ export function usePurchaseSystemPage({ client }) {
   }
 
   useEffect(() => {
+    setPurchaseSettingsDraft((currentDraft) => (
+      currentDraft?.is_dirty
+        ? currentDraft
+        : normalizePurchaseSettingsDraft(purchaseServer?.runtimeSettings)
+    ));
+  }, [purchaseServer?.runtimeSettings]);
+
+  useEffect(() => {
     let active = true;
 
-    async function loadPage() {
+    async function ensurePurchaseState() {
+      if (!isActive) {
+        return;
+      }
+
+      if (shouldBootstrapPage) {
+        setIsLoading(true);
+        try {
+          const [nextStatus, nextConfigs, nextUiPreferences, nextPurchaseSettings] = await Promise.all([
+            shouldFetchBootstrapStatus
+              ? client.getPurchaseRuntimeStatus()
+              : Promise.resolve(purchaseServer?.runtimeStatus),
+            shouldFetchBootstrapConfigList
+              ? client.listQueryConfigs()
+              : Promise.resolve(purchaseUi?.configList ?? []),
+            shouldFetchBootstrapUiPreferences
+              ? client.getPurchaseUiPreferences()
+              : Promise.resolve(purchaseServer?.uiPreferences),
+            shouldFetchBootstrapRuntimeSettings
+              ? client.getPurchaseRuntimeSettings()
+              : Promise.resolve(purchaseServer?.runtimeSettings),
+          ]);
+          if (!active) {
+            return;
+          }
+
+          const normalizedStatus = shouldFetchBootstrapStatus
+            ? normalizeStatus(nextStatus)
+            : status;
+          const normalizedConfigs = shouldFetchBootstrapConfigList
+            ? normalizeConfigList(nextConfigs)
+            : configList;
+          const normalizedUiPreferences = shouldFetchBootstrapUiPreferences
+            ? normalizeUiPreferences(nextUiPreferences)
+            : uiPreferences;
+          const normalizedPurchaseSettings = normalizePurchaseSettingsDraft(nextPurchaseSettings);
+          const serverPatch = {};
+          if (shouldFetchBootstrapStatus) {
+            serverPatch.runtimeStatus = normalizedStatus;
+          }
+          if (shouldFetchBootstrapUiPreferences) {
+            serverPatch.uiPreferences = normalizedUiPreferences;
+          }
+          if (shouldFetchBootstrapRuntimeSettings) {
+            serverPatch.runtimeSettings = nextPurchaseSettings;
+          }
+          if (Object.keys(serverPatch).length > 0) {
+            applyPurchaseSystemServer(serverPatch);
+          }
+          if (shouldFetchBootstrapConfigList) {
+            patchPurchaseUi({
+              configList: normalizedConfigs,
+            });
+          }
+          setPurchaseSettingsDraft((currentDraft) => (
+            currentDraft?.is_dirty ? currentDraft : normalizedPurchaseSettings
+          ));
+          setPurchaseSettingsError("");
+          setLoadError("");
+
+          const preferredConfigId = resolveSelectedConfigId(
+            normalizedConfigs,
+            normalizedUiPreferences,
+            normalizedStatus,
+            purchaseUi?.selectedConfigId || null,
+          );
+
+          if (!preferredConfigId) {
+            patchPurchaseUi({ selectedConfigId: null });
+            return;
+          }
+
+          patchPurchaseUi({ selectedConfigId: preferredConfigId });
+          const detail = await client.getQueryConfig(preferredConfigId);
+          if (!active) {
+            return;
+          }
+          applyConfigDetailToStore(detail);
+        } catch (error) {
+          if (!active) {
+            return;
+          }
+          setLoadError(toErrorMessage(error));
+        } finally {
+          if (active) {
+            setIsLoading(false);
+          }
+        }
+        return;
+      }
+
+      if ((purchaseUi?.selectedConfigId || null) !== selectedConfigId) {
+        patchPurchaseUi({ selectedConfigId });
+      }
+
+      if (!selectedConfigId || selectedConfigDetail) {
+        setIsLoading(false);
+        return;
+      }
+
       setIsLoading(true);
       try {
-        const [nextStatus, nextConfigs, nextUiPreferences, nextPurchaseSettings] = await Promise.all([
-          client.getPurchaseRuntimeStatus(),
-          client.listQueryConfigs(),
-          client.getPurchaseUiPreferences(),
-          client.getPurchaseRuntimeSettings(),
-        ]);
+        const detail = await client.getQueryConfig(selectedConfigId);
         if (!active) {
           return;
         }
-
-        const normalizedStatus = normalizeStatus(nextStatus);
-        const normalizedConfigs = normalizeConfigList(nextConfigs);
-        const normalizedUiPreferences = normalizeUiPreferences(nextUiPreferences);
-        setStatus(normalizedStatus);
-        setConfigList(normalizedConfigs);
-        setPurchaseSettingsDraft(normalizePurchaseSettingsDraft(nextPurchaseSettings));
-        setPurchaseSettingsError("");
+        applyConfigDetailToStore(detail);
         setLoadError("");
-
-        const preferredConfigId = resolvePersistedConfigId(normalizedConfigs, normalizedUiPreferences)
-          || normalizedStatus.active_query_config?.config_id
-          || null;
-
-        if (!preferredConfigId) {
-          setSelectedConfigId(null);
-          setSelectedConfigDetail(null);
-          setManualAllocationDrafts({});
-          return;
-        }
-
-        const detail = normalizeQueryConfigDetail(await client.getQueryConfig(preferredConfigId));
-        if (!active) {
-          return;
-        }
-        setSelectedConfigId(preferredConfigId);
-        setSelectedConfigDetail(detail);
-        setManualAllocationDrafts({});
       } catch (error) {
         if (!active) {
           return;
@@ -802,7 +1003,43 @@ export function usePurchaseSystemPage({ client }) {
       }
     }
 
-    loadPage();
+    ensurePurchaseState();
+
+    return () => {
+      active = false;
+    };
+  }, [
+    applyPurchaseSystemServer,
+    client,
+    configList,
+    isActive,
+    patchPurchaseUi,
+    purchaseServer,
+    purchaseUi?.selectedConfigId,
+    selectedConfigDetail,
+    selectedConfigId,
+    shouldBootstrapPage,
+    shouldFetchBootstrapConfigList,
+    shouldFetchBootstrapRuntimeSettings,
+    shouldFetchBootstrapStatus,
+    shouldFetchBootstrapUiPreferences,
+    status,
+    uiPreferences,
+  ]);
+
+  useEffect(() => {
+    let active = true;
+    const shouldSkipImmediateStatusRefresh = shouldBootstrapPage && shouldFetchBootstrapStatus;
+
+    if (!isActive) {
+      return () => {
+        active = false;
+      };
+    }
+
+    if (!shouldSkipImmediateStatusRefresh) {
+      refreshStatus({ silent: true });
+    }
     const timerId = window.setInterval(() => {
       if (!active) {
         return;
@@ -814,7 +1051,7 @@ export function usePurchaseSystemPage({ client }) {
       active = false;
       window.clearInterval(timerId);
     };
-  }, [client]);
+  }, [client, isActive]);
 
   const activeConfig = status.active_query_config;
   const selectedConfigSummary = useMemo(
@@ -944,8 +1181,10 @@ export function usePurchaseSystemPage({ client }) {
         client.getPurchaseRuntimeStatus(),
         client.getQueryConfig(selectedConfigDetail.config_id),
       ]);
-      setStatus(normalizeStatus(nextStatus));
-      setSelectedConfigDetail(normalizeQueryConfigDetail(nextDetail));
+      applyPurchaseSystemServer({
+        runtimeStatus: normalizeStatus(nextStatus),
+      });
+      applyConfigDetailToStore(nextDetail);
       setManualAllocationDrafts({});
       setLoadError("");
       return true;
@@ -957,6 +1196,11 @@ export function usePurchaseSystemPage({ client }) {
     }
   }
 
+  function discardRuntimeDrafts() {
+    setManualAllocationDrafts({});
+    return true;
+  }
+
   async function performConfigSelection(nextConfigId) {
     if (!nextConfigId) {
       return false;
@@ -964,7 +1208,11 @@ export function usePurchaseSystemPage({ client }) {
 
     setIsActionPending(true);
     try {
-      await client.updatePurchaseUiPreferences(nextConfigId);
+      const nextUiPreferences = await client.updatePurchaseUiPreferences(nextConfigId);
+      applyPurchaseSystemServer({
+        uiPreferences: normalizeUiPreferences(nextUiPreferences),
+      });
+      patchPurchaseUi({ selectedConfigId: nextConfigId });
       await loadSelectedConfigDetail(nextConfigId);
 
       if (!isRuntimeRunning || nextConfigId === activeConfig?.config_id) {
@@ -975,7 +1223,9 @@ export function usePurchaseSystemPage({ client }) {
       }
 
       const nextStatus = await client.startPurchaseRuntime(nextConfigId);
-      setStatus(normalizeStatus(nextStatus));
+      applyPurchaseSystemServer({
+        runtimeStatus: normalizeStatus(nextStatus),
+      });
       setIsConfigDialogOpen(false);
       setSelectorDraftId(null);
       setLoadError("");
@@ -998,7 +1248,9 @@ export function usePurchaseSystemPage({ client }) {
       const nextStatus = isRuntimeRunning
         ? await client.stopPurchaseRuntime()
         : await client.startPurchaseRuntime(selectedConfigId);
-      setStatus(normalizeStatus(nextStatus));
+      applyPurchaseSystemServer({
+        runtimeStatus: normalizeStatus(nextStatus),
+      });
       setManualAllocationDrafts({});
       setLoadError("");
     } catch (error) {
@@ -1133,6 +1385,7 @@ export function usePurchaseSystemPage({ client }) {
     itemRows,
     loadError,
     configLeavePromptError: configLeavePrompt.error,
+    discardRuntimeDrafts,
     onCloseAccountMonitor: accountMonitorModal.onClose,
     onCloseConfigDialog: closeConfigDialog,
     onClosePurchaseSettings: closePurchaseSettings,

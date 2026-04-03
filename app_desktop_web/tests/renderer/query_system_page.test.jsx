@@ -2,11 +2,12 @@
 
 import "@testing-library/jest-dom/vitest";
 
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { App } from "../../src/App.jsx";
+import { createAppRuntimeStore } from "../../src/runtime/app_runtime_store.js";
 
 
 function jsonResponse(payload, status = 200) {
@@ -167,7 +168,426 @@ function createFetchHarness({ initialRuntimeStatus } = {}) {
 }
 
 
+function buildHydratedQueryRuntimeStore({ configOverrides = {}, draftOverrides = {} } = {}) {
+  const store = createAppRuntimeStore();
+  const hydratedConfig = {
+    config_id: "cfg-1",
+    name: "白天配置",
+    description: "白天轮询",
+    enabled: true,
+    created_at: "2026-03-19T10:00:00",
+    updated_at: "2026-03-19T10:00:00",
+    items: [],
+    mode_settings: [],
+    serverShape: "detail",
+    ...configOverrides,
+  };
+
+  store.applyBootstrap({
+    querySystem: {
+      server: {
+        configs: [hydratedConfig],
+        capacitySummary: {
+          modes: {
+            new_api: { mode_type: "new_api", available_account_count: 2 },
+            fast_api: { mode_type: "fast_api", available_account_count: 1 },
+            token: { mode_type: "token", available_account_count: 3 },
+          },
+        },
+        runtimeStatus: buildIdleRuntimeStatus(),
+      },
+    },
+  });
+  store.patchQueryUi({ selectedConfigId: "cfg-1" });
+  store.patchQueryDraft({
+    currentConfig: {
+      ...hydratedConfig,
+      ...draftOverrides,
+    },
+    hasUnsavedChanges: false,
+  });
+
+  return store;
+}
+
+
+function buildEmptyHydratedQueryRuntimeStore() {
+  const store = createAppRuntimeStore();
+
+  store.applyBootstrap({
+    querySystem: {
+      server: {
+        configs: [],
+        capacitySummary: { modes: {} },
+        runtimeStatus: {
+          running: false,
+          item_rows: [],
+        },
+      },
+    },
+  });
+
+  return store;
+}
+
+
+function findQueryPayloadCalls(calls) {
+  return calls.filter((call) => [
+    "/query-configs",
+    "/query-configs/capacity-summary",
+    "/query-runtime/status",
+    "/query-configs/cfg-2",
+    "/query-configs/cfg-1",
+  ].includes(call.pathname));
+}
+
+
 describe("query system page", () => {
+  it("prefers store-backed selected config during cold load before persisted or fallback ids", async () => {
+    const harness = createFetchHarness();
+    const runtimeStore = createAppRuntimeStore();
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    runtimeStore.patchQueryUi({ selectedConfigId: "cfg-2" });
+
+    render(<App runtimeStore={runtimeStore} />);
+
+    await screen.findByText("C5 账号中心");
+    await user.click(screen.getByRole("button", { name: "配置管理" }));
+
+    expect(await screen.findByRole("heading", { name: "夜刀配置" })).toBeInTheDocument();
+    expect(harness.calls).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          body: null,
+          method: "GET",
+          pathname: "/query-configs/cfg-2",
+        }),
+      ]),
+    );
+  });
+
+  it("does not refetch full query page payload when query store is empty but already hydrated", async () => {
+    const harness = createFetchHarness();
+    const runtimeStore = buildEmptyHydratedQueryRuntimeStore();
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App runtimeStore={runtimeStore} />);
+
+    await screen.findByText("C5 账号中心");
+    expect(findQueryPayloadCalls(harness.calls)).toHaveLength(0);
+
+    await user.click(screen.getByRole("button", { name: "配置管理" }));
+    expect(await screen.findByText("当前配置")).toBeInTheDocument();
+    expect(findQueryPayloadCalls(harness.calls)).toHaveLength(0);
+
+    await user.click(screen.getByRole("button", { name: "账号中心" }));
+    await screen.findByText("C5 账号中心");
+
+    await user.click(screen.getByRole("button", { name: "配置管理" }));
+    expect(await screen.findByText("当前配置")).toBeInTheDocument();
+    expect(findQueryPayloadCalls(harness.calls)).toHaveLength(0);
+  });
+
+  it("does not background reload or reset transient query state while the keep-alive page is hidden", async () => {
+    const harness = createFetchHarness();
+    const runtimeStore = buildHydratedQueryRuntimeStore();
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App runtimeStore={runtimeStore} />);
+
+    await screen.findByText("C5 账号中心");
+    await user.click(screen.getByRole("button", { name: "配置管理" }));
+    await screen.findByRole("heading", { name: "白天配置" });
+
+    await user.click(screen.getByRole("button", { name: "新建配置" }));
+    const createDialog = await screen.findByRole("dialog", { name: "新建配置" });
+    await user.type(within(createDialog).getByLabelText("配置名称"), "alpha");
+
+    const queryPayloadCallsBeforeHide = findQueryPayloadCalls(harness.calls).length;
+    await user.click(screen.getByRole("button", { name: "账号中心" }));
+    await screen.findByText("C5 账号中心");
+
+    act(() => {
+      runtimeStore.applyQuerySystemServer({
+        configs: [
+          {
+            config_id: "cfg-1",
+            name: "白天配置-已推送",
+            description: "白天轮询",
+            enabled: true,
+            created_at: "2026-03-19T10:00:00",
+            updated_at: "2026-03-19T10:00:00",
+            items: [],
+            mode_settings: [],
+          },
+        ],
+      });
+    });
+
+    expect(findQueryPayloadCalls(harness.calls)).toHaveLength(queryPayloadCallsBeforeHide);
+
+    await user.click(screen.getByRole("button", { name: "配置管理" }));
+    const restoredDialog = await screen.findByRole("dialog", { name: "新建配置" });
+    expect(within(restoredDialog).getByLabelText("配置名称")).toHaveValue("alpha");
+    expect(findQueryPayloadCalls(harness.calls)).toHaveLength(queryPayloadCallsBeforeHide);
+  });
+
+  it("re-evaluates query state when the hidden keep-alive page becomes active again", async () => {
+    const harness = createFetchHarness();
+    const runtimeStore = buildHydratedQueryRuntimeStore();
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App runtimeStore={runtimeStore} />);
+
+    await screen.findByText("C5 账号中心");
+    await user.click(screen.getByRole("button", { name: "配置管理" }));
+    expect(await screen.findByRole("heading", { name: "白天配置" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "账号中心" }));
+    await screen.findByText("C5 账号中心");
+
+    act(() => {
+      runtimeStore.patchQueryUi({ selectedConfigId: "cfg-2" });
+    });
+
+    await user.click(screen.getByRole("button", { name: "配置管理" }));
+
+    expect(await screen.findByRole("heading", { name: "夜刀配置" })).toBeInTheDocument();
+    expect(harness.calls).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          body: null,
+          method: "GET",
+          pathname: "/query-configs/cfg-2",
+        }),
+      ]),
+    );
+  });
+
+  it("syncs the workbench to updated server content for the same config id when showing again without local edits", async () => {
+    const harness = createFetchHarness();
+    const runtimeStore = buildHydratedQueryRuntimeStore();
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App runtimeStore={runtimeStore} />);
+
+    await screen.findByText("C5 账号中心");
+    await user.click(screen.getByRole("button", { name: "配置管理" }));
+    expect(await screen.findByRole("heading", { name: "白天配置" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "账号中心" }));
+    await screen.findByText("C5 账号中心");
+
+    const queryPayloadCallsBeforeShow = findQueryPayloadCalls(harness.calls).length;
+    act(() => {
+      runtimeStore.applyQuerySystemServer({
+        configs: [
+          {
+            config_id: "cfg-1",
+            name: "白天配置-已推送",
+            description: "白天轮询",
+            enabled: true,
+            created_at: "2026-03-19T10:00:00",
+            updated_at: "2026-03-19T12:00:00",
+            items: [
+              {
+                query_item_id: "item-1",
+                config_id: "cfg-1",
+                product_url: "https://example.com/item-1",
+                external_item_id: "item-1",
+                item_name: "AK-47 | Redline",
+                market_hash_name: "AK-47 | Redline (Field-Tested)",
+                min_wear: 0.1,
+                max_wear: 0.7,
+                detail_min_wear: 0.1,
+                detail_max_wear: 0.25,
+                max_price: 199,
+                last_market_price: 188.88,
+                last_detail_sync_at: "2026-03-19T12:00:00",
+                manual_paused: false,
+                mode_allocations: [],
+                sort_order: 0,
+                created_at: "2026-03-19T10:00:00",
+                updated_at: "2026-03-19T12:00:00",
+              },
+            ],
+            mode_settings: [],
+            serverShape: "detail",
+          },
+        ],
+      });
+    });
+
+    await user.click(screen.getByRole("button", { name: "配置管理" }));
+
+    expect(await screen.findByRole("heading", { name: "白天配置-已推送" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "商品 AK-47 | Redline" })).toBeInTheDocument();
+    expect(findQueryPayloadCalls(harness.calls)).toHaveLength(queryPayloadCallsBeforeShow);
+  });
+
+  it("syncs authoritative empty detail items for the same config id when showing again without local edits", async () => {
+    const harness = createFetchHarness();
+    const runtimeStore = buildHydratedQueryRuntimeStore({
+      configOverrides: {
+        items: [
+          {
+            query_item_id: "item-1",
+            config_id: "cfg-1",
+            product_url: "https://example.com/item-1",
+            external_item_id: "item-1",
+            item_name: "AK-47 | Redline",
+            market_hash_name: "AK-47 | Redline (Field-Tested)",
+            min_wear: 0.1,
+            max_wear: 0.7,
+            detail_min_wear: 0.1,
+            detail_max_wear: 0.25,
+            max_price: 199,
+            last_market_price: 188.88,
+            last_detail_sync_at: "2026-03-19T10:00:00",
+            manual_paused: false,
+            mode_allocations: [],
+            sort_order: 0,
+            created_at: "2026-03-19T10:00:00",
+            updated_at: "2026-03-19T10:00:00",
+          },
+        ],
+      },
+    });
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App runtimeStore={runtimeStore} />);
+
+    await screen.findByText("C5 账号中心");
+    await user.click(screen.getByRole("button", { name: "配置管理" }));
+    expect(await screen.findByRole("heading", { name: "白天配置" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "商品 AK-47 | Redline" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "账号中心" }));
+    await screen.findByText("C5 账号中心");
+
+    const queryPayloadCallsBeforeShow = findQueryPayloadCalls(harness.calls).length;
+    act(() => {
+      runtimeStore.applyQuerySystemServer({
+        configs: [
+          {
+            config_id: "cfg-1",
+            name: "白天配置-清空",
+            description: "白天轮询",
+            enabled: true,
+            created_at: "2026-03-19T10:00:00",
+            updated_at: "2026-03-19T12:30:00",
+            items: [],
+            mode_settings: [],
+            serverShape: "detail",
+          },
+        ],
+      });
+    });
+
+    await user.click(screen.getByRole("button", { name: "配置管理" }));
+
+    expect(await screen.findByRole("heading", { name: "白天配置-清空" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "商品配置列表" })).toHaveTextContent("当前配置还没有商品，先从右上角 + 添加一件。");
+    expect(screen.queryByRole("region", { name: "商品 AK-47 | Redline" })).not.toBeInTheDocument();
+    expect(findQueryPayloadCalls(harness.calls)).toHaveLength(queryPayloadCallsBeforeShow);
+  });
+
+  it("treats external same-id pushes without serverShape as summary instead of silently clearing detail items", async () => {
+    const harness = createFetchHarness();
+    const runtimeStore = buildHydratedQueryRuntimeStore({
+      configOverrides: {
+        items: [
+          {
+            query_item_id: "item-1",
+            config_id: "cfg-1",
+            product_url: "https://example.com/item-1",
+            external_item_id: "item-1",
+            item_name: "AK-47 | Redline",
+            market_hash_name: "AK-47 | Redline (Field-Tested)",
+            min_wear: 0.1,
+            max_wear: 0.7,
+            detail_min_wear: 0.1,
+            detail_max_wear: 0.25,
+            max_price: 199,
+            last_market_price: 188.88,
+            last_detail_sync_at: "2026-03-19T10:00:00",
+            manual_paused: false,
+            mode_allocations: [],
+            sort_order: 0,
+            created_at: "2026-03-19T10:00:00",
+            updated_at: "2026-03-19T10:00:00",
+          },
+        ],
+      },
+    });
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App runtimeStore={runtimeStore} />);
+
+    await screen.findByText("C5 账号中心");
+    await user.click(screen.getByRole("button", { name: "配置管理" }));
+    expect(await screen.findByRole("heading", { name: "白天配置" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "商品 AK-47 | Redline" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "账号中心" }));
+    await screen.findByText("C5 账号中心");
+
+    const queryPayloadCallsBeforeShow = findQueryPayloadCalls(harness.calls).length;
+    act(() => {
+      runtimeStore.applyQuerySystemServer({
+        configs: [
+          {
+            config_id: "cfg-1",
+            name: "白天配置-外部摘要",
+            description: "白天轮询",
+            enabled: true,
+            created_at: "2026-03-19T10:00:00",
+            updated_at: "2026-03-19T12:45:00",
+            items: [],
+            mode_settings: [],
+          },
+        ],
+      });
+    });
+
+    await user.click(screen.getByRole("button", { name: "配置管理" }));
+
+    expect(await screen.findByRole("heading", { name: "白天配置-外部摘要" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "商品 AK-47 | Redline" })).toBeInTheDocument();
+    expect(findQueryPayloadCalls(harness.calls)).toHaveLength(queryPayloadCallsBeforeShow);
+  });
+
+  it("does not refetch full query page payload when entering and re-entering with hydrated runtime store", async () => {
+    const harness = createFetchHarness();
+    const runtimeStore = buildHydratedQueryRuntimeStore();
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App runtimeStore={runtimeStore} />);
+
+    await screen.findByText("C5 账号中心");
+    expect(findQueryPayloadCalls(harness.calls)).toHaveLength(0);
+
+    await user.click(screen.getByRole("button", { name: "配置管理" }));
+    expect(await screen.findByRole("heading", { name: "白天配置" })).toBeInTheDocument();
+    expect(findQueryPayloadCalls(harness.calls)).toHaveLength(0);
+
+    await user.click(screen.getByRole("button", { name: "账号中心" }));
+    await screen.findByText("C5 账号中心");
+
+    await user.click(screen.getByRole("button", { name: "配置管理" }));
+    expect(await screen.findByRole("heading", { name: "白天配置" })).toBeInTheDocument();
+    expect(findQueryPayloadCalls(harness.calls)).toHaveLength(0);
+  });
+
   it("switches from account center into the real query system page and renders the skeleton", async () => {
     const harness = createFetchHarness();
     installDesktopApp(harness.fetchImpl);

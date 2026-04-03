@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+import threading
 
 
 class _DummyRuntime:
@@ -151,6 +152,60 @@ async def test_managed_edge_cdp_login_runner_waits_until_account_center_fields_a
 
     assert payload["c5_nick_name"] == "纯净账号"
     assert process.terminated is False
+
+
+async def test_managed_edge_cdp_login_runner_offloads_blocking_debugger_calls_from_event_loop(monkeypatch, tmp_path: Path):
+    from app_backend.infrastructure.browser_runtime.login_adapter import ManagedEdgeCdpLoginRunner
+
+    runtime = _DummyRuntime(tmp_path)
+    runner = ManagedEdgeCdpLoginRunner(runtime=runtime, login_timeout_seconds=1.0, poll_interval_seconds=0.0)
+    process = _FakeProcess()
+    main_thread_id = threading.get_ident()
+    wait_thread_ids: list[int] = []
+    read_thread_ids: list[int] = []
+
+    monkeypatch.setattr(
+        "app_backend.infrastructure.browser_runtime.login_adapter.subprocess.Popen",
+        lambda command: process,
+    )
+    monkeypatch.setattr(
+        "app_backend.infrastructure.browser_runtime.login_adapter.reserve_debug_port",
+        lambda: 9559,
+    )
+
+    def _wait_for_debugger_port(port, process):
+        wait_thread_ids.append(threading.get_ident())
+
+    monkeypatch.setattr(
+        "app_backend.infrastructure.browser_runtime.login_adapter.wait_for_debugger_port",
+        _wait_for_debugger_port,
+    )
+
+    def _read_attached_session(debugger_address):
+        read_thread_ids.append(threading.get_ident())
+        return {
+            "c5_user_id": "10001",
+            "c5_nick_name": "纯净账号",
+            "cookie_raw": "NC5_accessToken=token-1; NC5_deviceId=device-1",
+            "target_url": "https://www.c5game.com/user/user/",
+        }
+
+    monkeypatch.setattr(
+        "app_backend.infrastructure.browser_runtime.login_adapter.read_attached_session",
+        _read_attached_session,
+    )
+    monkeypatch.setattr(
+        "app_backend.infrastructure.browser_runtime.login_adapter.ManagedEdgeCdpLoginRunner._schedule_delayed_cleanup",
+        lambda self, process, session_root, cleanup_callbacks, remove_session_root=True: None,
+    )
+
+    payload = await runner.run(proxy_url=None)
+
+    assert payload["c5_user_id"] == "10001"
+    assert wait_thread_ids
+    assert read_thread_ids
+    assert all(thread_id != main_thread_id for thread_id in wait_thread_ids)
+    assert all(thread_id != main_thread_id for thread_id in read_thread_ids)
 
 
 async def test_managed_edge_cdp_login_runner_delays_close_after_capture(monkeypatch, tmp_path: Path):

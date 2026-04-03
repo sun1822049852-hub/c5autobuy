@@ -31,6 +31,12 @@ class InventoryState:
     def inventories(self) -> list[dict[str, Any]]:
         return [dict(inventory) for inventory in self._inventories]
 
+    def clone(self) -> "InventoryState":
+        cloned = InventoryState(min_capacity_threshold=self._min_capacity_threshold)
+        cloned.load_snapshot(self.inventories)
+        cloned.selected_steam_id = self.selected_steam_id
+        return cloned
+
     def load_snapshot(self, inventories: list[dict[str, Any]]) -> None:
         self._inventories = [dict(inventory) for inventory in inventories]
         self._refresh_available_inventories()

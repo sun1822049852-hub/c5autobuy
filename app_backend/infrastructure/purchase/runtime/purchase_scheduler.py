@@ -45,6 +45,10 @@ class PurchaseScheduler:
                 return None
             return self._queue.popleft()
 
+    def requeue_batch_front(self, batch: PurchaseHitBatch) -> None:
+        with self._lock:
+            self._queue.appendleft(batch)
+
     def queue_size(self) -> int:
         with self._lock:
             return len(self._queue)

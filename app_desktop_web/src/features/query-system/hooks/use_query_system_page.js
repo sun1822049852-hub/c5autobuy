@@ -1,6 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
+  useApplyQuerySystemServer,
+  usePatchQuerySystemDraft,
+  usePatchQuerySystemUi,
+  useQuerySystemDraft,
+  useQuerySystemServer,
+  useQuerySystemServerHydrated,
+  useQuerySystemUi,
+} from "../../../runtime/use_app_runtime.js";
+import {
   ALL_MODES,
   applyDraftToItem,
   buildRemainingByMode,
@@ -36,6 +45,9 @@ const EMPTY_CONFIG_FORM = {
   description: "",
 };
 
+const QUERY_CONFIG_SERVER_SHAPE_SUMMARY = "summary";
+const QUERY_CONFIG_SERVER_SHAPE_DETAIL = "detail";
+
 
 function toErrorMessage(error) {
   return error instanceof Error ? error.message : String(error);
@@ -44,6 +56,11 @@ function toErrorMessage(error) {
 
 function cloneValue(value) {
   return JSON.parse(JSON.stringify(value));
+}
+
+
+function areValuesEqual(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 
@@ -57,16 +74,118 @@ function resolvePersistedConfigId(configs) {
 }
 
 
-export function useQuerySystemPage({ client }) {
-  const [configs, setConfigs] = useState([]);
-  const [selectedConfigId, setSelectedConfigId] = useState(null);
-  const [sourceConfig, setSourceConfig] = useState(null);
-  const [draftConfig, setDraftConfig] = useState(null);
-  const [capacitySummary, setCapacitySummary] = useState({ modes: {} });
-  const [runtimeStatus, setRuntimeStatus] = useState(EMPTY_RUNTIME_STATUS);
+function normalizeRuntimeStatus(status) {
+  return {
+    ...EMPTY_RUNTIME_STATUS,
+    ...(status || {}),
+    item_rows: Array.isArray(status?.item_rows) ? status.item_rows : [],
+  };
+}
+
+
+function findConfigById(configs, configId) {
+  if (!configId) {
+    return null;
+  }
+
+  return configs.find((config) => config.config_id === configId) || null;
+}
+
+
+function getConfigServerShape(config) {
+  return config?.serverShape === QUERY_CONFIG_SERVER_SHAPE_DETAIL
+    ? QUERY_CONFIG_SERVER_SHAPE_DETAIL
+    : QUERY_CONFIG_SERVER_SHAPE_SUMMARY;
+}
+
+
+function normalizeConfigWithServerShape(config, serverShape) {
+  return normalizeConfig({
+    ...config,
+    serverShape,
+  });
+}
+
+
+function mergeConfigSummaries(existingConfigs, nextConfigs) {
+  const existingById = new Map(existingConfigs.map((config) => [config.config_id, config]));
+
+  return nextConfigs.map((config) => {
+    const normalizedConfig = normalizeConfigWithServerShape(config, QUERY_CONFIG_SERVER_SHAPE_SUMMARY);
+    const existingConfig = existingById.get(normalizedConfig.config_id);
+
+    if (!existingConfig || getConfigServerShape(existingConfig) !== QUERY_CONFIG_SERVER_SHAPE_DETAIL) {
+      return normalizedConfig;
+    }
+
+    return {
+      ...existingConfig,
+      name: normalizedConfig.name,
+      description: normalizedConfig.description,
+      enabled: normalizedConfig.enabled,
+      created_at: normalizedConfig.created_at,
+      updated_at: normalizedConfig.updated_at,
+    };
+  });
+}
+
+
+function upsertServerConfig(configs, nextConfig) {
+  const normalizedConfig = normalizeConfigWithServerShape(nextConfig, QUERY_CONFIG_SERVER_SHAPE_DETAIL);
+
+  return upsertConfigSummary(configs, normalizedConfig).map((config) => (
+    config.config_id === normalizedConfig.config_id
+      ? normalizedConfig
+      : config
+  ));
+}
+
+
+function buildSyncedDraftConfig(currentDraft, serverConfig) {
+  const normalizedServerConfig = normalizeConfig(serverConfig);
+  const serverShape = getConfigServerShape(normalizedServerConfig);
+
+  if (!currentDraft) {
+    return normalizedServerConfig;
+  }
+
+  if (serverShape === QUERY_CONFIG_SERVER_SHAPE_DETAIL) {
+    return normalizedServerConfig;
+  }
+
+  if (getConfigServerShape(currentDraft) !== QUERY_CONFIG_SERVER_SHAPE_DETAIL) {
+    return normalizedServerConfig;
+  }
+
+  return {
+    ...cloneValue(currentDraft),
+    name: normalizedServerConfig.name,
+    description: normalizedServerConfig.description,
+    enabled: normalizedServerConfig.enabled,
+    created_at: normalizedServerConfig.created_at,
+    updated_at: normalizedServerConfig.updated_at,
+  };
+}
+
+
+export function useQuerySystemPage({ client, isActive = true }) {
+  const queryServer = useQuerySystemServer();
+  const queryUi = useQuerySystemUi();
+  const queryDraft = useQuerySystemDraft();
+  const queryServerHydrated = useQuerySystemServerHydrated();
+  const patchQueryUi = usePatchQuerySystemUi();
+  const patchQueryDraft = usePatchQuerySystemDraft();
+  const applyQuerySystemServer = useApplyQuerySystemServer();
+
+  const configs = queryServer.configs || [];
+  const selectedConfigId = queryUi.selectedConfigId || null;
+  const draftConfig = queryDraft.currentConfig || null;
+  const hasUnsavedChanges = Boolean(queryDraft.hasUnsavedChanges);
+  const capacitySummary = queryServer.capacitySummary || { modes: {} };
+  const runtimeStatus = normalizeRuntimeStatus(queryServer.runtimeStatus);
+
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
-  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [isSaving, setIsSaving] = useState(false);
 
@@ -85,84 +204,182 @@ export function useQuerySystemPage({ client }) {
   const [isDeletingConfig, setIsDeletingConfig] = useState(false);
   const draftCounterRef = useRef(1);
 
-  async function refreshConfigList() {
-    const nextConfigs = await client.listQueryConfigs();
-    setConfigs(nextConfigs);
-    return nextConfigs;
+  function writeSelectedConfigId(configId) {
+    patchQueryUi({ selectedConfigId: configId });
+    writeQuerySystemViewState({ selectedConfigId: configId ? String(configId) : null });
   }
 
-  async function loadConfigDetail(configId) {
-    const detail = await client.getQueryConfig(configId);
-    const normalized = normalizeConfig(detail);
-
-    setSourceConfig(normalized);
-    setDraftConfig(cloneValue(normalized));
-    setSelectedConfigId(configId);
-    writeQuerySystemViewState({ selectedConfigId: configId });
-    setHasUnsavedChanges(false);
-    setSaveError("");
+  function resetTransientEditorState() {
     setEditingItemId(null);
     setEditItemDraft(null);
     setIsCreateItemDialogOpen(false);
     setCreateItemDraft(createBlankItemDraft());
     setIsConfigDeleteMode(false);
     setIsItemDeleteMode(false);
+  }
 
-    return normalized;
+  function applyDraftFromConfig(config, configId = config?.config_id || null) {
+    if (!configId || !config) {
+      return null;
+    }
+
+    const normalizedConfig = normalizeConfig(config);
+    writeSelectedConfigId(configId);
+    patchQueryDraft({
+      currentConfig: cloneValue(normalizedConfig),
+      hasUnsavedChanges: false,
+    });
+    setSaveError("");
+    resetTransientEditorState();
+    return normalizedConfig;
+  }
+
+  function clearCurrentConfig() {
+    writeSelectedConfigId(null);
+    patchQueryDraft({
+      currentConfig: null,
+      hasUnsavedChanges: false,
+    });
+    setSaveError("");
+    resetTransientEditorState();
+  }
+
+  async function refreshConfigList() {
+    const nextConfigs = mergeConfigSummaries(configs, await client.listQueryConfigs());
+    applyQuerySystemServer({ configs: nextConfigs });
+    return nextConfigs;
+  }
+
+  async function loadConfigDetail(configId, baseConfigs = configs) {
+    const detail = normalizeConfigWithServerShape(
+      await client.getQueryConfig(configId),
+      QUERY_CONFIG_SERVER_SHAPE_DETAIL,
+    );
+    applyQuerySystemServer({
+      configs: upsertServerConfig(baseConfigs, detail),
+    });
+    applyDraftFromConfig(detail, configId);
+    return detail;
   }
 
   useEffect(() => {
-    let isMounted = true;
+    let active = true;
 
-    async function loadPage() {
-      setIsLoading(true);
+    async function ensureQueryState() {
+      if (!isActive) {
+        return;
+      }
+
       setLoadError("");
 
+      if (!queryServerHydrated) {
+        setIsLoading(true);
+
+        try {
+          const [nextConfigsRaw, nextCapacitySummary, nextRuntimeStatusRaw] = await Promise.all([
+            client.listQueryConfigs(),
+            client.getQueryCapacitySummary(),
+            client.getQueryRuntimeStatus(),
+          ]);
+          if (!active) {
+            return;
+          }
+
+          const nextConfigs = mergeConfigSummaries([], nextConfigsRaw);
+          const nextRuntimeStatus = normalizeRuntimeStatus(nextRuntimeStatusRaw);
+          applyQuerySystemServer({
+            configs: nextConfigs,
+            capacitySummary: nextCapacitySummary,
+            runtimeStatus: nextRuntimeStatus,
+          });
+
+          const preferredConfigId = findConfigById(nextConfigs, selectedConfigId)?.config_id
+            || resolvePersistedConfigId(nextConfigs)
+            || nextRuntimeStatus.config_id
+            || nextConfigs[0]?.config_id
+            || null;
+
+          if (!preferredConfigId) {
+            clearCurrentConfig();
+            return;
+          }
+
+          await loadConfigDetail(preferredConfigId, nextConfigs);
+        } catch (error) {
+          if (!active) {
+            return;
+          }
+          setLoadError(toErrorMessage(error));
+        } finally {
+          if (active) {
+            setIsLoading(false);
+          }
+        }
+        return;
+      }
+
+      const preferredConfigId = selectedConfigId
+        || resolvePersistedConfigId(configs)
+        || runtimeStatus.config_id
+        || configs[0]?.config_id
+        || null;
+
+      if (!preferredConfigId) {
+        clearCurrentConfig();
+        setIsLoading(false);
+        return;
+      }
+
+      if (selectedConfigId !== preferredConfigId) {
+        writeSelectedConfigId(preferredConfigId);
+      }
+
+      if (draftConfig?.config_id === preferredConfigId) {
+        const serverConfig = findConfigById(configs, preferredConfigId);
+
+        if (!hasUnsavedChanges && serverConfig) {
+          const syncedDraftConfig = buildSyncedDraftConfig(draftConfig, serverConfig);
+
+          if (!areValuesEqual(syncedDraftConfig, draftConfig)) {
+            applyDraftFromConfig(syncedDraftConfig, preferredConfigId);
+          }
+        }
+        setIsLoading(false);
+        return;
+      }
+
+      setIsLoading(true);
+
       try {
-        const [nextConfigs, nextCapacitySummary, nextRuntimeStatus] = await Promise.all([
-          client.listQueryConfigs(),
-          client.getQueryCapacitySummary(),
-          client.getQueryRuntimeStatus(),
-        ]);
-        if (!isMounted) {
-          return;
-        }
-
-        setConfigs(nextConfigs);
-        setCapacitySummary(nextCapacitySummary);
-        setRuntimeStatus(nextRuntimeStatus);
-
-        const preferredConfigId = resolvePersistedConfigId(nextConfigs)
-          || nextRuntimeStatus.config_id
-          || nextConfigs[0]?.config_id
-          || null;
-        if (!preferredConfigId) {
-          setSelectedConfigId(null);
-          setSourceConfig(null);
-          setDraftConfig(null);
-          writeQuerySystemViewState({ selectedConfigId: null });
-          return;
-        }
-
         await loadConfigDetail(preferredConfigId);
       } catch (error) {
-        if (!isMounted) {
+        if (!active) {
           return;
         }
         setLoadError(toErrorMessage(error));
       } finally {
-        if (isMounted) {
+        if (active) {
           setIsLoading(false);
         }
       }
     }
 
-    loadPage();
+    ensureQueryState();
 
     return () => {
-      isMounted = false;
+      active = false;
     };
-  }, [client]);
+  }, [
+    applyQuerySystemServer,
+    client,
+    configs,
+    draftConfig?.config_id,
+    hasUnsavedChanges,
+    isActive,
+    queryServerHydrated,
+    runtimeStatus.config_id,
+    selectedConfigId,
+  ]);
 
   const capacityModeMap = capacitySummary.modes || {};
   const capacityModes = useMemo(
@@ -229,23 +446,27 @@ export function useQuerySystemPage({ client }) {
   );
 
   function updateDraftConfig(updater) {
-    setDraftConfig((current) => {
-      if (!current) {
-        return current;
-      }
-      return updater(current);
+    if (!draftConfig) {
+      return;
+    }
+
+    patchQueryDraft({
+      currentConfig: updater(cloneValue(draftConfig)),
+      hasUnsavedChanges: true,
     });
-    setHasUnsavedChanges(true);
     setSaveError("");
   }
 
   async function selectConfig(configId) {
     setLoadError("");
+    setIsLoading(true);
 
     try {
       await loadConfigDetail(configId);
     } catch (error) {
       setLoadError(toErrorMessage(error));
+    } finally {
+      setIsLoading(false);
     }
   }
 
@@ -276,12 +497,16 @@ export function useQuerySystemPage({ client }) {
     setLoadError("");
 
     try {
-      const created = await client.createQueryConfig({
-        name: nextName,
-        description: String(createConfigForm.description || "").trim() || null,
-      });
-      setConfigs((current) => upsertConfigSummary(current, created));
-      await loadConfigDetail(created.config_id);
+      const created = normalizeConfigWithServerShape(
+        await client.createQueryConfig({
+          name: nextName,
+          description: String(createConfigForm.description || "").trim() || null,
+        }),
+        QUERY_CONFIG_SERVER_SHAPE_DETAIL,
+      );
+      const nextConfigs = upsertServerConfig(configs, created);
+      applyQuerySystemServer({ configs: nextConfigs });
+      await loadConfigDetail(created.config_id, nextConfigs);
       closeCreateConfigDialog();
     } catch (error) {
       setLoadError(toErrorMessage(error));
@@ -319,14 +544,9 @@ export function useQuerySystemPage({ client }) {
         : selectedConfigId;
 
       if (!nextSelectedId) {
-        setSelectedConfigId(null);
-        setSourceConfig(null);
-        setDraftConfig(null);
-        writeQuerySystemViewState({ selectedConfigId: null });
-        setHasUnsavedChanges(false);
-        setSaveError("");
-      } else {
-        await loadConfigDetail(nextSelectedId);
+        clearCurrentConfig();
+      } else if (selectedConfigId === deletedConfigId) {
+        await loadConfigDetail(nextSelectedId, nextConfigs);
       }
 
       closeDeleteConfigDialog();
@@ -554,16 +774,15 @@ export function useQuerySystemPage({ client }) {
     try {
       await persistQueryConfigDraft({
         client,
-        sourceConfig,
+        sourceConfig: findConfigById(configs, draftConfig.config_id) || draftConfig,
         draftConfig,
       });
       if (isCurrentConfigRuntimeActive) {
         await client.applyQueryRuntimeConfig(draftConfig.config_id);
       }
 
-      await refreshConfigList();
-      const refreshed = await loadConfigDetail(draftConfig.config_id);
-      setConfigs((current) => upsertConfigSummary(current, refreshed));
+      const nextConfigs = await refreshConfigList();
+      await loadConfigDetail(draftConfig.config_id, nextConfigs);
       return true;
     } catch (error) {
       setSaveError(toErrorMessage(error));
@@ -571,6 +790,18 @@ export function useQuerySystemPage({ client }) {
     } finally {
       setIsSaving(false);
     }
+  }
+
+  function discardDraftChanges() {
+    const sourceConfig = findConfigById(configs, draftConfig?.config_id || selectedConfigId);
+
+    patchQueryDraft({
+      currentConfig: sourceConfig ? cloneValue(normalizeConfig(sourceConfig)) : draftConfig,
+      hasUnsavedChanges: false,
+    });
+    setSaveError("");
+    resetTransientEditorState();
+    return true;
   }
 
   return {
@@ -630,7 +861,9 @@ export function useQuerySystemPage({ client }) {
             : "已保存"
     ),
     saveBarError: saveError,
+    discardDraftChanges,
     saveConfig,
     selectConfig,
+    isActive,
   };
 }

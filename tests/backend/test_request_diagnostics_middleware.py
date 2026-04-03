@@ -65,3 +65,46 @@ async def test_request_diagnostics_logs_exceptions(tmp_path: Path):
     assert records[-1]["path"] == "/_boom"
     assert records[-1]["error_type"] == "RuntimeError"
     assert records[-1]["error_message"] == "boom"
+
+
+async def test_request_diagnostics_logs_inflight_timeouts_before_request_completes(tmp_path: Path):
+    log_path = tmp_path / "runtime" / "request_diagnostics.runtime.jsonl"
+    app = create_app(
+        db_path=tmp_path / "stuck.db",
+        request_diagnostics_log_path=log_path,
+        request_diagnostics_slow_ms=20,
+    )
+    release_request = asyncio.Event()
+    request_started = asyncio.Event()
+
+    @app.get("/_stuck")
+    async def stuck_request() -> dict[str, bool]:
+        request_started.set()
+        await release_request.wait()
+        return {"ok": True}
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        pending = asyncio.create_task(client.get("/_stuck"))
+        await asyncio.wait_for(request_started.wait(), timeout=1)
+        await asyncio.sleep(0.05)
+
+        assert log_path.exists()
+        records = [
+            json.loads(line)
+            for line in log_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        assert any(
+            record["event"] == "request_inflight_timeout"
+            and record["method"] == "GET"
+            and record["path"] == "/_stuck"
+            and record["status_code"] is None
+            for record in records
+        )
+
+        release_request.set()
+        response = await pending
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}

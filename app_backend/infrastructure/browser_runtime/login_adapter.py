@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import threading
+from threading import Thread as BlockingThread
 import time
 from typing import Any, Awaitable, Callable
 from uuid import uuid4
@@ -153,7 +154,8 @@ class ManagedEdgeCdpLoginRunner:
         debugger_address = ""
         captured = False
         try:
-            browser_process, debugger_address = self._launch_browser(
+            browser_process, debugger_address = await self._run_blocking(
+                self._launch_browser,
                 session_root=session_root,
                 proxy_url=proxy_url,
                 cleanup_callbacks=cleanup_callbacks,
@@ -184,10 +186,10 @@ class ManagedEdgeCdpLoginRunner:
             return payload
         finally:
             if not captured:
-                self._terminate_process(browser_process)
-                self._run_cleanup_callbacks(cleanup_callbacks)
+                await self._run_blocking(self._terminate_process, browser_process)
+                await self._run_blocking(self._run_cleanup_callbacks, cleanup_callbacks)
                 if remove_session_root:
-                    shutil.rmtree(session_root, ignore_errors=True)
+                    await self._run_blocking(shutil.rmtree, session_root, True)
 
     def _launch_browser(
         self,
@@ -269,7 +271,7 @@ class ManagedEdgeCdpLoginRunner:
             if browser_process.poll() is not None:
                 raise RuntimeError("用户取消了登录")
             try:
-                payload = read_attached_session(debugger_address)
+                payload = await self._run_blocking(read_attached_session, debugger_address)
             except Exception as exc:
                 last_error = exc
                 payload = None
@@ -289,6 +291,22 @@ class ManagedEdgeCdpLoginRunner:
         if last_error is not None:
             raise RuntimeError(f"登录失败或超时: {last_error}") from last_error
         raise RuntimeError("登录失败或超时")
+
+    @staticmethod
+    async def _run_blocking(func: Callable[..., Any], /, *args, **kwargs) -> Any:
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+
+        def runner() -> None:
+            try:
+                result = func(*args, **kwargs)
+            except BaseException as exc:  # pragma: no cover - defensive bridge
+                loop.call_soon_threadsafe(future.set_exception, exc)
+            else:
+                loop.call_soon_threadsafe(future.set_result, result)
+
+        BlockingThread(target=runner, name="login-blocking-call", daemon=True).start()
+        return await future
 
     @staticmethod
     def _terminate_process(process: subprocess.Popen[Any] | None) -> None:

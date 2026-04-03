@@ -238,9 +238,11 @@ async def run_login_task(
             c5_user_id=capture.c5_user_id,
             exclude_account_id=account_id,
         )
-        final_account = matched_account
-        if final_account is None and _is_api_key_only_account(source_account):
-            final_account = _create_login_result_account(repository)
+        final_account = None
+        if _is_api_key_only_account(source_account):
+            final_account = matched_account
+            if final_account is None:
+                final_account = _create_login_result_account(repository)
         if final_account is None:
             final_account = source_account
 

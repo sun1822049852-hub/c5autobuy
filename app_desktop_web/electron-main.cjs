@@ -2,6 +2,10 @@ const path = require("node:path");
 const net = require("node:net");
 
 const { app, BrowserWindow, ipcMain } = require("electron");
+const {
+  DEFAULT_DESKTOP_BOOTSTRAP_CONFIG,
+  resolveDesktopRuntimeMode,
+} = require("./electron_runtime_mode.cjs");
 const { appendRendererDiagnostic } = require("./renderer_diagnostics_logger.cjs");
 
 
@@ -11,30 +15,38 @@ const dbPath = path.join(projectRoot, "data", "app.db");
 let mainWindow = null;
 let backend = null;
 let bootstrapConfig = {
-  apiBaseUrl: "",
+  ...DEFAULT_DESKTOP_BOOTSTRAP_CONFIG,
   backendStatus: "starting",
 };
-let runtimeDependenciesPromise = null;
+let backendDependenciesPromise = null;
+let windowStateDependenciesPromise = null;
 let loadWindowState = null;
 let saveWindowState = null;
 let resolvePythonExecutable = null;
 let startPythonBackend = null;
 
 
-async function ensureRuntimeDependencies() {
-  if (!runtimeDependenciesPromise) {
-    runtimeDependenciesPromise = Promise.all([
-      import("./python_backend.js"),
-      import("./window_state.js"),
-    ]).then(([pythonBackendModule, windowStateModule]) => {
-      startPythonBackend = pythonBackendModule.startPythonBackend;
-      resolvePythonExecutable = pythonBackendModule.resolvePythonExecutable;
+async function ensureWindowStateDependencies() {
+  if (!windowStateDependenciesPromise) {
+    windowStateDependenciesPromise = import("./window_state.js").then((windowStateModule) => {
       loadWindowState = windowStateModule.loadWindowState;
       saveWindowState = windowStateModule.saveWindowState;
     });
   }
 
-  return runtimeDependenciesPromise;
+  return windowStateDependenciesPromise;
+}
+
+
+async function ensureBackendDependencies() {
+  if (!backendDependenciesPromise) {
+    backendDependenciesPromise = import("./python_backend.js").then((pythonBackendModule) => {
+      startPythonBackend = pythonBackendModule.startPythonBackend;
+      resolvePythonExecutable = pythonBackendModule.resolvePythonExecutable;
+    });
+  }
+
+  return backendDependenciesPromise;
 }
 
 
@@ -89,9 +101,19 @@ function createWindow() {
 }
 
 
-function createFailureWindow(error) {
+function buildStartupFailureCopy(runtimeMode) {
+  if (runtimeMode?.backendMode === "remote") {
+    return "远程模式启动失败，请检查远程模式配置、服务状态或网络连通性。";
+  }
+
+  return "Python 后端未能成功拉起，请先确认 .venv 与 data/app.db 是否存在。";
+}
+
+
+function createFailureWindow(error, runtimeMode) {
   const message = encodeURIComponent(String(error instanceof Error ? error.message : error));
-  const html = `data:text/html;charset=utf-8,<!doctype html><html lang="zh-CN"><body style="margin:0;font-family:'Microsoft YaHei UI',sans-serif;background:#111317;color:#f3efe6;display:grid;place-items:center;height:100vh"><main style="max-width:680px;padding:32px;border:1px solid rgba(255,255,255,.1);border-radius:20px;background:rgba(255,255,255,.04)"><h1 style="margin-top:0">账号中心桌面端启动失败</h1><p>Python 后端未能成功拉起，请先确认 <code>.venv</code> 与 <code>data/app.db</code> 是否存在。</p><pre style="white-space:pre-wrap;color:#ffb0b0">${message}</pre></main></body></html>`;
+  const copy = encodeURIComponent(buildStartupFailureCopy(runtimeMode));
+  const html = `data:text/html;charset=utf-8,<!doctype html><html lang="zh-CN"><body style="margin:0;font-family:'Microsoft YaHei UI',sans-serif;background:#111317;color:#f3efe6;display:grid;place-items:center;height:100vh"><main style="max-width:680px;padding:32px;border:1px solid rgba(255,255,255,.1);border-radius:20px;background:rgba(255,255,255,.04)"><h1 style="margin-top:0">账号中心桌面端启动失败</h1><p>${copy}</p><pre style="white-space:pre-wrap;color:#ffb0b0">${message}</pre></main></body></html>`;
   const failureWindow = new BrowserWindow({
     width: 880,
     height: 620,
@@ -101,13 +123,46 @@ function createFailureWindow(error) {
 }
 
 
-async function bootstrapApplication() {
-  try {
-    await ensureRuntimeDependencies();
+async function bootstrapApplication({
+  runtimeMode = resolveDesktopRuntimeMode(process.env),
+  createFailureWindowImpl = createFailureWindow,
+  createWindowImpl = createWindow,
+  ensureBackendDependenciesImpl = ensureBackendDependencies,
+  ensureWindowStateDependenciesImpl = ensureWindowStateDependencies,
+  findAvailablePortImpl = findAvailablePort,
+  resolvePythonExecutableImpl = null,
+  startPythonBackendImpl = null,
+} = {}) {
+  bootstrapConfig = {
+    ...DEFAULT_DESKTOP_BOOTSTRAP_CONFIG,
+    backendMode: runtimeMode.backendMode,
+    apiBaseUrl: runtimeMode.apiBaseUrl,
+    runtimeWebSocketUrl: runtimeMode.runtimeWebSocketUrl,
+    backendStatus: "starting",
+  };
 
-    const port = await findAvailablePort();
-    const pythonExecutable = resolvePythonExecutable(projectRoot);
-    backend = await startPythonBackend({
+  try {
+    if (runtimeMode.configurationError) {
+      throw new Error(runtimeMode.configurationError);
+    }
+
+    await ensureWindowStateDependenciesImpl();
+
+    if (!runtimeMode.shouldStartEmbeddedBackend) {
+      bootstrapConfig = {
+        ...bootstrapConfig,
+        backendStatus: "ready",
+      };
+      createWindowImpl();
+      return;
+    }
+
+    await ensureBackendDependenciesImpl();
+    const port = await findAvailablePortImpl();
+    const selectedResolvePythonExecutable = resolvePythonExecutableImpl ?? resolvePythonExecutable;
+    const selectedStartPythonBackend = startPythonBackendImpl ?? startPythonBackend;
+    const pythonExecutable = selectedResolvePythonExecutable(projectRoot);
+    backend = await selectedStartPythonBackend({
       dbPath,
       pollIntervalMs: 250,
       portProvider: () => port,
@@ -116,16 +171,17 @@ async function bootstrapApplication() {
       timeoutMs: 15000,
     });
     bootstrapConfig = {
+      ...bootstrapConfig,
       apiBaseUrl: backend.baseUrl,
       backendStatus: "ready",
     };
-    createWindow();
+    createWindowImpl();
   } catch (error) {
     bootstrapConfig = {
-      apiBaseUrl: "",
+      ...bootstrapConfig,
       backendStatus: "failed",
     };
-    createFailureWindow(error);
+    createFailureWindowImpl(error, runtimeMode);
   }
 }
 
@@ -159,9 +215,14 @@ app.on("before-quit", () => {
 });
 
 app.on("activate", async () => {
-  await ensureRuntimeDependencies();
+  await ensureWindowStateDependencies();
 
   if (!BrowserWindow.getAllWindows().length && bootstrapConfig.backendStatus === "ready") {
     createWindow();
   }
 });
+
+module.exports = {
+  bootstrapApplication,
+  buildStartupFailureCopy,
+};

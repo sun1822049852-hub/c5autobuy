@@ -201,6 +201,11 @@ export function createAccountCenterClient({
   });
 
   return {
+    async getAppBootstrap() {
+      return http.getJson("/app/bootstrap", {
+        method: "GET",
+      });
+    },
     async listAccountCenterAccounts() {
       return http.getJson("/account-center/accounts", {
         method: "GET",

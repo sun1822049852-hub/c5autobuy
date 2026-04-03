@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request, status
 
+from app_backend.api.schemas.purchase_runtime import PurchaseRuntimeStatusResponse
 from app_backend.api.schemas.query_configs import (
     QueryCapacitySummaryResponse,
     QueryConfigCreateRequest,
@@ -19,6 +20,7 @@ from app_backend.application.use_cases.add_query_item import AddQueryItemUseCase
 from app_backend.application.use_cases.create_query_config import CreateQueryConfigUseCase
 from app_backend.application.use_cases.delete_query_config import DeleteQueryConfigUseCase
 from app_backend.application.use_cases.delete_query_item import DeleteQueryItemUseCase
+from app_backend.application.use_cases.get_purchase_runtime_status import GetPurchaseRuntimeStatusUseCase
 from app_backend.application.use_cases.get_query_config import GetQueryConfigUseCase
 from app_backend.application.use_cases.get_query_capacity_summary import GetQueryCapacitySummaryUseCase
 from app_backend.application.use_cases.list_query_configs import ListQueryConfigsUseCase
@@ -51,6 +53,50 @@ def _query_runtime_service(request: Request):
     return request.app.state.query_runtime_service
 
 
+def _purchase_runtime_service(request: Request):
+    return request.app.state.purchase_runtime_service
+
+
+def _purchase_ui_preferences_repository(request: Request):
+    return request.app.state.purchase_ui_preferences_repository
+
+
+def _runtime_update_hub(request: Request):
+    return request.app.state.runtime_update_hub
+
+
+def _publish_query_configs_update(request: Request) -> None:
+    payload = {
+        "configs": [
+            QueryConfigResponse.model_validate(config).model_dump(mode="json")
+            for config in ListQueryConfigsUseCase(_repository(request)).execute()
+        ]
+    }
+    _runtime_update_hub(request).publish(
+        event="query_configs.updated",
+        payload=payload,
+    )
+
+
+def _publish_runtime_snapshot_updates_for_active_config(request: Request, *, config_id: str) -> None:
+    query_status = _query_runtime_service(request).get_status()
+    active_config_id = str(query_status.get("config_id") or "").strip() or None
+    if active_config_id != config_id:
+        return
+    _runtime_update_hub(request).publish(
+        event="query_runtime.updated",
+        payload=query_status,
+    )
+    purchase_status = GetPurchaseRuntimeStatusUseCase(
+        _purchase_runtime_service(request),
+        _query_runtime_service(request),
+    ).execute()
+    _runtime_update_hub(request).publish(
+        event="purchase_runtime.updated",
+        payload=PurchaseRuntimeStatusResponse.model_validate(purchase_status).model_dump(mode="json"),
+    )
+
+
 @router.get("", response_model=list[QueryConfigResponse])
 def list_query_configs(request: Request) -> list[QueryConfigResponse]:
     use_case = ListQueryConfigsUseCase(_repository(request))
@@ -64,7 +110,9 @@ def create_query_config(
 ) -> QueryConfigResponse:
     use_case = CreateQueryConfigUseCase(_repository(request))
     config = use_case.execute(name=payload.name, description=payload.description)
-    return QueryConfigResponse.model_validate(config)
+    response = QueryConfigResponse.model_validate(config)
+    _publish_query_configs_update(request)
+    return response
 
 
 @router.get("/capacity-summary", response_model=QueryCapacitySummaryResponse)
@@ -96,16 +144,29 @@ def update_query_config(
         )
     except KeyError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Query config not found") from exc
-    return QueryConfigResponse.model_validate(config)
+    response = QueryConfigResponse.model_validate(config)
+    _publish_query_configs_update(request)
+    return response
 
 
 @router.delete("/{config_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_query_config(config_id: str, request: Request) -> None:
+    selected_config_id = str(
+        getattr(_purchase_ui_preferences_repository(request).get(), "selected_config_id", "") or ""
+    ).strip() or None
     use_case = DeleteQueryConfigUseCase(_repository(request))
     try:
         use_case.execute(config_id)
     except KeyError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Query config not found") from exc
+    _publish_query_configs_update(request)
+    _publish_runtime_snapshot_updates_for_active_config(request, config_id=config_id)
+    if selected_config_id == config_id:
+        _purchase_ui_preferences_repository(request).clear_selected_config()
+        _runtime_update_hub(request).publish(
+            event="purchase_ui_preferences.updated",
+            payload={"selected_config_id": None, "updated_at": None},
+        )
 
 
 @router.post("/{config_id}/items", response_model=QueryItemResponse, status_code=status.HTTP_201_CREATED)
@@ -133,7 +194,9 @@ async def add_query_item(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Query config not found") from exc
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    return QueryItemResponse.model_validate(item)
+    response = QueryItemResponse.model_validate(item)
+    _publish_query_configs_update(request)
+    return response
 
 
 @router.patch("/{config_id}/items/{query_item_id}", response_model=QueryItemResponse)
@@ -159,7 +222,9 @@ async def update_query_item(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     if item.config_id != config_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Query item not found")
-    return QueryItemResponse.model_validate(item)
+    response = QueryItemResponse.model_validate(item)
+    _publish_query_configs_update(request)
+    return response
 
 
 @router.post(
@@ -192,6 +257,7 @@ def delete_query_item(
     if config is None or all(item.query_item_id != query_item_id for item in config.items):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Query item not found")
     DeleteQueryItemUseCase(_repository(request)).execute(query_item_id=query_item_id)
+    _publish_query_configs_update(request)
 
 
 @router.post("/{config_id}/items/{query_item_id}/refresh-detail", response_model=QueryItemResponse)
@@ -211,7 +277,9 @@ async def refresh_query_item_detail(
     except ValueError as exc:
         status_code = status.HTTP_409_CONFLICT if "没有可用于商品信息补全的已登录账号" in str(exc) else status.HTTP_400_BAD_REQUEST
         raise HTTPException(status_code=status_code, detail=str(exc)) from exc
-    return QueryItemResponse.model_validate(item)
+    response = QueryItemResponse.model_validate(item)
+    _publish_query_configs_update(request)
+    return response
 
 
 @router.patch("/{config_id}/modes/{mode_type}", response_model=QueryModeSettingResponse)
@@ -240,4 +308,6 @@ def update_query_mode_setting(
         )
     except KeyError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Query mode not found") from exc
-    return QueryModeSettingResponse.model_validate(setting)
+    response = QueryModeSettingResponse.model_validate(setting)
+    _publish_query_configs_update(request)
+    return response

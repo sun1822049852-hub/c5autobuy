@@ -31,6 +31,7 @@ class QueryRuntimeService:
         purchase_runtime_service=None,
         open_api_binding_sync_service=None,
         stats_sink=None,
+        runtime_update_hub=None,
     ) -> None:
         self._query_config_repository = query_config_repository
         self._query_settings_repository = query_settings_repository
@@ -39,6 +40,7 @@ class QueryRuntimeService:
         self._purchase_runtime_service = purchase_runtime_service
         self._open_api_binding_sync_service = open_api_binding_sync_service
         self._stats_sink = stats_sink
+        self._runtime_update_hub = runtime_update_hub
         self._state_lock = threading.RLock()
         self._runtime = None
         self._retained_runtime = None
@@ -52,6 +54,7 @@ class QueryRuntimeService:
     def start(self, *, config_id: str, resume: bool = False) -> tuple[bool, str]:
         config = None
         runtime_to_stop = None
+        message = ""
         with self._state_lock:
             active_config_id = self._get_active_config_id_locked()
             allow_pending_resume = (
@@ -114,25 +117,28 @@ class QueryRuntimeService:
                 self._bind_purchase_runtime_session(config=config, runtime_session_id=runtime_session_id)
             if not self._purchase_runtime_has_available_accounts():
                 self._mark_waiting_for_purchase_recovery(config, runtime_session_id=runtime_session_id)
-                return True, "查询任务已启动，等待购买账号恢复"
-
-            preserve_allocation_state = retained_runtime is not None
-            if retained_runtime is not None:
-                runtime = retained_runtime
+                message = "查询任务已启动，等待购买账号恢复"
             else:
-                accounts = latest_accounts if latest_accounts is not None else list(self._account_repository.list_accounts())
-                hit_sink = self._resolve_hit_sink()
-                runtime = self._create_runtime(
-                    config,
-                    accounts,
-                    hit_sink=hit_sink,
-                    runtime_session_id=runtime_session_id,
-                )
-            self._runtime = runtime
-            self._retained_runtime = runtime
-            self._start_runtime(runtime, preserve_allocation_state=preserve_allocation_state)
-            self._clear_pending_resume_state()
-            return True, "查询任务已启动"
+                preserve_allocation_state = retained_runtime is not None
+                if retained_runtime is not None:
+                    runtime = retained_runtime
+                else:
+                    accounts = latest_accounts if latest_accounts is not None else list(self._account_repository.list_accounts())
+                    hit_sink = self._resolve_hit_sink()
+                    runtime = self._create_runtime(
+                        config,
+                        accounts,
+                        hit_sink=hit_sink,
+                        runtime_session_id=runtime_session_id,
+                    )
+                self._runtime = runtime
+                self._retained_runtime = runtime
+                self._start_runtime(runtime, preserve_allocation_state=preserve_allocation_state)
+                self._clear_pending_resume_state()
+                message = "查询任务已启动"
+
+        self._publish_runtime_update()
+        return True, message
 
     def stop(self) -> tuple[bool, str]:
         with self._state_lock:
@@ -147,6 +153,7 @@ class QueryRuntimeService:
             runtime.stop()
         self._close_runtime_accounts()
         self._stop_linked_purchase_runtime()
+        self._publish_runtime_update()
         return True, "查询任务已停止"
 
     def refresh_runtime_accounts(self) -> None:
@@ -162,6 +169,8 @@ class QueryRuntimeService:
             refresh_accounts = getattr(runtime, "refresh_accounts", None)
             if callable(refresh_accounts):
                 refresh_accounts(latest_accounts)
+        if runtimes:
+            self._publish_runtime_update()
 
     def get_status(self) -> dict[str, object]:
         with self._state_lock:
@@ -196,12 +205,14 @@ class QueryRuntimeService:
             if not runtime_is_running:
                 if pending_resume:
                     self._pending_resume_config_name = getattr(config, "name", None)
-                    return self._build_apply_query_item_result(
+                    result = self._build_apply_query_item_result(
                         status="applied_waiting_resume",
                         message="当前配置等待恢复运行，已记录热应用",
                         config_id=config_id,
                         query_item_id=query_item_id,
                     )
+                    self._publish_runtime_update()
+                    return result
                 return self._build_apply_query_item_result(
                     status="skipped_inactive",
                     message="当前配置未在运行，已跳过热应用",
@@ -226,12 +237,14 @@ class QueryRuntimeService:
                 config_id=config_id,
                 query_item_id=query_item_id,
             )
-        return self._build_apply_query_item_result(
+        result = self._build_apply_query_item_result(
             status="applied",
             message="当前运行配置已热应用",
             config_id=config_id,
             query_item_id=query_item_id,
         )
+        self._publish_runtime_update()
+        return result
 
     def apply_manual_allocations(
         self,
@@ -266,7 +279,9 @@ class QueryRuntimeService:
         if not callable(apply_manual_allocations):
             raise ValueError("当前运行时不支持运行时分配调整")
         apply_manual_allocations(config=config, items=list(items))
-        return self.get_status()
+        snapshot = self.get_status()
+        self._publish_runtime_update()
+        return snapshot
 
     def apply_runtime_config(self, *, config_id: str) -> dict[str, object]:
         config = self._query_config_repository.get_config(config_id)
@@ -284,14 +299,18 @@ class QueryRuntimeService:
             if not runtime_is_running:
                 if pending_resume:
                     self._pending_resume_config_name = getattr(config, "name", None)
-                    return self.get_status()
+                    snapshot = self.get_status()
+                    self._publish_runtime_update()
+                    return snapshot
                 raise ValueError("当前配置未在运行，无法热应用整份配置")
 
         apply_config = getattr(runtime, "apply_config", None)
         if not callable(apply_config):
             raise ValueError("当前运行时不支持整份配置热应用")
         apply_config(config)
-        return self.get_status()
+        snapshot = self.get_status()
+        self._publish_runtime_update()
+        return snapshot
 
     def apply_query_settings(self) -> None:
         with self._state_lock:
@@ -306,6 +325,8 @@ class QueryRuntimeService:
             if self._has_pending_resume_state():
                 self._pending_resume_config_name = runtime_config.name
         if runtime is None:
+            if self._has_pending_resume_state():
+                self._publish_runtime_update()
             return
         apply_query_settings = getattr(runtime, "apply_query_settings", None)
         if not callable(apply_query_settings):
@@ -314,6 +335,7 @@ class QueryRuntimeService:
             apply_query_settings(config=runtime_config)
         except Exception:
             return
+        self._publish_runtime_update()
 
     def _has_running_runtime(self) -> bool:
         with self._state_lock:
@@ -901,6 +923,7 @@ class QueryRuntimeService:
             self._mark_waiting_for_purchase_recovery(config, runtime_session_id=runtime_session_id)
         if runtime is not None:
             runtime.stop()
+        self._publish_runtime_update()
 
     def _resume_after_purchase_recovered(self) -> None:
         with self._state_lock:
@@ -911,6 +934,14 @@ class QueryRuntimeService:
             return
         self.start(config_id=config_id, resume=True)
 
+    def _publish_runtime_update(self) -> None:
+        if self._runtime_update_hub is None:
+            return
+        self._runtime_update_hub.publish(
+            event="query_runtime.updated",
+            payload=self.get_status(),
+        )
+
     def _handle_runtime_event(self, event: dict[str, object]) -> None:
         if not isinstance(event, dict):
             return
@@ -920,14 +951,13 @@ class QueryRuntimeService:
         error = str(event.get("error") or "").strip()
         if error == "Not login":
             self._mark_account_not_login(account_id=account_id, error=error)
-            return
-        if is_api_key_ip_invalid_error(
+        elif is_api_key_ip_invalid_error(
             error=error,
             response_text=str(event.get("response_text") or "") or None,
             status_code=event.get("status_code"),
         ):
             self._mark_account_api_key_ip_invalid(account_id=account_id, error=error)
-            return
+        self._publish_runtime_update()
 
     def _mark_waiting_for_purchase_recovery(
         self,

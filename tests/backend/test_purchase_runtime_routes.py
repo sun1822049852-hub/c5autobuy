@@ -194,6 +194,20 @@ async def test_purchase_runtime_ui_preferences_clears_deleted_config(client):
     }
 
 
+async def test_delete_selected_query_config_bumps_runtime_update_version(client, app):
+    config_id = await _create_query_config(client)
+    await client.put(
+        "/purchase-runtime/ui-preferences",
+        json={"selected_config_id": config_id},
+    )
+    version_before_delete = app.state.runtime_update_hub.current_version()
+
+    delete_response = await client.delete(f"/query-configs/{config_id}")
+
+    assert delete_response.status_code == 204
+    assert app.state.runtime_update_hub.current_version() == version_before_delete + 2
+
+
 async def _wait_until_status(client, predicate, *, timeout: float = 1.0, interval: float = 0.01):
     deadline = asyncio.get_running_loop().time() + timeout
     while True:
@@ -205,7 +219,9 @@ async def _wait_until_status(client, predicate, *, timeout: float = 1.0, interva
         await asyncio.sleep(interval)
 async def test_purchase_runtime_end_to_end_handles_hit(client, app):
     class StubExecutionGateway:
-        async def execute(self, *, account, batch, selected_steam_id: str):
+        async def execute(self, *, account, batch, selected_steam_id: str, on_execute_started=None, **_kwargs):
+            if callable(on_execute_started):
+                on_execute_started()
             return PurchaseExecutionResult.success(purchased_count=1)
 
     app.state.account_repository.create_account(_build_account("a1"))

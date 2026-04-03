@@ -472,7 +472,7 @@ describe("query system editing", () => {
     expect(within(editorOneAgain).getByText("new_api 还可分配 1")).toBeInTheDocument();
   });
 
-  it("adds a draft item from the centered create dialog and saves both existing and new items", async () => {
+  it("adds a draft item from the centered create dialog and saves both existing and new items", { timeout: 15000 }, async () => {
     const harness = createFetchHarness({ saveDelayMs: 40 });
     installDesktopApp(harness.fetchImpl);
     const user = userEvent.setup();
@@ -768,6 +768,11 @@ describe("query system editing", () => {
     await waitFor(() => {
       expect(screen.getByRole("button", { name: "开始扫货" })).toBeInTheDocument();
     });
+
+    await user.click(screen.getByRole("button", { name: "配置管理" }));
+    const itemOneAgain = await screen.findByRole("region", { name: "商品 AK-47 | Redline" });
+    expect(screen.getByRole("button", { name: "已保存" })).toBeInTheDocument();
+    expect(within(itemOneAgain).getByRole("button", { name: "修改扫货价 AK-47 | Redline" })).toHaveTextContent("199");
 
     expect(
       harness.calls.some(

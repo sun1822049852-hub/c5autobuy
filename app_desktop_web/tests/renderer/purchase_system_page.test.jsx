@@ -2,11 +2,12 @@
 
 import "@testing-library/jest-dom/vitest";
 
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { App } from "../../src/App.jsx";
+import { createAppRuntimeStore } from "../../src/runtime/app_runtime_store.js";
 
 
 const ALL_MODES = ["new_api", "fast_api", "token"];
@@ -633,7 +634,227 @@ function createFetchHarness({
 }
 
 
+function buildHydratedPurchaseRuntimeStore({
+  runtimeStatus = buildPurchaseRuntimeStatus(),
+  uiPreferences = { selected_config_id: "cfg-1", updated_at: "2026-03-22T10:00:00" },
+  runtimeSettings = { per_batch_ip_fanout_limit: 1, updated_at: null },
+  configList = QUERY_CONFIGS,
+  configDetailsById,
+} = {}) {
+  const store = createAppRuntimeStore();
+
+  store.applyBootstrap({
+    purchaseSystem: {
+      server: {
+        runtimeStatus,
+        uiPreferences,
+        runtimeSettings,
+      },
+    },
+  });
+  store.patchPurchaseUi({
+    configList,
+    configDetailsById: {
+      "cfg-1": buildQueryConfigDetail("cfg-1"),
+      "cfg-2": buildQueryConfigDetail("cfg-2"),
+      ...(configDetailsById || {}),
+    },
+  });
+
+  return store;
+}
+
+
+function findPurchasePayloadCalls(calls) {
+  return calls.filter((call) => call.method === "GET" && (
+    call.pathname === "/query-configs"
+    || call.pathname === "/purchase-runtime/ui-preferences"
+    || call.pathname === "/runtime-settings/purchase"
+    || /^\/query-configs\/[^/]+$/.test(call.pathname)
+  ));
+}
+
+
+function countPurchaseStatusCalls(calls) {
+  return calls.filter((call) => (
+    call.method === "GET" && call.pathname === "/purchase-runtime/status"
+  )).length;
+}
+
+
 describe("purchase system page", () => {
+  it("bootstraps missing purchase slices when serverHydrated is true but ui/server fragments are partial", async () => {
+    const harness = createFetchHarness({
+      initialStatus: buildPurchaseRuntimeStatus({
+        running: true,
+        message: "运行中",
+        active_query_config: {
+          config_id: "cfg-1",
+          config_name: "白天配置",
+          state: "running",
+          message: "运行中",
+        },
+      }),
+    });
+    const runtimeStore = createAppRuntimeStore();
+    runtimeStore.applyBootstrap({
+      purchaseSystem: {
+        server: {
+          runtimeStatus: buildPurchaseRuntimeStatus({
+            running: true,
+            message: "运行中",
+            active_query_config: {
+              config_id: "cfg-1",
+              config_name: "白天配置",
+              state: "running",
+              message: "运行中",
+            },
+          }),
+        },
+      },
+    });
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App runtimeStore={runtimeStore} />);
+    await screen.findByText("C5 账号中心");
+
+    await user.click(screen.getByRole("button", { name: "扫货系统" }));
+    const commandDeck = await screen.findByRole("region", { name: "扫货运行控制台" });
+
+    await waitFor(() => {
+      expect(harness.calls).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ method: "GET", pathname: "/query-configs" }),
+          expect.objectContaining({ method: "GET", pathname: "/purchase-runtime/ui-preferences" }),
+          expect.objectContaining({ method: "GET", pathname: "/runtime-settings/purchase" }),
+        ]),
+      );
+    });
+    expect(within(commandDeck).getByText("白天配置")).toBeInTheDocument();
+  });
+
+  it("merges selected config detail incrementally without overwriting existing configDetailsById entries", async () => {
+    const harness = createFetchHarness();
+    const runtimeStore = createAppRuntimeStore();
+    runtimeStore.applyBootstrap({
+      purchaseSystem: {
+        server: {
+          runtimeStatus: buildPurchaseRuntimeStatus(),
+          uiPreferences: { selected_config_id: "cfg-1", updated_at: "2026-03-22T10:00:00" },
+          runtimeSettings: { per_batch_ip_fanout_limit: 1, updated_at: null },
+        },
+      },
+    });
+    runtimeStore.patchPurchaseUi({
+      selectedConfigId: "cfg-1",
+      configList: QUERY_CONFIGS,
+      configDetailsById: {
+        "cfg-2": buildQueryConfigDetail("cfg-2"),
+      },
+    });
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App runtimeStore={runtimeStore} />);
+    await screen.findByText("C5 账号中心");
+    await user.click(screen.getByRole("button", { name: "扫货系统" }));
+    await screen.findByRole("region", { name: "扫货运行控制台" });
+
+    await waitFor(() => {
+      const detailsById = runtimeStore.getSnapshot().purchaseSystem.ui.configDetailsById;
+      expect(detailsById?.["cfg-1"]?.config_id).toBe("cfg-1");
+      expect(detailsById?.["cfg-2"]?.config_id).toBe("cfg-2");
+    });
+  });
+
+  it("does not immediately double-fetch purchase runtime status on first active entry", async () => {
+    const harness = createFetchHarness();
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "扫货系统" }));
+    await screen.findByRole("region", { name: "扫货运行控制台" });
+
+    await waitFor(() => {
+      expect(countPurchaseStatusCalls(harness.calls)).toBe(1);
+    });
+    await new Promise((resolve) => {
+      setTimeout(resolve, 250);
+    });
+    expect(countPurchaseStatusCalls(harness.calls)).toBe(1);
+  });
+
+  it("does not refetch full purchase payload when entering and re-entering with hydrated runtime store", async () => {
+    const harness = createFetchHarness();
+    const runtimeStore = buildHydratedPurchaseRuntimeStore();
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App runtimeStore={runtimeStore} />);
+
+    await screen.findByText("C5 账号中心");
+    expect(findPurchasePayloadCalls(harness.calls)).toHaveLength(0);
+
+    await user.click(screen.getByRole("button", { name: "扫货系统" }));
+    const commandDeck = await screen.findByRole("region", { name: "扫货运行控制台" });
+    expect(within(commandDeck).getByText("白天配置")).toBeInTheDocument();
+    expect(findPurchasePayloadCalls(harness.calls)).toHaveLength(0);
+
+    await user.click(screen.getByRole("button", { name: "账号中心" }));
+    await screen.findByText("C5 账号中心");
+
+    await user.click(screen.getByRole("button", { name: "扫货系统" }));
+    expect(await screen.findByRole("region", { name: "扫货运行控制台" })).toBeInTheDocument();
+    expect(findPurchasePayloadCalls(harness.calls)).toHaveLength(0);
+  });
+
+  it("keeps unsaved purchase settings draft across tab switches and preserves it over hidden-page store pushes", async () => {
+    const harness = createFetchHarness();
+    const runtimeStore = buildHydratedPurchaseRuntimeStore();
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App runtimeStore={runtimeStore} />);
+    await screen.findByText("C5 账号中心");
+
+    await user.click(screen.getByRole("button", { name: "扫货系统" }));
+    const commandDeck = await screen.findByRole("region", { name: "扫货运行控制台" });
+    await user.click(within(commandDeck).getByRole("button", { name: "购买设置" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "购买设置" });
+    const panel = within(dialog).getByRole("region", { name: "购买设置" });
+    const input = within(panel).getByLabelText("单批次单IP并发购买数");
+    fireEvent.change(input, { target: { value: "3" } });
+    expect(input).toHaveValue(3);
+
+    const purchasePayloadCallsBeforeHide = findPurchasePayloadCalls(harness.calls).length;
+
+    await user.click(screen.getByRole("button", { name: "账号中心" }));
+    await screen.findByText("C5 账号中心");
+
+    act(() => {
+      runtimeStore.applyPurchaseSystemServer({
+        runtimeStatus: buildPurchaseRuntimeStatus({
+          running: false,
+          active_query_config: null,
+          message: "推送后运行态",
+        }),
+        runtimeSettings: {
+          per_batch_ip_fanout_limit: 5,
+          updated_at: "2026-03-31T20:30:00",
+        },
+      });
+    });
+
+    await user.click(screen.getByRole("button", { name: "扫货系统" }));
+    const restoredDialog = await screen.findByRole("dialog", { name: "购买设置" });
+    const restoredPanel = within(restoredDialog).getByRole("region", { name: "购买设置" });
+    expect(within(restoredPanel).getByLabelText("单批次单IP并发购买数")).toHaveValue(3);
+    expect(findPurchasePayloadCalls(harness.calls)).toHaveLength(purchasePayloadCallsBeforeHide);
+  });
+
   it("switches into purchase system page", async () => {
     const harness = createFetchHarness();
     installDesktopApp(harness.fetchImpl);
@@ -1084,6 +1305,49 @@ describe("purchase system page", () => {
     ).toBe(true);
   });
 
+  it("discards page-level runtime drafts when leaving the page without saving", async () => {
+    const harness = createFetchHarness({
+      initialStatus: buildPurchaseRuntimeStatus({
+        running: true,
+        message: "运行中",
+        active_query_config: {
+          config_id: "cfg-1",
+          config_name: "白天配置",
+          state: "running",
+          message: "运行中",
+        },
+      }),
+    });
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "扫货系统" }));
+
+    const itemToggle = await screen.findByRole("button", { name: "AK-47 | Redline" });
+    await user.click(itemToggle);
+    await user.click(screen.getAllByRole("button", { name: "浏览器查询器 增加实际分配" })[0]);
+    expect(screen.getByRole("button", { name: "提交更改" })).not.toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "账号中心" }));
+
+    const leaveDialog = await screen.findByRole("dialog", { name: "未保存修改" });
+    await user.click(within(leaveDialog).getByRole("button", { name: "不保存" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("C5 账号中心")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "扫货系统" }));
+
+    expect(await screen.findByRole("button", { name: "提交更改" })).toBeDisabled();
+    expect(
+      harness.calls.some((call) => (
+        call.method === "PUT" && call.pathname === "/query-runtime/configs/cfg-1/manual-assignments"
+      )),
+    ).toBe(false);
+  });
+
   it("prompts before switching config and discards runtime drafts when the user chooses not to save", async () => {
     const harness = createFetchHarness({
       initialStatus: buildPurchaseRuntimeStatus({
@@ -1131,6 +1395,35 @@ describe("purchase system page", () => {
         call.method === "POST" && call.pathname === "/purchase-runtime/start" && call.body?.config_id === "cfg-2"
       )),
     ).toBe(true);
+  });
+
+  it("stops polling purchase runtime status while the page is hidden", async () => {
+    const harness = createFetchHarness();
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "扫货系统" }));
+    await screen.findByRole("region", { name: "扫货运行控制台" });
+
+    const purchaseStatusCallsBeforeHide = harness.calls.filter((call) => (
+      call.method === "GET" && call.pathname === "/purchase-runtime/status"
+    )).length;
+
+    await user.click(screen.getByRole("button", { name: "账号中心" }));
+    await waitFor(() => {
+      expect(screen.getByText("C5 账号中心")).toBeInTheDocument();
+    });
+
+    await new Promise((resolve) => {
+      setTimeout(resolve, 1800);
+    });
+
+    const purchaseStatusCallsAfterHide = harness.calls.filter((call) => (
+      call.method === "GET" && call.pathname === "/purchase-runtime/status"
+    )).length;
+
+    expect(purchaseStatusCallsAfterHide).toBe(purchaseStatusCallsBeforeHide);
   });
 
   it("prefers persisted page selection over the active runtime config", async () => {

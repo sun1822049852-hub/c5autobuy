@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useState } from "react";
 
 import { createAccountCenterClient } from "./api/account_center_client.js";
 import { getDesktopBootstrapConfig } from "./desktop/bridge.js";
@@ -22,15 +22,20 @@ import {
   writeAppShellState,
 } from "./features/shell/app_shell_state.js";
 import { UnsavedChangesDialog } from "./features/shell/unsaved_changes_dialog.jsx";
+import { AppRuntimeProvider } from "./runtime/app_runtime_provider.jsx";
+import { createAppRuntimeStore } from "./runtime/app_runtime_store.js";
+import { createRuntimeConnectionManager } from "./runtime/runtime_connection_manager.js";
 
 
 const EMPTY_QUERY_SYSTEM_LEAVE_STATE = {
   canPromptOnLeave: false,
+  requestDiscard: async () => true,
   requestSave: async () => false,
 };
 
 const EMPTY_PURCHASE_SYSTEM_LEAVE_STATE = {
   canPromptOnLeave: false,
+  requestDiscard: async () => true,
   requestSave: async () => false,
 };
 
@@ -42,19 +47,29 @@ const EMPTY_NAV_PROMPT = {
 };
 
 
-export function App() {
+export function App({ runtimeStore }) {
   const [initialAppShellState] = useState(() => readAppShellState());
   const [bootstrapConfig] = useState(() => getDesktopBootstrapConfig());
+  const [fallbackRuntimeStore] = useState(() => createAppRuntimeStore());
   const [activeItem, setActiveItem] = useState(initialAppShellState.activeItem);
+  const [mountedKeepAliveItems, setMountedKeepAliveItems] = useState(() => ({
+    "query-system": initialAppShellState.activeItem === "query-system",
+    "purchase-system": initialAppShellState.activeItem === "purchase-system",
+  }));
   const [reloadNotice] = useState(() => initializeRendererReloadNotice({
     activeItem: initialAppShellState.activeItem,
   }));
   const [navPrompt, setNavPrompt] = useState(EMPTY_NAV_PROMPT);
   const [querySystemLeaveState, setQuerySystemLeaveState] = useState(EMPTY_QUERY_SYSTEM_LEAVE_STATE);
   const [purchaseSystemLeaveState, setPurchaseSystemLeaveState] = useState(EMPTY_PURCHASE_SYSTEM_LEAVE_STATE);
+  const appRuntimeStore = runtimeStore ?? fallbackRuntimeStore;
   const [client] = useState(() => createAccountCenterClient({
     apiBaseUrl: bootstrapConfig.apiBaseUrl,
     pollIntervalMs: 25,
+  }));
+  const [runtimeConnectionManager] = useState(() => createRuntimeConnectionManager({
+    client,
+    store: appRuntimeStore,
   }));
   const diagnostics = useSidebarDiagnostics(client, {
     enabled: activeItem === "diagnostics",
@@ -86,6 +101,18 @@ export function App() {
     logRendererDiagnostic("renderer_reload_detected", reloadNotice);
   }, [reloadNotice]);
 
+  useLayoutEffect(() => {
+    if (bootstrapConfig.backendMode !== "remote" || bootstrapConfig.backendStatus !== "ready") {
+      return;
+    }
+
+    void runtimeConnectionManager.bootstrap().catch(() => {});
+  }, [
+    bootstrapConfig.backendMode,
+    bootstrapConfig.backendStatus,
+    runtimeConnectionManager,
+  ]);
+
   useEffect(() => {
     function handleWindowError(event) {
       logRendererDiagnostic("renderer_window_error", buildWindowErrorDetails(event));
@@ -112,6 +139,20 @@ export function App() {
       ? purchaseSystemLeaveState
       : EMPTY_QUERY_SYSTEM_LEAVE_STATE;
 
+  const activateItem = useCallback((nextItem) => {
+    if (nextItem === "query-system" || nextItem === "purchase-system") {
+      setMountedKeepAliveItems((current) => (
+        current[nextItem]
+          ? current
+          : {
+            ...current,
+            [nextItem]: true,
+          }
+      ));
+    }
+    setActiveItem(nextItem);
+  }, []);
+
   const handleSelectItem = useCallback((nextItem) => {
     if (!nextItem || nextItem === activeItem) {
       return;
@@ -127,17 +168,22 @@ export function App() {
       return;
     }
 
-    setActiveItem(nextItem);
-  }, [activeItem, activeLeaveState]);
+    activateItem(nextItem);
+  }, [activeItem, activeLeaveState, activateItem]);
 
-  const handleDiscardAndLeave = useCallback(() => {
+  const handleDiscardAndLeave = useCallback(async () => {
     if (!navPrompt.nextItem) {
       return;
     }
 
-    setActiveItem(navPrompt.nextItem);
+    const discarded = await activeLeaveState.requestDiscard();
+    if (!discarded) {
+      return;
+    }
+
+    activateItem(navPrompt.nextItem);
     setNavPrompt(EMPTY_NAV_PROMPT);
-  }, [navPrompt.nextItem]);
+  }, [activateItem, activeLeaveState, navPrompt.nextItem]);
 
   const handleSaveAndLeave = useCallback(async () => {
     if (!navPrompt.nextItem) {
@@ -161,24 +207,29 @@ export function App() {
       return;
     }
 
-    setActiveItem(nextItem);
+    activateItem(nextItem);
     setNavPrompt(EMPTY_NAV_PROMPT);
-  }, [activeLeaveState, navPrompt.nextItem]);
+  }, [activateItem, activeLeaveState, navPrompt.nextItem]);
 
   return (
-    <>
+    <AppRuntimeProvider store={appRuntimeStore}>
+      <>
       <AppShell
         activeItem={activeItem}
         onSelect={handleSelectItem}
         reloadNotice={reloadNotice}
       >
-        {activeItem === "query-system" ? (
-          <QuerySystemPage
-            bootstrapConfig={bootstrapConfig}
-            client={client}
-            onLeaveStateChange={handleQuerySystemLeaveStateChange}
-          />
-        ) : activeItem === "query-stats" ? (
+        {mountedKeepAliveItems["query-system"] ? (
+          <div hidden={activeItem !== "query-system"}>
+            <QuerySystemPage
+              bootstrapConfig={bootstrapConfig}
+              client={client}
+              isActive={activeItem === "query-system"}
+              onLeaveStateChange={handleQuerySystemLeaveStateChange}
+            />
+          </div>
+        ) : null}
+        {activeItem === "query-stats" ? (
           <QueryStatsPage
             bootstrapConfig={bootstrapConfig}
             client={client}
@@ -188,25 +239,42 @@ export function App() {
             bootstrapConfig={bootstrapConfig}
             client={client}
           />
-        ) : activeItem === "purchase-system" ? (
-          <PurchaseSystemPage
-            bootstrapConfig={bootstrapConfig}
-            client={client}
-            onLeaveStateChange={handlePurchaseSystemLeaveStateChange}
-          />
-        ) : activeItem === "diagnostics" ? (
+        ) : null}
+        {mountedKeepAliveItems["purchase-system"] ? (
+          <div hidden={activeItem !== "purchase-system"}>
+            <PurchaseSystemPage
+              bootstrapConfig={bootstrapConfig}
+              client={client}
+              isActive={activeItem === "purchase-system"}
+              onLeaveStateChange={handlePurchaseSystemLeaveStateChange}
+            />
+          </div>
+        ) : null}
+        {activeItem === "diagnostics" ? (
           <DiagnosticsPanel
             error={diagnostics.error}
             isLoading={diagnostics.isLoading}
             isRefreshing={diagnostics.isRefreshing}
             snapshot={diagnostics.snapshot}
           />
-        ) : (
+        ) : null}
+        {activeItem === "account-center" ? (
           <AccountCenterPage
             bootstrapConfig={bootstrapConfig}
             client={client}
           />
-        )}
+        ) : null}
+        {activeItem !== "query-system"
+        && activeItem !== "query-stats"
+        && activeItem !== "account-capability-stats"
+        && activeItem !== "purchase-system"
+        && activeItem !== "diagnostics"
+        && activeItem !== "account-center" ? (
+          <AccountCenterPage
+            bootstrapConfig={bootstrapConfig}
+            client={client}
+          />
+        ) : null}
       </AppShell>
 
       <UnsavedChangesDialog
@@ -216,6 +284,7 @@ export function App() {
         onDiscard={handleDiscardAndLeave}
         onSave={handleSaveAndLeave}
       />
-    </>
+      </>
+    </AppRuntimeProvider>
   );
 }
