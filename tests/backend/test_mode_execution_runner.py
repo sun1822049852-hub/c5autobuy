@@ -477,6 +477,63 @@ def test_mode_runner_preserves_dedicated_bindings_on_restart_when_requested():
     assert second_snapshot["item_rows"][1]["actual_dedicated_count"] == 0
 
 
+async def test_mode_runner_resets_counts_on_restart_even_within_same_day():
+    from app_backend.infrastructure.query.runtime.mode_runner import ModeRunner
+    from app_backend.infrastructure.query.runtime.runtime_events import QueryExecutionEvent
+
+    class FakeWorker:
+        def __init__(self, account: Account) -> None:
+            self.account = account
+
+        def snapshot(self) -> dict[str, object]:
+            return {
+                "account_id": self.account.account_id,
+                "active": True,
+                "eligible": True,
+                "disabled_reason": None,
+                "last_query_at": None,
+                "last_success_at": None,
+                "last_error": None,
+            }
+
+        async def run_once(self, query_item: QueryItem) -> QueryExecutionEvent:
+            return QueryExecutionEvent(
+                timestamp="2026-03-16T10:00:00",
+                level="info",
+                mode_type="new_api",
+                account_id=self.account.account_id,
+                query_item_id=query_item.query_item_id,
+                message="查询完成",
+                match_count=1,
+                latency_ms=12.0,
+                error=None,
+            )
+
+    runner = ModeRunner(
+        build_mode("new_api"),
+        [build_account("a1", api_key="api-1")],
+        query_items=[build_item("1380979899390261111")],
+        worker_factory=lambda mode_type, account: FakeWorker(account),
+        now_provider=lambda: datetime(2026, 3, 16, 10, 0, 0),
+    )
+
+    runner.start()
+    await runner.run_once()
+
+    before_restart = runner.snapshot()
+    assert before_restart["query_count"] == 1
+    assert before_restart["found_count"] == 1
+    assert before_restart["item_rows"][0]["query_count"] == 1
+
+    runner.stop()
+    runner.start()
+    after_restart = runner.snapshot()
+
+    assert after_restart["query_count"] == 0
+    assert after_restart["found_count"] == 0
+    assert after_restart["item_rows"][0]["query_count"] == 0
+
+
 async def test_mode_runner_run_loop_executes_cycle_and_stops_on_signal():
     import asyncio
 
@@ -732,6 +789,61 @@ async def test_mode_runner_keeps_recent_hit_and_error_events():
     assert snapshot["recent_events"][1]["total_wear_sum"] == 0.1234
     assert snapshot["recent_events"][1]["product_list"][0]["productId"] == "p-1"
     assert snapshot["recent_events"][1]["query_item_name"] == "商品-1380979899390261111"
+
+
+async def test_mode_runner_limits_recent_events_to_twenty_entries():
+    from app_backend.infrastructure.query.runtime.mode_runner import ModeRunner
+    from app_backend.infrastructure.query.runtime.runtime_events import QueryExecutionEvent
+
+    class FakeWorker:
+        def __init__(self, account: Account) -> None:
+            self.account = account
+            self._events = [
+                QueryExecutionEvent(
+                    timestamp=f"2026-03-16T10:00:{index:02d}",
+                    level="info",
+                    mode_type="new_api",
+                    account_id=self.account.account_id,
+                    query_item_id="1380979899390261111",
+                    query_item_name="商品-1380979899390261111",
+                    message=f"查询完成-{index}",
+                    match_count=1,
+                    latency_ms=10.0 + index,
+                    error=None,
+                )
+                for index in range(25)
+            ]
+
+        def snapshot(self) -> dict[str, object]:
+            return {
+                "account_id": self.account.account_id,
+                "active": True,
+                "eligible": True,
+                "disabled_reason": None,
+                "last_query_at": None,
+                "last_success_at": None,
+                "last_error": None,
+            }
+
+        async def run_once(self, query_item: QueryItem) -> QueryExecutionEvent:
+            return self._events.pop(0)
+
+    runner = ModeRunner(
+        build_mode("new_api"),
+        [build_account("a1", api_key="api-1")],
+        query_items=[build_item("1380979899390261111")],
+        worker_factory=lambda mode_type, account: FakeWorker(account),
+    )
+
+    runner.start()
+    for _ in range(25):
+        await runner.run_once()
+
+    snapshot = runner.snapshot()
+
+    assert len(snapshot["recent_events"]) == 20
+    assert snapshot["recent_events"][0]["message"] == "查询完成-24"
+    assert snapshot["recent_events"][-1]["message"] == "查询完成-5"
 
 
 def test_mode_runner_apply_mode_setting_forwards_item_cooldown_strategy_to_scheduler():

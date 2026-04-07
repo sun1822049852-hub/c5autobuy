@@ -3,21 +3,9 @@ from __future__ import annotations
 import asyncio
 import inspect
 import random
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
-
-# 北京时间时区 (UTC+8)
-_TZ_CST = timezone(timedelta(hours=8))
-
-
-def _cst_date_str(dt: datetime | None = None) -> str:
-    """返回北京时间的日期字符串 YYYY-MM-DD，用于跨天检测。"""
-    now = dt if dt is not None else datetime.now(tz=_TZ_CST)
-    if now.tzinfo is None:
-        # 本地 naive datetime 当作北京时间处理
-        now = now.replace(tzinfo=_TZ_CST)
-    return now.astimezone(_TZ_CST).strftime("%Y-%m-%d")
 
 
 from app_backend.domain.models.query_config import QueryItem, QueryModeSetting
@@ -34,7 +22,7 @@ from .window_scheduler import WindowScheduler
 
 
 class ModeRunner:
-    _RECENT_EVENT_LIMIT = 1000
+    _RECENT_EVENT_LIMIT = 20
 
     def __init__(
         self,
@@ -87,32 +75,19 @@ class ModeRunner:
         self._recent_events: list[dict[str, object]] = []
         self._worker_cooldown_until: dict[str, float | None] = {}
         self._item_query_counts: dict[str, int] = {}
-        # 当天北京日期，用于跨天自动清零
-        self._count_date: str = _cst_date_str(self._as_datetime(self._now_provider()))
 
     def start(self, *, preserve_allocation_state: bool = False) -> None:
         self._started = True
         self._has_run_cycle = False
+        self._query_count = 0
+        self._found_count = 0
         self._last_error = None
         self._recent_events = []
         self._worker_cooldown_until = {}
-
-        # ── 跨天检测（北京时间）：仅跨天时清零计数，同天保留 ──
-        today = _cst_date_str(self._as_datetime(self._now_provider()))
-        if today != self._count_date:
-            self._query_count = 0
-            self._found_count = 0
-            self._item_query_counts = {
-                str(query_item.query_item_id): 0
-                for query_item in self._query_items
-            }
-            self._count_date = today
-        else:
-            # 同天：补全新 item 的计数槽位，已有槽位保留
-            for query_item in self._query_items:
-                item_id = str(query_item.query_item_id)
-                if item_id not in self._item_query_counts:
-                    self._item_query_counts[item_id] = 0
+        self._item_query_counts = {
+            str(query_item.query_item_id): 0
+            for query_item in self._query_items
+        }
 
         if not preserve_allocation_state:
             self._query_item_scheduler.reset()
