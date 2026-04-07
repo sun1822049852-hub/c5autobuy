@@ -32,6 +32,7 @@ export function QueryWorkbenchHeader({
   saveDisabled,
   saveError,
   saveLabel,
+  saveNotice,
 }) {
   return (
     <section className="query-workbench-header">
@@ -71,7 +72,21 @@ export function QueryWorkbenchHeader({
 
       {saveError ? (
         <div className="query-workbench-header__footer">
-          <div className="query-workbench-header__save-message is-danger">{saveError}</div>
+          <div
+            className="query-workbench-header__save-message is-danger"
+            role="status"
+          >
+            {saveError}
+          </div>
+        </div>
+      ) : saveNotice ? (
+        <div className="query-workbench-header__footer">
+          <div
+            className="query-workbench-header__save-message is-success"
+            role="status"
+          >
+            {saveNotice}
+          </div>
         </div>
       ) : null}
     </section>

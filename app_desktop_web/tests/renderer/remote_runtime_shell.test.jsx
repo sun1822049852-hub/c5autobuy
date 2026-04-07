@@ -35,6 +35,41 @@ function installRemoteDesktopApp(fetchImpl) {
 }
 
 
+class FakeWebSocket {
+  static instances = [];
+
+  constructor(url) {
+    this.url = url;
+    this.readyState = 0;
+    this.onopen = null;
+    this.onmessage = null;
+    this.onerror = null;
+    this.onclose = null;
+    FakeWebSocket.instances.push(this);
+  }
+
+  emitOpen() {
+    this.readyState = 1;
+    this.onopen?.();
+  }
+
+  emitMessage(payload) {
+    this.onmessage?.({
+      data: JSON.stringify(payload),
+    });
+  }
+
+  emitError() {
+    this.onerror?.(new Event("error"));
+  }
+
+  close() {
+    this.readyState = 3;
+    this.onclose?.(new CloseEvent("close"));
+  }
+}
+
+
 function createFetchHarness() {
   const calls = [];
   const queryConfigs = [
@@ -218,6 +253,7 @@ describe("remote runtime shell keep alive", () => {
     window.sessionStorage.clear();
     resetAppShellRuntimeForTests();
     delete window.desktopApp;
+    FakeWebSocket.instances = [];
   });
 
   it("keeps query and purchase local dialog state after tab switches", { timeout: 10000 }, async () => {
@@ -268,5 +304,58 @@ describe("remote runtime shell keep alive", () => {
 
     const restoredPurchaseDialog = await screen.findByRole("dialog", { name: "购买设置" });
     expect(within(restoredPurchaseDialog).getByLabelText("单批次单IP并发购买数")).toHaveValue(3);
+  });
+
+  it("updates query runtime status from remote runtime websocket events", async () => {
+    const harness = createFetchHarness();
+    installRemoteDesktopApp(harness.fetchImpl);
+    const originalWebSocket = window.WebSocket;
+    window.WebSocket = FakeWebSocket;
+    const user = userEvent.setup();
+
+    try {
+      render(<App />);
+
+      await screen.findByText("C5 账号中心");
+
+      await waitFor(() => {
+        expect(
+          FakeWebSocket.instances.some((instance) => instance.url.includes("/ws/runtime")),
+        ).toBe(true);
+      });
+      const runtimeSocket = FakeWebSocket.instances.find((instance) => instance.url.includes("/ws/runtime"));
+      expect(runtimeSocket?.url).toBe("wss://api.example.com/ws/runtime?since_version=5");
+
+      runtimeSocket?.emitOpen();
+      runtimeSocket?.emitMessage({
+        version: 6,
+        event: "query_runtime.updated",
+        updated_at: "2026-03-31T20:00:01.000Z",
+        payload: {
+          running: true,
+          config_id: "cfg-1",
+          config_name: "白天配置",
+          message: "运行中",
+          account_count: 1,
+          started_at: "2026-03-31T20:00:01.000Z",
+          stopped_at: null,
+          total_query_count: 12,
+          total_found_count: 1,
+          modes: {},
+          group_rows: [],
+          recent_events: [],
+          item_rows: [],
+        },
+      });
+
+      await user.click(screen.getByRole("button", { name: "配置管理" }));
+
+      const currentConfigSection = (await screen.findByText("当前配置")).closest("section");
+      expect(currentConfigSection).not.toBeNull();
+      expect(await screen.findByRole("heading", { name: "白天配置" })).toBeInTheDocument();
+      expect(within(currentConfigSection).getAllByText("运行中").length).toBeGreaterThan(0);
+    } finally {
+      window.WebSocket = originalWebSocket;
+    }
   });
 });

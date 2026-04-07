@@ -103,14 +103,17 @@ export function QueryItemEditDialog({
               />
             </label>
 
-            <label className="query-item-dialog__checkbox">
-              <input
-                type="checkbox"
-                checked={Boolean(draft.manualPaused)}
-                aria-label="手动暂停"
-                onChange={(event) => onFieldChange("manualPaused", event.target.checked)}
-              />
-              <span>手动暂停</span>
+            <label className="form-field">
+              <span className="form-label">暂停状态</span>
+              <span className="query-item-dialog__checkbox">
+                <input
+                  type="checkbox"
+                  checked={Boolean(draft.manualPaused)}
+                  aria-label="手动暂停"
+                  onChange={(event) => onFieldChange("manualPaused", event.target.checked)}
+                />
+                <span>手动暂停</span>
+              </span>
             </label>
           </div>
 

@@ -51,8 +51,117 @@ function buildIdleRuntimeStatus() {
   };
 }
 
+function buildRunningRuntimeStatus({
+  configId = "cfg-1",
+  configName = "白天配置",
+  queryCount = 74,
+} = {}) {
+  return {
+    ...buildIdleRuntimeStatus(),
+    running: true,
+    config_id: configId,
+    config_name: configName,
+    message: "运行中",
+    total_query_count: queryCount,
+    item_rows: [
+      {
+        query_item_id: "item-1",
+        item_name: "P90 | 满晕作品 (久经沙场)",
+        max_price: 0.4,
+        min_wear: 0.15,
+        max_wear: 0.28,
+        detail_min_wear: 0.15,
+        detail_max_wear: 0.28,
+        manual_paused: false,
+        query_count: queryCount,
+        modes: {
+          new_api: {
+            mode_type: "new_api",
+            target_dedicated_count: 2,
+            actual_dedicated_count: 2,
+            status: "running",
+            status_message: "运行中",
+          },
+        },
+      },
+    ],
+  };
+}
 
-function createFetchHarness({ initialRuntimeStatus } = {}) {
+function buildIdlePurchaseStatus() {
+  return {
+    running: false,
+    message: "未运行",
+    started_at: null,
+    stopped_at: null,
+    queue_size: 0,
+    active_account_count: 0,
+    total_account_count: 0,
+    total_purchased_count: 0,
+    runtime_session_id: null,
+    active_query_config: null,
+    matched_product_count: 0,
+    purchase_success_count: 0,
+    purchase_failed_count: 0,
+    recent_events: [],
+    accounts: [],
+    item_rows: [],
+  };
+}
+
+function buildRunningPurchaseStatus({
+  configId = "cfg-1",
+  configName = "白天配置",
+  queryExecutionCount = 74,
+} = {}) {
+  return {
+    ...buildIdlePurchaseStatus(),
+    running: true,
+    message: "运行中",
+    started_at: "2026-03-19T12:00:00",
+    queue_size: 1,
+    active_account_count: 1,
+    total_account_count: 1,
+    runtime_session_id: "runtime-1",
+    active_query_config: {
+      config_id: configId,
+      config_name: configName,
+      state: "running",
+      message: "运行中",
+    },
+    item_rows: [
+      {
+        query_item_id: "item-1",
+        item_name: "P90 | 满晕作品 (久经沙场)",
+        max_price: 0.4,
+        min_wear: 0.15,
+        max_wear: 0.28,
+        detail_min_wear: 0.15,
+        detail_max_wear: 0.28,
+        manual_paused: false,
+        query_execution_count: queryExecutionCount,
+        matched_product_count: 0,
+        purchase_success_count: 0,
+        purchase_failed_count: 0,
+        modes: {
+          new_api: {
+            mode_type: "new_api",
+            target_dedicated_count: 2,
+            actual_dedicated_count: 2,
+            status: "running",
+            status_message: "运行中",
+            shared_available_count: 0,
+          },
+        },
+        source_mode_stats: [],
+        recent_hit_sources: [],
+      },
+    ],
+  };
+}
+
+
+function createFetchHarness({ initialRuntimeStatus, initialPurchaseStatus } = {}) {
   const configs = [
     {
       config_id: "cfg-1",
@@ -78,6 +187,7 @@ function createFetchHarness({ initialRuntimeStatus } = {}) {
 
   const details = Object.fromEntries(configs.map((config) => [config.config_id, config]));
   let runtimeStatus = initialRuntimeStatus || buildIdleRuntimeStatus();
+  let purchaseRuntimeStatus = initialPurchaseStatus || buildIdlePurchaseStatus();
   const calls = [];
   let createdCount = 3;
 
@@ -125,6 +235,21 @@ function createFetchHarness({ initialRuntimeStatus } = {}) {
     if (url.pathname === "/query-runtime/status" && method === "GET") {
       return jsonResponse(runtimeStatus);
     }
+    if (url.pathname === "/purchase-runtime/status" && method === "GET") {
+      return jsonResponse(purchaseRuntimeStatus);
+    }
+    if (url.pathname === "/purchase-runtime/ui-preferences" && method === "GET") {
+      return jsonResponse({
+        selected_config_id: purchaseRuntimeStatus.active_query_config?.config_id || "cfg-1",
+        updated_at: "2026-03-19T12:00:00",
+      });
+    }
+    if (url.pathname === "/runtime-settings/purchase" && method === "GET") {
+      return jsonResponse({
+        per_batch_ip_fanout_limit: 1,
+        updated_at: "2026-03-19T12:00:00",
+      });
+    }
     if (url.pathname === "/query-runtime/start" && method === "POST") {
       const nextConfig = details[body.config_id];
       runtimeStatus = {
@@ -164,6 +289,12 @@ function createFetchHarness({ initialRuntimeStatus } = {}) {
   return {
     calls,
     fetchImpl,
+    setPurchaseRuntimeStatus(nextStatus) {
+      purchaseRuntimeStatus = nextStatus;
+    },
+    setRuntimeStatus(nextStatus) {
+      runtimeStatus = nextStatus;
+    },
   };
 }
 
@@ -751,5 +882,34 @@ describe("query system page", () => {
     expect(within(nav).getByRole("button", { name: /^夜刀配置/ })).toHaveTextContent("已停止");
     expect(screen.queryByRole("button", { name: "启动当前配置" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "停止当前配置" })).not.toBeInTheDocument();
+  });
+
+  it("syncs query config runtime badges after the purchase page hydrates a running runtime", async () => {
+    const harness = createFetchHarness();
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "配置管理" }));
+
+    const initialHeader = await screen.findByRole("heading", { name: "白天配置" });
+    const initialSection = initialHeader.closest("section");
+    expect(initialSection).not.toBeNull();
+    expect(within(initialSection).getByText("已停止")).toBeInTheDocument();
+
+    act(() => {
+      harness.setRuntimeStatus(buildRunningRuntimeStatus());
+      harness.setPurchaseRuntimeStatus(buildRunningPurchaseStatus());
+    });
+
+    await user.click(screen.getByRole("button", { name: "扫货系统" }));
+    expect(await screen.findByRole("button", { name: "停止扫货" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "配置管理" }));
+
+    const syncedHeader = await screen.findByRole("heading", { name: "白天配置" });
+    const syncedSection = syncedHeader.closest("section");
+    expect(syncedSection).not.toBeNull();
+    expect(within(syncedSection).getAllByText("运行中").length).toBeGreaterThan(0);
   });
 });

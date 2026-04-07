@@ -47,6 +47,7 @@ const EMPTY_CONFIG_FORM = {
 
 const QUERY_CONFIG_SERVER_SHAPE_SUMMARY = "summary";
 const QUERY_CONFIG_SERVER_SHAPE_DETAIL = "detail";
+const ACTIVE_SAVE_NOTICE = "新配置已生效，仅影响后续新命中；已入队或已派发的旧扫货任务会按旧快照执行完毕。";
 
 
 function toErrorMessage(error) {
@@ -168,6 +169,7 @@ function buildSyncedDraftConfig(currentDraft, serverConfig) {
 }
 
 
+
 export function useQuerySystemPage({ client, isActive = true }) {
   const queryServer = useQuerySystemServer();
   const queryUi = useQuerySystemUi();
@@ -187,6 +189,7 @@ export function useQuerySystemPage({ client, isActive = true }) {
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [saveError, setSaveError] = useState("");
+  const [saveNotice, setSaveNotice] = useState("");
   const [isSaving, setIsSaving] = useState(false);
 
   const [isCreateConfigDialogOpen, setIsCreateConfigDialogOpen] = useState(false);
@@ -230,6 +233,7 @@ export function useQuerySystemPage({ client, isActive = true }) {
       hasUnsavedChanges: false,
     });
     setSaveError("");
+    setSaveNotice("");
     resetTransientEditorState();
     return normalizedConfig;
   }
@@ -241,6 +245,7 @@ export function useQuerySystemPage({ client, isActive = true }) {
       hasUnsavedChanges: false,
     });
     setSaveError("");
+    setSaveNotice("");
     resetTransientEditorState();
   }
 
@@ -455,6 +460,7 @@ export function useQuerySystemPage({ client, isActive = true }) {
       hasUnsavedChanges: true,
     });
     setSaveError("");
+    setSaveNotice("");
   }
 
   async function selectConfig(configId) {
@@ -767,9 +773,11 @@ export function useQuerySystemPage({ client, isActive = true }) {
       return false;
     }
 
+    const shouldShowActiveSaveNotice = isCurrentConfigRuntimeActive;
     setIsSaving(true);
     setLoadError("");
     setSaveError("");
+    setSaveNotice("");
 
     try {
       await persistQueryConfigDraft({
@@ -778,11 +786,17 @@ export function useQuerySystemPage({ client, isActive = true }) {
         draftConfig,
       });
       if (isCurrentConfigRuntimeActive) {
-        await client.applyQueryRuntimeConfig(draftConfig.config_id);
+        const nextRuntimeStatus = await client.applyQueryRuntimeConfig(draftConfig.config_id);
+        applyQuerySystemServer({
+          runtimeStatus: normalizeRuntimeStatus(nextRuntimeStatus),
+        });
       }
 
       const nextConfigs = await refreshConfigList();
       await loadConfigDetail(draftConfig.config_id, nextConfigs);
+      if (shouldShowActiveSaveNotice) {
+        setSaveNotice(ACTIVE_SAVE_NOTICE);
+      }
       return true;
     } catch (error) {
       setSaveError(toErrorMessage(error));
@@ -800,6 +814,7 @@ export function useQuerySystemPage({ client, isActive = true }) {
       hasUnsavedChanges: false,
     });
     setSaveError("");
+    setSaveNotice("");
     resetTransientEditorState();
     return true;
   }
@@ -861,6 +876,7 @@ export function useQuerySystemPage({ client, isActive = true }) {
             : "已保存"
     ),
     saveBarError: saveError,
+    saveBarNotice: saveNotice,
     discardDraftChanges,
     saveConfig,
     selectConfig,

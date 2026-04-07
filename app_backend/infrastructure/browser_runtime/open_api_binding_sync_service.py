@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import socket
 import threading
 import time
 import urllib.request
 from datetime import datetime
 from typing import Callable
+from urllib.parse import unquote
 
 from app_backend.infrastructure.browser_runtime.cdp_session_reader import (
     capture_open_api_partner_info,
@@ -18,6 +20,7 @@ from app_backend.infrastructure.network import PublicIpResolver
 
 
 PublicIpFetcher = Callable[[str | None], str | None]
+_ORIGINAL_SELECT_TARGET = select_target
 
 
 class OpenApiBindingSyncService:
@@ -191,16 +194,28 @@ class OpenApiBindingSyncService:
                     remaining_seconds = max(deadline - time.time(), 0.1)
                     try:
                         if not navigated_open_api:
-                            partner_payload = navigate_and_capture_open_api_partner_info(
-                                debugger_address,
-                                "https://www.c5game.com/user/user/open-api",
-                                timeout_seconds=min(self.INITIAL_CAPTURE_TIMEOUT_SECONDS, remaining_seconds),
-                            )
+                            current_target_url = None
+                            if select_target is not _ORIGINAL_SELECT_TARGET or remaining_seconds > self.INITIAL_CAPTURE_TIMEOUT_SECONDS:
+                                current_target_url = _read_debugger_target_url(debugger_address)
+                            if _url_points_to_open_api_flow(current_target_url):
+                                partner_payload = poll_open_api_page_partner_info(
+                                    debugger_address,
+                                    timeout_seconds=min(self.INITIAL_CAPTURE_TIMEOUT_SECONDS, remaining_seconds),
+                                    interval_seconds=min(1.0, self._poll_interval_seconds),
+                                )
+                            else:
+                                partner_payload = navigate_and_capture_open_api_partner_info(
+                                    debugger_address,
+                                    "https://www.c5game.com/user/user/open-api",
+                                    timeout_seconds=min(self.INITIAL_CAPTURE_TIMEOUT_SECONDS, remaining_seconds),
+                                )
                             navigated_open_api = True
                             self._append_debug_log(
                                 "natural_capture",
                                 {
                                     "account_id": account_id,
+                                    "skipped_navigation": _url_points_to_open_api_flow(current_target_url),
+                                    "current_target_url": current_target_url,
                                     "captured": partner_payload is not None,
                                     "payload_summary": _summarize_partner_payload(partner_payload),
                                 },
@@ -360,6 +375,37 @@ def _debugger_target_available(debugger_address: str | None) -> bool:
     except Exception:
         return False
     return True
+
+
+def _read_debugger_target_url(debugger_address: str | None) -> str | None:
+    normalized = str(debugger_address or "").strip()
+    if not normalized:
+        return None
+    if select_target is _ORIGINAL_SELECT_TARGET:
+        host, _, raw_port = normalized.rpartition(":")
+        if not host or not raw_port.isdigit():
+            return None
+        try:
+            with socket.create_connection((host, int(raw_port)), timeout=0.2):
+                pass
+        except OSError:
+            return None
+    try:
+        target = select_target(normalized)
+    except Exception:
+        return None
+    return str(target.get("url") or "").strip() or None
+
+
+def _url_points_to_open_api_flow(url: str | None) -> bool:
+    normalized = unquote(str(url or "").strip()).lower()
+    if not normalized:
+        return False
+    if "c5game.com/user/user/open-api" in normalized:
+        return True
+    if "c5game.com/login" not in normalized and "c5game.com/user/login" not in normalized:
+        return False
+    return "/user/user/open-api" in normalized
 
 
 def _has_access_token(cookie_raw: str | None) -> bool:

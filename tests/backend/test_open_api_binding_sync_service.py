@@ -479,6 +479,94 @@ def test_open_api_binding_watch_uses_short_natural_capture_timeout(tmp_path: Pat
     assert captured_timeouts[0] <= 2.0
 
 
+def test_open_api_binding_watch_skips_initial_navigation_when_browser_already_on_open_api(tmp_path: Path, monkeypatch):
+    import app_backend.infrastructure.browser_runtime.open_api_binding_sync_service as module
+    from app_backend.infrastructure.browser_runtime.open_api_binding_sync_service import OpenApiBindingSyncService
+
+    account = _build_account()
+    repository = _MemoryRepository(account)
+    navigate_calls: list[tuple[str, str, float]] = []
+    poll_calls: list[tuple[str, float, float]] = []
+
+    monkeypatch.setattr(
+        module,
+        "select_target",
+        lambda debugger_address: {
+            "type": "page",
+            "url": "https://www.c5game.com/user/user/open-api",
+            "webSocketDebuggerUrl": "ws://example.test/devtools/page/1",
+        },
+    )
+
+    def fake_navigate(debugger_address, url, timeout_seconds=20.0):
+        navigate_calls.append((debugger_address, url, float(timeout_seconds)))
+        return None
+
+    def fake_poll(debugger_address, timeout_seconds=20.0, interval_seconds=1.0):
+        poll_calls.append((debugger_address, float(timeout_seconds), float(interval_seconds)))
+        return None
+
+    monkeypatch.setattr(module, "navigate_and_capture_open_api_partner_info", fake_navigate)
+    monkeypatch.setattr(module, "capture_open_api_partner_info", lambda debugger_address, timeout_seconds=20.0: None)
+    monkeypatch.setattr(module, "poll_open_api_page_partner_info", fake_poll)
+
+    service = OpenApiBindingSyncService(
+        account_repository=repository,
+        public_ip_fetcher=lambda proxy_url: "39.71.213.149",
+        poll_interval_seconds=0.01,
+        max_wait_seconds=0.05,
+        debug_log_path=tmp_path / "open_api_binding_debug.jsonl",
+    )
+
+    service._watch_account("a-1", "127.0.0.1:9222")
+
+    assert navigate_calls == []
+    assert poll_calls
+
+
+def test_open_api_binding_watch_skips_initial_navigation_when_browser_is_on_login_returning_to_open_api(
+    tmp_path: Path,
+    monkeypatch,
+):
+    import app_backend.infrastructure.browser_runtime.open_api_binding_sync_service as module
+    from app_backend.infrastructure.browser_runtime.open_api_binding_sync_service import OpenApiBindingSyncService
+
+    account = _build_account()
+    repository = _MemoryRepository(account)
+    navigate_calls: list[tuple[str, str, float]] = []
+
+    monkeypatch.setattr(
+        module,
+        "select_target",
+        lambda debugger_address: {
+            "type": "page",
+            "url": "https://www.c5game.com/login?return_url=%2Fuser%2Fuser%2Fopen-api",
+            "webSocketDebuggerUrl": "ws://example.test/devtools/page/1",
+        },
+    )
+    monkeypatch.setattr(
+        module,
+        "navigate_and_capture_open_api_partner_info",
+        lambda debugger_address, url, timeout_seconds=20.0: navigate_calls.append(
+            (debugger_address, url, float(timeout_seconds))
+        ) or None,
+    )
+    monkeypatch.setattr(module, "capture_open_api_partner_info", lambda debugger_address, timeout_seconds=20.0: None)
+    monkeypatch.setattr(module, "poll_open_api_page_partner_info", lambda debugger_address, timeout_seconds=20.0, interval_seconds=1.0: None)
+
+    service = OpenApiBindingSyncService(
+        account_repository=repository,
+        public_ip_fetcher=lambda proxy_url: "39.71.213.149",
+        poll_interval_seconds=0.01,
+        max_wait_seconds=0.05,
+        debug_log_path=tmp_path / "open_api_binding_debug.jsonl",
+    )
+
+    service._watch_account("a-1", "127.0.0.1:9222")
+
+    assert navigate_calls == []
+
+
 def test_open_api_binding_sync_service_never_issues_backend_partner_fetch(tmp_path: Path):
     from app_backend.infrastructure.browser_runtime.open_api_binding_sync_service import OpenApiBindingSyncService
 

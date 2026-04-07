@@ -51,6 +51,7 @@ export function QuerySystemPage({ bootstrapConfig, client, isActive, onLeaveStat
     saveBarDisabled,
     saveBarError,
     saveBarLabel,
+    saveBarNotice,
     saveConfig,
     selectConfig,
     submitCreateConfig,
@@ -116,6 +117,7 @@ export function QuerySystemPage({ bootstrapConfig, client, isActive, onLeaveStat
             saveDisabled={saveBarDisabled}
             saveError={saveBarError}
             saveLabel={saveBarLabel}
+            saveNotice={saveBarNotice}
           />
 
           <div className="query-system-page__editor-grid">

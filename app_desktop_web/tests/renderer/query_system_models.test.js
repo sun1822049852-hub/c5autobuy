@@ -76,6 +76,33 @@ describe("query system models", () => {
     });
   });
 
+  it("keeps manual pause visible until a fresh runtime snapshot says otherwise", () => {
+    expect(buildStatusByMode(
+      {
+        manual_paused: true,
+        mode_allocations: [
+          { mode_type: "new_api", target_dedicated_count: 1 },
+        ],
+      },
+      {
+        modes: {
+          new_api: {
+            mode_type: "new_api",
+            target_dedicated_count: 1,
+            actual_dedicated_count: 1,
+            status: "shared_pool",
+            status_message: "共享池 1/1",
+          },
+        },
+      },
+    ).new_api).toMatchObject({
+      status: "manual_paused",
+      status_message: "手动暂停",
+      actual_dedicated_count: 0,
+      target_dedicated_count: 1,
+    });
+  });
+
   it("validates draft allocations against available capacity", () => {
     expect(validateDraftConfig(
       {

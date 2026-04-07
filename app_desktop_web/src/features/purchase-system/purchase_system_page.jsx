@@ -104,6 +104,7 @@ export function PurchaseSystemPage({ bootstrapConfig, client, isActive, onLeaveS
     recentEvents,
     recentEventsModal,
     runtimeMessage,
+    runtimeDrainNotice,
     selectedDialogConfigId,
     totalPurchasedCount,
     discardRuntimeDrafts,
@@ -151,6 +152,7 @@ export function PurchaseSystemPage({ bootstrapConfig, client, isActive, onLeaveS
             onOpenPurchaseSettings={onOpenPurchaseSettings}
             onOpenQuerySettings={onOpenQuerySettings}
             runtimeMessage={runtimeMessage}
+            runtimeDrainNotice={runtimeDrainNotice}
             totalPurchasedCount={totalPurchasedCount}
           />
 

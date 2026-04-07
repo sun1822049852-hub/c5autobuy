@@ -251,16 +251,83 @@ function buildRuntimeStatus() {
 }
 
 
+function buildSecondaryConfigDetail() {
+  return {
+    config_id: "cfg-2",
+    name: "夜刀配置",
+    description: "夜间轮询",
+    enabled: true,
+    created_at: "2026-03-19T10:10:00",
+    updated_at: "2026-03-19T10:10:00",
+    mode_settings: [],
+    items: [
+      {
+        query_item_id: "item-9",
+        config_id: "cfg-2",
+        product_url: "https://www.c5game.com/csgo/730/asset/1380979899390267999",
+        external_item_id: "1380979899390267999",
+        item_name: "Desert Eagle | Blaze",
+        market_hash_name: "Desert Eagle | Blaze (Factory New)",
+        min_wear: 0.0,
+        max_wear: 0.08,
+        detail_min_wear: 0.0,
+        detail_max_wear: 0.03,
+        max_price: 1999,
+        last_market_price: 1888.88,
+        last_detail_sync_at: "2026-03-19T10:11:00",
+        manual_paused: false,
+        mode_allocations: buildModeAllocations({ token: 1 }),
+        sort_order: 0,
+        created_at: "2026-03-19T10:10:00",
+        updated_at: "2026-03-19T10:10:00",
+      },
+    ],
+  };
+}
+
+
+function buildApplyConfigRuntimeStatus(detail) {
+  return {
+    running: true,
+    config_id: "cfg-1",
+    config_name: detail.name,
+    message: "运行中",
+    account_count: 3,
+    started_at: "2026-03-19T11:00:00",
+    stopped_at: null,
+    total_query_count: 0,
+    total_found_count: 0,
+    modes: {},
+    group_rows: [],
+    recent_events: [],
+    item_rows: detail.items.map((item) => ({
+      query_item_id: item.query_item_id,
+      item_name: item.item_name,
+      max_price: item.max_price,
+      min_wear: item.min_wear,
+      max_wear: item.max_wear,
+      detail_min_wear: item.detail_min_wear,
+      detail_max_wear: item.detail_max_wear,
+      manual_paused: item.manual_paused,
+      query_count: 0,
+      modes: {},
+    })),
+  };
+}
+
+
 function createFetchHarness({
   capacityModes = {
     new_api: { mode_type: "new_api", available_account_count: 2 },
     fast_api: { mode_type: "fast_api", available_account_count: 1 },
     token: { mode_type: "token", available_account_count: 3 },
   },
+  applyConfigRuntimeStatus = null,
+  runtimeStatus = buildRuntimeStatus(),
   saveDelayMs = 0,
+  secondaryDetail = null,
 } = {}) {
   let detail = buildConfigDetail();
-  const runtimeStatus = buildRuntimeStatus();
   const calls = [];
   let createdCount = 4;
 
@@ -278,18 +345,20 @@ function createFetchHarness({
       return jsonResponse([]);
     }
     if (url.pathname === "/query-configs" && method === "GET") {
-      return jsonResponse([
-        {
-          config_id: detail.config_id,
-          name: detail.name,
-          description: detail.description,
-          enabled: detail.enabled,
-          created_at: detail.created_at,
-          updated_at: detail.updated_at,
-          items: [],
-          mode_settings: [],
-        },
-      ]);
+      return jsonResponse(
+        [detail, secondaryDetail]
+          .filter(Boolean)
+          .map((configDetail) => ({
+            config_id: configDetail.config_id,
+            name: configDetail.name,
+            description: configDetail.description,
+            enabled: configDetail.enabled,
+            created_at: configDetail.created_at,
+            updated_at: configDetail.updated_at,
+            items: [],
+            mode_settings: [],
+          })),
+      );
     }
     if (url.pathname === "/query-configs/capacity-summary" && method === "GET") {
       return jsonResponse({ modes: capacityModes });
@@ -297,8 +366,15 @@ function createFetchHarness({
     if (url.pathname === "/query-runtime/status" && method === "GET") {
       return jsonResponse(runtimeStatus);
     }
-    if (url.pathname === "/query-configs/cfg-1" && method === "GET") {
-      return jsonResponse(detail);
+    const detailMatch = url.pathname.match(/^\/query-configs\/([^/]+)$/);
+    if (detailMatch && method === "GET") {
+      const configId = detailMatch[1];
+      if (configId === detail.config_id) {
+        return jsonResponse(detail);
+      }
+      if (secondaryDetail && configId === secondaryDetail.config_id) {
+        return jsonResponse(secondaryDetail);
+      }
     }
     if (url.pathname === "/query-items/parse-url" && method === "POST") {
       return jsonResponse({
@@ -382,32 +458,10 @@ function createFetchHarness({
     }
 
     if (url.pathname === "/query-runtime/configs/cfg-1/apply-config" && method === "POST") {
-      return delayedJsonResponse({
-        running: true,
-        config_id: "cfg-1",
-        config_name: detail.name,
-        message: "运行中",
-        account_count: 3,
-        started_at: "2026-03-19T11:00:00",
-        stopped_at: null,
-        total_query_count: 0,
-        total_found_count: 0,
-        modes: {},
-        group_rows: [],
-        recent_events: [],
-        item_rows: detail.items.map((item) => ({
-          query_item_id: item.query_item_id,
-          item_name: item.item_name,
-          max_price: item.max_price,
-          min_wear: item.min_wear,
-          max_wear: item.max_wear,
-          detail_min_wear: item.detail_min_wear,
-          detail_max_wear: item.detail_max_wear,
-          manual_paused: item.manual_paused,
-          query_count: 0,
-          modes: {},
-        })),
-      }, 200, saveDelayMs);
+      const nextRuntimeStatus = typeof applyConfigRuntimeStatus === "function"
+        ? applyConfigRuntimeStatus(detail)
+        : (applyConfigRuntimeStatus || buildApplyConfigRuntimeStatus(detail));
+      return delayedJsonResponse(nextRuntimeStatus, 200, saveDelayMs);
     }
 
     throw new Error(`Unhandled request: ${method} ${url.pathname}`);
@@ -554,6 +608,13 @@ describe("query system editing", () => {
         expect(screen.getByRole("button", { name: "已保存" })).toBeInTheDocument();
       });
 
+      expect(
+        screen.getByText("新配置已生效，仅影响后续新命中；已入队或已派发的旧扫货任务会按旧快照执行完毕。"),
+      ).toBeInTheDocument();
+      expect(
+        within(screen.getByRole("region", { name: "商品 AK-47 | Redline" })).getByRole("button", { name: "修改 new_api AK-47 | Redline" }),
+      ).toHaveTextContent("手动暂停");
+
       expect(harness.calls).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
@@ -616,6 +677,178 @@ describe("query system editing", () => {
     } finally {
       consoleErrorSpy.mockRestore();
     }
+  });
+
+  it("applies the returned runtime snapshot immediately after unpausing a running item", async () => {
+    const staleRuntimeStatus = buildRuntimeStatus();
+    staleRuntimeStatus.item_rows = staleRuntimeStatus.item_rows.map((row) => (
+      row.query_item_id !== "item-3"
+        ? row
+        : {
+          ...row,
+          manual_paused: true,
+          modes: {
+            new_api: {
+              mode_type: "new_api",
+              target_dedicated_count: 1,
+              actual_dedicated_count: 0,
+              status: "manual_paused",
+              status_message: "手动暂停",
+            },
+            token: {
+              mode_type: "token",
+              target_dedicated_count: 1,
+              actual_dedicated_count: 0,
+              status: "manual_paused",
+              status_message: "手动暂停",
+            },
+          },
+        }
+    ));
+
+    const harness = createFetchHarness({
+      runtimeStatus: staleRuntimeStatus,
+      applyConfigRuntimeStatus(detail) {
+        return {
+          ...buildApplyConfigRuntimeStatus(detail),
+          item_rows: detail.items.map((item) => (
+            item.query_item_id !== "item-3"
+              ? {
+                query_item_id: item.query_item_id,
+                item_name: item.item_name,
+                max_price: item.max_price,
+                min_wear: item.min_wear,
+                max_wear: item.max_wear,
+                detail_min_wear: item.detail_min_wear,
+                detail_max_wear: item.detail_max_wear,
+                manual_paused: item.manual_paused,
+                query_count: 0,
+                modes: {},
+              }
+              : {
+                query_item_id: item.query_item_id,
+                item_name: item.item_name,
+                max_price: item.max_price,
+                min_wear: item.min_wear,
+                max_wear: item.max_wear,
+                detail_min_wear: item.detail_min_wear,
+                detail_max_wear: item.detail_max_wear,
+                manual_paused: false,
+                query_count: 0,
+                modes: {
+                  new_api: {
+                    mode_type: "new_api",
+                    target_dedicated_count: 1,
+                    actual_dedicated_count: 1,
+                    status: "dedicated",
+                    status_message: "专属中 1/1",
+                  },
+                  token: {
+                    mode_type: "token",
+                    target_dedicated_count: 1,
+                    actual_dedicated_count: 0,
+                    status: "no_capacity",
+                    status_message: "无可用账号 0/1",
+                  },
+                },
+              }
+          )),
+        };
+      },
+    });
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    await openQuerySystem(user);
+
+    const itemThree = await screen.findByRole("region", { name: "商品 M4A1-S | Blue Phosphor" });
+    expect(within(itemThree).getByRole("button", { name: "修改 new_api M4A1-S | Blue Phosphor" })).toHaveTextContent("手动暂停");
+
+    await user.click(within(itemThree).getByRole("button", { name: "修改扫货价 M4A1-S | Blue Phosphor" }));
+    const editor = await screen.findByRole("dialog", { name: "编辑商品" });
+    await user.click(within(editor).getByLabelText("手动暂停"));
+    await user.click(within(editor).getByRole("button", { name: "应用修改" }));
+
+    await user.click(screen.getByRole("button", { name: "保存到当前配置" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "已保存" })).toBeInTheDocument();
+    });
+
+    const itemThreeSaved = screen.getByRole("region", { name: "商品 M4A1-S | Blue Phosphor" });
+    expect(within(itemThreeSaved).getByRole("button", { name: "修改 new_api M4A1-S | Blue Phosphor" })).toHaveTextContent("专属中 1/1");
+    expect(within(itemThreeSaved).getByRole("button", { name: "修改 token M4A1-S | Blue Phosphor" })).toHaveTextContent("无可用账号 0/1");
+  });
+
+  it("clears the running-save notice once the draft changes again", async () => {
+    const harness = createFetchHarness();
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    await openQuerySystem(user);
+
+    const itemOne = await screen.findByRole("region", { name: "商品 AK-47 | Redline" });
+    await user.click(within(itemOne).getByRole("button", { name: "修改扫货价 AK-47 | Redline" }));
+
+    const editor = await screen.findByRole("dialog", { name: "编辑商品" });
+    const maxPrice = within(editor).getByLabelText("扫货价");
+    await user.clear(maxPrice);
+    await user.type(maxPrice, "188");
+    await user.click(within(editor).getByRole("button", { name: "应用修改" }));
+
+    await user.click(screen.getByRole("button", { name: "保存到当前配置" }));
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "已保存" })).toBeInTheDocument();
+    });
+    expect(
+      screen.getByText("新配置已生效，仅影响后续新命中；已入队或已派发的旧扫货任务会按旧快照执行完毕。"),
+    ).toBeInTheDocument();
+
+    await user.click(within(screen.getByRole("region", { name: "商品 AK-47 | Redline" })).getByRole("button", { name: "修改扫货价 AK-47 | Redline" }));
+    const secondEditor = await screen.findByRole("dialog", { name: "编辑商品" });
+    const secondMaxPrice = within(secondEditor).getByLabelText("扫货价");
+    await user.clear(secondMaxPrice);
+    await user.type(secondMaxPrice, "190");
+    await user.click(within(secondEditor).getByRole("button", { name: "应用修改" }));
+
+    expect(screen.queryByText("新配置已生效，仅影响后续新命中；已入队或已派发的旧扫货任务会按旧快照执行完毕。")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "保存到当前配置" })).toBeInTheDocument();
+  });
+
+  it("clears the running-save notice when switching to another config", async () => {
+    const harness = createFetchHarness({
+      secondaryDetail: buildSecondaryConfigDetail(),
+    });
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    await openQuerySystem(user);
+
+    const itemOne = await screen.findByRole("region", { name: "商品 AK-47 | Redline" });
+    await user.click(within(itemOne).getByRole("button", { name: "修改扫货价 AK-47 | Redline" }));
+
+    const editor = await screen.findByRole("dialog", { name: "编辑商品" });
+    const maxPrice = within(editor).getByLabelText("扫货价");
+    await user.clear(maxPrice);
+    await user.type(maxPrice, "188");
+    await user.click(within(editor).getByRole("button", { name: "应用修改" }));
+
+    await user.click(screen.getByRole("button", { name: "保存到当前配置" }));
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "已保存" })).toBeInTheDocument();
+    });
+    expect(
+      screen.getByText("新配置已生效，仅影响后续新命中；已入队或已派发的旧扫货任务会按旧快照执行完毕。"),
+    ).toBeInTheDocument();
+
+    const nav = screen.getByRole("navigation", { name: "配置管理导航" });
+    await user.click(within(nav).getByRole("button", { name: /^夜刀配置/ }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "夜刀配置" })).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText("新配置已生效，仅影响后续新命中；已入队或已派发的旧扫货任务会按旧快照执行完毕。")).not.toBeInTheDocument();
   });
 
   it("blocks save when dedicated allocations exceed the available capacity", async () => {

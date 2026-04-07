@@ -19,6 +19,34 @@ import {
 } from "../../src/runtime/use_app_runtime.js";
 
 
+class FakeWebSocket {
+  static instances = [];
+
+  constructor(url) {
+    this.url = url;
+    this.onopen = null;
+    this.onmessage = null;
+    this.onerror = null;
+    this.onclose = null;
+    FakeWebSocket.instances.push(this);
+  }
+
+  emitOpen() {
+    this.onopen?.();
+  }
+
+  emitMessage(payload) {
+    this.onmessage?.({
+      data: JSON.stringify(payload),
+    });
+  }
+
+  close() {
+    this.onclose?.();
+  }
+}
+
+
 function QuerySystemProbe() {
   const server = useQuerySystemServer();
   const ui = useQuerySystemUi();
@@ -580,6 +608,89 @@ describe("app runtime hooks", () => {
 
 
 describe("runtime connection manager", () => {
+  it("connects runtime websocket updates after bootstrap and applies them into store slices", async () => {
+    FakeWebSocket.instances = [];
+    const store = createAppRuntimeStore();
+    const client = {
+      getAppBootstrap: vi.fn().mockResolvedValue({
+        version: 5,
+        generated_at: "2026-03-31T12:34:56.000Z",
+        query_system: {
+          configs: [{ config_id: "cfg-1", name: "白天配置" }],
+          capacitySummary: { modes: {} },
+          runtimeStatus: { running: false, item_rows: [] },
+        },
+        purchase_system: {
+          runtimeStatus: { running: false, accounts: [], item_rows: [] },
+          uiPreferences: { selected_config_id: null, updated_at: null },
+          runtimeSettings: { per_batch_ip_fanout_limit: 1, updated_at: null },
+        },
+      }),
+    };
+    const manager = createRuntimeConnectionManager({
+      client,
+      now: () => "2026-03-31T12:35:00.000Z",
+      schedule: (callback) => {
+        callback();
+        return 0;
+      },
+      store,
+    });
+
+    await manager.bootstrap();
+    const disconnect = manager.connectRuntimeUpdates({
+      websocketUrl: "wss://api.example.com/ws/runtime",
+      WebSocketImpl: FakeWebSocket,
+      reconnectDelayMs: 0,
+    });
+
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    expect(FakeWebSocket.instances[0].url).toBe("wss://api.example.com/ws/runtime?since_version=5");
+
+    FakeWebSocket.instances[0].emitOpen();
+    FakeWebSocket.instances[0].emitMessage({
+      version: 6,
+      event: "query_runtime.updated",
+      updated_at: "2026-03-31T12:35:01.000Z",
+      payload: {
+        running: true,
+        config_id: "cfg-1",
+        config_name: "白天配置",
+        message: "运行中",
+        item_rows: [{ query_item_id: "item-1" }],
+      },
+    });
+    FakeWebSocket.instances[0].emitMessage({
+      version: 7,
+      event: "purchase_runtime.updated",
+      updated_at: "2026-03-31T12:35:02.000Z",
+      payload: {
+        running: true,
+        message: "运行中",
+        accounts: [{ account_id: "acc-1" }],
+        item_rows: [],
+      },
+    });
+
+    expect(store.getSnapshot().querySystem.server.runtimeStatus).toEqual({
+      running: true,
+      config_id: "cfg-1",
+      config_name: "白天配置",
+      message: "运行中",
+      item_rows: [{ query_item_id: "item-1" }],
+    });
+    expect(store.getSnapshot().purchaseSystem.server.runtimeStatus).toEqual({
+      running: true,
+      message: "运行中",
+      accounts: [{ account_id: "acc-1" }],
+      item_rows: [],
+    });
+    expect(store.getSnapshot().connection.lastEventVersion).toBe(7);
+    expect(store.getSnapshot().connection.lastSyncAt).toBe("2026-03-31T12:35:02.000Z");
+
+    disconnect();
+  });
+
   it("hydrates bootstrap server state and connection metadata from /app/bootstrap", async () => {
     const store = createAppRuntimeStore();
     const client = {

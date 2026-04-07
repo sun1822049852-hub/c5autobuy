@@ -229,6 +229,9 @@ export function AccountTable({
 }) {
   return (
     <table aria-label="账号列表" className="account-table">
+      <colgroup>
+        <col /><col /><col /><col /><col /><col /><col />
+      </colgroup>
       <thead>
         <tr>
           <th scope="col" style={NO_SELECT_STYLE}>C5昵称</th>

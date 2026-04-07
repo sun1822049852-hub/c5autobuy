@@ -904,6 +904,99 @@ describe("purchase system page", () => {
     expect(within(commandDeck).queryByText("购买失败 2")).not.toBeInTheDocument();
   });
 
+  it("shows a drain notice while queued or dispatched purchase work may still be consuming old snapshots", async () => {
+    const harness = createFetchHarness({
+      initialStatus: buildPurchaseRuntimeStatus({
+        running: true,
+        message: "运行中",
+        queue_size: 2,
+        active_account_count: 1,
+        active_query_config: {
+          config_id: "cfg-1",
+          config_name: "白天配置",
+          state: "running",
+          message: "运行中",
+        },
+      }),
+    });
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "扫货系统" }));
+
+    const commandDeck = screen.getByRole("region", { name: "扫货运行控制台" });
+    expect(
+      within(commandDeck).getByText("若刚修改了当前配置，新配置只影响后续新命中；队列中或已派发的旧扫货任务会按旧快照继续执行。"),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps showing the drain notice even when runtime queue data arrives before active config binding", async () => {
+    const harness = createFetchHarness({
+      initialStatus: buildPurchaseRuntimeStatus({
+        running: true,
+        message: "运行中",
+        queue_size: 1,
+        active_account_count: 0,
+        active_query_config: null,
+      }),
+    });
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "扫货系统" }));
+
+    const commandDeck = screen.getByRole("region", { name: "扫货运行控制台" });
+    expect(
+      within(commandDeck).getByText("若刚修改了当前配置，新配置只影响后续新命中；队列中或已派发的旧扫货任务会按旧快照继续执行。"),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the drain notice when only dispatched accounts remain active", async () => {
+    const harness = createFetchHarness({
+      initialStatus: buildPurchaseRuntimeStatus({
+        running: true,
+        message: "运行中",
+        queue_size: 0,
+        active_account_count: 1,
+        active_query_config: null,
+      }),
+    });
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "扫货系统" }));
+
+    const commandDeck = screen.getByRole("region", { name: "扫货运行控制台" });
+    expect(
+      within(commandDeck).getByText("若刚修改了当前配置，新配置只影响后续新命中；队列中或已派发的旧扫货任务会按旧快照继续执行。"),
+    ).toBeInTheDocument();
+  });
+
+  it("does not show the drain notice when runtime is stopped even if old counters remain", async () => {
+    const harness = createFetchHarness({
+      initialStatus: buildPurchaseRuntimeStatus({
+        running: false,
+        message: "未运行",
+        queue_size: 1,
+        active_account_count: 1,
+        active_query_config: null,
+      }),
+    });
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "扫货系统" }));
+
+    const commandDeck = screen.getByRole("region", { name: "扫货运行控制台" });
+    expect(
+      within(commandDeck).queryByText("若刚修改了当前配置，新配置只影响后续新命中；队列中或已派发的旧扫货任务会按旧快照继续执行。"),
+    ).not.toBeInTheDocument();
+  });
+
   it("keeps showing the bound config when purchase runtime is waiting", async () => {
     const harness = createFetchHarness({
       initialStatus: buildPurchaseRuntimeStatus({

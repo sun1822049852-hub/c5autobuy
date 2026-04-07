@@ -2,10 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 
 import {
   useApplyPurchaseSystemServer,
+  useApplyQuerySystemServer,
   usePatchPurchaseSystemUi,
   usePurchaseSystemServer,
   usePurchaseSystemServerHydrated,
   usePurchaseSystemUi,
+  useQuerySystemServerHydrated,
 } from "../../../runtime/use_app_runtime.js";
 import { useFloatingRuntimeModalState } from "./use_floating_runtime_modal_state.js";
 
@@ -56,6 +58,8 @@ const QUERY_SETTINGS_MINIMUMS = {
   new_api: 1,
   fast_api: 0.2,
 };
+
+const PURCHASE_QUEUE_DRAIN_NOTICE = "若刚修改了当前配置，新配置只影响后续新命中；队列中或已派发的旧扫货任务会按旧快照继续执行。";
 
 
 function toErrorMessage(error) {
@@ -371,6 +375,42 @@ function normalizeStatus(status) {
   };
 }
 
+function toQuerySystemRuntimeStatus(status) {
+  const activeQueryConfig = status?.active_query_config || null;
+  const itemRows = Array.isArray(status?.item_rows)
+    ? status.item_rows.map((row) => ({
+      query_item_id: String(row?.query_item_id ?? ""),
+      item_name: row?.item_name ? String(row.item_name) : null,
+      max_price: row?.max_price ?? null,
+      min_wear: row?.min_wear ?? null,
+      max_wear: row?.max_wear ?? null,
+      detail_min_wear: row?.detail_min_wear ?? null,
+      detail_max_wear: row?.detail_max_wear ?? null,
+      manual_paused: Boolean(row?.manual_paused),
+      query_count: Number(row?.query_execution_count ?? 0),
+      modes: row?.modes && typeof row.modes === "object" ? row.modes : {},
+    })).filter((row) => row.query_item_id)
+    : [];
+  const isRunning = activeQueryConfig?.state === "running";
+  const isWaiting = activeQueryConfig?.state === "waiting";
+
+  return {
+    running: isRunning,
+    config_id: activeQueryConfig?.config_id ?? null,
+    config_name: activeQueryConfig?.config_name ?? null,
+    message: activeQueryConfig?.message || (isWaiting ? "等待购买账号恢复" : (isRunning ? "运行中" : "未运行")),
+    account_count: isRunning ? Number(status?.active_account_count ?? 0) : 0,
+    started_at: isRunning ? (status?.started_at ?? null) : null,
+    stopped_at: !isRunning ? (status?.stopped_at ?? null) : null,
+    total_query_count: itemRows.reduce((total, row) => total + Number(row.query_count ?? 0), 0),
+    total_found_count: 0,
+    modes: {},
+    group_rows: [],
+    recent_events: [],
+    item_rows: activeQueryConfig?.config_id ? itemRows : [],
+  };
+}
+
 
 function normalizeUiPreferences(preferences) {
   return {
@@ -637,8 +677,10 @@ export function usePurchaseSystemPage({ client, isActive = true }) {
   const purchaseServer = usePurchaseSystemServer();
   const purchaseServerHydrated = usePurchaseSystemServerHydrated();
   const purchaseUi = usePurchaseSystemUi();
+  const querySystemServerHydrated = useQuerySystemServerHydrated();
   const patchPurchaseUi = usePatchPurchaseSystemUi();
   const applyPurchaseSystemServer = useApplyPurchaseSystemServer();
+  const applyQuerySystemServer = useApplyQuerySystemServer();
 
   const status = useMemo(
     () => normalizeStatus(purchaseServer?.runtimeStatus),
@@ -721,13 +763,24 @@ export function usePurchaseSystemPage({ client, isActive = true }) {
     return normalizedDetail;
   }
 
+  function syncRuntimeStatus(nextStatus) {
+    const normalizedStatus = normalizeStatus(nextStatus);
+    applyPurchaseSystemServer({ runtimeStatus: normalizedStatus });
+    if (querySystemServerHydrated) {
+      applyQuerySystemServer({
+        runtimeStatus: toQuerySystemRuntimeStatus(normalizedStatus),
+      });
+    }
+    return normalizedStatus;
+  }
+
   async function refreshStatus({ silent = false } = {}) {
     if (!silent) {
       setIsLoading(true);
     }
     try {
       const nextStatus = await client.getPurchaseRuntimeStatus();
-      applyPurchaseSystemServer({ runtimeStatus: normalizeStatus(nextStatus) });
+      syncRuntimeStatus(nextStatus);
       setLoadError("");
     } catch (error) {
       setLoadError(toErrorMessage(error));
@@ -910,7 +963,7 @@ export function usePurchaseSystemPage({ client, isActive = true }) {
           }
 
           const normalizedStatus = shouldFetchBootstrapStatus
-            ? normalizeStatus(nextStatus)
+            ? syncRuntimeStatus(nextStatus)
             : status;
           const normalizedConfigs = shouldFetchBootstrapConfigList
             ? normalizeConfigList(nextConfigs)
@@ -920,9 +973,6 @@ export function usePurchaseSystemPage({ client, isActive = true }) {
             : uiPreferences;
           const normalizedPurchaseSettings = normalizePurchaseSettingsDraft(nextPurchaseSettings);
           const serverPatch = {};
-          if (shouldFetchBootstrapStatus) {
-            serverPatch.runtimeStatus = normalizedStatus;
-          }
           if (shouldFetchBootstrapUiPreferences) {
             serverPatch.uiPreferences = normalizedUiPreferences;
           }
@@ -1063,6 +1113,10 @@ export function usePurchaseSystemPage({ client, isActive = true }) {
     || "未选择配置";
   const runtimeMessage = activeConfig?.message || status.message || "未运行";
   const isRuntimeRunning = Boolean(status.running);
+  const runtimeDrainNotice = isRuntimeRunning
+    && (Number(status.queue_size) > 0 || Number(status.active_account_count) > 0)
+    ? PURCHASE_QUEUE_DRAIN_NOTICE
+    : "";
   const isSelectedConfigRunning = Boolean(selectedConfigDetail?.config_id)
     && isConfigActive(status, selectedConfigDetail.config_id);
   const actionLabel = isRuntimeRunning ? "停止扫货" : "开始扫货";
@@ -1181,9 +1235,7 @@ export function usePurchaseSystemPage({ client, isActive = true }) {
         client.getPurchaseRuntimeStatus(),
         client.getQueryConfig(selectedConfigDetail.config_id),
       ]);
-      applyPurchaseSystemServer({
-        runtimeStatus: normalizeStatus(nextStatus),
-      });
+      syncRuntimeStatus(nextStatus);
       applyConfigDetailToStore(nextDetail);
       setManualAllocationDrafts({});
       setLoadError("");
@@ -1223,9 +1275,7 @@ export function usePurchaseSystemPage({ client, isActive = true }) {
       }
 
       const nextStatus = await client.startPurchaseRuntime(nextConfigId);
-      applyPurchaseSystemServer({
-        runtimeStatus: normalizeStatus(nextStatus),
-      });
+      syncRuntimeStatus(nextStatus);
       setIsConfigDialogOpen(false);
       setSelectorDraftId(null);
       setLoadError("");
@@ -1248,9 +1298,7 @@ export function usePurchaseSystemPage({ client, isActive = true }) {
       const nextStatus = isRuntimeRunning
         ? await client.stopPurchaseRuntime()
         : await client.startPurchaseRuntime(selectedConfigId);
-      applyPurchaseSystemServer({
-        runtimeStatus: normalizeStatus(nextStatus),
-      });
+      syncRuntimeStatus(nextStatus);
       setManualAllocationDrafts({});
       setLoadError("");
     } catch (error) {
@@ -1421,6 +1469,7 @@ export function usePurchaseSystemPage({ client, isActive = true }) {
     recentEvents: status.recent_events,
     recentEventsModal,
     runtimeMessage,
+    runtimeDrainNotice,
     selectedDialogConfigId: selectorDraftId,
     status,
     totalAccountCount: status.total_account_count,

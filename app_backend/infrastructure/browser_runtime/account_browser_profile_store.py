@@ -22,8 +22,6 @@ class AccountBrowserProfileStore:
         "Code Cache",
         "GPUCache",
         "Sessions",
-        "Default/Cookies",
-        "Default/Cookies-journal",
     )
 
     def __init__(

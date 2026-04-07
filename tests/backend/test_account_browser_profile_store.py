@@ -20,14 +20,16 @@ def test_account_browser_profile_store_clones_and_persists_account_session(tmp_p
     default_root = account_root / "Default"
     default_root.mkdir(parents=True, exist_ok=True)
     default_root.joinpath("Preferences").write_text('{"ok":1}', encoding="utf-8")
+    default_root.joinpath("Cookies").write_text("seed-cookie", encoding="utf-8")
 
     cloned_session = store.clone_session("a-1")
     assert cloned_session.joinpath("Default", "Preferences").read_text(encoding="utf-8") == '{"ok":1}'
+    assert cloned_session.joinpath("Default", "Cookies").read_text(encoding="utf-8") == "seed-cookie"
 
-    cloned_session.joinpath("Default", "Cookies").write_text("cookie", encoding="utf-8")
+    cloned_session.joinpath("Default", "Cookies").write_text("session-cookie", encoding="utf-8")
     persisted_root = store.persist_session("a-1", cloned_session)
 
     assert persisted_root == account_root
     assert persisted_root.joinpath("Default", "Preferences").read_text(encoding="utf-8") == '{"ok":1}'
-    assert not persisted_root.joinpath("Default", "Cookies").exists()
+    assert persisted_root.joinpath("Default", "Cookies").read_text(encoding="utf-8") == "session-cookie"
 

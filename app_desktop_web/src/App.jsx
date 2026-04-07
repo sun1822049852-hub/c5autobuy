@@ -114,6 +114,42 @@ export function App({ runtimeStore }) {
   ]);
 
   useEffect(() => {
+    if (
+      bootstrapConfig.backendMode !== "remote"
+      || bootstrapConfig.backendStatus !== "ready"
+      || !bootstrapConfig.runtimeWebSocketUrl
+      || !globalThis.WebSocket
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    let disconnect = () => {};
+
+    void runtimeConnectionManager.bootstrap()
+      .then(() => {
+        if (cancelled) {
+          return;
+        }
+        disconnect = runtimeConnectionManager.connectRuntimeUpdates({
+          websocketUrl: bootstrapConfig.runtimeWebSocketUrl,
+          WebSocketImpl: globalThis.WebSocket,
+        });
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+      disconnect();
+    };
+  }, [
+    bootstrapConfig.backendMode,
+    bootstrapConfig.backendStatus,
+    bootstrapConfig.runtimeWebSocketUrl,
+    runtimeConnectionManager,
+  ]);
+
+  useEffect(() => {
     function handleWindowError(event) {
       logRendererDiagnostic("renderer_window_error", buildWindowErrorDetails(event));
       event.preventDefault?.();

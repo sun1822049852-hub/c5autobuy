@@ -3,7 +3,7 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 const FOREGROUND_POLL_MS = 1500;
 const BACKGROUND_POLL_MS = 5000;
-const MAX_RETAINED_EVENT_ROWS = 80;
+const MAX_RETAINED_EVENT_ROWS = 1000;
 const MAX_RETAINED_ACCOUNT_ROWS = 40;
 const MAX_RETAINED_LOGIN_TASKS = 40;
 
@@ -73,10 +73,9 @@ function isErrorLike(value) {
 }
 
 
-function isRetainableEvent(row) {
-  return isErrorLike(row?.level || row?.status || row?.state)
-    || Boolean(normalizeText(row?.error || row?.error_message))
-    || hasRawDetails(row);
+function isRetainableEvent(_row) {
+  // 保留全部事件（后端已限 1000 条）
+  return true;
 }
 
 

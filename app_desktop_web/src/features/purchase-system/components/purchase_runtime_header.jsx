@@ -9,6 +9,7 @@ export function PurchaseRuntimeHeader({
   onOpenPurchaseSettings,
   onOpenQuerySettings,
   runtimeMessage,
+  runtimeDrainNotice,
   totalPurchasedCount,
 }) {
   const configName = displayConfigName || activeQueryConfig?.config_name || "未选择配置";
@@ -22,6 +23,9 @@ export function PurchaseRuntimeHeader({
           <div className="purchase-runtime-header__name">{configName}</div>
           <div className="purchase-runtime-header__status">{stateText}</div>
         </div>
+        {runtimeDrainNotice ? (
+          <div className="purchase-runtime-header__notice" role="status">{runtimeDrainNotice}</div>
+        ) : null}
       </div>
 
       <div className="purchase-runtime-header__inline-actions">
