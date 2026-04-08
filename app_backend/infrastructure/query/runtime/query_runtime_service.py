@@ -49,6 +49,7 @@ class QueryRuntimeService:
         self._pending_resume_config_name: str | None = None
         self._pending_resume_runtime_session_id: str | None = None
         self._paused_at: str | None = None
+        self._auto_stop_requested = False
         self._register_purchase_runtime_callbacks()
 
     def start(self, *, config_id: str, resume: bool = False) -> tuple[bool, str]:
@@ -56,6 +57,7 @@ class QueryRuntimeService:
         runtime_to_stop = None
         message = ""
         with self._state_lock:
+            self._auto_stop_requested = False
             active_config_id = self._get_active_config_id_locked()
             allow_pending_resume = (
                 resume
@@ -144,11 +146,13 @@ class QueryRuntimeService:
         with self._state_lock:
             if not self._has_running_runtime_locked() and not self._has_pending_resume_state():
                 self._runtime = None
+                self._auto_stop_requested = False
                 return False, "当前没有运行中的查询任务"
 
             runtime = self._runtime
             self._runtime = None
             self._clear_pending_resume_state()
+            self._auto_stop_requested = False
         if runtime is not None:
             runtime.stop()
         self._close_runtime_accounts()
@@ -1075,15 +1079,14 @@ class QueryRuntimeService:
             except Exception:
                 pass
 
-        if self._purchase_runtime_service is None:
-            return
-        mark_account_auth_invalid = getattr(self._purchase_runtime_service, "mark_account_auth_invalid", None)
-        if not callable(mark_account_auth_invalid):
-            return
-        try:
-            mark_account_auth_invalid(account_id=account_id, error=error)
-        except Exception:
-            return
+        if self._purchase_runtime_service is not None:
+            mark_account_auth_invalid = getattr(self._purchase_runtime_service, "mark_account_auth_invalid", None)
+            if callable(mark_account_auth_invalid):
+                try:
+                    mark_account_auth_invalid(account_id=account_id, error=error)
+                except Exception:
+                    pass
+        self._schedule_stop_when_query_capacity_exhausted()
 
     def _mark_account_api_key_ip_invalid(self, *, account_id: str, error: str) -> None:
         account = None
@@ -1121,6 +1124,7 @@ class QueryRuntimeService:
             self.refresh_runtime_accounts()
         except Exception:
             pass
+        self._schedule_stop_when_query_capacity_exhausted()
         sync_service = self._open_api_binding_sync_service
         sync_account_now = getattr(sync_service, "sync_account_now", None) if sync_service is not None else None
         if callable(sync_account_now):
@@ -1140,6 +1144,88 @@ class QueryRuntimeService:
             return runtime_account
         runtime_account.bind_account(account)
         return runtime_account
+
+    def _schedule_stop_when_query_capacity_exhausted(self) -> None:
+        runtime_to_stop = None
+        with self._state_lock:
+            if self._auto_stop_requested or not self._has_running_runtime_locked():
+                return
+            config_id = self._get_active_config_id_locked()
+            if not config_id:
+                return
+            config = self._query_config_repository.get_config(config_id)
+            if config is None:
+                return
+            config = self._resolve_runtime_config(config)
+            if self._has_available_query_capacity(config):
+                return
+            runtime_to_stop = self._runtime
+            self._auto_stop_requested = True
+        if runtime_to_stop is None:
+            with self._state_lock:
+                self._auto_stop_requested = False
+            return
+        threading.Thread(
+            target=self._stop_runtime_if_still_current,
+            args=(runtime_to_stop,),
+            name="query-runtime-auto-stop",
+            daemon=True,
+        ).start()
+
+    def _stop_runtime_if_still_current(self, runtime_to_stop) -> None:
+        should_stop = False
+        try:
+            with self._state_lock:
+                should_stop = (
+                    runtime_to_stop is not None
+                    and self._runtime is runtime_to_stop
+                    and self._has_running_runtime_locked()
+                )
+            if should_stop:
+                self.stop()
+        finally:
+            with self._state_lock:
+                self._auto_stop_requested = False
+
+    def _has_available_query_capacity(self, config: QueryConfig) -> bool:
+        enabled_modes = {
+            str(mode_setting.mode_type)
+            for mode_setting in getattr(config, "mode_settings", []) or []
+            if bool(getattr(mode_setting, "enabled", False))
+        }
+        if not enabled_modes:
+            return True
+        for account in self._account_repository.list_accounts():
+            if self._account_supports_any_enabled_mode(account, enabled_modes=enabled_modes):
+                return True
+        return False
+
+    def _account_supports_any_enabled_mode(self, account: object, *, enabled_modes: set[str]) -> bool:
+        if QueryMode.NEW_API in enabled_modes and bool(getattr(account, "api_key", None)) and bool(
+            getattr(account, "new_api_enabled", False)
+        ):
+            return True
+        if QueryMode.FAST_API in enabled_modes and bool(getattr(account, "api_key", None)) and bool(
+            getattr(account, "fast_api_enabled", False)
+        ):
+            return True
+        if QueryMode.TOKEN not in enabled_modes:
+            return False
+        if not bool(getattr(account, "token_enabled", False)):
+            return False
+        if str(getattr(account, "last_error", "") or "").strip() == "Not login":
+            return False
+        return self._has_access_token(getattr(account, "cookie_raw", None))
+
+    @staticmethod
+    def _has_access_token(cookie_raw: str | None) -> bool:
+        if not cookie_raw:
+            return False
+        for raw_part in str(cookie_raw).split(";"):
+            key, _, value = raw_part.strip().partition("=")
+            if key == "NC5_accessToken" and bool(value):
+                return True
+        return False
 
     def _close_runtime_accounts(self) -> None:
         runtime_accounts = list(self._runtime_accounts.values())
