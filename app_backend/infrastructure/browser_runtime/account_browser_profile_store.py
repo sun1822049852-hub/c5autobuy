@@ -48,9 +48,13 @@ class AccountBrowserProfileStore:
         profile_root.joinpath(self.DEFAULT_PROFILE_DIRECTORY).mkdir(parents=True, exist_ok=True)
         return profile_root
 
-    def clone_session(self, account_id: str) -> Path:
+    def clone_session(self, account_id: str, *, session_name: str | None = None) -> Path:
         source_root = self.ensure_account_profile(account_id)
-        session_root = self._runtime.session_root / f"account-{self._safe_name(account_id)}"
+        normalized_session_name = str(session_name or "").strip()
+        if normalized_session_name:
+            session_root = self._runtime.session_root / self._safe_name(normalized_session_name)
+        else:
+            session_root = self._runtime.session_root / f"account-{self._safe_name(account_id)}"
         if session_root.exists():
             shutil.rmtree(session_root, ignore_errors=True)
         shutil.copytree(source_root, session_root, dirs_exist_ok=True)
