@@ -379,4 +379,47 @@ describe("diagnostics page", () => {
     expect(within(dialog).queryByText("2026-03-25T20:00:01")).not.toBeInTheDocument();
     expect(within(dialog).getByText("查询事件日志")).toBeInTheDocument();
   });
+
+  it("adds an error tab that only shows error events", async () => {
+    const snapshot = buildDiagnosticsSnapshot();
+    snapshot.query.recent_events = [
+      {
+        timestamp: "2026-03-25T20:00:02",
+        level: "info",
+        mode_type: "new_api",
+        account_id: "query-good-1",
+        account_display_name: "正常查询账号-1",
+        query_item_id: "item-2",
+        query_item_name: "M4A1-S | Blue Phosphor",
+        message: "查询事件-成功",
+        match_count: 0,
+        total_price: null,
+        total_wear_sum: null,
+        latency_ms: 66,
+        error: null,
+        status_code: 200,
+        request_method: "GET",
+        request_path: "/openapi/query",
+        response_text: "{\"ok\":true}",
+      },
+      ...snapshot.query.recent_events,
+    ];
+    installDesktopApp(createFetchHarness({ snapshots: [snapshot] }));
+    const user = userEvent.setup();
+
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "通用诊断" }));
+
+    const panel = await screen.findByRole("complementary", { name: "通用诊断面板" });
+    await user.click(within(panel).getByRole("button", { name: /查询事件日志/i }));
+
+    const dialog = await screen.findByRole("dialog", { name: "查询事件日志" });
+    expect(within(dialog).getByRole("tab", { name: /全部/i })).toBeInTheDocument();
+    expect(within(dialog).getByRole("tab", { name: /错误/i })).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole("tab", { name: /错误/i }));
+
+    expect(within(dialog).getByText("查询事件-1")).toBeInTheDocument();
+    expect(within(dialog).queryByText("查询事件-成功")).not.toBeInTheDocument();
+  });
 });
