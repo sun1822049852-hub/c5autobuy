@@ -7,6 +7,7 @@ import {
   usePurchaseSystemServer,
   usePurchaseSystemServerHydrated,
   usePurchaseSystemUi,
+  useQuerySystemServer,
   useQuerySystemServerHydrated,
 } from "../../../runtime/use_app_runtime.js";
 import { useFloatingRuntimeModalState } from "./use_floating_runtime_modal_state.js";
@@ -37,6 +38,7 @@ const EMPTY_UI_PREFERENCES = {
 
 const EMPTY_PURCHASE_SETTINGS_DRAFT = {
   per_batch_ip_fanout_limit: "1",
+  max_inflight_per_account: "1",
   is_dirty: false,
   updated_at: null,
 };
@@ -91,8 +93,13 @@ function normalizePurchaseSettingsDraft(settings) {
   const normalizedLimit = Number.isFinite(rawLimit) && rawLimit >= 1
     ? Math.trunc(rawLimit)
     : 1;
+  const rawMaxInflight = Number(settings?.max_inflight_per_account ?? 1);
+  const normalizedMaxInflight = Number.isFinite(rawMaxInflight) && rawMaxInflight >= 1
+    ? Math.trunc(rawMaxInflight)
+    : 1;
   return {
     per_batch_ip_fanout_limit: String(normalizedLimit),
+    max_inflight_per_account: String(normalizedMaxInflight),
     is_dirty: false,
     updated_at: settings?.updated_at ?? null,
   };
@@ -433,6 +440,7 @@ function normalizeConfigList(configs) {
     config_id: String(config?.config_id ?? ""),
     name: String(config?.name ?? ""),
     description: config?.description ? String(config.description) : "",
+    updated_at: config?.updated_at ? String(config.updated_at) : null,
   })).filter((config) => config.config_id && config.name);
 }
 
@@ -512,7 +520,8 @@ function isUiPreferencesHydrated(server) {
 
 
 function isRuntimeSettingsHydrated(server) {
-  return hasOwnKey(server?.runtimeSettings, "per_batch_ip_fanout_limit");
+  return hasOwnKey(server?.runtimeSettings, "per_batch_ip_fanout_limit")
+    || hasOwnKey(server?.runtimeSettings, "max_inflight_per_account");
 }
 
 
@@ -544,6 +553,25 @@ function getConfigById(configs, configId) {
   }
 
   return configs.find((config) => config.config_id === configId) || null;
+}
+
+
+function isQueryConfigDetail(config) {
+  return String(config?.serverShape || "") === "detail";
+}
+
+
+function isConfigDetailStale(detail, summary) {
+  if (!detail || !summary) {
+    return false;
+  }
+
+  if (summary.updated_at && String(summary.updated_at) !== String(detail.updated_at || "")) {
+    return true;
+  }
+
+  return String(summary.name || "") !== String(detail.name || "")
+    || String(summary.description || "") !== String(detail.description || "");
 }
 
 
@@ -677,6 +705,7 @@ export function usePurchaseSystemPage({ client, isActive = true }) {
   const purchaseServer = usePurchaseSystemServer();
   const purchaseServerHydrated = usePurchaseSystemServerHydrated();
   const purchaseUi = usePurchaseSystemUi();
+  const querySystemServer = useQuerySystemServer();
   const querySystemServerHydrated = useQuerySystemServerHydrated();
   const patchPurchaseUi = usePatchPurchaseSystemUi();
   const applyPurchaseSystemServer = useApplyPurchaseSystemServer();
@@ -693,6 +722,10 @@ export function usePurchaseSystemPage({ client, isActive = true }) {
   const configList = useMemo(
     () => normalizeConfigList(purchaseUi?.configList),
     [purchaseUi?.configList],
+  );
+  const sharedQueryConfigList = useMemo(
+    () => normalizeConfigList(querySystemServer?.configs),
+    [querySystemServer?.configs],
   );
   const uiPreferences = useMemo(
     () => normalizeUiPreferences(purchaseServer?.uiPreferences),
@@ -711,6 +744,10 @@ export function usePurchaseSystemPage({ client, isActive = true }) {
     () => getConfigDetailById(configDetailsById, selectedConfigId),
     [configDetailsById, selectedConfigId],
   );
+  const selectedSharedQueryConfig = useMemo(
+    () => getConfigById(querySystemServer?.configs || [], selectedConfigId),
+    [querySystemServer?.configs, selectedConfigId],
+  );
 
   const [selectorDraftId, setSelectorDraftId] = useState(null);
   const [manualAllocationDrafts, setManualAllocationDrafts] = useState({});
@@ -721,6 +758,7 @@ export function usePurchaseSystemPage({ client, isActive = true }) {
   const [loadError, setLoadError] = useState("");
   const [purchaseSettingsDraft, setPurchaseSettingsDraft] = useState(EMPTY_PURCHASE_SETTINGS_DRAFT);
   const [purchaseSettingsError, setPurchaseSettingsError] = useState("");
+  const [purchaseSettingsNotice, setPurchaseSettingsNotice] = useState("");
   const [isPurchaseSettingsSaving, setIsPurchaseSettingsSaving] = useState(false);
   const [isPurchaseSettingsOpen, setIsPurchaseSettingsOpen] = useState(false);
   const [querySettingsDraft, setQuerySettingsDraft] = useState(null);
@@ -830,19 +868,27 @@ export function usePurchaseSystemPage({ client, isActive = true }) {
     }
   }
 
-  function onPurchaseSettingsChange(value) {
+  function onPurchaseSettingsChange(field, value) {
     setPurchaseSettingsDraft((currentDraft) => ({
       ...currentDraft,
-      per_batch_ip_fanout_limit: value,
+      [field]: value,
       is_dirty: true,
     }));
     setPurchaseSettingsError("");
+    setPurchaseSettingsNotice("");
   }
 
   async function onSavePurchaseSettings() {
     const limit = Number(purchaseSettingsDraft?.per_batch_ip_fanout_limit ?? "");
+    const maxInflightPerAccount = Number(purchaseSettingsDraft?.max_inflight_per_account ?? "");
     if (!Number.isInteger(limit) || limit < 1) {
       setPurchaseSettingsError("单批次单IP并发购买数必须大于等于 1");
+      setPurchaseSettingsNotice("");
+      return false;
+    }
+    if (!Number.isInteger(maxInflightPerAccount) || maxInflightPerAccount < 1) {
+      setPurchaseSettingsError("单账号最大并发购买任务数必须大于等于 1");
+      setPurchaseSettingsNotice("");
       return false;
     }
 
@@ -850,15 +896,18 @@ export function usePurchaseSystemPage({ client, isActive = true }) {
     try {
       const savedSettings = await client.updatePurchaseRuntimeSettings({
         per_batch_ip_fanout_limit: limit,
+        max_inflight_per_account: maxInflightPerAccount,
       });
       applyPurchaseSystemServer({
         runtimeSettings: savedSettings,
       });
       setPurchaseSettingsDraft(normalizePurchaseSettingsDraft(savedSettings));
       setPurchaseSettingsError("");
+      setPurchaseSettingsNotice("已保存；若当前有正在执行的购买任务，将在本次购买完成后生效。");
       return true;
     } catch (error) {
       setPurchaseSettingsError(toErrorMessage(error));
+      setPurchaseSettingsNotice("");
       return false;
     } finally {
       setIsPurchaseSettingsSaving(false);
@@ -877,6 +926,7 @@ export function usePurchaseSystemPage({ client, isActive = true }) {
   function openPurchaseSettings() {
     setIsPurchaseSettingsOpen(true);
     setPurchaseSettingsError("");
+    setPurchaseSettingsNotice("");
   }
 
   function closePurchaseSettings() {
@@ -885,6 +935,7 @@ export function usePurchaseSystemPage({ client, isActive = true }) {
     }
     setIsPurchaseSettingsOpen(false);
     setPurchaseSettingsError("");
+    setPurchaseSettingsNotice("");
   }
 
   function onQuerySettingsChange(modeType, field, value) {
@@ -1028,7 +1079,25 @@ export function usePurchaseSystemPage({ client, isActive = true }) {
         patchPurchaseUi({ selectedConfigId });
       }
 
-      if (!selectedConfigId || selectedConfigDetail) {
+      if (!selectedConfigId) {
+        setIsLoading(false);
+        return;
+      }
+
+      if (isQueryConfigDetail(selectedSharedQueryConfig)) {
+        const normalizedSharedDetail = normalizeQueryConfigDetail(selectedSharedQueryConfig);
+
+        if (!selectedConfigDetail || isConfigDetailStale(selectedConfigDetail, normalizedSharedDetail)) {
+          applyConfigDetailToStore(normalizedSharedDetail);
+          setLoadError("");
+          setIsLoading(false);
+          return;
+        }
+      }
+
+      const selectedConfigSummary = getConfigById(sharedQueryConfigList, selectedConfigId)
+        || getConfigById(configList, selectedConfigId);
+      if (selectedConfigDetail && !isConfigDetailStale(selectedConfigDetail, selectedConfigSummary)) {
         setIsLoading(false);
         return;
       }
@@ -1068,11 +1137,13 @@ export function usePurchaseSystemPage({ client, isActive = true }) {
     purchaseUi?.selectedConfigId,
     selectedConfigDetail,
     selectedConfigId,
+    selectedSharedQueryConfig,
     shouldBootstrapPage,
     shouldFetchBootstrapConfigList,
     shouldFetchBootstrapRuntimeSettings,
     shouldFetchBootstrapStatus,
     shouldFetchBootstrapUiPreferences,
+    sharedQueryConfigList,
     status,
     uiPreferences,
   ]);
@@ -1105,8 +1176,8 @@ export function usePurchaseSystemPage({ client, isActive = true }) {
 
   const activeConfig = status.active_query_config;
   const selectedConfigSummary = useMemo(
-    () => getConfigById(configList, selectedConfigId),
-    [configList, selectedConfigId],
+    () => getConfigById(sharedQueryConfigList, selectedConfigId) || getConfigById(configList, selectedConfigId),
+    [configList, selectedConfigId, sharedQueryConfigList],
   );
   const configDisplayName = selectedConfigDetail?.name
     || selectedConfigSummary?.name
@@ -1462,6 +1533,7 @@ export function usePurchaseSystemPage({ client, isActive = true }) {
     onSubmitRuntimeDrafts,
     purchaseSettingsDraft,
     purchaseSettingsError,
+    purchaseSettingsNotice,
     isPurchaseSettingsSaving,
     querySettingsDraft,
     querySettingsError,

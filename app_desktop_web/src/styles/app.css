@@ -2249,6 +2249,11 @@ input[type="number"]:focus::-webkit-outer-spin-button {
   color: #ffb4b4;
 }
 
+.purchase-settings-panel__notice {
+  margin-top: 12px;
+  color: #b9f7ca;
+}
+
 .purchase-settings-panel__list {
   display: grid;
   gap: 10px;

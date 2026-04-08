@@ -71,6 +71,7 @@ class GetAppBootstrapUseCase:
                 "ui_preferences": ui_preferences,
                 "runtime_settings": {
                     "per_batch_ip_fanout_limit": self._read_per_batch_ip_fanout_limit(runtime_settings),
+                    "max_inflight_per_account": self._read_max_inflight_per_account(runtime_settings),
                     "updated_at": getattr(runtime_settings, "updated_at", None),
                 },
             },
@@ -83,3 +84,8 @@ class GetAppBootstrapUseCase:
     def _read_per_batch_ip_fanout_limit(runtime_settings) -> int:
         purchase_settings = dict(getattr(runtime_settings, "purchase_settings_json", {}) or {})
         return int(purchase_settings.get("per_batch_ip_fanout_limit", 1) or 1)
+
+    @staticmethod
+    def _read_max_inflight_per_account(runtime_settings) -> int:
+        purchase_settings = dict(getattr(runtime_settings, "purchase_settings_json", {}) or {})
+        return int(purchase_settings.get("max_inflight_per_account", 1) or 1)

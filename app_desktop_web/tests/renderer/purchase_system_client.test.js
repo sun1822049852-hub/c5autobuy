@@ -212,11 +212,19 @@ describe("purchase system client", () => {
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ per_batch_ip_fanout_limit: 1, updated_at: null }),
+        json: async () => ({
+          per_batch_ip_fanout_limit: 1,
+          max_inflight_per_account: 1,
+          updated_at: null,
+        }),
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ per_batch_ip_fanout_limit: 4, updated_at: "2026-03-29T12:00:00" }),
+        json: async () => ({
+          per_batch_ip_fanout_limit: 4,
+          max_inflight_per_account: 2,
+          updated_at: "2026-03-29T12:00:00",
+        }),
       });
     const client = createAccountCenterClient({
       apiBaseUrl: "http://127.0.0.1:8123",
@@ -226,6 +234,7 @@ describe("purchase system client", () => {
     const currentSettings = await client.getPurchaseRuntimeSettings();
     const updatedSettings = await client.updatePurchaseRuntimeSettings({
       per_batch_ip_fanout_limit: 4,
+      max_inflight_per_account: 2,
     });
 
     expect(fetchImpl).toHaveBeenNthCalledWith(
@@ -240,11 +249,16 @@ describe("purchase system client", () => {
       "http://127.0.0.1:8123/runtime-settings/purchase",
       expect.objectContaining({
         method: "PUT",
-        body: JSON.stringify({ per_batch_ip_fanout_limit: 4 }),
+        body: JSON.stringify({
+          per_batch_ip_fanout_limit: 4,
+          max_inflight_per_account: 2,
+        }),
       }),
     );
     expect(currentSettings.per_batch_ip_fanout_limit).toBe(1);
+    expect(currentSettings.max_inflight_per_account).toBe(1);
     expect(updatedSettings.per_batch_ip_fanout_limit).toBe(4);
+    expect(updatedSettings.max_inflight_per_account).toBe(2);
   });
 
   it("loads query item stats with only the provided range params", async () => {

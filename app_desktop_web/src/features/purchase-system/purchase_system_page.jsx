@@ -97,6 +97,7 @@ export function PurchaseSystemPage({ bootstrapConfig, client, isActive, onLeaveS
     onSubmitRuntimeDrafts,
     purchaseSettingsDraft,
     purchaseSettingsError,
+    purchaseSettingsNotice,
     isPurchaseSettingsSaving,
     querySettingsDraft,
     querySettingsError,
@@ -233,9 +234,16 @@ export function PurchaseSystemPage({ bootstrapConfig, client, isActive, onLeaveS
             <PurchaseSettingsPanel
               error={purchaseSettingsError}
               fanoutLimit={purchaseSettingsDraft?.per_batch_ip_fanout_limit || "1"}
+              maxInflightPerAccount={purchaseSettingsDraft?.max_inflight_per_account || "1"}
+              notice={purchaseSettingsNotice}
               isPending={isPurchaseSettingsSaving}
               isSaving={Boolean(purchaseSettingsDraft?.is_dirty)}
-              onFanoutLimitChange={onPurchaseSettingsChange}
+              onFanoutLimitChange={(value) => {
+                onPurchaseSettingsChange("per_batch_ip_fanout_limit", value);
+              }}
+              onMaxInflightPerAccountChange={(value) => {
+                onPurchaseSettingsChange("max_inflight_per_account", value);
+              }}
               onSave={onSavePurchaseSettings}
             />
           </section>

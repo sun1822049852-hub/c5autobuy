@@ -164,6 +164,20 @@ class PurchaseScheduler:
         with self._lock:
             return dict(self._account_status[account_id])
 
+    def update_account_max_inflight(self, account_id: str, *, max_inflight: int) -> None:
+        with self._lock:
+            status = self._account_status.get(account_id)
+            if status is None:
+                return
+            inflight_limit = max(int(max_inflight), 1)
+            status["max_inflight"] = inflight_limit
+            inflight_count = int(status.get("inflight_count", 0) or 0)
+            status["busy"] = bool(status.get("available")) and inflight_count >= inflight_limit
+
+    def total_inflight_count(self) -> int:
+        with self._lock:
+            return sum(max(int(status.get("inflight_count", 0) or 0), 0) for status in self._account_status.values())
+
     def drop_expired_batches(
         self,
         *,

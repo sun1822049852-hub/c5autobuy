@@ -16,6 +16,7 @@ def _default_query_settings() -> dict[str, object]:
 def _default_purchase_settings() -> dict[str, object]:
     return {
         "per_batch_ip_fanout_limit": 1,
+        "max_inflight_per_account": 1,
     }
 
 
@@ -67,7 +68,11 @@ class SqliteRuntimeSettingsRepository:
             value = json.loads(raw_value)
         except json.JSONDecodeError:
             return dict(fallback)
-        return value if isinstance(value, dict) else dict(fallback)
+        if not isinstance(value, dict):
+            return dict(fallback)
+        merged = dict(fallback)
+        merged.update(value)
+        return merged
 
     @classmethod
     def _to_settings(cls, row: RuntimeSettingsRecord) -> RuntimeSettings:

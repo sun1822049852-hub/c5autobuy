@@ -263,7 +263,10 @@ def test_runtime_update_websocket_receives_runtime_settings_updates(app):
         with client.websocket_connect("/ws/runtime") as websocket:
             response = client.put(
                 "/runtime-settings/purchase",
-                json={"per_batch_ip_fanout_limit": 4},
+                json={
+                    "per_batch_ip_fanout_limit": 4,
+                    "max_inflight_per_account": 2,
+                },
             )
             payload = websocket.receive_json()
 
@@ -271,6 +274,7 @@ def test_runtime_update_websocket_receives_runtime_settings_updates(app):
     assert payload["version"] == expected_version
     assert payload["event"] == "runtime_settings.updated"
     assert payload["payload"] == response.json()
+    assert payload["payload"]["max_inflight_per_account"] == 2
     assert payload["updated_at"]
 
 

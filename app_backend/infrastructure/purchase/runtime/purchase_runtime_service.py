@@ -115,6 +115,11 @@ class _AccountDispatchRunner:
             except RuntimeError:
                 return
 
+    def update_max_concurrent(self, max_concurrent: int) -> None:
+        with self._state_lock:
+            self._max_concurrent = max(int(max_concurrent), 1)
+        self._notify_loop()
+
     def discard_pending_jobs(self) -> list[_DispatchJob]:
         dropped_jobs: list[_DispatchJob] = []
         stop_markers = 0
@@ -273,7 +278,7 @@ class PurchaseRuntimeService:
         recovery_delay_seconds_provider: RecoveryDelaySecondsProvider | None = None,
         execution_gateway_factory: ExecutionGatewayFactory | None = None,
         runtime_factory: RuntimeFactory | None = None,
-        max_inflight_per_account: int = 3,
+        max_inflight_per_account: int | None = None,
         queued_hit_timeout_seconds: float = 2.0,
         stats_sink=None,
         runtime_update_hub=None,
@@ -286,7 +291,11 @@ class PurchaseRuntimeService:
         self._recovery_delay_seconds_provider = recovery_delay_seconds_provider
         self._execution_gateway_factory = execution_gateway_factory or PurchaseExecutionGateway
         self._runtime_factory = runtime_factory or self._build_default_runtime
-        self._max_inflight_per_account = max(int(max_inflight_per_account), 1)
+        self._max_inflight_per_account = (
+            max(int(max_inflight_per_account), 1)
+            if max_inflight_per_account is not None
+            else None
+        )
         self._queued_hit_timeout_seconds = max(float(queued_hit_timeout_seconds), 0.0)
         self._stats_sink = stats_sink
         self._runtime_update_hub = runtime_update_hub
@@ -591,6 +600,7 @@ class PurchaseRuntimeService:
         return bool(snapshot.get("running"))
 
     def _create_runtime(self, accounts: list[object]):
+        current_settings = self._get_purchase_runtime_settings()
         if self._runtime_factory_accepts_extended_kwargs():
             return self._runtime_factory(
                 accounts,
@@ -601,11 +611,32 @@ class PurchaseRuntimeService:
                 inventory_refresh_gateway_factory=self._inventory_refresh_gateway_factory,
                 recovery_delay_seconds_provider=self._recovery_delay_seconds_provider,
                 execution_gateway_factory=self._execution_gateway_factory,
-                max_inflight_per_account=self._max_inflight_per_account,
+                per_batch_ip_fanout_limit=int(current_settings["per_batch_ip_fanout_limit"]),
+                max_inflight_per_account=int(current_settings["max_inflight_per_account"]),
                 queued_hit_timeout_seconds=self._queued_hit_timeout_seconds,
                 stats_sink=self._stats_sink,
             )
         return self._runtime_factory(accounts, None)
+
+    def apply_purchase_runtime_settings(
+        self,
+        *,
+        per_batch_ip_fanout_limit: int,
+        max_inflight_per_account: int,
+    ) -> str:
+        runtime = self._runtime
+        if runtime is None or not self._has_running_runtime():
+            return "skipped"
+        apply_settings = getattr(runtime, "apply_purchase_runtime_settings", None)
+        if not callable(apply_settings):
+            return "skipped"
+        return str(
+            apply_settings(
+                per_batch_ip_fanout_limit=per_batch_ip_fanout_limit,
+                max_inflight_per_account=max_inflight_per_account,
+            )
+            or "skipped"
+        )
 
     def _bind_runtime_callbacks(self, runtime) -> None:
         set_callbacks = getattr(runtime, "set_availability_callbacks", None)
@@ -696,12 +727,45 @@ class PurchaseRuntimeService:
                 "inventory_refresh_gateway_factory",
                 "recovery_delay_seconds_provider",
                 "execution_gateway_factory",
+                "per_batch_ip_fanout_limit",
                 "max_inflight_per_account",
                 "queued_hit_timeout_seconds",
                 "stats_sink",
             }:
                 return True
         return False
+
+    def _get_purchase_runtime_settings(self) -> dict[str, int]:
+        repository = self._settings_repository
+        settings_payload = {
+            "per_batch_ip_fanout_limit": 1,
+            "max_inflight_per_account": 1,
+        }
+        if repository is not None:
+            get_settings = getattr(repository, "get", None)
+            if callable(get_settings):
+                try:
+                    runtime_settings = get_settings()
+                except Exception:
+                    runtime_settings = None
+                purchase_settings = dict(getattr(runtime_settings, "purchase_settings_json", {}) or {})
+                try:
+                    settings_payload["per_batch_ip_fanout_limit"] = max(
+                        int(purchase_settings.get("per_batch_ip_fanout_limit", 1) or 1),
+                        1,
+                    )
+                except (TypeError, ValueError):
+                    settings_payload["per_batch_ip_fanout_limit"] = 1
+                try:
+                    settings_payload["max_inflight_per_account"] = max(
+                        int(purchase_settings.get("max_inflight_per_account", 1) or 1),
+                        1,
+                    )
+                except (TypeError, ValueError):
+                    settings_payload["max_inflight_per_account"] = 1
+        if self._max_inflight_per_account is not None:
+            settings_payload["max_inflight_per_account"] = max(int(self._max_inflight_per_account), 1)
+        return settings_payload
 
     @staticmethod
     def _build_idle_snapshot() -> dict[str, object]:
@@ -1289,7 +1353,8 @@ class PurchaseRuntimeService:
         inventory_refresh_gateway_factory: InventoryRefreshGatewayFactory | None = None,
         recovery_delay_seconds_provider: RecoveryDelaySecondsProvider | None = None,
         execution_gateway_factory: ExecutionGatewayFactory | None = None,
-        max_inflight_per_account: int = 3,
+        per_batch_ip_fanout_limit: int = 1,
+        max_inflight_per_account: int = 1,
         queued_hit_timeout_seconds: float = 2.0,
         stats_sink=None,
     ):
@@ -1302,6 +1367,7 @@ class PurchaseRuntimeService:
             inventory_refresh_gateway_factory=inventory_refresh_gateway_factory,
             recovery_delay_seconds_provider=recovery_delay_seconds_provider,
             execution_gateway_factory=execution_gateway_factory or PurchaseExecutionGateway,
+            per_batch_ip_fanout_limit=per_batch_ip_fanout_limit,
             max_inflight_per_account=max_inflight_per_account,
             queued_hit_timeout_seconds=queued_hit_timeout_seconds,
             stats_sink=stats_sink,
@@ -1377,8 +1443,9 @@ class _DefaultPurchaseRuntime:
         inventory_refresh_gateway_factory: InventoryRefreshGatewayFactory | None,
         recovery_delay_seconds_provider: RecoveryDelaySecondsProvider | None,
         execution_gateway_factory: ExecutionGatewayFactory,
-        max_inflight_per_account: int,
-        queued_hit_timeout_seconds: float,
+        per_batch_ip_fanout_limit: int = 1,
+        max_inflight_per_account: int = 1,
+        queued_hit_timeout_seconds: float = 2.0,
         stats_sink=None,
     ) -> None:
         self._accounts = list(accounts)
@@ -1390,6 +1457,7 @@ class _DefaultPurchaseRuntime:
             recovery_delay_seconds_provider or self._default_recovery_delay_seconds
         )
         self._execution_gateway_factory = execution_gateway_factory
+        self._per_batch_ip_fanout_limit = max(int(per_batch_ip_fanout_limit), 1)
         self._max_inflight_per_account = max(int(max_inflight_per_account), 1)
         self._queued_hit_timeout_seconds = max(float(queued_hit_timeout_seconds), 0.0)
         self._stats_sink = stats_sink
@@ -1415,6 +1483,7 @@ class _DefaultPurchaseRuntime:
         self._dispatch_generation = 0
         self._tracked_dispatch_batches: dict[tuple[int, int], _TrackedDispatchBatch] = {}
         self._stats_aggregator = PurchaseStatsAggregator()
+        self._pending_purchase_settings: dict[str, int] | None = None
 
     def set_availability_callbacks(
         self,
@@ -1443,6 +1512,7 @@ class _DefaultPurchaseRuntime:
         self._dispatch_runners = {}
         self._tracked_dispatch_batches = {}
         self._stats_aggregator = PurchaseStatsAggregator()
+        self._pending_purchase_settings = None
         self._stats_aggregator.start()
         self._stats_aggregator.reset(
             runtime_session_id=None,
@@ -1753,7 +1823,29 @@ class _DefaultPurchaseRuntime:
         if effects is not None:
             self._run_dispatch_completion_effects(effects)
 
+    def apply_purchase_runtime_settings(
+        self,
+        *,
+        per_batch_ip_fanout_limit: int,
+        max_inflight_per_account: int,
+    ) -> str:
+        normalized_settings = {
+            "per_batch_ip_fanout_limit": max(int(per_batch_ip_fanout_limit), 1),
+            "max_inflight_per_account": max(int(max_inflight_per_account), 1),
+        }
+        should_signal_drain = False
+        with self._state_lock:
+            if self._scheduler.total_inflight_count() > 0:
+                self._pending_purchase_settings = normalized_settings
+                return "pending"
+            self._pending_purchase_settings = None
+            should_signal_drain = self._apply_purchase_settings_locked(normalized_settings)
+        if should_signal_drain:
+            self._signal_drain_worker()
+        return "applied"
+
     def _initialize_accounts(self) -> None:
+        self._max_inflight_per_account = max(int(self._max_inflight_per_account), 1)
         for account in self._accounts:
             if not self._is_eligible_account(account):
                 continue
@@ -2178,21 +2270,27 @@ class _DefaultPurchaseRuntime:
         return effects
 
     def _get_per_batch_ip_fanout_limit(self) -> int:
-        repository = getattr(self, "_settings_repository", None)
-        if repository is None:
-            return 1
-        get_settings = getattr(repository, "get", None)
-        if not callable(get_settings):
-            return 1
-        try:
-            settings = get_settings()
-        except Exception:
-            return 1
-        purchase_settings = dict(getattr(settings, "purchase_settings_json", {}) or {})
-        try:
-            return max(int(purchase_settings.get("per_batch_ip_fanout_limit", 1) or 1), 1)
-        except (TypeError, ValueError):
-            return 1
+        return max(int(self._per_batch_ip_fanout_limit), 1)
+
+    def _apply_purchase_settings_locked(self, purchase_settings: dict[str, int]) -> bool:
+        self._per_batch_ip_fanout_limit = max(int(purchase_settings["per_batch_ip_fanout_limit"]), 1)
+        self._max_inflight_per_account = max(int(purchase_settings["max_inflight_per_account"]), 1)
+        for account_id, dispatch_runner in self._dispatch_runners.items():
+            self._scheduler.update_account_max_inflight(
+                account_id,
+                max_inflight=self._max_inflight_per_account,
+            )
+            dispatch_runner.update_max_concurrent(self._max_inflight_per_account)
+        return self._scheduler.queue_size() > 0
+
+    def _apply_pending_purchase_settings_if_idle_locked(self) -> bool:
+        pending_settings = self._pending_purchase_settings
+        if pending_settings is None:
+            return False
+        if self._scheduler.total_inflight_count() > 0:
+            return False
+        self._pending_purchase_settings = None
+        return self._apply_purchase_settings_locked(pending_settings)
 
     @staticmethod
     def _account_bucket_key(account: object) -> str:
@@ -2369,6 +2467,8 @@ class _DefaultPurchaseRuntime:
 
             if deferred_success_outcome is None:
                 self._scheduler.release_account(account_id)
+                if self._apply_pending_purchase_settings_if_idle_locked():
+                    should_signal_drain = True
                 should_signal_drain = self._scheduler.queue_size() > 0
 
         if completion_effects is not None:
@@ -2392,6 +2492,8 @@ class _DefaultPurchaseRuntime:
                         reconcile_refresh_result=refresh_result,
                     )
                 self._scheduler.release_account(account_id)
+                if self._apply_pending_purchase_settings_if_idle_locked():
+                    should_signal_drain = True
                 should_signal_drain = self._scheduler.queue_size() > 0
             if completion_effects is not None:
                 self._run_dispatch_completion_effects(completion_effects)

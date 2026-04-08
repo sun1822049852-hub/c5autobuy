@@ -15,7 +15,10 @@ def test_runtime_settings_repository_returns_default_purchase_settings(tmp_path)
     settings = repository.get()
 
     assert settings.settings_id == "default"
-    assert settings.purchase_settings_json == {"per_batch_ip_fanout_limit": 1}
+    assert settings.purchase_settings_json == {
+        "per_batch_ip_fanout_limit": 1,
+        "max_inflight_per_account": 1,
+    }
     assert settings.query_settings_json == {}
     assert settings.updated_at is None
 
@@ -29,9 +32,20 @@ def test_runtime_settings_repository_updates_only_purchase_settings(tmp_path):
     create_schema(engine)
     repository = SqliteRuntimeSettingsRepository(build_session_factory(engine))
 
-    updated = repository.save_purchase_settings({"per_batch_ip_fanout_limit": 4})
+    updated = repository.save_purchase_settings(
+        {
+            "per_batch_ip_fanout_limit": 4,
+            "max_inflight_per_account": 2,
+        }
+    )
     reloaded = repository.get()
 
-    assert updated.purchase_settings_json == {"per_batch_ip_fanout_limit": 4}
-    assert reloaded.purchase_settings_json == {"per_batch_ip_fanout_limit": 4}
+    assert updated.purchase_settings_json == {
+        "per_batch_ip_fanout_limit": 4,
+        "max_inflight_per_account": 2,
+    }
+    assert reloaded.purchase_settings_json == {
+        "per_batch_ip_fanout_limit": 4,
+        "max_inflight_per_account": 2,
+    }
     assert reloaded.query_settings_json == {}

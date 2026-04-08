@@ -80,6 +80,7 @@ class FakeSettingsRepository:
     def __init__(self, purchase_settings=None) -> None:
         self._purchase_settings = {
             "per_batch_ip_fanout_limit": 1,
+            "max_inflight_per_account": 1,
         }
         if isinstance(purchase_settings, dict):
             self._purchase_settings.update(purchase_settings)
@@ -221,6 +222,32 @@ class BlockingExecutionGateway:
         )
         self.started.set()
         await asyncio.to_thread(self.release.wait, 1.0)
+        return self._result
+
+
+class MultiReleaseExecutionGateway:
+    def __init__(self, result: PurchaseExecutionResult) -> None:
+        self._result = result
+        self.calls: list[dict[str, object]] = []
+        self.release_events: list[threading.Event] = []
+        self._lock = threading.Lock()
+
+    async def execute(self, *, account, batch, selected_steam_id: str, **_kwargs):
+        on_execute_started = _kwargs.get("on_execute_started")
+        if callable(on_execute_started):
+            on_execute_started()
+        release_event = threading.Event()
+        with self._lock:
+            self.calls.append(
+                {
+                    "account": account,
+                    "account_id": _extract_account_id(account),
+                    "selected_steam_id": selected_steam_id,
+                    "query_item_name": batch.query_item_name,
+                }
+            )
+            self.release_events.append(release_event)
+        await asyncio.to_thread(release_event.wait, 1.0)
         return self._result
 
 
@@ -1651,6 +1678,153 @@ def test_purchase_runtime_service_allows_three_inflight_tasks_per_account_before
         assert len(gateway.calls) == 4
     finally:
         gateway.release.set()
+        service.stop()
+
+
+def test_purchase_runtime_service_reads_max_inflight_from_settings_repository():
+    from app_backend.infrastructure.purchase.runtime.purchase_runtime_service import PurchaseRuntimeService
+
+    snapshot_repository = FakeInventorySnapshotRepository(
+        {
+            "a1": type(
+                "Snapshot",
+                (),
+                {
+                    "account_id": "a1",
+                    "selected_steam_id": "steam-1",
+                    "inventories": [
+                        {"steamId": "steam-1", "nickname": "主仓", "inventory_num": 910, "inventory_max": 1000},
+                    ],
+                    "refreshed_at": "2026-03-16T20:00:00",
+                    "last_error": None,
+                },
+            )()
+        }
+    )
+    gateway = BlockingExecutionGateway(PurchaseExecutionResult.success(purchased_count=1))
+    service = PurchaseRuntimeService(
+        account_repository=FakeAccountRepository([build_account("a1")]),
+        settings_repository=FakeSettingsRepository({"max_inflight_per_account": 2}),
+        inventory_snapshot_repository=snapshot_repository,
+        execution_gateway_factory=lambda: gateway,
+    )
+    service.start()
+
+    try:
+        first = service.accept_query_hit(
+            {
+                "external_item_id": "1380979899390261110",
+                "query_item_name": "AK-1",
+                "product_url": "https://www.c5game.com/csgo/730/asset/1380979899390261110",
+                "product_list": [{"productId": "p-1", "price": 88.0, "actRebateAmount": 0}],
+                "total_price": 88.0,
+                "total_wear_sum": 0.1234,
+                "mode_type": "new_api",
+            }
+        )
+        second = service.accept_query_hit(
+            {
+                "external_item_id": "1380979899390261111",
+                "query_item_name": "AK-2",
+                "product_url": "https://www.c5game.com/csgo/730/asset/1380979899390261111",
+                "product_list": [{"productId": "p-2", "price": 89.0, "actRebateAmount": 0}],
+                "total_price": 89.0,
+                "total_wear_sum": 0.2234,
+                "mode_type": "new_api",
+            }
+        )
+        third = service.accept_query_hit(
+            {
+                "external_item_id": "1380979899390261112",
+                "query_item_name": "AK-3",
+                "product_url": "https://www.c5game.com/csgo/730/asset/1380979899390261112",
+                "product_list": [{"productId": "p-3", "price": 90.0, "actRebateAmount": 0}],
+                "total_price": 90.0,
+                "total_wear_sum": 0.3234,
+                "mode_type": "new_api",
+            }
+        )
+
+        assert first == {"accepted": True, "status": "queued"}
+        assert second == {"accepted": True, "status": "queued"}
+        assert third == {"accepted": True, "status": "queued"}
+        assert wait_until(lambda: len(gateway.calls) == 2)
+        assert service._runtime._scheduler.account_status("a1")["max_inflight"] == 2
+        assert service.get_status()["queue_size"] == 1
+    finally:
+        gateway.release.set()
+        service.stop()
+
+
+def test_purchase_runtime_service_waits_for_current_purchase_completion_before_applying_new_max_inflight():
+    from app_backend.infrastructure.purchase.runtime.purchase_runtime_service import PurchaseRuntimeService
+
+    snapshot_repository = FakeInventorySnapshotRepository(
+        {
+            "a1": type(
+                "Snapshot",
+                (),
+                {
+                    "account_id": "a1",
+                    "selected_steam_id": "steam-1",
+                    "inventories": [
+                        {"steamId": "steam-1", "nickname": "主仓", "inventory_num": 910, "inventory_max": 1000},
+                    ],
+                    "refreshed_at": "2026-03-16T20:00:00",
+                    "last_error": None,
+                },
+            )()
+        }
+    )
+    gateway = MultiReleaseExecutionGateway(PurchaseExecutionResult.success(purchased_count=1))
+    service = PurchaseRuntimeService(
+        account_repository=FakeAccountRepository([build_account("a1")]),
+        settings_repository=FakeSettingsRepository(),
+        inventory_snapshot_repository=snapshot_repository,
+        execution_gateway_factory=lambda: gateway,
+    )
+    service.start()
+    runtime = service._runtime
+
+    try:
+        for index in range(3):
+            result = service.accept_query_hit(
+                {
+                    "external_item_id": f"13809798993902621{index}",
+                    "query_item_name": f"AK-{index + 1}",
+                    "product_url": f"https://www.c5game.com/csgo/730/asset/13809798993902621{index}",
+                    "product_list": [{"productId": f"p-{index + 1}", "price": 88.0 + index, "actRebateAmount": 0}],
+                    "total_price": 88.0 + index,
+                    "total_wear_sum": 0.5234 + index,
+                    "mode_type": "new_api",
+                }
+            )
+            assert result == {"accepted": True, "status": "queued"}
+
+        assert wait_until(lambda: len(gateway.release_events) == 1)
+        assert runtime._scheduler.account_status("a1")["max_inflight"] == 1
+
+        service.apply_purchase_runtime_settings(
+            per_batch_ip_fanout_limit=1,
+            max_inflight_per_account=2,
+        )
+
+        assert runtime._scheduler.account_status("a1")["max_inflight"] == 1
+        assert getattr(runtime, "_pending_purchase_settings", None) == {
+            "per_batch_ip_fanout_limit": 1,
+            "max_inflight_per_account": 2,
+        }
+        assert wait_until(lambda: len(gateway.release_events) == 2, timeout=0.2) is False
+
+        gateway.release_events[0].set()
+
+        assert wait_until(lambda: len(gateway.release_events) == 3)
+        assert runtime._scheduler.account_status("a1")["max_inflight"] == 2
+        assert runtime._dispatch_runners["a1"]._max_concurrent == 2
+        assert getattr(runtime, "_pending_purchase_settings", None) is None
+    finally:
+        for event in list(gateway.release_events):
+            event.set()
         service.stop()
 
 

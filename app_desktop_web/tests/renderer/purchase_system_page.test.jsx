@@ -407,7 +407,11 @@ function createFetchHarness({
   capacitySummary = buildCapacitySummary(),
   configDetails,
   initialStatus,
-  initialPurchaseRuntimeSettings = { per_batch_ip_fanout_limit: 1, updated_at: null },
+  initialPurchaseRuntimeSettings = {
+    per_batch_ip_fanout_limit: 1,
+    max_inflight_per_account: 1,
+    updated_at: null,
+  },
   initialQuerySettings = QUERY_SETTINGS,
   initialUiPreferences = { selected_config_id: null, updated_at: null },
   queryConfigs = QUERY_CONFIGS,
@@ -415,6 +419,7 @@ function createFetchHarness({
   let purchaseRuntimeStatus = initialStatus || buildPurchaseRuntimeStatus();
   let purchaseRuntimeSettings = {
     per_batch_ip_fanout_limit: initialPurchaseRuntimeSettings?.per_batch_ip_fanout_limit ?? 1,
+    max_inflight_per_account: initialPurchaseRuntimeSettings?.max_inflight_per_account ?? 1,
     updated_at: initialPurchaseRuntimeSettings?.updated_at ?? null,
   };
   let querySettings = JSON.parse(JSON.stringify(initialQuerySettings));
@@ -458,6 +463,7 @@ function createFetchHarness({
     if (url.pathname === "/runtime-settings/purchase" && method === "PUT") {
       purchaseRuntimeSettings = {
         per_batch_ip_fanout_limit: body?.per_batch_ip_fanout_limit ?? purchaseRuntimeSettings.per_batch_ip_fanout_limit,
+        max_inflight_per_account: body?.max_inflight_per_account ?? purchaseRuntimeSettings.max_inflight_per_account,
         updated_at: "2026-03-29T12:00:00",
       };
       return jsonResponse(purchaseRuntimeSettings);
@@ -768,6 +774,87 @@ describe("purchase system page", () => {
     });
   });
 
+  it("refreshes the purchase item list after config management updates the selected query config detail", async () => {
+    const harness = createFetchHarness({
+      initialStatus: buildPurchaseRuntimeStatus({
+        running: true,
+        message: "运行中",
+        active_query_config: {
+          config_id: "cfg-1",
+          config_name: "白天配置",
+          state: "running",
+          message: "运行中",
+        },
+      }),
+    });
+    const runtimeStore = buildHydratedPurchaseRuntimeStore({
+      runtimeStatus: buildPurchaseRuntimeStatus({
+        running: true,
+        message: "运行中",
+        active_query_config: {
+          config_id: "cfg-1",
+          config_name: "白天配置",
+          state: "running",
+          message: "运行中",
+        },
+      }),
+    });
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+    const nextConfigDetail = buildQueryConfigDetail("cfg-1", {
+      serverShape: "detail",
+      updated_at: "2026-03-22T12:30:00",
+      items: [
+        ...buildQueryConfigDetail("cfg-1").items,
+        {
+          query_item_id: "item-9",
+          config_id: "cfg-1",
+          product_url: "https://www.c5game.com/csgo/730/asset/1380979899390267009",
+          external_item_id: "1380979899390267009",
+          item_name: "Desert Eagle | Blaze",
+          market_hash_name: "Desert Eagle | Blaze (Factory New)",
+          min_wear: 0,
+          max_wear: 0.08,
+          detail_min_wear: 0,
+          detail_max_wear: 0.03,
+          max_price: 1999,
+          last_market_price: 1888.88,
+          last_detail_sync_at: "2026-03-22T12:30:00",
+          manual_paused: false,
+          mode_allocations: buildModeAllocations({ fast_api: 1 }),
+          sort_order: 2,
+          created_at: "2026-03-22T12:30:00",
+          updated_at: "2026-03-22T12:30:00",
+        },
+      ],
+    });
+
+    render(<App runtimeStore={runtimeStore} />);
+    await screen.findByText("C5 账号中心");
+
+    await user.click(screen.getByRole("button", { name: "扫货系统" }));
+    expect(await screen.findByRole("button", { name: "AK-47 | Redline" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Desert Eagle | Blaze" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "账号中心" }));
+    await screen.findByText("C5 账号中心");
+
+    act(() => {
+      runtimeStore.applyQuerySystemServer({
+        configs: [
+          nextConfigDetail,
+          { ...QUERY_CONFIGS[1], serverShape: "summary" },
+        ],
+      });
+    });
+
+    await user.click(screen.getByRole("button", { name: "扫货系统" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Desert Eagle | Blaze" })).toBeInTheDocument();
+    });
+  });
+
   it("does not immediately double-fetch purchase runtime status on first active entry", async () => {
     const harness = createFetchHarness();
     installDesktopApp(harness.fetchImpl);
@@ -1065,7 +1152,11 @@ describe("purchase system page", () => {
 
   it("opens purchase settings from query settings and saves the global per-batch limit", async () => {
     const harness = createFetchHarness({
-      initialPurchaseRuntimeSettings: { per_batch_ip_fanout_limit: 1, updated_at: null },
+      initialPurchaseRuntimeSettings: {
+        per_batch_ip_fanout_limit: 1,
+        max_inflight_per_account: 1,
+        updated_at: null,
+      },
     });
     installDesktopApp(harness.fetchImpl);
     const user = userEvent.setup();
@@ -1079,16 +1170,22 @@ describe("purchase system page", () => {
     const dialog = await screen.findByRole("dialog", { name: "购买设置" });
     const panel = within(dialog).getByRole("region", { name: "购买设置" });
     const input = within(panel).getByLabelText("单批次单IP并发购买数");
+    const inflightInput = within(panel).getByLabelText("单账号最大并发购买任务数");
     expect(input).toHaveValue(1);
+    expect(inflightInput).toHaveValue(1);
 
     fireEvent.change(input, { target: { value: "4" } });
+    fireEvent.change(inflightInput, { target: { value: "2" } });
     await user.click(within(panel).getByRole("button", { name: "保存购买设置" }));
 
     await waitFor(() => {
       expect(harness.calls).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
-            body: { per_batch_ip_fanout_limit: 4 },
+            body: {
+              per_batch_ip_fanout_limit: 4,
+              max_inflight_per_account: 2,
+            },
             method: "PUT",
             pathname: "/runtime-settings/purchase",
           }),
@@ -1096,6 +1193,8 @@ describe("purchase system page", () => {
       );
     });
     expect(within(panel).getByLabelText("单批次单IP并发购买数")).toHaveValue(4);
+    expect(within(panel).getByLabelText("单账号最大并发购买任务数")).toHaveValue(2);
+    expect(within(panel).getByText("已保存；若当前有正在执行的购买任务，将在本次购买完成后生效。")).toBeInTheDocument();
     expect(screen.getByRole("dialog", { name: "购买设置" })).toBeInTheDocument();
   });
 

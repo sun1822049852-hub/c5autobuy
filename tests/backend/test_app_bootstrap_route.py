@@ -25,6 +25,7 @@ async def test_app_bootstrap_route_matches_existing_runtime_and_diagnostics_rout
     }
     assert payload["purchase_system"]["runtime_settings"] == {
         "per_batch_ip_fanout_limit": 1,
+        "max_inflight_per_account": 1,
         "updated_at": None,
     }
     diagnostics_summary = diagnostics_response.json()["summary"]
@@ -81,7 +82,10 @@ async def test_app_bootstrap_route_matches_non_default_purchase_preferences_and_
     )
     runtime_settings_response = await client.put(
         "/runtime-settings/purchase",
-        json={"per_batch_ip_fanout_limit": 4},
+        json={
+            "per_batch_ip_fanout_limit": 4,
+            "max_inflight_per_account": 2,
+        },
     )
     bootstrap_response = await client.get("/app/bootstrap")
 
