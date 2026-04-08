@@ -339,6 +339,48 @@ def build_active_worker(account_id: str) -> object:
     return SimpleNamespace(account=SimpleNamespace(account_id=account_id))
 
 
+def test_mode_runner_keeps_successful_zero_match_events_in_recent_events():
+    from app_backend.infrastructure.query.runtime.mode_runner import ModeRunner
+    from app_backend.infrastructure.query.runtime.runtime_events import QueryExecutionEvent
+
+    config = build_config("cfg-1")
+    runner = ModeRunner(
+        config.mode_settings[0],
+        [build_account("a1", api_key="api-1")],
+        query_items=list(config.items),
+    )
+    event = QueryExecutionEvent(
+        timestamp="2026-04-08T15:20:00",
+        level="info",
+        mode_type="new_api",
+        account_id="a1",
+        account_display_name="账号-a1",
+        query_item_id="item-1",
+        query_item_name="商品-1",
+        message="查询完成，无命中",
+        match_count=0,
+        query_config_id="cfg-1",
+        runtime_session_id="run-1",
+        external_item_id="1380979899390261111",
+        product_url="https://www.c5game.com/csgo/730/asset/item-1",
+        total_price=None,
+        total_wear_sum=None,
+        latency_ms=45.0,
+        error=None,
+        status_code=200,
+        request_method="GET",
+        request_path="/openapi/query",
+        response_text="{\"ok\":true}",
+    )
+
+    runner._record_event(event)
+    snapshot = runner.snapshot()
+
+    assert len(snapshot["recent_events"]) == 1
+    assert snapshot["recent_events"][0]["message"] == "查询完成，无命中"
+    assert snapshot["recent_events"][0]["match_count"] == 0
+
+
 def test_query_task_runtime_starts_mode_runners_and_aggregates_snapshot():
     from app_backend.infrastructure.query.runtime.query_task_runtime import QueryTaskRuntime
 

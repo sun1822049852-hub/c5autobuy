@@ -431,8 +431,6 @@ class ModeRunner:
         return await self._wait_for_stop(stop_event, delay)
 
     def _record_event(self, event: QueryExecutionEvent) -> None:
-        if int(getattr(event, "match_count", 0)) <= 0 and not getattr(event, "error", None):
-            return
         self._recent_events.insert(0, self._serialize_event(event))
         del self._recent_events[self._RECENT_EVENT_LIMIT :]
 
