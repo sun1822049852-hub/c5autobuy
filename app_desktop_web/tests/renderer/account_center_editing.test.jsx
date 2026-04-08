@@ -898,6 +898,54 @@ describe("account center editing flows", () => {
     });
   });
 
+  it("keeps api proxy saved for not logged in accounts even when whitelist sync is skipped", async () => {
+    const harness = createFetchHarness();
+    const fetchImpl = vi.fn(async (input, options = {}) => {
+      const url = new URL(input);
+      if (
+        String(options.method ?? "GET").toUpperCase() === "POST"
+        && url.pathname === "/accounts/a-2/open-api/sync"
+      ) {
+        return jsonResponse({ detail: "当前账号未登录，无法同步 API 白名单" }, 409);
+      }
+      return harness.fetchImpl(input, options);
+    });
+    installDesktopApp(fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await screen.findByText("账号 B");
+
+    await user.click(screen.getByRole("button", { name: "编辑API IP 账号 B" }));
+    await screen.findByRole("heading", { name: "API IP 设置" });
+    await user.clear(screen.getByLabelText("API代理"));
+    await user.type(screen.getByLabelText("API代理"), "10.20.30.40:9101");
+    await user.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("heading", { name: "API IP 设置" })).not.toBeInTheDocument();
+    });
+
+    expect(harness.calls).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          method: "PATCH",
+          pathname: "/accounts/a-2",
+          body: expect.objectContaining({
+            api_proxy_mode: "custom",
+            api_proxy_url: "10.20.30.40:9101",
+          }),
+        }),
+      ]),
+    );
+    expect(fetchImpl.mock.calls.filter(([input]) => new URL(input).pathname === "/accounts/a-2/open-api/sync")).toHaveLength(1);
+
+    await user.click(screen.getByRole("button", { name: "编辑API IP 账号 B" }));
+    const dialog = await screen.findByRole("dialog", { name: "API IP 设置" });
+    expect(within(dialog).getByLabelText("API代理")).toHaveValue("10.20.30.40:9101");
+  });
+
   it("opens the binding page from api ip dialog", async () => {
     const harness = createFetchHarness();
     installDesktopApp(harness.fetchImpl);

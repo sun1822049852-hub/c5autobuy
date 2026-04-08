@@ -8,6 +8,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from app_backend.infrastructure.query.product_url_utils import normalize_c5_product_url
 from app_backend.domain.models.query_config import QueryItem
 from xsign import XSignWrapper
 
@@ -68,7 +69,7 @@ class TokenQueryExecutor:
         headers["Accept"] = "application/json, text/plain, */*"
         headers["Accept-Language"] = "zh-CN"
         headers["Accept-Encoding"] = "gzip, deflate, br, zstd"
-        headers["Referer"] = query_item.product_url
+        headers["Referer"] = normalize_c5_product_url(query_item.product_url)
         headers["Cookie"] = account.get_cookie_header_exact()
         headers["Sec-Fetch-Dest"] = "empty"
         headers["Sec-Fetch-Mode"] = "no-cors"

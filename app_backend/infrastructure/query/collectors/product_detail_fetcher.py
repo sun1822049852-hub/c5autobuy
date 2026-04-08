@@ -8,6 +8,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+from app_backend.infrastructure.query.product_url_utils import normalize_c5_product_url
 from app_backend.infrastructure.query.runtime.runtime_account_adapter import RuntimeAccountAdapter
 from xsign import XSignWrapper
 
@@ -40,22 +41,23 @@ class ProductDetailFetcher:
 
     async def fetch(self, *, external_item_id: str, product_url: str) -> dict[str, object]:
         last_error = "商品信息补全失败"
+        normalized_product_url = normalize_c5_product_url(product_url)
         for account in self._selector.build_attempt_order():
             runtime_account = self._build_runtime_account(account)
             try:
                 preview_payload = await self._fetch_preview_payload(
                     runtime_account=runtime_account,
                     external_item_id=external_item_id,
-                    product_url=product_url,
+                    product_url=normalized_product_url,
                 )
                 market_payload = await self._fetch_market_payload(
                     runtime_account=runtime_account,
                     external_item_id=external_item_id,
-                    product_url=product_url,
+                    product_url=normalized_product_url,
                 )
                 return self._merge_payloads(
                     external_item_id=external_item_id,
-                    product_url=product_url,
+                    product_url=normalized_product_url,
                     preview_payload=preview_payload,
                     market_payload=market_payload,
                 )

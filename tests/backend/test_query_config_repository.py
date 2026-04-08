@@ -161,6 +161,45 @@ def test_upsert_product_reuses_shared_product_cache(tmp_path):
     assert second.market_hash_name == "M4A1-S | Printstream (Field-Tested)"
 
 
+def test_update_item_detail_normalizes_legacy_http_product_url(tmp_path):
+    engine = build_engine(tmp_path / "app.db")
+    create_schema(engine)
+    repository = SqliteQueryConfigRepository(build_session_factory(engine))
+
+    config = repository.create_config(name="商品配置", description="用于商品")
+    item = repository.add_item(
+        config_id=config.config_id,
+        product_url="http://www.c5game.com/csgo/730/asset/123",
+        external_item_id="123",
+        item_name="AK-47 | Redline",
+        market_hash_name="AK-47 | Redline (Field-Tested)",
+        min_wear=0.0,
+        max_wear=0.7,
+        detail_min_wear=0.1,
+        detail_max_wear=0.25,
+        max_price=199.0,
+        last_market_price=123.45,
+    )
+
+    updated = repository.update_item_detail(
+        item.query_item_id,
+        item_name="AK-47 | Redline",
+        market_hash_name="AK-47 | Redline (Field-Tested)",
+        min_wear=0.0,
+        max_wear=0.7,
+        last_market_price=111.11,
+        last_detail_sync_at="2026-03-19T12:00:00",
+    )
+    stored = repository.get_config(config.config_id)
+    product = repository.get_product("123")
+
+    assert updated.product_url == "https://www.c5game.com/csgo/730/asset/123"
+    assert stored is not None
+    assert stored.items[0].product_url == "https://www.c5game.com/csgo/730/asset/123"
+    assert product is not None
+    assert product.product_url == "https://www.c5game.com/csgo/730/asset/123"
+
+
 def test_update_and_delete_query_config(tmp_path):
     engine = build_engine(tmp_path / "app.db")
     create_schema(engine)

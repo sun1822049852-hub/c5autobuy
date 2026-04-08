@@ -14,6 +14,7 @@ from app_backend.domain.models.query_config import (
     QueryModeSetting,
     QueryProduct,
 )
+from app_backend.infrastructure.query.product_url_utils import normalize_c5_product_url
 from app_backend.infrastructure.db.models import (
     QueryConfigItemRecord,
     QueryConfigRecord,
@@ -445,11 +446,12 @@ class SqliteQueryConfigRepository:
         last_detail_sync_at: str | None,
     ) -> QueryProductRecord:
         now = datetime.now().isoformat(timespec="seconds")
+        normalized_product_url = normalize_c5_product_url(product_url)
         row = session.get(QueryProductRecord, external_item_id)
         if row is None:
             row = QueryProductRecord(
                 external_item_id=external_item_id,
-                product_url=product_url,
+                product_url=normalized_product_url,
                 item_name=item_name,
                 market_hash_name=market_hash_name,
                 min_wear=min_wear,
@@ -463,7 +465,7 @@ class SqliteQueryConfigRepository:
             session.flush()
             return row
 
-        row.product_url = product_url
+        row.product_url = normalized_product_url
         row.item_name = item_name
         row.market_hash_name = market_hash_name
         row.min_wear = min_wear

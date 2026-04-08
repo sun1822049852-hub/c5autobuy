@@ -46,6 +46,18 @@ def build_batch() -> PurchaseHitBatch:
     )
 
 
+def build_batch_with_url(product_url: str) -> PurchaseHitBatch:
+    return PurchaseHitBatch(
+        external_item_id="1380979899390261111",
+        query_item_name="AK-47",
+        product_url=product_url,
+        product_list=[{"productId": "p-1", "price": 88.0, "actRebateAmount": 0}],
+        total_price=88.0,
+        total_wear_sum=0.1234,
+        source_mode_type="token",
+    )
+
+
 class FakeSigner:
     def __init__(self, *, result: str | None = None, error: Exception | None = None) -> None:
         self._result = result
@@ -168,6 +180,27 @@ async def test_purchase_execution_gateway_returns_stage_latencies_on_success(mon
     assert result.submitted_count == 1
     assert result.create_order_latency_ms == 25.0
     assert result.submit_order_latency_ms == 45.0
+
+
+@pytest.mark.asyncio
+async def test_purchase_execution_gateway_normalizes_legacy_http_referer(monkeypatch):
+    session = FakeSession(
+        responses=[
+            (200, json.dumps({"success": True, "data": "order-1"})),
+            (200, json.dumps({"success": True, "data": {"successCount": 1}})),
+        ]
+    )
+    gateway = await _build_gateway(monkeypatch, session=session, signer=FakeSigner(result="fake-sign"))
+
+    result = await gateway.execute(
+        account=build_account(),
+        batch=build_batch_with_url("http://www.c5game.com/csgo/730/asset/1380979899390261111"),
+        selected_steam_id="steam-1",
+    )
+
+    assert result.status == "success"
+    assert session.calls[0]["headers"]["Referer"] == "https://www.c5game.com/csgo/730/asset/1380979899390261111"
+    assert session.calls[1]["headers"]["Referer"] == "https://www.c5game.com/csgo/730/asset/1380979899390261111"
 
 
 @pytest.mark.asyncio

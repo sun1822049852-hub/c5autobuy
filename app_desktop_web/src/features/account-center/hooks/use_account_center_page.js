@@ -32,6 +32,7 @@ const INITIAL_LOG_ENTRIES = [
 ];
 const QUERY_STATUS_ENABLED = "enabled";
 const QUERY_STATUS_DISABLED = "disabled";
+const OPEN_API_SYNC_SKIPPED_MESSAGE = "当前账号未登录，无法同步 API 白名单";
 const QUERY_REASON_TEXTS = {
   ip_invalid: "IP 不在白名单内，请手动绑定",
   manual_disabled: "手动禁用",
@@ -47,6 +48,12 @@ function getDisplayName(row) {
 
 function toErrorMessage(error) {
   return error instanceof Error ? error.message : String(error);
+}
+
+
+function isIgnorableOpenApiSyncError(error) {
+  return Number(error?.status) === 409
+    && toErrorMessage(error).includes(OPEN_API_SYNC_SKIPPED_MESSAGE);
 }
 
 
@@ -955,13 +962,30 @@ export function useAccountCenterPage({ client }) {
         || (account.api_proxy_url ?? "") !== (payload.api_proxy_url ?? "");
 
       return handleAction(async () => {
+        let skippedWhitelistSync = false;
         await client.updateAccount(account.account_id, buildAccountUpdatePayload(account, payload));
         if (apiProxyChanged) {
-          await client.syncAccountOpenApi(account.account_id);
+          try {
+            await client.syncAccountOpenApi(account.account_id);
+          } catch (error) {
+            if (!isIgnorableOpenApiSyncError(error)) {
+              throw error;
+            }
+            skippedWhitelistSync = true;
+          }
         }
         setProxyDialogAccount(null);
         await refreshAccounts();
-      }, `${apiProxyChanged ? "已更新 API 代理并刷新白名单" : "已更新 API 代理"}：${getDisplayName(account)}`);
+        return {
+          apiProxyChanged,
+          skippedWhitelistSync,
+        };
+      }, (result) => {
+        if (result?.skippedWhitelistSync) {
+          return `已更新 API 代理，账号未登录，跳过白名单刷新：${getDisplayName(account)}`;
+        }
+        return `${apiProxyChanged ? "已更新 API 代理并刷新白名单" : "已更新 API 代理"}：${getDisplayName(account)}`;
+      });
     },
     submitPurchaseConfig: async (payload) => {
       const account = purchaseDrawerState.account;

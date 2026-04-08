@@ -5,6 +5,8 @@ from pathlib import Path
 from sqlalchemy import Engine, create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
+from app_backend.infrastructure.query.product_url_utils import normalize_c5_product_url
+
 
 class Base(DeclarativeBase):
     """Base declarative model for the account center database."""
@@ -76,6 +78,7 @@ def create_schema(engine: Engine) -> None:
     _ensure_query_settings_mode_columns(engine)
     _ensure_account_columns(engine)
     _backfill_query_products(engine, had_detail_min_wear=had_detail_min_wear_before_migration)
+    _normalize_legacy_c5_product_urls(engine)
 
 
 def _ensure_query_config_item_columns(engine: Engine) -> None:
@@ -609,3 +612,42 @@ def _backfill_query_products(engine: Engine, *, had_detail_min_wear: bool) -> No
                 """
             )
         )
+
+
+def _normalize_legacy_c5_product_urls(engine: Engine) -> None:
+    inspector = inspect(engine)
+    table_names = set(inspector.get_table_names())
+    targets = (
+        ("query_products", "external_item_id"),
+        ("query_config_items", "query_item_id"),
+    )
+    with engine.begin() as connection:
+        for table_name, identity_column in targets:
+            if table_name not in table_names:
+                continue
+            rows = connection.execute(
+                text(
+                    f"""
+                    SELECT {identity_column} AS row_id, product_url
+                    FROM {table_name}
+                    WHERE product_url LIKE 'http://%'
+                    """
+                )
+            ).mappings()
+            for row in rows:
+                normalized_product_url = normalize_c5_product_url(row["product_url"])
+                if normalized_product_url == row["product_url"]:
+                    continue
+                connection.execute(
+                    text(
+                        f"""
+                        UPDATE {table_name}
+                        SET product_url = :product_url
+                        WHERE {identity_column} = :row_id
+                        """
+                    ),
+                    {
+                        "product_url": normalized_product_url,
+                        "row_id": row["row_id"],
+                    },
+                )

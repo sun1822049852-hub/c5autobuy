@@ -206,6 +206,65 @@ async def test_product_detail_fetcher_merges_preview_and_market_hash_name():
     assert session.get_calls[0]["headers"]["Referer"] == product_url
 
 
+async def test_product_detail_fetcher_normalizes_legacy_http_product_url():
+    from app_backend.infrastructure.query.collectors.product_detail_fetcher import ProductDetailFetcher
+
+    item_id = "1380979899390267393"
+    legacy_product_url = f"http://www.c5game.com/csgo/730/asset/{item_id}"
+    normalized_product_url = f"https://www.c5game.com/csgo/730/asset/{item_id}"
+    account = build_account(
+        "a1",
+        cookie_raw="foo=bar; NC5_accessToken=token-1; NC5_deviceId=device-1; _csrf=abc%3D",
+    )
+    session = FakeSession(
+        post_responses=[
+            (
+                200,
+                json.dumps(
+                    {
+                        "success": True,
+                        "data": {
+                            "wearRange": [{"start": 0.1, "end": 0.3}],
+                            "minPrice": 123.45,
+                            "itemName": "AK-47 | Redline",
+                        },
+                    }
+                ),
+            )
+        ],
+        get_responses=[
+            (
+                200,
+                json.dumps(
+                    {
+                        "success": True,
+                        "data": {
+                            "list": [
+                                {
+                                    "itemName": "AK-47 | Redline",
+                                    "marketHashName": "AK-47 | Redline (Field-Tested)",
+                                    "itemInfo": {},
+                                }
+                            ]
+                        },
+                    }
+                ),
+            )
+        ],
+    )
+    fetcher = ProductDetailFetcher(
+        selector=FakeSelector([account]),
+        xsign_wrapper=FakeSigner(),
+        runtime_account_factory=lambda current: FakeRuntimeAccount(current, session),
+    )
+
+    detail = await fetcher.fetch(external_item_id=item_id, product_url=legacy_product_url)
+
+    assert detail["product_url"] == normalized_product_url
+    assert session.post_calls[0]["headers"]["Referer"] == normalized_product_url
+    assert session.get_calls[0]["headers"]["Referer"] == normalized_product_url
+
+
 async def test_product_detail_fetcher_switches_to_next_account_after_request_failure():
     from app_backend.infrastructure.query.collectors.product_detail_fetcher import ProductDetailFetcher
 

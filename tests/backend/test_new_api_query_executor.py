@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -226,6 +227,86 @@ async def test_new_api_query_executor_returns_network_error_text():
 
     assert result.success is False
     assert result.error == "网络错误: boom"
+
+
+async def test_new_api_query_executor_returns_proxy_connection_diagnostics(monkeypatch):
+    import app_backend.infrastructure.query.runtime.new_api_query_executor as module
+
+    class FakeClientError(Exception):
+        pass
+
+    class FakeClientConnectorError(FakeClientError):
+        pass
+
+    monkeypatch.setattr(
+        module,
+        "aiohttp",
+        SimpleNamespace(
+            ClientError=FakeClientError,
+            ClientConnectorError=FakeClientConnectorError,
+            ClientTimeout=lambda total: total,
+        ),
+    )
+
+    executor = module.NewApiQueryExecutor()
+    account = build_account()
+    account.api_proxy_mode = "custom"
+    account.api_proxy_url = "http://user:pass@36.138.220.178:50004"
+
+    result = await executor.execute_query(
+        account=RuntimeAccountAdapter(account),
+        query_item=build_item(),
+        session=FakeSession(
+            raised_error=FakeClientConnectorError(
+                "Cannot connect to host 36.138.220.178:50004 ssl:default [不能访问网络位置。]"
+            )
+        ),
+    )
+
+    assert result.success is False
+    assert result.error == (
+        "代理连接失败: http://36.138.220.178:50004 (auth=yes); "
+        "原始错误: Cannot connect to host 36.138.220.178:50004 ssl:default [不能访问网络位置。]"
+    )
+
+
+async def test_new_api_query_executor_returns_proxy_auth_diagnostics(monkeypatch):
+    import app_backend.infrastructure.query.runtime.new_api_query_executor as module
+
+    class FakeClientError(Exception):
+        pass
+
+    class FakeClientHttpProxyError(FakeClientError):
+        pass
+
+    monkeypatch.setattr(
+        module,
+        "aiohttp",
+        SimpleNamespace(
+            ClientError=FakeClientError,
+            ClientHttpProxyError=FakeClientHttpProxyError,
+            ClientTimeout=lambda total: total,
+        ),
+    )
+
+    executor = module.NewApiQueryExecutor()
+    account = build_account()
+    account.api_proxy_mode = "custom"
+    account.api_proxy_url = "http://user:pass@36.138.220.178:50004"
+
+    result = await executor.execute_query(
+        account=RuntimeAccountAdapter(account),
+        query_item=build_item(),
+        session=FakeSession(
+            raised_error=FakeClientHttpProxyError("407, message='Proxy Authentication Required'")
+        ),
+    )
+
+    assert result.success is False
+    assert result.error == (
+        "代理认证失败: http://36.138.220.178:50004 (auth=yes); "
+        "原始错误: 407, message='Proxy Authentication Required'"
+    )
 
 
 async def test_new_api_query_executor_rejects_missing_final_detail_wear_range():

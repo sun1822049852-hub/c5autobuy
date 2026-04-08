@@ -12,6 +12,17 @@ def test_parse_c5_product_url_extracts_external_item_id():
     assert result.external_item_id == "1380979899390267393"
 
 
+def test_parse_c5_product_url_normalizes_legacy_http_to_https():
+    from app_backend.infrastructure.query.collectors.product_url_parser import ProductUrlParser
+
+    parser = ProductUrlParser()
+
+    result = parser.parse("http://www.c5game.com/csgo/730/asset/1380979899390267393")
+
+    assert result.product_url == "https://www.c5game.com/csgo/730/asset/1380979899390267393"
+    assert result.external_item_id == "1380979899390267393"
+
+
 def test_parse_c5_product_url_rejects_invalid_url():
     from app_backend.infrastructure.query.collectors.product_url_parser import ProductUrlParser
 

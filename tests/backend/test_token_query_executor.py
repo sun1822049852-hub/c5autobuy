@@ -38,12 +38,13 @@ def build_item(
     max_wear: float | None = 0.8,
     detail_min_wear: float | None = 0.1,
     detail_max_wear: float | None = 0.25,
+    product_url: str | None = None,
 ) -> QueryItem:
     item_id = "1380979899390261111"
     return QueryItem(
         query_item_id="item-1",
         config_id="cfg-1",
-        product_url=f"https://www.c5game.com/csgo/730/asset/{item_id}",
+        product_url=product_url or f"https://www.c5game.com/csgo/730/asset/{item_id}",
         external_item_id=item_id,
         item_name="Test Item",
         market_hash_name="Test Item Name",
@@ -163,6 +164,42 @@ async def test_token_query_executor_parses_success_response_and_keeps_request_sh
     assert session.calls[0]["headers"]["x-device-id"] == "device-1"
     assert session.calls[0]["headers"]["Cookie"] == build_account().cookie_raw
     assert session.calls[0]["headers"]["Referer"] == build_item().product_url
+
+
+async def test_token_query_executor_normalizes_legacy_http_referer():
+    from app_backend.infrastructure.query.runtime.token_query_executor import TokenQueryExecutor
+
+    legacy_product_url = "http://www.c5game.com/csgo/730/asset/1380979899390261111"
+    normalized_product_url = "https://www.c5game.com/csgo/730/asset/1380979899390261111"
+    signer = FakeSigner(result="fake-sign")
+    session = FakeSession(
+        status=200,
+        text=json.dumps(
+            {
+                "success": True,
+                "data": {
+                    "matchCount": 1,
+                    "sellList": [
+                        {
+                            "id": "p3",
+                            "price": "77.70",
+                            "assetInfo": {"wear": "0.1111"},
+                        }
+                    ],
+                },
+            }
+        ),
+    )
+    executor = TokenQueryExecutor(xsign_wrapper=signer)
+
+    result = await executor.execute_query(
+        account=RuntimeAccountAdapter(build_account()),
+        query_item=build_item(product_url=legacy_product_url),
+        session=session,
+    )
+
+    assert result.success is True
+    assert session.calls[0]["headers"]["Referer"] == normalized_product_url
 
 
 async def test_token_query_executor_returns_403_error_text():

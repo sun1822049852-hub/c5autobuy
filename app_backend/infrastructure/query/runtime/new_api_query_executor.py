@@ -4,6 +4,7 @@ import asyncio
 import json
 import time
 from typing import Any
+from urllib.parse import urlsplit
 
 from app_backend.domain.models.query_config import QueryItem
 
@@ -94,7 +95,10 @@ class NewApiQueryExecutor:
         except Exception as exc:
             if aiohttp is not None and isinstance(exc, aiohttp.ClientError):
                 return self._build_failure_result(
-                    f"网络错误: {exc}",
+                    self._format_client_error(
+                        exc,
+                        proxy_url=getattr(runtime_account, "_api_proxy_url_or_none", None),
+                    ),
                     started_at=started_at,
                     request_method="POST",
                     request_path="/merchant/market/v2/products/search",
@@ -169,6 +173,52 @@ class NewApiQueryExecutor:
             request_path=request_path,
             response_text=response_text,
         )
+
+    @classmethod
+    def _format_client_error(cls, exc: Exception, *, proxy_url: str | None) -> str:
+        proxy_summary = cls._summarize_proxy_url(proxy_url)
+        if not proxy_summary:
+            return f"网络错误: {exc}"
+
+        raw_error = str(exc)
+        error_text = raw_error.lower()
+        error_class_name = exc.__class__.__name__.lower()
+        if "407" in error_text or "proxy authentication" in error_text:
+            return f"代理认证失败: {proxy_summary}; 原始错误: {exc}"
+        if "proxy" in error_class_name or cls._error_mentions_proxy_target(raw_error, proxy_url):
+            return f"代理连接失败: {proxy_summary}; 原始错误: {exc}"
+        return f"代理网络错误: {proxy_summary}; 原始错误: {exc}"
+
+    @staticmethod
+    def _summarize_proxy_url(proxy_url: str | None) -> str | None:
+        normalized = str(proxy_url or "").strip()
+        if not normalized:
+            return None
+        parsed = urlsplit(normalized)
+        host = parsed.hostname or ""
+        if not host:
+            return None
+        scheme = parsed.scheme or "http"
+        auth_used = "yes" if (parsed.username or parsed.password) else "no"
+        location = f"{host}:{parsed.port}" if parsed.port is not None else host
+        return f"{scheme}://{location} (auth={auth_used})"
+
+    @staticmethod
+    def _error_mentions_proxy_target(error_message: str, proxy_url: str | None) -> bool:
+        normalized = str(proxy_url or "").strip()
+        if not normalized:
+            return False
+        parsed = urlsplit(normalized)
+        host = parsed.hostname or ""
+        if not host:
+            return False
+        port = parsed.port
+        message = str(error_message or "")
+        if host not in message:
+            return False
+        if port is None:
+            return True
+        return f"{host}:{port}" in message
 
     def _parse_response(
         self,

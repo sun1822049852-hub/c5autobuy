@@ -10,6 +10,7 @@ from typing import Any
 
 import aiohttp
 
+from app_backend.infrastructure.query.product_url_utils import normalize_c5_product_url
 from app_backend.infrastructure.query.runtime.runtime_account_adapter import RuntimeAccountAdapter
 from xsign import XSignWrapper
 
@@ -376,7 +377,7 @@ class PurchaseExecutionGateway:
         headers["Accept"] = "application/json, text/plain, */*"
         headers["Accept-Language"] = "zh-CN"
         headers["Accept-Encoding"] = "gzip, deflate, br, zstd"
-        headers["Referer"] = referer_url
+        headers["Referer"] = normalize_c5_product_url(referer_url)
         headers["Content-Type"] = "application/json"
         headers["Connection"] = "keep-alive"
         headers["Cookie"] = runtime_account.get_cookie_header_exact()
