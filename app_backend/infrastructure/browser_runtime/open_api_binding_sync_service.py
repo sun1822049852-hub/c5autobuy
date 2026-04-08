@@ -32,6 +32,7 @@ class OpenApiBindingSyncService:
         *,
         account_repository,
         account_update_hub=None,
+        account_balance_service=None,
         account_cleanup_callback=None,
         public_ip_fetcher: PublicIpFetcher | None = None,
         poll_interval_seconds: float = 5.0,
@@ -40,6 +41,7 @@ class OpenApiBindingSyncService:
     ) -> None:
         self._account_repository = account_repository
         self._account_update_hub = account_update_hub
+        self._account_balance_service = account_balance_service
         self._account_cleanup_callback = account_cleanup_callback
         self._public_ip_fetcher = public_ip_fetcher or self._fetch_public_ip
         self._public_ip_resolver = PublicIpResolver()
@@ -110,9 +112,13 @@ class OpenApiBindingSyncService:
                     public_ip=None,
                 ),
             )
+            early_changes = self._prepare_balance_refresh_changes(account, early_changes)
+        should_schedule_balance_refresh = self._should_schedule_balance_refresh(account, early_changes)
         if early_changes:
             account = self._account_repository.update_account(account_id, **early_changes)
             self._publish_account_update(account_id, "write_account_fast", early_changes)
+            if should_schedule_balance_refresh:
+                self._schedule_balance_refresh(account_id)
             self._append_debug_log(
                 "write_account_fast",
                 {
@@ -148,11 +154,15 @@ class OpenApiBindingSyncService:
                 public_ip=public_ip,
             ),
         )
+        changes = self._prepare_balance_refresh_changes(account, changes)
+        should_schedule_balance_refresh = self._should_schedule_balance_refresh(account, changes)
         if not changes:
             self._append_debug_log("sync_no_changes", {"account_id": account_id, "matched": matched})
             return {"matched": matched, "updated": False}
         self._account_repository.update_account(account_id, **changes)
         self._publish_account_update(account_id, "write_account", changes)
+        if should_schedule_balance_refresh:
+            self._schedule_balance_refresh(account_id)
         self._append_debug_log(
             "write_account",
             {
@@ -351,6 +361,33 @@ class OpenApiBindingSyncService:
         try:
             publish(account_id=account_id, event=event, payload=changes)
         except Exception:
+            return
+
+    @staticmethod
+    def _should_schedule_balance_refresh(account, changes: dict[str, object]) -> bool:
+        next_api_key = str(changes.get("api_key", "") or "").strip()
+        if not next_api_key:
+            return False
+        current_api_key = str(getattr(account, "api_key", "") or "").strip()
+        return next_api_key != current_api_key
+
+    def _prepare_balance_refresh_changes(self, account, changes: dict[str, object]) -> dict[str, object]:
+        if not self._should_schedule_balance_refresh(account, changes):
+            return changes
+        prepared = dict(changes)
+        prepared["balance_refresh_after_at"] = None
+        return prepared
+
+    def _schedule_balance_refresh(self, account_id: str) -> None:
+        service = self._account_balance_service
+        schedule_refresh = getattr(service, "maybe_schedule_refresh", None)
+        if not callable(schedule_refresh):
+            return
+        try:
+            schedule_refresh(account_id)
+            self._append_debug_log("schedule_balance_refresh", {"account_id": account_id})
+        except Exception:
+            self._append_debug_log("schedule_balance_refresh_error", {"account_id": account_id})
             return
 
 

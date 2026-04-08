@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime
+import json
 import time
 
 import pytest
@@ -81,6 +82,63 @@ class FakeAccountUpdateHub:
                 "payload": dict(payload),
             }
         )
+
+
+class FakeSigner:
+    def __init__(self, *, result: str = "fake-sign") -> None:
+        self._result = result
+        self.calls: list[dict[str, object]] = []
+
+    def generate(self, *, path: str, method: str, timestamp: str, token: str) -> str:
+        self.calls.append(
+            {
+                "path": path,
+                "method": method,
+                "timestamp": timestamp,
+                "token": token,
+            }
+        )
+        return self._result
+
+
+class FakeResponse:
+    def __init__(self, *, text: str) -> None:
+        self._text = text
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> bool:
+        return False
+
+    async def text(self) -> str:
+        return self._text
+
+
+class FakeClientSession:
+    instances: list["FakeClientSession"] = []
+
+    def __init__(self, *, timeout, cookie_jar=None) -> None:
+        self.timeout = timeout
+        self.cookie_jar = cookie_jar
+        self.calls: list[dict[str, object]] = []
+        FakeClientSession.instances.append(self)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> bool:
+        return False
+
+    def get(self, url: str, *, proxy: str | None = None, headers=None):
+        self.calls.append(
+            {
+                "url": url,
+                "proxy": proxy,
+                "headers": dict(headers or {}),
+            }
+        )
+        return FakeResponse(text=json.dumps({"success": True, "data": {"balance": 66.6}}))
 
 
 @pytest.mark.asyncio
@@ -246,6 +304,56 @@ async def test_account_balance_service_waits_for_api_key_before_falling_back():
     assert updated.balance_source == "openapi"
     assert openapi_calls == ["late-api-key"]
     assert browser_calls == []
+
+
+@pytest.mark.asyncio
+async def test_account_balance_service_browser_fetch_uses_standalone_session_with_browser_like_headers(monkeypatch):
+    import app_backend.application.services.account_balance_service as module
+    from app_backend.application.services.account_balance_service import AccountBalanceService
+    from app_backend.infrastructure.query.runtime.runtime_account_adapter import RuntimeAccountAdapter
+
+    account = build_account(api_key=None)
+    signer = FakeSigner()
+    FakeClientSession.instances.clear()
+
+    async def unexpected_get_global_session(self, force_new: bool = False):
+        raise AssertionError("browser balance fetch should not reuse the global purchase session")
+
+    monkeypatch.setattr(RuntimeAccountAdapter, "get_global_session", unexpected_get_global_session)
+    monkeypatch.setattr(module.aiohttp, "ClientSession", FakeClientSession)
+    monkeypatch.setattr(module.aiohttp, "ClientTimeout", lambda total: {"total": total})
+
+    service = AccountBalanceService(
+        account_repository=FakeRepository(account),
+        xsign_wrapper=signer,
+    )
+
+    amount = await service._fetch_browser_balance(account, proxy_url="http://browser.proxy:9001")
+
+    assert amount == 66.6
+    assert len(FakeClientSession.instances) == 1
+    assert FakeClientSession.instances[0].cookie_jar is None
+    assert FakeClientSession.instances[0].calls[0]["url"].endswith("/account/v1/my/account")
+    assert FakeClientSession.instances[0].calls[0]["proxy"] == "http://browser.proxy:9001"
+    headers = FakeClientSession.instances[0].calls[0]["headers"]
+    assert headers["Host"] == "www.c5game.com"
+    assert headers["User-Agent"].startswith("Mozilla/5.0")
+    assert headers["Accept"] == "application/json, text/plain, */*"
+    assert headers["Accept-Encoding"] == "gzip, deflate, br, zstd"
+    assert headers["Connection"] == "keep-alive"
+    assert headers["Sec-Fetch-Dest"] == "empty"
+    assert headers["Sec-Fetch-Mode"] == "no-cors"
+    assert headers["Sec-Fetch-Site"] == "same-origin"
+    assert headers["TE"] == "trailers"
+    assert headers["Priority"] == "u=4"
+    assert headers["Pragma"] == "no-cache"
+    assert headers["Cache-Control"] == "no-cache"
+    assert headers["Cookie"] == account.cookie_raw
+    assert headers["x-sign"] == "fake-sign"
+    assert headers["x-access-token"] == "token-1"
+    assert headers["x-device-id"] == "device-1"
+    assert signer.calls[0]["path"] == "account/v1/my/account"
+    assert signer.calls[0]["method"] == "GET"
 
 
 def test_account_balance_service_maybe_schedule_refresh_works_without_running_loop():

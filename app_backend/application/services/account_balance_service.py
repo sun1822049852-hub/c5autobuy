@@ -299,16 +299,27 @@ class AccountBalanceService:
         access_token = runtime_account.get_x_access_token()
         device_id = runtime_account.get_x_device_id()
         headers: OrderedDict[str, str] = OrderedDict()
+        headers["Host"] = "www.c5game.com"
+        headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:146.0) Gecko/20100101 Firefox/146.0"
         headers["Accept"] = "application/json, text/plain, */*"
         headers["Accept-Language"] = "zh-CN"
+        headers["Accept-Encoding"] = "gzip, deflate, br, zstd"
         headers["Referer"] = "https://www.c5game.com/user/user/"
+        headers["Connection"] = "keep-alive"
         headers["Cookie"] = runtime_account.get_cookie_header_exact()
+        headers["Sec-Fetch-Dest"] = "empty"
+        headers["Sec-Fetch-Mode"] = "no-cors"
+        headers["Sec-Fetch-Site"] = "same-origin"
+        headers["TE"] = "trailers"
         headers["x-app-channel"] = "WEB"
         headers["x-device-id"] = str(device_id)
         headers["x-start-req-time"] = timestamp
         headers["x-source"] = "1"
         headers["x-sign"] = x_sign
         headers["x-access-token"] = str(access_token)
+        headers["Priority"] = "u=4"
+        headers["Pragma"] = "no-cache"
+        headers["Cache-Control"] = "no-cache"
         return headers
 
     def _get_xsign_wrapper(self) -> Any:

@@ -103,6 +103,10 @@ def create_app(
     stats_pipeline.start()
     account_update_hub = AccountUpdateHub()
     runtime_update_hub = RuntimeUpdateHub()
+    account_balance_service = AccountBalanceService(
+        account_repository=repository,
+        account_update_hub=account_update_hub,
+    )
     purchase_runtime_service = PurchaseRuntimeService(
         account_repository=repository,
         settings_repository=runtime_settings_repository,
@@ -114,6 +118,7 @@ def create_app(
     open_api_binding_sync_service = OpenApiBindingSyncService(
         account_repository=repository,
         account_update_hub=account_update_hub,
+        account_balance_service=account_balance_service,
         account_cleanup_callback=DeleteAccountUseCase(
             repository,
             bundle_repository,
@@ -121,10 +126,6 @@ def create_app(
         ).execute,
         poll_interval_seconds=1.0,
         debug_log_path=database_path.parent / "runtime" / "open_api_binding_debug.runtime.jsonl",
-    )
-    account_balance_service = AccountBalanceService(
-        account_repository=repository,
-        account_update_hub=account_update_hub,
     )
     query_runtime_service = QueryRuntimeService(
         query_config_repository=query_config_repository,

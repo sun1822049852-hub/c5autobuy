@@ -31,6 +31,15 @@ class _MemoryRepository:
         self._accounts.pop(account_id, None)
 
 
+class _RecordingBalanceService:
+    def __init__(self) -> None:
+        self.scheduled_account_ids: list[str] = []
+
+    def maybe_schedule_refresh(self, account_id: str) -> bool:
+        self.scheduled_account_ids.append(account_id)
+        return True
+
+
 def _build_account() -> Account:
     return Account(
         account_id="a-1",
@@ -314,6 +323,42 @@ def test_open_api_binding_sync_service_writes_api_key_before_public_ip_fetch():
     assert "api_public_ip" not in first_update
     final_update = repository.updates[-1]
     assert final_update["api_public_ip"] == "http://127.0.0.1:9000"
+
+
+def test_open_api_binding_sync_service_triggers_balance_refresh_when_api_key_is_newly_written():
+    from app_backend.infrastructure.browser_runtime.open_api_binding_sync_service import OpenApiBindingSyncService
+
+    account = _build_account()
+    account.api_key = None
+    account.balance_refresh_after_at = "2099-01-01T00:00:00"
+    repository = _MemoryRepository(account)
+    balance_service = _RecordingBalanceService()
+    service = OpenApiBindingSyncService(
+        account_repository=repository,
+        account_balance_service=balance_service,
+        public_ip_fetcher=lambda proxy_url: "162.128.182.254",
+    )
+
+    outcome = service.sync_account_now(
+        "a-1",
+        final=False,
+        partner_payload_override={
+            "success": True,
+            "data": {
+                "apiInfo": {
+                    "key": "api-key-1",
+                    "ipAllowList": "36.138.220.178",
+                },
+            },
+        },
+    )
+    updated = repository.get_account("a-1")
+
+    assert outcome["updated"] is True
+    assert updated is not None
+    assert updated.api_key == "api-key-1"
+    assert updated.balance_refresh_after_at is None
+    assert balance_service.scheduled_account_ids == ["a-1"]
 
 
 def test_open_api_binding_sync_service_mismatch_is_display_only():
