@@ -285,11 +285,12 @@ describe("diagnostics page", () => {
     expect(within(panel).getByText("42")).toBeInTheDocument();
     expect(within(panel).getByText("8")).toBeInTheDocument();
     expect(within(panel).getByText("异常查询账号-1")).toBeInTheDocument();
-    expect(within(panel).getByText("查询事件-1")).toBeInTheDocument();
+    expect(within(panel).getByRole("button", { name: /查询事件日志/i })).toBeInTheDocument();
+    expect(within(panel).getByText("1")).toBeInTheDocument();
     expect(within(panel).getAllByText("token invalid").length).toBeGreaterThan(0);
   });
 
-  it("keeps showing captured error logs and raw detail lines even after later snapshots no longer include them", async () => {
+  it("keeps showing captured summary and account errors even after later snapshots clear them", async () => {
     const initialSnapshot = buildDiagnosticsSnapshot();
     const laterSnapshot = buildDiagnosticsSnapshot();
     laterSnapshot.summary.last_error = "";
@@ -308,7 +309,7 @@ describe("diagnostics page", () => {
     const panel = await screen.findByRole("complementary", { name: "通用诊断面板" });
 
     await waitFor(() => {
-      expect(within(panel).getByText("查询事件-1")).toBeInTheDocument();
+      expect(within(panel).getByText("异常查询账号-1")).toBeInTheDocument();
     });
 
     await act(async () => {
@@ -317,9 +318,65 @@ describe("diagnostics page", () => {
       });
     });
 
-    expect(within(panel).getByText("查询事件-1")).toBeInTheDocument();
-    expect(within(panel).getByText("HTTP 401")).toBeInTheDocument();
-    expect(within(panel).getByText("GET /openapi/query")).toBeInTheDocument();
-    expect(within(panel).getByText("原始返回：not login")).toBeInTheDocument();
+    expect(within(panel).getByText("异常查询账号-1")).toBeInTheDocument();
+    expect(within(panel).getAllByText("token invalid").length).toBeGreaterThan(0);
+    expect(within(panel).getByRole("button", { name: /查询事件日志/i })).toBeInTheDocument();
+    expect(within(panel).getByText("0")).toBeInTheDocument();
+  });
+
+  it("refreshes the query events modal with the latest snapshot instead of retaining stale rows", async () => {
+    const initialSnapshot = buildDiagnosticsSnapshot();
+    const laterSnapshot = buildDiagnosticsSnapshot();
+    laterSnapshot.query.updated_at = "2026-03-25T20:21:00";
+    laterSnapshot.updated_at = "2026-03-25T20:21:00";
+    laterSnapshot.query.recent_events = [
+      {
+        timestamp: "2026-03-25T20:21:00",
+        level: "info",
+        mode_type: "new_api",
+        account_id: "query-good-2",
+        account_display_name: "查询账号-2",
+        query_item_id: "item-2",
+        query_item_name: "M4A1-S | Blue Phosphor",
+        message: "查询事件-2",
+        match_count: 2,
+        total_price: 456.78,
+        total_wear_sum: 0.09,
+        latency_ms: 66,
+        error: null,
+        status_code: 200,
+        request_method: "GET",
+        request_path: "/openapi/query",
+        response_text: "{\"ok\":true}",
+      },
+    ];
+    installDesktopApp(createFetchHarness({
+      snapshots: [initialSnapshot, laterSnapshot],
+    }));
+    const user = userEvent.setup();
+
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "通用诊断" }));
+
+    const panel = await screen.findByRole("complementary", { name: "通用诊断面板" });
+    await user.click(within(panel).getByRole("button", { name: /查询事件日志/i }));
+
+    const dialog = await screen.findByRole("dialog", { name: "查询事件日志" });
+    expect(within(dialog).getByText("查询事件-1")).toBeInTheDocument();
+    expect(within(dialog).getByText("2026-03-25T20:00:01")).toBeInTheDocument();
+
+    await act(async () => {
+      await new Promise((resolve) => {
+        window.setTimeout(resolve, 1600);
+      });
+    });
+
+    await waitFor(() => {
+      expect(within(dialog).getByText("查询事件-2")).toBeInTheDocument();
+    });
+    expect(within(dialog).getByText("2026-03-25T20:21:00")).toBeInTheDocument();
+    expect(within(dialog).queryByText("查询事件-1")).not.toBeInTheDocument();
+    expect(within(dialog).queryByText("2026-03-25T20:00:01")).not.toBeInTheDocument();
+    expect(within(dialog).getByText("查询事件日志")).toBeInTheDocument();
   });
 });

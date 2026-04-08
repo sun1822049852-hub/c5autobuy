@@ -178,6 +178,14 @@ function mergeUniqueRows(previousRows, nextRows, { getKey, shouldRetain, maxRows
 }
 
 
+function takeLatestRows(rows, { maxRows }) {
+  return asArray(rows)
+    .slice()
+    .sort(compareRowsByTimeDesc)
+    .slice(0, maxRows);
+}
+
+
 function mergeLoginTask(previousTask, nextTask) {
   return {
     ...previousTask,
@@ -245,10 +253,8 @@ function mergeDiagnosticsSnapshot(previousSnapshot, nextSnapshot) {
         maxRows: MAX_RETAINED_ACCOUNT_ROWS,
         shouldRetain: isRetainableAccountRow,
       }),
-      recent_events: mergeUniqueRows(previousSnapshot.query?.recent_events, nextSnapshot.query.recent_events, {
-        getKey: buildEventSignature,
+      recent_events: takeLatestRows(nextSnapshot.query.recent_events, {
         maxRows: MAX_RETAINED_EVENT_ROWS,
-        shouldRetain: isRetainableEvent,
       }),
     },
     purchase: {
@@ -259,10 +265,8 @@ function mergeDiagnosticsSnapshot(previousSnapshot, nextSnapshot) {
         maxRows: MAX_RETAINED_ACCOUNT_ROWS,
         shouldRetain: isRetainableAccountRow,
       }),
-      recent_events: mergeUniqueRows(previousSnapshot.purchase?.recent_events, nextSnapshot.purchase.recent_events, {
-        getKey: buildEventSignature,
+      recent_events: takeLatestRows(nextSnapshot.purchase.recent_events, {
         maxRows: MAX_RETAINED_EVENT_ROWS,
-        shouldRetain: isRetainableEvent,
       }),
     },
     login_tasks: {
