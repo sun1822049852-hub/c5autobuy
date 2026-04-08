@@ -292,7 +292,7 @@ class PurchaseExecutionGateway:
             }
 
         if not response_data.get("success", False):
-            error_msg = response_data.get("errorMsg", "未知错误")
+            error_msg = cls._extract_error_message(response_data)
             return False, None, f"创建订单失败: {error_msg}", {
                 "status_code": status_code,
                 "request_method": "POST",
@@ -335,7 +335,7 @@ class PurchaseExecutionGateway:
             }
 
         if not response_data.get("success", False):
-            error_msg = response_data.get("errorMsg", "未知错误")
+            error_msg = cls._extract_error_message(response_data)
             return False, 0, f"支付失败: {error_msg}", {
                 "status_code": status_code,
                 "request_method": "POST",
@@ -406,8 +406,9 @@ class PurchaseExecutionGateway:
     def _build_timestamp() -> str:
         return str(int(time.time() * 1000))
 
-    @staticmethod
+    @classmethod
     def _build_error_result(
+        cls,
         status: str,
         error: str | None,
         *,
@@ -417,7 +418,7 @@ class PurchaseExecutionGateway:
         debug_details: dict[str, object] | None = None,
     ) -> PurchaseExecutionResult:
         details = debug_details or {}
-        if PurchaseExecutionGateway._is_auth_invalid(error):
+        if cls._is_auth_invalid(error):
             return PurchaseExecutionResult.auth_invalid(
                 error or "Not login",
                 submitted_count=submitted_count,
@@ -428,8 +429,13 @@ class PurchaseExecutionGateway:
                 request_path=details.get("request_path"),
                 response_text=details.get("response_text"),
             )
-        return PurchaseExecutionResult(
+        normalized_status = cls._classify_error_status(
             status=status,
+            error=error,
+            response_text=details.get("response_text"),
+        )
+        return PurchaseExecutionResult(
+            status=normalized_status,
             purchased_count=0,
             submitted_count=submitted_count,
             error=error,
@@ -445,6 +451,44 @@ class PurchaseExecutionGateway:
     def _is_auth_invalid(error: str | None) -> bool:
         normalized = str(error or "").lower()
         return "not login" in normalized or "403" in normalized
+
+    @staticmethod
+    def _extract_error_message(response_data: dict[str, object]) -> str:
+        for key in ("errorMsg", "error_msg", "message", "msg", "error"):
+            value = response_data.get(key)
+            text = str(value or "").strip()
+            if text:
+                return text
+        return "未知错误"
+
+    @classmethod
+    def _classify_error_status(
+        cls,
+        *,
+        status: str,
+        error: str | None,
+        response_text: object,
+    ) -> str:
+        if cls._is_item_unavailable_error(error=error, response_text=response_text):
+            return "item_unavailable"
+        return str(status or "")
+
+    @staticmethod
+    def _is_item_unavailable_error(*, error: str | None, response_text: object) -> bool:
+        haystacks = [
+            str(error or "").lower(),
+            str(response_text or "").lower(),
+        ]
+        markers = (
+            "订单数据发生变化",
+            "请刷新页面重试",
+            "sold out",
+            "already sold",
+            "item unavailable",
+            "已被买走",
+            "已售罄",
+        )
+        return any(marker in haystack for haystack in haystacks for marker in markers if haystack)
 
     @staticmethod
     def _elapsed_ms(started_at: float) -> float:

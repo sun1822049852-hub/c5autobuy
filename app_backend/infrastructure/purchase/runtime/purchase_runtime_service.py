@@ -1925,7 +1925,7 @@ class _DefaultPurchaseRuntime:
         state.capability_state = outcome.capability_state
         state.pool_state = outcome.pool_state
         state.busy = False
-        state.last_error = outcome.error
+        state.last_error = None if self._should_clear_account_error_for_outcome(outcome) else outcome.error
         stats_status = str(outcome.status)
         if outcome.status == "success":
             transition = state.inventory_state.apply_purchase_success(
@@ -2002,6 +2002,10 @@ class _DefaultPurchaseRuntime:
         effects.expected_state_version = state.state_version
         effects.notify_state_change = True
         return effects
+
+    @staticmethod
+    def _should_clear_account_error_for_outcome(outcome) -> bool:
+        return str(getattr(outcome, "status", "") or "") in {"item_unavailable"}
 
     def _forward_stats_events(self, *, account_id: str, account_display_name: str, batch, outcome) -> None:
         if self._stats_sink is None:

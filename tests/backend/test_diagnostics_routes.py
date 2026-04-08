@@ -301,3 +301,44 @@ async def test_sidebar_diagnostics_exposes_raw_debug_fields_for_query_purchase_a
     assert payload["login_tasks"]["recent_tasks"][0]["events"][-1]["payload"]["status_code"] == 500
     assert payload["login_tasks"]["recent_tasks"][0]["events"][-1]["payload"]["request_path"] == "/accounts/a-1/login"
 
+
+async def test_sidebar_diagnostics_ignores_duplicate_and_item_unavailable_purchase_events_as_last_error(client, app):
+    query_status = _build_query_status(recent_event_count=0, abnormal_row_count=0)
+    for raw_mode in query_status["modes"].values():
+        raw_mode["last_error"] = None
+    purchase_status = _build_purchase_status(recent_event_count=0, abnormal_account_count=0)
+    purchase_status["recent_events"] = [
+        {
+            "occurred_at": "2026-03-25T10:01:00",
+            "status": "duplicate_filtered",
+            "message": "重复命中已忽略",
+            "query_item_name": "AK-47 | Redline",
+            "product_list": [],
+            "total_price": 123.45,
+            "total_wear_sum": 0.12,
+            "source_mode_type": "token",
+        },
+        {
+            "occurred_at": "2026-03-25T10:01:01",
+            "status": "item_unavailable",
+            "message": "支付失败: 订单数据发生变化,请刷新页面重试",
+            "query_item_name": "AK-47 | Redline",
+            "product_list": [],
+            "total_price": 123.45,
+            "total_wear_sum": 0.12,
+            "source_mode_type": "token",
+            "status_code": 409,
+        },
+    ]
+
+    app.state.query_runtime_service = FakeQueryRuntimeService(query_status)
+    app.state.purchase_runtime_service = FakePurchaseRuntimeService(purchase_status)
+
+    response = await client.get("/diagnostics/sidebar")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["purchase"]["recent_events"][0]["status"] == "duplicate_filtered"
+    assert payload["purchase"]["recent_events"][1]["status"] == "item_unavailable"
+    assert payload["purchase"]["last_error"] is None
+    assert payload["summary"]["last_error"] is None

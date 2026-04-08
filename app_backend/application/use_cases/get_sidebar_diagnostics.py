@@ -270,7 +270,7 @@ class GetSidebarDiagnosticsUseCase:
                 *[
                     event.get("message")
                     for event in recent_events
-                    if str(event.get("status") or "").lower() not in {"success", "queued"}
+                    if self._is_purchase_last_error_event(event)
                 ],
             ),
             "updated_at": updated_at,
@@ -381,6 +381,16 @@ class GetSidebarDiagnosticsUseCase:
         if value is None or value == "":
             return None
         return int(value)
+
+    @staticmethod
+    def _is_purchase_last_error_event(event: dict[str, object]) -> bool:
+        normalized_status = str(event.get("status") or "").strip().lower()
+        return normalized_status not in {
+            "success",
+            "queued",
+            "duplicate_filtered",
+            "item_unavailable",
+        }
 
     @staticmethod
     def _latest_timestamp(*values: object) -> str | None:

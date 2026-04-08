@@ -302,6 +302,27 @@ async def test_purchase_execution_gateway_returns_payment_failed_for_regular_pay
 
 
 @pytest.mark.asyncio
+async def test_purchase_execution_gateway_classifies_order_changed_payment_as_item_unavailable(monkeypatch):
+    session = FakeSession(
+        responses=[
+            (200, json.dumps({"success": True, "data": "order-1"})),
+            (409, json.dumps({"success": False, "errorMsg": "订单数据发生变化,请刷新页面重试"})),
+        ]
+    )
+    gateway = await _build_gateway(monkeypatch, session=session, signer=FakeSigner(result="fake-sign"))
+
+    result = await gateway.execute(
+        account=build_account(),
+        batch=build_batch(),
+        selected_steam_id="steam-1",
+    )
+
+    assert result.status == "item_unavailable"
+    assert result.status_code == 409
+    assert result.error == "支付失败: 订单数据发生变化,请刷新页面重试"
+
+
+@pytest.mark.asyncio
 async def test_purchase_execution_gateway_returns_payment_success_no_items_when_success_count_zero(monkeypatch):
     session = FakeSession(
         responses=[

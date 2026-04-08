@@ -3869,6 +3869,72 @@ def test_purchase_runtime_service_marks_account_auth_invalid_without_dropping_ca
     assert snapshot["recent_events"][0]["status"] == "auth_invalid"
 
 
+def test_purchase_runtime_service_treats_item_unavailable_as_product_contention_not_account_error():
+    from app_backend.infrastructure.purchase.runtime.purchase_runtime_service import PurchaseRuntimeService
+
+    account_repository = FakeAccountRepository([build_account("a1")])
+    snapshot_repository = FakeInventorySnapshotRepository(
+        {
+            "a1": type(
+                "Snapshot",
+                (),
+                {
+                    "account_id": "a1",
+                    "selected_steam_id": "steam-1",
+                    "inventories": [
+                        {"steamId": "steam-1", "inventory_num": 910, "inventory_max": 1000},
+                    ],
+                    "refreshed_at": "2026-03-16T20:00:00",
+                    "last_error": None,
+                },
+            )()
+        }
+    )
+    gateway = StubExecutionGateway(
+        PurchaseExecutionResult(
+            status="item_unavailable",
+            purchased_count=0,
+            submitted_count=1,
+            error="支付失败: 订单数据发生变化,请刷新页面重试",
+            status_code=409,
+            request_method="POST",
+            request_path="/pay/order/v1/pay",
+            response_text='{"errorMsg":"订单数据发生变化,请刷新页面重试"}',
+        )
+    )
+    service = PurchaseRuntimeService(
+        account_repository=account_repository,
+        settings_repository=FakeSettingsRepository(),
+        inventory_snapshot_repository=snapshot_repository,
+        execution_gateway_factory=lambda: gateway,
+    )
+    service.start()
+
+    accepted = service.accept_query_hit(
+        {
+            "external_item_id": "1380979899390261111",
+            "query_item_name": "AK",
+            "product_url": "https://www.c5game.com/csgo/730/asset/1380979899390261111",
+            "product_list": [{"productId": "p-1", "price": 88.0, "actRebateAmount": 0}],
+            "total_price": 88.0,
+            "total_wear_sum": 0.1234,
+            "mode_type": "new_api",
+        }
+    )
+
+    assert accepted == {"accepted": True, "status": "queued"}
+    assert wait_until(lambda: len(service.get_status()["recent_events"]) >= 1)
+
+    snapshot = service.get_status()
+    persisted = account_repository.get_account("a1")
+    assert snapshot["accounts"][0]["purchase_pool_state"] == "active"
+    assert snapshot["accounts"][0]["last_error"] is None
+    assert snapshot["recent_events"][0]["status"] == "item_unavailable"
+    assert snapshot["recent_events"][0]["message"] == "支付失败: 订单数据发生变化,请刷新页面重试"
+    assert persisted.last_error is None
+    assert persisted.purchase_pool_state == "active"
+
+
 def test_purchase_runtime_service_rechecks_remote_inventory_when_purchase_exhausts_local_capacity():
     from app_backend.infrastructure.purchase.runtime.purchase_runtime_service import PurchaseRuntimeService
     from app_backend.infrastructure.purchase.runtime.runtime_events import InventoryRefreshResult
