@@ -1,8 +1,13 @@
-import { DiagnosticsEventList } from "./diagnostics_event_list.jsx";
+import { useState } from "react";
+
 import { DiagnosticsSummary } from "./diagnostics_summary.jsx";
+import { PurchaseEventsModal } from "./query_events_modal.jsx";
 
 
 export function PurchaseDiagnosticsTab({ snapshot }) {
+  const [showEvents, setShowEvents] = useState(false);
+  const events = snapshot.recent_events || [];
+
   return (
     <div className="diagnostics-tab">
       <DiagnosticsSummary
@@ -38,11 +43,18 @@ export function PurchaseDiagnosticsTab({ snapshot }) {
         )}
       </section>
 
-      <DiagnosticsEventList
-        rows={snapshot.recent_events || []}
-        timeKey="occurred_at"
-        title="最近购买事件"
-      />
+      <button
+        type="button"
+        className="query-events-trigger"
+        onClick={() => setShowEvents(true)}
+      >
+        <span>购买事件日志</span>
+        <span className="query-events-trigger__badge">{events.length}</span>
+      </button>
+
+      {showEvents ? (
+        <PurchaseEventsModal events={events} onClose={() => setShowEvents(false)} />
+      ) : null}
     </div>
   );
 }

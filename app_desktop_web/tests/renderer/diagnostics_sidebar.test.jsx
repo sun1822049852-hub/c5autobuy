@@ -422,4 +422,24 @@ describe("diagnostics page", () => {
     expect(within(dialog).getByText("查询事件-1")).toBeInTheDocument();
     expect(within(dialog).queryByText("查询事件-成功")).not.toBeInTheDocument();
   });
+
+  it("shows purchase events behind a dedicated modal trigger instead of expanding them inline", async () => {
+    installDesktopApp(createFetchHarness());
+    const user = userEvent.setup();
+
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "通用诊断" }));
+
+    const panel = await screen.findByRole("complementary", { name: "通用诊断面板" });
+    await user.click(within(panel).getByRole("tab", { name: "购买" }));
+
+    expect(within(panel).getByRole("button", { name: /购买事件日志/i })).toBeInTheDocument();
+    expect(within(panel).queryByText("购买事件-1")).not.toBeInTheDocument();
+
+    await user.click(within(panel).getByRole("button", { name: /购买事件日志/i }));
+
+    const dialog = await screen.findByRole("dialog", { name: "购买事件日志" });
+    expect(within(dialog).getByText("购买事件-1")).toBeInTheDocument();
+    expect(within(dialog).getByText("2026-03-25T20:00:02")).toBeInTheDocument();
+  });
 });

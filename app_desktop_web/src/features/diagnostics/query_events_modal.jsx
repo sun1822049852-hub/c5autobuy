@@ -25,30 +25,40 @@ function isErrorEvent(event) {
 }
 
 
-const FILTER_TABS = [
-  { id: "all", label: "全部", matches: () => true },
-  { id: "error", label: "错误", matches: (event) => isErrorEvent(event) },
-  { id: "new_api", label: "NEW_API", matches: (event) => event?.mode_type === "new_api" },
-  { id: "fast_api", label: "FAST_API", matches: (event) => event?.mode_type === "fast_api" },
-  { id: "token", label: "TOKEN", matches: (event) => event?.mode_type === "token" },
-];
+function buildFilterTabs(resolveMode) {
+  return [
+    { id: "all", label: "全部", matches: () => true },
+    { id: "error", label: "错误", matches: (event) => isErrorEvent(event) },
+    { id: "new_api", label: "NEW_API", matches: (event) => resolveMode(event) === "new_api" },
+    { id: "fast_api", label: "FAST_API", matches: (event) => resolveMode(event) === "fast_api" },
+    { id: "token", label: "TOKEN", matches: (event) => resolveMode(event) === "token" },
+  ];
+}
 
 
-export function QueryEventsModal({ events = [], onClose }) {
+function RuntimeEventsModal({
+  emptyText = "暂无事件",
+  events = [],
+  onClose,
+  resolveMode = (event) => event?.mode_type,
+  timeKey = "timestamp",
+  title,
+}) {
   const [activeTab, setActiveTab] = useState("all");
-  const currentTab = FILTER_TABS.find((tab) => tab.id === activeTab) || FILTER_TABS[0];
+  const filterTabs = buildFilterTabs(resolveMode);
+  const currentTab = filterTabs.find((tab) => tab.id === activeTab) || filterTabs[0];
 
   const filtered = events.filter((event) => currentTab.matches(event));
 
   return (
-    <div className="surface-backdrop" role="dialog" aria-modal="true" aria-label="查询事件日志">
+    <div className="surface-backdrop" role="dialog" aria-modal="true" aria-label={title}>
       <div className="query-events-modal">
         {/* 标题栏 */}
         <header className="query-events-modal__header">
           <div>
             <div className="diagnostics-panel__eyebrow">Events</div>
             <h2 className="query-events-modal__title">
-              查询事件日志
+              {title}
               <span className="query-events-modal__count">{events.length}</span>
             </h2>
           </div>
@@ -64,7 +74,7 @@ export function QueryEventsModal({ events = [], onClose }) {
 
         {/* 模式切换 Tab */}
         <div className="query-events-modal__tabs" role="tablist" aria-label="按模式筛选">
-          {FILTER_TABS.map((tab) => {
+          {filterTabs.map((tab) => {
             const count = events.filter((event) => tab.matches(event)).length;
             return (
               <button
@@ -86,11 +96,39 @@ export function QueryEventsModal({ events = [], onClose }) {
         <div className="query-events-modal__body">
           <DiagnosticsEventList
             rows={filtered}
+            timeKey={timeKey}
             title=""
-            emptyText="暂无事件"
+            emptyText={emptyText}
           />
         </div>
       </div>
     </div>
+  );
+}
+
+
+export function QueryEventsModal({ events = [], onClose }) {
+  return (
+    <RuntimeEventsModal
+      events={events}
+      onClose={onClose}
+      resolveMode={(event) => event?.mode_type}
+      timeKey="timestamp"
+      title="查询事件日志"
+    />
+  );
+}
+
+
+export function PurchaseEventsModal({ events = [], onClose }) {
+  return (
+    <RuntimeEventsModal
+      emptyText="暂无购买事件"
+      events={events}
+      onClose={onClose}
+      resolveMode={(event) => event?.source_mode_type}
+      timeKey="occurred_at"
+      title="购买事件日志"
+    />
   );
 }
