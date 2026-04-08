@@ -44,3 +44,23 @@ def test_extract_user_info_from_html_still_reads_nickname_from_embedded_json():
 
     assert payload["userId"] == "1003936745"
     assert payload["nickName"] == "Eight"
+
+
+def test_extract_user_info_from_html_does_not_treat_notice_ellipsis_as_nickname():
+    from app_backend.infrastructure.browser_runtime.cdp_session_reader import extract_user_info_from_html
+
+    payload = extract_user_info_from_html(
+        """
+        <div class="notice-box">
+          <p class="ellipsis notice-item d-flex d-c pointer">
+            为维护交易公平，任一方在交易完成后撤销交易，账号将受到限制和处罚，点查看规则详情。
+          </p>
+        </div>
+        <div class="common-content">
+          <div class="page-body">此时页面尚未渲染出用户昵称</div>
+        </div>
+        """
+    )
+
+    assert payload["userId"] == ""
+    assert payload["nickName"] == ""

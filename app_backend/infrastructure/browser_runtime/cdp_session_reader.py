@@ -100,14 +100,6 @@ def extract_user_info_from_html(html: str) -> dict[str, object]:
         )
         if user_center_match:
             nick_name = re.sub(r"<[^>]+>", "", html_lib.unescape(user_center_match.group("nick_name"))).strip()
-    if not nick_name:
-        ellipsis_match = re.search(
-            r'<p[^>]*class="[^"]*\bellipsis\b[^"]*"[^>]*>(?P<nick_name>[^<]+)</p>',
-            html,
-            flags=re.IGNORECASE,
-        )
-        if ellipsis_match:
-            nick_name = html_lib.unescape(ellipsis_match.group("nick_name")).strip()
     return {
         "userId": user_id,
         "nickName": nick_name,
