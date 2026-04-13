@@ -218,6 +218,55 @@ def test_mode_runner_refresh_accounts_marks_existing_worker_inactive_when_accoun
     assert snapshot["active_account_count"] == 0
 
 
+def test_mode_runner_refresh_accounts_creates_worker_for_newly_eligible_account():
+    from app_backend.infrastructure.query.runtime.mode_runner import ModeRunner
+
+    created_workers: list[str] = []
+    refresh_calls: list[tuple[str, bool]] = []
+
+    class FakeWorker:
+        def __init__(self, account: Account) -> None:
+            self.account = account
+            self.active = True
+            created_workers.append(self.account.account_id)
+
+        def refresh_account(self, account: Account, *, eligible: bool | None = None) -> None:
+            self.account = account
+            self.active = bool(eligible)
+            refresh_calls.append((self.account.account_id, bool(eligible)))
+
+        def snapshot(self) -> dict[str, object]:
+            return {
+                "account_id": self.account.account_id,
+                "active": self.active,
+                "eligible": self.active,
+                "disabled_reason": None,
+                "last_query_at": None,
+                "last_success_at": None,
+                "last_error": None,
+            }
+
+    runner = ModeRunner(
+        build_mode("new_api"),
+        [build_account("a1", api_key="api-1")],
+        query_items=[build_item("1380979899390261111")],
+        worker_factory=lambda mode_type, account: FakeWorker(account),
+    )
+
+    runner.start()
+    runner.refresh_accounts(
+        [
+            build_account("a1", api_key="api-1"),
+            build_account("a2", api_key="api-2"),
+        ]
+    )
+    snapshot = runner.snapshot()
+
+    assert created_workers == ["a1", "a2"]
+    assert refresh_calls == [("a1", True)]
+    assert {row["account_id"] for row in snapshot["group_rows"]} == {"a1", "a2"}
+
+
 async def test_mode_runner_dispatches_one_item_per_active_worker():
     from app_backend.infrastructure.query.runtime.mode_runner import ModeRunner
     from app_backend.infrastructure.query.runtime.runtime_events import QueryExecutionEvent
@@ -654,6 +703,67 @@ async def test_mode_runner_run_loop_starts_account_groups_independently():
     await asyncio.wait_for(second_started.wait(), timeout=0.1)
     allow_first_finish.set()
     await asyncio.wait_for(task, timeout=0.1)
+
+
+async def test_mode_runner_run_loop_picks_up_worker_added_after_start():
+    import asyncio
+
+    from app_backend.infrastructure.query.runtime.mode_runner import ModeRunner
+    from app_backend.infrastructure.query.runtime.runtime_events import QueryExecutionEvent
+
+    stop_event = asyncio.Event()
+    calls: list[str] = []
+
+    class FakeWorker:
+        def __init__(self, account: Account) -> None:
+            self.account = account
+
+        def refresh_account(self, account: Account, *, eligible: bool | None = None) -> None:
+            self.account = account
+
+        def snapshot(self) -> dict[str, object]:
+            return {
+                "account_id": self.account.account_id,
+                "active": True,
+                "eligible": True,
+                "disabled_reason": None,
+                "last_query_at": None,
+                "last_success_at": None,
+                "last_error": None,
+            }
+
+        async def run_once(self, query_item: QueryItem) -> QueryExecutionEvent:
+            calls.append(self.account.account_id)
+            stop_event.set()
+            return QueryExecutionEvent(
+                timestamp="2026-03-16T10:00:00",
+                level="info",
+                mode_type="new_api",
+                account_id=self.account.account_id,
+                query_item_id=query_item.query_item_id,
+                message="查询完成",
+                match_count=1,
+                latency_ms=12.0,
+                error=None,
+            )
+
+    runner = ModeRunner(
+        build_mode("new_api"),
+        [],
+        query_items=[build_item("1380979899390261111")],
+        worker_factory=lambda mode_type, account: FakeWorker(account),
+    )
+
+    runner.start()
+    task = asyncio.create_task(runner.run_loop(stop_event))
+
+    await asyncio.sleep(0.05)
+    runner.refresh_accounts([build_account("a1", api_key="api-1")])
+
+    await asyncio.wait_for(stop_event.wait(), timeout=0.3)
+    await asyncio.wait_for(task, timeout=0.3)
+
+    assert calls == ["a1"]
 
 
 async def test_mode_runner_cleanup_closes_all_worker_sessions():

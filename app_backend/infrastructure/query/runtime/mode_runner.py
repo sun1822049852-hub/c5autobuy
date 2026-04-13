@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import random
+import threading
 from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
@@ -68,6 +69,7 @@ class ModeRunner:
         )
         self._workers: list[Any] = []
         self._started = False
+        self._state_lock = threading.RLock()
         self._has_run_cycle = False
         self._query_count = 0
         self._found_count = 0
@@ -77,53 +79,74 @@ class ModeRunner:
         self._item_query_counts: dict[str, int] = {}
 
     def start(self, *, preserve_allocation_state: bool = False) -> None:
-        self._started = True
-        self._has_run_cycle = False
-        self._query_count = 0
-        self._found_count = 0
-        self._last_error = None
-        self._recent_events = []
-        self._worker_cooldown_until = {}
-        self._item_query_counts = {
-            str(query_item.query_item_id): 0
-            for query_item in self._query_items
-        }
+        with self._state_lock:
+            self._started = True
+            self._has_run_cycle = False
+            self._query_count = 0
+            self._found_count = 0
+            self._last_error = None
+            self._recent_events = []
+            self._worker_cooldown_until = {}
+            self._item_query_counts = {
+                str(query_item.query_item_id): 0
+                for query_item in self._query_items
+            }
 
-        if not preserve_allocation_state:
-            self._query_item_scheduler.reset()
-            self._query_mode_allocator.reset()
-        self._workers = [
-            self._worker_factory(self._mode_setting.mode_type, account)
-            for account in self._eligible_accounts()
-        ]
+            if not preserve_allocation_state:
+                self._query_item_scheduler.reset()
+                self._query_mode_allocator.reset()
+            self._workers = [
+                self._build_worker(account)
+                for account in self._eligible_accounts()
+            ]
 
     @property
     def mode_type(self) -> str:
         return str(self._mode_setting.mode_type)
 
     def stop(self) -> None:
-        self._started = False
-        self._has_run_cycle = False
-        self._workers = []
+        with self._state_lock:
+            self._started = False
+            self._has_run_cycle = False
+            self._workers = []
 
     def refresh_accounts(self, accounts: list[object]) -> None:
-        self._accounts = list(accounts)
-        latest_by_account_id = {
-            str(getattr(account, "account_id", "") or ""): account
-            for account in self._accounts
-        }
-        for worker in self._workers:
-            worker_account = getattr(worker, "account", None)
-            account_id = str(getattr(worker_account, "account_id", "") or "")
-            if not account_id:
-                continue
-            latest_account = latest_by_account_id.get(account_id, worker_account)
-            refresh_account = getattr(worker, "refresh_account", None)
-            if callable(refresh_account):
-                refresh_account(
-                    latest_account,
-                    eligible=self._is_eligible_account(latest_account),
-                )
+        with self._state_lock:
+            self._accounts = list(accounts)
+            if not self._started:
+                return
+
+            latest_by_account_id = {
+                self._account_id(account): account
+                for account in self._accounts
+                if self._account_id(account)
+            }
+            next_workers: list[Any] = []
+            tracked_worker_ids: set[str] = set()
+            for worker in self._workers:
+                account_id = self._worker_account_id(worker)
+                if not account_id:
+                    continue
+                latest_account = latest_by_account_id.get(account_id)
+                if latest_account is None:
+                    continue
+                refresh_account = getattr(worker, "refresh_account", None)
+                if callable(refresh_account):
+                    refresh_account(
+                        latest_account,
+                        eligible=self._is_eligible_account(latest_account),
+                    )
+                next_workers.append(worker)
+                tracked_worker_ids.add(account_id)
+
+            for account in self._eligible_accounts():
+                account_id = self._account_id(account)
+                if not account_id or account_id in tracked_worker_ids:
+                    continue
+                next_workers.append(self._build_worker(account))
+                tracked_worker_ids.add(account_id)
+
+            self._workers = next_workers
 
     def sync_query_items(self, query_items: list[QueryItem]) -> None:
         self._query_items = list(query_items or [])
@@ -179,23 +202,18 @@ class ModeRunner:
                 await cleanup()
 
     async def run_loop(self, stop_event) -> None:
-        if not self._workers:
-            while self._started and not stop_event.is_set():
-                await self._wait_for_stop(stop_event, 0.1)
-            return
-
-        worker_tasks = [
-            asyncio.create_task(self._run_worker_loop(worker, stop_event))
-            for worker in self._workers
-        ]
+        worker_tasks: dict[str, tuple[object, asyncio.Task]] = {}
         try:
-            await asyncio.gather(*worker_tasks, return_exceptions=True)
+            while self._is_started():
+                if stop_event is not None and stop_event.is_set():
+                    return
+                has_current_workers = await self._sync_worker_tasks(worker_tasks, stop_event)
+                if has_current_workers and worker_tasks and all(task.done() for _, task in worker_tasks.values()):
+                    return
+                await asyncio.sleep(0.05)
         finally:
-            for task in worker_tasks:
-                if not task.done():
-                    task.cancel()
-            if worker_tasks:
-                await asyncio.gather(*worker_tasks, return_exceptions=True)
+            for worker, task in worker_tasks.values():
+                await self._stop_worker_task(worker, task, cleanup=False)
 
     async def run_once(self) -> list[object]:
         if not self._started or not self._mode_setting.enabled or not self._query_items:
@@ -221,7 +239,8 @@ class ModeRunner:
     def snapshot(self) -> dict[str, object]:
         enabled = bool(self._mode_setting.enabled)
         window_state = self._window_scheduler.compute(now=self._as_datetime(self._now_provider()))
-        worker_snapshots = [worker.snapshot() for worker in self._workers]
+        workers = self._snapshot_workers()
+        worker_snapshots = [worker.snapshot() for worker in workers]
         last_error = self._last_error
         if last_error is None:
             for worker_snapshot in worker_snapshots:
@@ -254,7 +273,11 @@ class ModeRunner:
             "last_error": last_error,
             "shared_available_count": int(allocation_snapshot.get("shared_available_count", 0)),
             "shared_candidate_count": int(allocation_snapshot.get("shared_candidate_count", 0)),
-            "group_rows": self._build_group_rows(worker_snapshots, in_window=bool(enabled and window_state.in_window)),
+            "group_rows": self._build_group_rows(
+                workers,
+                worker_snapshots,
+                in_window=bool(enabled and window_state.in_window),
+            ),
             "item_rows": item_rows,
             "recent_events": list(self._recent_events),
         }
@@ -267,11 +290,12 @@ class ModeRunner:
     def _eligible_accounts(self) -> list[object]:
         if not self._mode_setting.enabled:
             return []
-        return [account for account in self._accounts if self._is_eligible_account(account)]
+        accounts = self._snapshot_accounts()
+        return [account for account in accounts if self._is_eligible_account(account)]
 
     def _active_workers(self) -> list[object]:
         active_workers: list[object] = []
-        for worker in self._workers:
+        for worker in self._snapshot_workers():
             snapshot = worker.snapshot()
             if snapshot.get("active"):
                 active_workers.append(worker)
@@ -295,6 +319,63 @@ class ModeRunner:
             account=account,
             runtime_account=runtime_account,
         )
+
+    def _build_worker(self, account: object) -> object:
+        return self._worker_factory(self._mode_setting.mode_type, account)
+
+    def _snapshot_accounts(self) -> list[object]:
+        with self._state_lock:
+            return list(self._accounts)
+
+    def _snapshot_workers(self) -> list[object]:
+        with self._state_lock:
+            return list(self._workers)
+
+    def _is_started(self) -> bool:
+        with self._state_lock:
+            return bool(self._started)
+
+    async def _sync_worker_tasks(
+        self,
+        worker_tasks: dict[str, tuple[object, asyncio.Task]],
+        stop_event,
+    ) -> bool:
+        current_workers = {
+            account_id: worker
+            for worker in self._snapshot_workers()
+            if (account_id := self._worker_account_id(worker))
+        }
+        for account_id, (worker, task) in list(worker_tasks.items()):
+            current_worker = current_workers.get(account_id)
+            if current_worker is None:
+                await self._stop_worker_task(worker, task, cleanup=True)
+                worker_tasks.pop(account_id, None)
+                continue
+            if current_worker is not worker:
+                await self._stop_worker_task(worker, task, cleanup=True)
+                worker_tasks[account_id] = (
+                    current_worker,
+                    asyncio.create_task(self._run_worker_loop(current_worker, stop_event)),
+                )
+
+        for account_id, worker in current_workers.items():
+            if account_id in worker_tasks:
+                continue
+            worker_tasks[account_id] = (
+                worker,
+                asyncio.create_task(self._run_worker_loop(worker, stop_event)),
+            )
+        return bool(current_workers)
+
+    async def _stop_worker_task(self, worker: object, task: asyncio.Task, *, cleanup: bool) -> None:
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        if not cleanup:
+            return
+        cleanup_worker = getattr(worker, "cleanup", None)
+        if callable(cleanup_worker):
+            await cleanup_worker()
 
     async def _reserve_next_item(self, worker: object, *, active_workers: list[object]):
         if not hasattr(self._query_item_scheduler, "reserve_item"):
@@ -431,6 +512,8 @@ class ModeRunner:
         return await self._wait_for_stop(stop_event, delay)
 
     def _record_event(self, event: QueryExecutionEvent) -> None:
+        if not getattr(event, "error", None) and int(getattr(event, "match_count", 0)) <= 0:
+            return
         self._recent_events.insert(0, self._serialize_event(event))
         del self._recent_events[self._RECENT_EVENT_LIMIT :]
 
@@ -548,9 +631,15 @@ class ModeRunner:
             product_ids.append(product_id)
         return product_ids
 
-    def _build_group_rows(self, worker_snapshots: list[dict[str, object]], *, in_window: bool) -> list[dict[str, object]]:
+    def _build_group_rows(
+        self,
+        workers: list[object],
+        worker_snapshots: list[dict[str, object]],
+        *,
+        in_window: bool,
+    ) -> list[dict[str, object]]:
         rows: list[dict[str, object]] = []
-        for worker, worker_snapshot in zip(self._workers, worker_snapshots, strict=False):
+        for worker, worker_snapshot in zip(workers, worker_snapshots, strict=False):
             account = getattr(worker, "account", None)
             account_id = str(worker_snapshot.get("account_id") or getattr(account, "account_id", "") or "")
             display_name = str(getattr(account, "display_name", None) or account_id)
@@ -573,6 +662,15 @@ class ModeRunner:
                 }
             )
         return rows
+
+    @staticmethod
+    def _account_id(account: object) -> str:
+        return str(getattr(account, "account_id", "") or "")
+
+    @classmethod
+    def _worker_account_id(cls, worker: object) -> str:
+        account = getattr(worker, "account", None)
+        return cls._account_id(account)
 
     def _set_worker_cooldown_until(self, worker: object, cooldown_seconds: float) -> None:
         account = getattr(worker, "account", None)
