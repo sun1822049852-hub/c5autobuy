@@ -1139,12 +1139,10 @@ describe("purchase system page", () => {
     expect(itemToggle).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText("命中来源")).toBeInTheDocument();
     expect(screen.getByText("查询分配")).toBeInTheDocument();
-    expect(screen.getByText("api查询器")).toBeInTheDocument();
+    expect(screen.getByText("查询账号A / api查询器")).toBeInTheDocument();
     expect(screen.getByText("命中 2次")).toBeInTheDocument();
-    expect(screen.getByText("api高速查询器")).toBeInTheDocument();
+    expect(screen.getByText("查询账号B / api高速查询器")).toBeInTheDocument();
     expect(screen.getByText("命中 1次")).toBeInTheDocument();
-    expect(screen.queryByText("查询账号A / api查询器")).not.toBeInTheDocument();
-    expect(screen.queryByText("查询账号B / api高速查询器")).not.toBeInTheDocument();
     expect(screen.queryByText("后续在这里展示 query worker / mode 来源摘要。")).not.toBeInTheDocument();
 
     expect(screen.queryByRole("region", { name: "购买设置" })).not.toBeInTheDocument();

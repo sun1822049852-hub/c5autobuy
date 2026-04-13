@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { DiagnosticsEventList } from "./diagnostics_event_list.jsx";
+import { formatSourceModeLabel } from "../stats/stats_shared.js";
 
 
 function normalizeText(value) {
@@ -39,6 +40,7 @@ function buildFilterTabs(resolveMode) {
 function RuntimeEventsModal({
   emptyText = "暂无事件",
   events = [],
+  formatSourceLabel = null,
   onClose,
   resolveMode = (event) => event?.mode_type,
   timeKey = "timestamp",
@@ -95,6 +97,7 @@ function RuntimeEventsModal({
         {/* 事件列表（可滚动） */}
         <div className="query-events-modal__body">
           <DiagnosticsEventList
+            formatSourceLabel={formatSourceLabel}
             rows={filtered}
             timeKey={timeKey}
             title=""
@@ -111,6 +114,7 @@ export function QueryEventsModal({ events = [], onClose }) {
   return (
     <RuntimeEventsModal
       events={events}
+      formatSourceLabel={formatSourceModeLabel}
       onClose={onClose}
       resolveMode={(event) => event?.mode_type}
       timeKey="timestamp"

@@ -68,7 +68,7 @@ function createFetchHarness() {
               purchase_success_count: 1,
               purchase_failed_count: 1,
               source_mode_stats: [
-                { mode_type: "new_api", hit_count: 2 },
+                { mode_type: "new_api", hit_count: 2, account_display_name: "查询账号A" },
               ],
               updated_at: "2026-03-22T10:00:00",
             },
@@ -90,7 +90,7 @@ function createFetchHarness() {
               purchase_success_count: 2,
               purchase_failed_count: 1,
               source_mode_stats: [
-                { mode_type: "fast_api", hit_count: 3 },
+                { mode_type: "fast_api", hit_count: 3, account_display_name: "查询账号B" },
               ],
               updated_at: "2026-03-22T10:00:00",
             },
@@ -110,8 +110,8 @@ function createFetchHarness() {
             purchase_success_count: 2,
             purchase_failed_count: 3,
             source_mode_stats: [
-              { mode_type: "new_api", hit_count: 3 },
-              { mode_type: "fast_api", hit_count: 2 },
+              { mode_type: "new_api", hit_count: 3, account_display_name: "查询账号A" },
+              { mode_type: "fast_api", hit_count: 2, account_display_name: "查询账号B" },
             ],
             updated_at: "2026-03-22T10:00:00",
           },
@@ -150,7 +150,7 @@ describe("query stats page", () => {
     expect(within(table).getByText("4")).toBeInTheDocument();
     expect(within(table).getByText("2")).toBeInTheDocument();
     expect(within(table).getAllByText("1")).toHaveLength(2);
-    expect(within(table).getByText("api查询器 2")).toBeInTheDocument();
+    expect(within(table).getByText("查询账号A / api查询器 2")).toBeInTheDocument();
 
     expect(harness.calls).toEqual(
       expect.arrayContaining([
@@ -205,7 +205,7 @@ describe("query stats page", () => {
     expect(within(table).getByText("4")).toBeInTheDocument();
     expect(within(table).getByText("2")).toBeInTheDocument();
     expect(within(table).getAllByText("1")).toHaveLength(2);
-    expect(within(table).getByText("api查询器 2")).toBeInTheDocument();
+    expect(within(table).getByText("查询账号A / api查询器 2")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "打开统计时间选择" })).toHaveTextContent("2026-03-21 00:00:00");
 
     await user.click(screen.getByRole("button", { name: "打开统计时间选择" }));
@@ -239,7 +239,7 @@ describe("query stats page", () => {
       "2026-03-21 00:00:00 ~ 2026-03-25 23:59:59",
     );
     expect(within(table).getByText("8")).toBeInTheDocument();
-    expect(within(table).getByText("api高速查询器 3")).toBeInTheDocument();
+    expect(within(table).getByText("查询账号B / api高速查询器 3")).toBeInTheDocument();
   });
 
   it("closes the stats picker when clicking outside the picker", async () => {

@@ -97,6 +97,14 @@ export function formatModeLabel(modeType) {
 }
 
 
+export function formatSourceModeLabel(source) {
+  const accountDisplayName = String(source?.account_display_name || "").trim();
+  const modeType = source?.mode_type || source?.source_mode_type;
+  const modeLabel = formatModeLabel(modeType);
+  return accountDisplayName ? `${accountDisplayName} / ${modeLabel}` : modeLabel;
+}
+
+
 export function formatStatsDayDisplay(date) {
   return `${normalizeDateString(date)} 00:00:00`;
 }
@@ -113,6 +121,6 @@ export function formatQuerySourceModeSummary(sourceModeStats) {
   }
 
   return sourceModeStats
-    .map((entry) => `${formatModeLabel(entry?.mode_type)} ${Number(entry?.hit_count ?? 0)}`)
+    .map((entry) => `${formatSourceModeLabel(entry)} ${Number(entry?.hit_count ?? 0)}`)
     .join(" · ");
 }

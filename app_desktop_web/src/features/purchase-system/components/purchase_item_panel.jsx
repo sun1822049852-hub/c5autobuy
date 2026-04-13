@@ -10,7 +10,9 @@ const MODE_ORDER = ["new_api", "fast_api", "token"];
 
 
 function formatSourceModeLabel(source) {
-  return getPurchaseModeLabel(source?.mode_type);
+  const modeLabel = getPurchaseModeLabel(source?.mode_type);
+  const accountLabel = String(source?.account_display_name || "").trim();
+  return accountLabel ? `${accountLabel} / ${modeLabel}` : modeLabel;
 }
 
 

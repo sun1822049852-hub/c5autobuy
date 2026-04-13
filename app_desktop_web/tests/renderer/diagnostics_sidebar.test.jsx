@@ -364,6 +364,7 @@ describe("diagnostics page", () => {
     const dialog = await screen.findByRole("dialog", { name: "查询事件日志" });
     expect(within(dialog).getByText("查询事件-1")).toBeInTheDocument();
     expect(within(dialog).getByText("2026-03-25T20:00:01")).toBeInTheDocument();
+    expect(within(dialog).getByText(/异常查询账号-1 \/ 浏览器查询器/)).toBeInTheDocument();
 
     await act(async () => {
       await new Promise((resolve) => {
@@ -375,6 +376,7 @@ describe("diagnostics page", () => {
       expect(within(dialog).getByText("查询事件-2")).toBeInTheDocument();
     });
     expect(within(dialog).getByText("2026-03-25T20:21:00")).toBeInTheDocument();
+    expect(within(dialog).getByText(/查询账号-2 \/ api查询器/)).toBeInTheDocument();
     expect(within(dialog).queryByText("查询事件-1")).not.toBeInTheDocument();
     expect(within(dialog).queryByText("2026-03-25T20:00:01")).not.toBeInTheDocument();
     expect(within(dialog).getByText("查询事件日志")).toBeInTheDocument();
