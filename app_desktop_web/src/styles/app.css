@@ -1632,8 +1632,8 @@ input[type="number"]:focus::-webkit-outer-spin-button {
   transition: transform 140ms ease, border-color 140ms ease, background-color 140ms ease;
 }
 
-.query-item-row__value:hover,
-.query-item-row__value:focus-visible {
+button.query-item-row__value:hover,
+button.query-item-row__value:focus-visible {
   transform: translateY(-1px);
   border-color: rgba(220, 164, 76, 0.42);
   background: rgba(220, 164, 76, 0.14);
@@ -1649,23 +1649,52 @@ input[type="number"]:focus::-webkit-outer-spin-button {
   color: var(--text-soft);
 }
 
+.query-item-row__value--readonly {
+  cursor: default;
+}
+
 .query-item-row__value--price {
   font-weight: 700;
 }
 
-.query-item-row__delete {
-  width: 36px;
-  padding: 0;
+.query-item-row__delete,
+.query-item-row__control {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--query-item-tools-width);
+  min-height: 100%;
+  padding: 0 12px;
   justify-self: end;
   border: 1px solid rgba(220, 164, 76, 0.24);
   border-radius: 14px;
   color: var(--accent-strong);
+  background: rgba(220, 164, 76, 0.12);
+  transition: opacity 140ms ease, border-color 140ms ease, background-color 140ms ease;
+}
+
+.query-item-row__control {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.query-item-row__control.is-active {
+  border-color: rgba(220, 164, 76, 0.4);
+  background: rgba(220, 164, 76, 0.18);
+}
+
+.query-item-row__control:hover,
+.query-item-row__control:focus-visible {
+  border-color: rgba(220, 164, 76, 0.42);
+  background: rgba(220, 164, 76, 0.18);
+  outline: none;
+}
+
+.query-item-row__delete {
   font-size: 20px;
   line-height: 1;
   opacity: 0;
   pointer-events: none;
-  background: rgba(220, 164, 76, 0.12);
-  transition: opacity 140ms ease;
 }
 
 .query-item-row__delete.is-visible {
@@ -1705,8 +1734,13 @@ input[type="number"]:focus::-webkit-outer-spin-button {
   width: min(760px, 100%);
 }
 
+.query-item-dialog--single {
+  width: min(520px, 100%);
+}
+
 .query-item-dialog__readonly-grid,
-.query-item-dialog__field-grid {
+.query-item-dialog__field-grid,
+.query-item-dialog__single-grid {
   display: grid;
   gap: 12px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3154,7 +3188,8 @@ input[type="number"]:focus::-webkit-outer-spin-button {
 
   .query-item-dialog__readonly-grid,
   .query-item-dialog__field-grid,
-  .query-item-dialog__allocation-grid {
+  .query-item-dialog__allocation-grid,
+  .query-item-dialog__single-grid {
     grid-template-columns: 1fr;
   }
 

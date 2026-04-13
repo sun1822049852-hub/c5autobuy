@@ -128,10 +128,21 @@ function buildModeStatus(item, modeType, runtimeMode) {
     };
   }
 
+  const runtimeTarget = parseAllocationValue(runtimeMode?.target_dedicated_count ?? target);
+  if (runtimeMode && runtimeTarget !== target) {
+    return {
+      mode_type: modeType,
+      target_dedicated_count: target,
+      actual_dedicated_count: 0,
+      status: target > 0 ? "no_capacity" : "shared",
+      status_message: target > 0 ? `无可用账号 0/${target}` : "共享中",
+    };
+  }
+
   if (runtimeMode) {
     return {
       mode_type: runtimeMode.mode_type || modeType,
-      target_dedicated_count: parseAllocationValue(runtimeMode.target_dedicated_count ?? target),
+      target_dedicated_count: runtimeTarget,
       actual_dedicated_count: parseAllocationValue(runtimeMode.actual_dedicated_count),
       status: runtimeMode.status || "no_capacity",
       status_message: runtimeMode.status_message || (target > 0 ? `无可用账号 0/${target}` : "无可用账号"),

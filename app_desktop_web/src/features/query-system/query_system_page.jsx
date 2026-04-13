@@ -29,8 +29,8 @@ export function QuerySystemPage({ bootstrapConfig, client, isActive, onLeaveStat
     discardDraftChanges,
     deleteDraftItem,
     editDialogRemainingByMode,
-    editItemDraft,
-    editingItemId,
+    editingContext,
+    editingItemViewModel,
     hasUnsavedChanges,
     isConfigDeleteMode,
     isCreateConfigDialogOpen,
@@ -58,9 +58,9 @@ export function QuerySystemPage({ bootstrapConfig, client, isActive, onLeaveStat
     updateCreateItemAllocation,
     updateCreateConfigField,
     updateCreateItemField,
-    updateEditItemAllocation,
-    updateEditItemField,
-    applyEditItem,
+    updateEditingItemAllocation,
+    updateEditingItemField,
+    toggleDraftItemManualPaused,
     toggleConfigDeleteMode,
     toggleItemDeleteMode,
   } = useQuerySystemPage({ client, isActive });
@@ -127,6 +127,7 @@ export function QuerySystemPage({ bootstrapConfig, client, isActive, onLeaveStat
               items={itemViewModels}
               onDeleteItem={deleteDraftItem}
               onEditItem={openEditItemDialog}
+              onToggleManualPause={toggleDraftItemManualPaused}
               onOpenCreateItemDialog={openCreateItemDialog}
               onToggleDeleteMode={toggleItemDeleteMode}
             />
@@ -162,12 +163,12 @@ export function QuerySystemPage({ bootstrapConfig, client, isActive, onLeaveStat
       />
 
       <QueryItemEditDialog
-        draft={editItemDraft}
-        isOpen={Boolean(editingItemId)}
-        onAllocationChange={updateEditItemAllocation}
-        onApply={applyEditItem}
+        context={editingContext}
+        item={editingItemViewModel}
+        isOpen={Boolean(editingContext)}
+        onAllocationChange={updateEditingItemAllocation}
         onClose={closeEditItemDialog}
-        onFieldChange={updateEditItemField}
+        onFieldChange={updateEditingItemField}
         remainingByMode={editDialogRemainingByMode}
       />
     </section>

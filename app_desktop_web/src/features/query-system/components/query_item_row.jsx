@@ -19,26 +19,23 @@ export function QueryItemRow({
   item,
   onDeleteItem,
   onEditItem,
+  onToggleManualPause,
 }) {
   const displayName = item.item_name || item.market_hash_name || item.query_item_id;
+  const queryItemId = item.query_item_id;
 
   return (
     <section className="query-item-row" role="region" aria-label={`商品 ${displayName}`}>
       <div className="query-item-row__content">
         <div className="query-item-row__name">{displayName}</div>
-        <button
-          className="query-item-row__value query-item-row__value--market-price"
-          type="button"
-          aria-label={`查看市场价 ${displayName}`}
-          onClick={() => onEditItem(item.query_item_id)}
-        >
+        <div className="query-item-row__value query-item-row__value--market-price query-item-row__value--readonly">
           {formatValue(item.last_market_price)}
-        </button>
+        </div>
         <button
           className="query-item-row__value query-item-row__value--price"
           type="button"
           aria-label={`修改扫货价 ${displayName}`}
-          onClick={() => onEditItem(item.query_item_id)}
+          onClick={() => onEditItem({ queryItemId, kind: "price" })}
         >
           {formatValue(item.max_price)}
         </button>
@@ -46,7 +43,7 @@ export function QueryItemRow({
           className="query-item-row__value"
           type="button"
           aria-label={`修改磨损 ${displayName}`}
-          onClick={() => onEditItem(item.query_item_id)}
+          onClick={() => onEditItem({ queryItemId, kind: "wear" })}
         >
           {formatWearRange(item)}
         </button>
@@ -56,7 +53,7 @@ export function QueryItemRow({
             className="query-item-row__value query-item-row__value--status"
             type="button"
             aria-label={`修改 ${modeType} ${displayName}`}
-            onClick={() => onEditItem(item.query_item_id)}
+            onClick={() => onEditItem({ queryItemId, kind: "allocation", modeType })}
           >
             {item.statusByMode[modeType]?.status_message || "无可用账号"}
           </button>
@@ -67,11 +64,21 @@ export function QueryItemRow({
           className="query-item-row__delete is-visible"
           type="button"
           aria-label={`删除商品 ${displayName}`}
-          onClick={() => onDeleteItem(item.query_item_id)}
+          onClick={() => onDeleteItem(queryItemId)}
         >
           -
         </button>
-      ) : null}
+      ) : (
+        <button
+          aria-label={`切换手动暂停 ${displayName}`}
+          aria-pressed={Boolean(item.manual_paused)}
+          className={`query-item-row__control${item.manual_paused ? " is-active" : ""}`}
+          type="button"
+          onClick={() => onToggleManualPause(queryItemId)}
+        >
+          手动暂停
+        </button>
+      )}
     </section>
   );
 }

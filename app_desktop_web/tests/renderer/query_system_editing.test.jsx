@@ -481,8 +481,82 @@ async function openQuerySystem(user) {
 }
 
 
+function getItemRow(itemName) {
+  return screen.getByRole("region", { name: `商品 ${itemName}` });
+}
+
+
+async function openPriceDialog(user, itemName) {
+  const itemRow = getItemRow(itemName);
+  await user.click(within(itemRow).getByRole("button", { name: `修改扫货价 ${itemName}` }));
+  return screen.findByRole("dialog", { name: "修改扫货价" });
+}
+
+
+async function openWearDialog(user, itemName) {
+  const itemRow = getItemRow(itemName);
+  await user.click(within(itemRow).getByRole("button", { name: `修改磨损 ${itemName}` }));
+  return screen.findByRole("dialog", { name: "修改磨损" });
+}
+
+
+async function openAllocationDialog(user, itemName, modeType) {
+  const itemRow = getItemRow(itemName);
+  await user.click(within(itemRow).getByRole("button", { name: `修改 ${modeType} ${itemName}` }));
+  return screen.findByRole("dialog", { name: `修改 ${modeType} 分配` });
+}
+
+
+async function closeDialog(user, dialog) {
+  await user.click(within(dialog).getByRole("button", { name: "关闭" }));
+  await waitFor(() => {
+    expect(screen.queryByRole("dialog", { name: dialog.getAttribute("aria-label") || "" })).not.toBeInTheDocument();
+  });
+}
+
+
+async function setPriceDraft(user, itemName, value) {
+  const dialog = await openPriceDialog(user, itemName);
+  const input = within(dialog).getByLabelText("扫货价");
+  await user.clear(input);
+  await user.type(input, value);
+  await closeDialog(user, dialog);
+}
+
+
+async function setWearDraft(user, itemName, { minWear, maxWear }) {
+  const dialog = await openWearDialog(user, itemName);
+  if (minWear !== undefined) {
+    const minWearInput = within(dialog).getByLabelText("配置最小磨损");
+    await user.clear(minWearInput);
+    await user.type(minWearInput, minWear);
+  }
+  if (maxWear !== undefined) {
+    const maxWearInput = within(dialog).getByLabelText("配置最大磨损");
+    await user.clear(maxWearInput);
+    await user.type(maxWearInput, maxWear);
+  }
+  await closeDialog(user, dialog);
+}
+
+
+async function setAllocationDraft(user, itemName, modeType, value) {
+  const dialog = await openAllocationDialog(user, itemName, modeType);
+  const input = within(dialog).getByLabelText(`${modeType} 专属目标`);
+  await user.clear(input);
+  await user.type(input, value);
+  await closeDialog(user, dialog);
+}
+
+
+async function toggleManualPause(user, itemName) {
+  const itemRow = getItemRow(itemName);
+  await user.click(within(itemRow).getByRole("button", { name: `切换手动暂停 ${itemName}` }));
+}
+
+
 describe("query system editing", () => {
-  it("renders item rows and recalculates remaining dedicated capacity through item dialogs", async () => {
+  it("renders item rows with single-item dialogs and recalculates remaining dedicated capacity", async () => {
     const harness = createFetchHarness();
     installDesktopApp(harness.fetchImpl);
     const user = userEvent.setup();
@@ -490,40 +564,73 @@ describe("query system editing", () => {
     await openQuerySystem(user);
 
     const itemOne = await screen.findByRole("region", { name: "商品 AK-47 | Redline" });
-    const itemTwo = screen.getByRole("region", { name: "商品 AWP | Asiimov" });
+    const itemTwo = getItemRow("AWP | Asiimov");
 
-    expect(within(itemOne).getByRole("button", { name: "查看市场价 AK-47 | Redline" })).toHaveTextContent("188.88");
+    expect(within(itemOne).queryByRole("button", { name: "查看市场价 AK-47 | Redline" })).not.toBeInTheDocument();
+    expect(within(itemOne).getByText("188.88")).toBeInTheDocument();
     expect(within(itemOne).getByRole("button", { name: "修改扫货价 AK-47 | Redline" })).toHaveTextContent("199");
     expect(within(itemOne).getByRole("button", { name: "修改磨损 AK-47 | Redline" })).toHaveTextContent("0.1 ~ 0.25");
     expect(within(itemOne).getByRole("button", { name: "修改 new_api AK-47 | Redline" })).toHaveTextContent("专属中 1/1");
-    expect(within(itemTwo).getByRole("button", { name: "查看市场价 AWP | Asiimov" })).toHaveTextContent("955.55");
+    expect(within(itemTwo).queryByRole("button", { name: "查看市场价 AWP | Asiimov" })).not.toBeInTheDocument();
+    expect(within(itemTwo).getByText("955.55")).toBeInTheDocument();
     expect(within(itemTwo).getByRole("button", { name: "修改扫货价 AWP | Asiimov" })).toHaveTextContent("999");
     expect(within(itemTwo).getByRole("button", { name: "修改 fast_api AWP | Asiimov" })).toHaveTextContent("无可用账号 0/1");
-    const itemThree = screen.getByRole("region", { name: "商品 M4A1-S | Blue Phosphor" });
+    const itemThree = getItemRow("M4A1-S | Blue Phosphor");
     expect(within(itemThree).getByRole("button", { name: "修改 new_api M4A1-S | Blue Phosphor" })).toHaveTextContent("手动暂停");
     expect(within(itemThree).getByRole("button", { name: "修改 token M4A1-S | Blue Phosphor" })).toHaveTextContent("手动暂停");
+    expect(within(itemOne).getByRole("button", { name: "切换手动暂停 AK-47 | Redline" })).toBeInTheDocument();
 
-    await user.click(within(itemOne).getByRole("button", { name: "修改扫货价 AK-47 | Redline" }));
-    const editorOne = await screen.findByRole("dialog", { name: "编辑商品" });
+    const priceDialog = await openPriceDialog(user, "AK-47 | Redline");
+    expect(within(priceDialog).getByLabelText("市场价")).toHaveValue("188.88");
+    expect(within(priceDialog).getByLabelText("扫货价")).toHaveValue(199);
+    expect(within(priceDialog).queryByLabelText("配置最小磨损")).not.toBeInTheDocument();
+    expect(within(priceDialog).queryByLabelText("new_api 专属目标")).not.toBeInTheDocument();
+    await closeDialog(user, priceDialog);
 
-    expect(within(editorOne).getByText("天然磨损范围 0.1 ~ 0.7")).toBeInTheDocument();
-    expect(within(editorOne).getByLabelText("配置最小磨损")).toHaveValue(0.1);
-    expect(within(editorOne).getByLabelText("配置最大磨损")).toHaveValue(0.25);
-    expect(within(editorOne).getByLabelText("扫货价")).toHaveValue(199);
-    expect(within(editorOne).getByLabelText("new_api 专属目标")).toHaveValue(1);
-    expect(within(editorOne).getByText("new_api 还可分配 2")).toBeInTheDocument();
-    await user.click(within(editorOne).getByRole("button", { name: "取消" }));
+    const wearDialog = await openWearDialog(user, "AK-47 | Redline");
+    expect(within(wearDialog).getByText("天然磨损范围 0.1 ~ 0.7")).toBeInTheDocument();
+    expect(within(wearDialog).getByLabelText("配置最小磨损")).toHaveValue(0.1);
+    expect(within(wearDialog).getByLabelText("配置最大磨损")).toHaveValue(0.25);
+    expect(within(wearDialog).queryByLabelText("扫货价")).not.toBeInTheDocument();
+    expect(within(wearDialog).queryByLabelText("new_api 专属目标")).not.toBeInTheDocument();
+    await closeDialog(user, wearDialog);
 
-    await user.click(within(itemTwo).getByRole("button", { name: "修改扫货价 AWP | Asiimov" }));
-    const editorTwo = await screen.findByRole("dialog", { name: "编辑商品" });
-    const itemTwoNewApi = within(editorTwo).getByLabelText("new_api 专属目标");
-    await user.clear(itemTwoNewApi);
-    await user.type(itemTwoNewApi, "1");
-    await user.click(within(editorTwo).getByRole("button", { name: "应用修改" }));
+    const newApiDialog = await openAllocationDialog(user, "AWP | Asiimov", "new_api");
+    expect(within(newApiDialog).getByLabelText("new_api 专属目标")).toHaveValue(0);
+    expect(within(newApiDialog).getByText("new_api 还可分配 1")).toBeInTheDocument();
+    expect(within(newApiDialog).queryByLabelText("fast_api 专属目标")).not.toBeInTheDocument();
+    await user.clear(within(newApiDialog).getByLabelText("new_api 专属目标"));
+    await user.type(within(newApiDialog).getByLabelText("new_api 专属目标"), "1");
+    await closeDialog(user, newApiDialog);
 
-    await user.click(within(itemOne).getByRole("button", { name: "修改扫货价 AK-47 | Redline" }));
-    const editorOneAgain = await screen.findByRole("dialog", { name: "编辑商品" });
+    expect(within(itemTwo).getByRole("button", { name: "修改 new_api AWP | Asiimov" })).toHaveTextContent("无可用账号 0/1");
+
+    const editorOneAgain = await openAllocationDialog(user, "AK-47 | Redline", "new_api");
     expect(within(editorOneAgain).getByText("new_api 还可分配 1")).toBeInTheDocument();
+    await closeDialog(user, editorOneAgain);
+  });
+
+  it("toggles manual pause inline and swaps the token-side control with delete mode", async () => {
+    const harness = createFetchHarness();
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    await openQuerySystem(user);
+
+    const itemOne = await screen.findByRole("region", { name: "商品 AK-47 | Redline" });
+    expect(within(itemOne).getByRole("button", { name: "切换手动暂停 AK-47 | Redline" })).toBeInTheDocument();
+
+    await toggleManualPause(user, "AK-47 | Redline");
+
+    expect(within(itemOne).getByRole("button", { name: "修改 new_api AK-47 | Redline" })).toHaveTextContent("手动暂停");
+    expect(within(itemOne).getByRole("button", { name: "修改 fast_api AK-47 | Redline" })).toHaveTextContent("手动暂停");
+    expect(within(itemOne).getByRole("button", { name: "修改 token AK-47 | Redline" })).toHaveTextContent("手动暂停");
+    expect(screen.getByRole("button", { name: "保存到当前配置" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "切换商品删除模式" }));
+
+    expect(within(itemOne).queryByRole("button", { name: "切换手动暂停 AK-47 | Redline" })).not.toBeInTheDocument();
+    expect(within(itemOne).getByRole("button", { name: "删除商品 AK-47 | Redline" })).toHaveTextContent("-");
   });
 
   it("adds a draft item from the centered create dialog and saves both existing and new items", { timeout: 15000 }, async () => {
@@ -535,19 +642,9 @@ describe("query system editing", () => {
     try {
       await openQuerySystem(user);
 
-      const itemOne = await screen.findByRole("region", { name: "商品 AK-47 | Redline" });
-      await user.click(within(itemOne).getByRole("button", { name: "修改扫货价 AK-47 | Redline" }));
-      const editorOne = await screen.findByRole("dialog", { name: "编辑商品" });
-
-      const minWearInput = within(editorOne).getByLabelText("配置最小磨损");
-      await user.clear(minWearInput);
-      await user.type(minWearInput, "0.12");
-
-      const maxPriceInput = within(editorOne).getByLabelText("扫货价");
-      await user.clear(maxPriceInput);
-      await user.type(maxPriceInput, "188");
-      await user.click(within(editorOne).getByLabelText("手动暂停"));
-      await user.click(within(editorOne).getByRole("button", { name: "应用修改" }));
+      await setWearDraft(user, "AK-47 | Redline", { minWear: "0.12" });
+      await setPriceDraft(user, "AK-47 | Redline", "188");
+      await toggleManualPause(user, "AK-47 | Redline");
 
       await user.click(screen.getByRole("button", { name: "添加商品" }));
       const createPanel = await screen.findByRole("dialog", { name: "添加商品" });
@@ -763,11 +860,7 @@ describe("query system editing", () => {
 
     const itemThree = await screen.findByRole("region", { name: "商品 M4A1-S | Blue Phosphor" });
     expect(within(itemThree).getByRole("button", { name: "修改 new_api M4A1-S | Blue Phosphor" })).toHaveTextContent("手动暂停");
-
-    await user.click(within(itemThree).getByRole("button", { name: "修改扫货价 M4A1-S | Blue Phosphor" }));
-    const editor = await screen.findByRole("dialog", { name: "编辑商品" });
-    await user.click(within(editor).getByLabelText("手动暂停"));
-    await user.click(within(editor).getByRole("button", { name: "应用修改" }));
+    await toggleManualPause(user, "M4A1-S | Blue Phosphor");
 
     await user.click(screen.getByRole("button", { name: "保存到当前配置" }));
 
@@ -787,14 +880,7 @@ describe("query system editing", () => {
 
     await openQuerySystem(user);
 
-    const itemOne = await screen.findByRole("region", { name: "商品 AK-47 | Redline" });
-    await user.click(within(itemOne).getByRole("button", { name: "修改扫货价 AK-47 | Redline" }));
-
-    const editor = await screen.findByRole("dialog", { name: "编辑商品" });
-    const maxPrice = within(editor).getByLabelText("扫货价");
-    await user.clear(maxPrice);
-    await user.type(maxPrice, "188");
-    await user.click(within(editor).getByRole("button", { name: "应用修改" }));
+    await setPriceDraft(user, "AK-47 | Redline", "188");
 
     await user.click(screen.getByRole("button", { name: "保存到当前配置" }));
     await waitFor(() => {
@@ -804,12 +890,7 @@ describe("query system editing", () => {
       screen.getByText("新配置已生效，仅影响后续新命中；已入队或已派发的旧扫货任务会按旧快照执行完毕。"),
     ).toBeInTheDocument();
 
-    await user.click(within(screen.getByRole("region", { name: "商品 AK-47 | Redline" })).getByRole("button", { name: "修改扫货价 AK-47 | Redline" }));
-    const secondEditor = await screen.findByRole("dialog", { name: "编辑商品" });
-    const secondMaxPrice = within(secondEditor).getByLabelText("扫货价");
-    await user.clear(secondMaxPrice);
-    await user.type(secondMaxPrice, "190");
-    await user.click(within(secondEditor).getByRole("button", { name: "应用修改" }));
+    await setPriceDraft(user, "AK-47 | Redline", "190");
 
     expect(screen.queryByText("新配置已生效，仅影响后续新命中；已入队或已派发的旧扫货任务会按旧快照执行完毕。")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "保存到当前配置" })).toBeInTheDocument();
@@ -824,14 +905,7 @@ describe("query system editing", () => {
 
     await openQuerySystem(user);
 
-    const itemOne = await screen.findByRole("region", { name: "商品 AK-47 | Redline" });
-    await user.click(within(itemOne).getByRole("button", { name: "修改扫货价 AK-47 | Redline" }));
-
-    const editor = await screen.findByRole("dialog", { name: "编辑商品" });
-    const maxPrice = within(editor).getByLabelText("扫货价");
-    await user.clear(maxPrice);
-    await user.type(maxPrice, "188");
-    await user.click(within(editor).getByRole("button", { name: "应用修改" }));
+    await setPriceDraft(user, "AK-47 | Redline", "188");
 
     await user.click(screen.getByRole("button", { name: "保存到当前配置" }));
     await waitFor(() => {
@@ -864,13 +938,7 @@ describe("query system editing", () => {
 
     await openQuerySystem(user);
 
-    const itemTwo = await screen.findByRole("region", { name: "商品 AWP | Asiimov" });
-    await user.click(within(itemTwo).getByRole("button", { name: "修改扫货价 AWP | Asiimov" }));
-    const editorTwo = await screen.findByRole("dialog", { name: "编辑商品" });
-    const itemTwoNewApi = within(editorTwo).getByLabelText("new_api 专属目标");
-    await user.clear(itemTwoNewApi);
-    await user.type(itemTwoNewApi, "1");
-    await user.click(within(editorTwo).getByRole("button", { name: "应用修改" }));
+    await setAllocationDraft(user, "AWP | Asiimov", "new_api", "1");
 
     const saveButton = screen.getByRole("button", { name: "保存到当前配置" });
 
@@ -952,13 +1020,7 @@ describe("query system editing", () => {
 
     await openQuerySystem(user);
 
-    const itemOne = await screen.findByRole("region", { name: "商品 AK-47 | Redline" });
-    await user.click(within(itemOne).getByRole("button", { name: "修改扫货价 AK-47 | Redline" }));
-    const editorOne = await screen.findByRole("dialog", { name: "编辑商品" });
-    const maxPriceInput = within(editorOne).getByLabelText("扫货价");
-    await user.clear(maxPriceInput);
-    await user.type(maxPriceInput, "233");
-    await user.click(within(editorOne).getByRole("button", { name: "应用修改" }));
+    await setPriceDraft(user, "AK-47 | Redline", "233");
 
     await user.click(screen.getByRole("button", { name: "账号中心" }));
 
@@ -985,13 +1047,7 @@ describe("query system editing", () => {
 
     await openQuerySystem(user);
 
-    const itemOne = await screen.findByRole("region", { name: "商品 AK-47 | Redline" });
-    await user.click(within(itemOne).getByRole("button", { name: "修改扫货价 AK-47 | Redline" }));
-    const editorOne = await screen.findByRole("dialog", { name: "编辑商品" });
-    const maxPriceInput = within(editorOne).getByLabelText("扫货价");
-    await user.clear(maxPriceInput);
-    await user.type(maxPriceInput, "211");
-    await user.click(within(editorOne).getByRole("button", { name: "应用修改" }));
+    await setPriceDraft(user, "AK-47 | Redline", "211");
 
     await user.click(screen.getByRole("button", { name: "扫货系统" }));
 

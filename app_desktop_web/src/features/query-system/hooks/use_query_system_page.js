@@ -199,8 +199,7 @@ export function useQuerySystemPage({ client, isActive = true }) {
 
   const [isCreateItemDialogOpen, setIsCreateItemDialogOpen] = useState(false);
   const [createItemDraft, setCreateItemDraft] = useState(createBlankItemDraft);
-  const [editingItemId, setEditingItemId] = useState(null);
-  const [editItemDraft, setEditItemDraft] = useState(null);
+  const [editingContext, setEditingContext] = useState(null);
   const [isItemDeleteMode, setIsItemDeleteMode] = useState(false);
 
   const [isCreatingConfig, setIsCreatingConfig] = useState(false);
@@ -213,8 +212,7 @@ export function useQuerySystemPage({ client, isActive = true }) {
   }
 
   function resetTransientEditorState() {
-    setEditingItemId(null);
-    setEditItemDraft(null);
+    setEditingContext(null);
     setIsCreateItemDialogOpen(false);
     setCreateItemDraft(createBlankItemDraft());
     setIsConfigDeleteMode(false);
@@ -406,22 +404,37 @@ export function useQuerySystemPage({ client, isActive = true }) {
 
     return (currentConfig.items || []).map((item) => buildViewItem(item, currentConfig.items || [], runtimeItemMap));
   }, [currentConfig, runtimeItemMap]);
+  const editingItemId = editingContext?.queryItemId || null;
+  const editingItem = useMemo(() => {
+    if (!currentConfig || !editingItemId) {
+      return null;
+    }
+
+    return currentConfig.items.find((item) => item.query_item_id === editingItemId) || null;
+  }, [currentConfig, editingItemId]);
+  const editingItemViewModel = useMemo(() => {
+    if (!editingItem || !currentConfig) {
+      return null;
+    }
+
+    return buildViewItem(editingItem, currentConfig.items || [], runtimeItemMap);
+  }, [currentConfig, editingItem, runtimeItemMap]);
 
   const createDialogRemainingByMode = useMemo(
     () => buildRemainingByMode(currentConfig?.items || [], null, createItemDraft, capacityModeMap),
     [capacityModeMap, createItemDraft, currentConfig?.items],
   );
   const editDialogRemainingByMode = useMemo(() => {
-    if (!editItemDraft || !currentConfig) {
+    if (!editingItem || !currentConfig) {
       return {};
     }
     return buildRemainingByMode(
       currentConfig.items || [],
       editingItemId,
-      editItemDraft,
+      createItemDraftFromItem(editingItem),
       capacityModeMap,
     );
-  }, [capacityModeMap, currentConfig, editItemDraft, editingItemId]);
+  }, [capacityModeMap, currentConfig, editingItem, editingItemId]);
 
   const currentStatusText = currentConfig
     ? getConfigStatusText({
@@ -693,16 +706,94 @@ export function useQuerySystemPage({ client, isActive = true }) {
     closeCreateItemDialog();
   }
 
-  function openEditItemDialog(queryItemId) {
+  function updateDraftItem(queryItemId, updater) {
+    if (!currentConfig || !queryItemId) {
+      return;
+    }
+
+    const hasTarget = currentConfig.items.some((item) => item.query_item_id === queryItemId);
+    if (!hasTarget) {
+      return;
+    }
+
+    updateDraftConfig((current) => ({
+      ...current,
+      items: current.items.map((item) => (
+        item.query_item_id === queryItemId
+          ? updater(item)
+          : item
+      )),
+    }));
+  }
+
+  function updateDraftItemField(queryItemId, field, value) {
+    const itemFieldMap = {
+      detailMaxWear: "detail_max_wear",
+      detailMinWear: "detail_min_wear",
+      manualPaused: "manual_paused",
+      maxPrice: "max_price",
+    };
+    const targetField = itemFieldMap[field];
+
+    if (targetField) {
+      updateDraftItem(queryItemId, (item) => normalizeItem({
+        ...item,
+        [targetField]: targetField === "manual_paused" ? Boolean(value) : value,
+      }));
+      return;
+    }
+
+    updateDraftItem(queryItemId, (item) => applyDraftToItem(item, {
+      ...createItemDraftFromItem(item),
+      [field]: value,
+    }));
+  }
+
+  function updateDraftItemAllocation(queryItemId, modeType, value) {
+    updateDraftItem(queryItemId, (item) => {
+      const draft = createItemDraftFromItem(item);
+      return applyDraftToItem(item, {
+        ...draft,
+        modeAllocations: {
+          ...draft.modeAllocations,
+          [modeType]: parseAllocationValue(value),
+        },
+      });
+    });
+  }
+
+  function toggleDraftItemManualPaused(queryItemId) {
+    updateDraftItem(queryItemId, (item) => applyDraftToItem(item, {
+      ...createItemDraftFromItem(item),
+      manualPaused: !item.manual_paused,
+    }));
+  }
+
+  function openEditItemDialog(nextContext) {
     if (!currentConfig) {
       return;
     }
+
+    const queryItemId = nextContext?.queryItemId || null;
+    const kind = nextContext?.kind || null;
+    const modeType = nextContext?.modeType || null;
     const item = currentConfig.items.find((candidate) => candidate.query_item_id === queryItemId);
     if (!item) {
       return;
     }
-    setEditingItemId(queryItemId);
-    setEditItemDraft(createItemDraftFromItem(item));
+
+    if (!["price", "wear", "allocation"].includes(kind)) {
+      return;
+    }
+    if (kind === "allocation" && !ALL_MODES.includes(modeType)) {
+      return;
+    }
+
+    setEditingContext({
+      queryItemId,
+      kind,
+      modeType: kind === "allocation" ? modeType : null,
+    });
   }
 
   function deleteDraftItem(queryItemId) {
@@ -711,55 +802,29 @@ export function useQuerySystemPage({ client, isActive = true }) {
       items: current.items.filter((item) => item.query_item_id !== queryItemId),
     }));
 
-    if (editingItemId === queryItemId) {
+    if (editingContext?.queryItemId === queryItemId) {
       closeEditItemDialog();
     }
   }
 
   function closeEditItemDialog() {
-    setEditingItemId(null);
-    setEditItemDraft(null);
+    setEditingContext(null);
   }
 
-  function updateEditItemField(field, value) {
-    setEditItemDraft((current) => (
-      current
-        ? {
-          ...current,
-          [field]: field === "manualPaused" ? Boolean(value) : value,
-        }
-        : current
-    ));
-  }
-
-  function updateEditItemAllocation(modeType, value) {
-    setEditItemDraft((current) => (
-      current
-        ? {
-          ...current,
-          modeAllocations: {
-            ...current.modeAllocations,
-            [modeType]: parseAllocationValue(value),
-          },
-        }
-        : current
-    ));
-  }
-
-  function applyEditItem() {
-    if (!editItemDraft || !editingItemId) {
+  function updateEditingItemField(field, value) {
+    if (!editingContext?.queryItemId) {
       return;
     }
 
-    updateDraftConfig((current) => ({
-      ...current,
-      items: current.items.map((item) => (
-        item.query_item_id === editingItemId
-          ? applyDraftToItem(item, editItemDraft)
-          : item
-      )),
-    }));
-    closeEditItemDialog();
+    updateDraftItemField(editingContext.queryItemId, field, value);
+  }
+
+  function updateEditingItemAllocation(modeType, value) {
+    if (!editingContext?.queryItemId) {
+      return;
+    }
+
+    updateDraftItemAllocation(editingContext.queryItemId, modeType, value);
   }
 
   async function saveConfig() {
@@ -830,7 +895,8 @@ export function useQuerySystemPage({ client, isActive = true }) {
     deleteConfigTarget,
     deleteDraftItem,
     editDialogRemainingByMode,
-    editItemDraft,
+    editingContext,
+    editingItemViewModel,
     hasUnsavedChanges,
     isConfigDeleteMode,
     isCreateConfigDialogOpen,
@@ -857,12 +923,11 @@ export function useQuerySystemPage({ client, isActive = true }) {
     updateCreateItemField,
     updateCreateItemAllocation,
     addDraftItem,
-    editingItemId,
     openEditItemDialog,
     closeEditItemDialog,
-    updateEditItemField,
-    updateEditItemAllocation,
-    applyEditItem,
+    updateEditingItemField,
+    updateEditingItemAllocation,
+    toggleDraftItemManualPaused,
     toggleItemDeleteMode,
     runtimeMessage: runtimeStatus.message || "未运行",
     saveBarDisabled: !currentConfig || isSaving || !hasUnsavedChanges,

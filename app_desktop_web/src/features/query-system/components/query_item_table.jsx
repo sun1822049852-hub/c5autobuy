@@ -7,6 +7,7 @@ export function QueryItemTable({
   items,
   onDeleteItem,
   onEditItem,
+  onToggleManualPause,
   onOpenCreateItemDialog,
   onToggleDeleteMode,
 }) {
@@ -58,6 +59,7 @@ export function QueryItemTable({
               item={item}
               onDeleteItem={onDeleteItem}
               onEditItem={onEditItem}
+              onToggleManualPause={onToggleManualPause}
             />
           ))}
         </div>
