@@ -38,7 +38,7 @@ const EMPTY_UI_PREFERENCES = {
 
 const EMPTY_PURCHASE_SETTINGS_DRAFT = {
   per_batch_ip_fanout_limit: "1",
-  max_inflight_per_account: "1",
+  max_inflight_per_account: "3",
   is_dirty: false,
   updated_at: null,
 };
@@ -93,10 +93,10 @@ function normalizePurchaseSettingsDraft(settings) {
   const normalizedLimit = Number.isFinite(rawLimit) && rawLimit >= 1
     ? Math.trunc(rawLimit)
     : 1;
-  const rawMaxInflight = Number(settings?.max_inflight_per_account ?? 1);
+  const rawMaxInflight = Number(settings?.max_inflight_per_account ?? 3);
   const normalizedMaxInflight = Number.isFinite(rawMaxInflight) && rawMaxInflight >= 1
     ? Math.trunc(rawMaxInflight)
-    : 1;
+    : 3;
   return {
     per_batch_ip_fanout_limit: String(normalizedLimit),
     max_inflight_per_account: String(normalizedMaxInflight),

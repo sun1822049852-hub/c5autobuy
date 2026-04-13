@@ -16,7 +16,7 @@ def _default_query_settings() -> dict[str, object]:
 def _default_purchase_settings() -> dict[str, object]:
     return {
         "per_batch_ip_fanout_limit": 1,
-        "max_inflight_per_account": 1,
+        "max_inflight_per_account": 3,
     }
 
 

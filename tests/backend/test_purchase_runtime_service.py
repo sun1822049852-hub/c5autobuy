@@ -80,7 +80,7 @@ class FakeSettingsRepository:
     def __init__(self, purchase_settings=None) -> None:
         self._purchase_settings = {
             "per_batch_ip_fanout_limit": 1,
-            "max_inflight_per_account": 1,
+            "max_inflight_per_account": 3,
         }
         if isinstance(purchase_settings, dict):
             self._purchase_settings.update(purchase_settings)
@@ -1617,7 +1617,7 @@ def test_purchase_runtime_service_queues_hit_while_account_busy_and_dispatches_a
         service.stop()
 
 
-def test_purchase_runtime_service_allows_three_inflight_tasks_per_account_before_queueing():
+def test_purchase_runtime_service_defaults_to_three_inflight_tasks_per_account_before_queueing():
     from app_backend.infrastructure.purchase.runtime.purchase_runtime_service import PurchaseRuntimeService
 
     snapshot_repository = FakeInventorySnapshotRepository(
@@ -1643,7 +1643,6 @@ def test_purchase_runtime_service_allows_three_inflight_tasks_per_account_before
         settings_repository=FakeSettingsRepository(),
         inventory_snapshot_repository=snapshot_repository,
         execution_gateway_factory=lambda: gateway,
-        max_inflight_per_account=3,
     )
     service.start()
 
@@ -1779,7 +1778,7 @@ def test_purchase_runtime_service_waits_for_current_purchase_completion_before_a
     gateway = MultiReleaseExecutionGateway(PurchaseExecutionResult.success(purchased_count=1))
     service = PurchaseRuntimeService(
         account_repository=FakeAccountRepository([build_account("a1")]),
-        settings_repository=FakeSettingsRepository(),
+        settings_repository=FakeSettingsRepository({"max_inflight_per_account": 1}),
         inventory_snapshot_repository=snapshot_repository,
         execution_gateway_factory=lambda: gateway,
     )

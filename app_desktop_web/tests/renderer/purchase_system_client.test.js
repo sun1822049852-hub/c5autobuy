@@ -214,7 +214,7 @@ describe("purchase system client", () => {
         ok: true,
         json: async () => ({
           per_batch_ip_fanout_limit: 1,
-          max_inflight_per_account: 1,
+          max_inflight_per_account: 3,
           updated_at: null,
         }),
       })
@@ -256,7 +256,7 @@ describe("purchase system client", () => {
       }),
     );
     expect(currentSettings.per_batch_ip_fanout_limit).toBe(1);
-    expect(currentSettings.max_inflight_per_account).toBe(1);
+    expect(currentSettings.max_inflight_per_account).toBe(3);
     expect(updatedSettings.per_batch_ip_fanout_limit).toBe(4);
     expect(updatedSettings.max_inflight_per_account).toBe(2);
   });

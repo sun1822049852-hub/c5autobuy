@@ -234,7 +234,7 @@ export function PurchaseSystemPage({ bootstrapConfig, client, isActive, onLeaveS
             <PurchaseSettingsPanel
               error={purchaseSettingsError}
               fanoutLimit={purchaseSettingsDraft?.per_batch_ip_fanout_limit || "1"}
-              maxInflightPerAccount={purchaseSettingsDraft?.max_inflight_per_account || "1"}
+              maxInflightPerAccount={purchaseSettingsDraft?.max_inflight_per_account || "3"}
               notice={purchaseSettingsNotice}
               isPending={isPurchaseSettingsSaving}
               isSaving={Boolean(purchaseSettingsDraft?.is_dirty)}

@@ -88,4 +88,4 @@ class GetAppBootstrapUseCase:
     @staticmethod
     def _read_max_inflight_per_account(runtime_settings) -> int:
         purchase_settings = dict(getattr(runtime_settings, "purchase_settings_json", {}) or {})
-        return int(purchase_settings.get("max_inflight_per_account", 1) or 1)
+        return int(purchase_settings.get("max_inflight_per_account", 3) or 3)

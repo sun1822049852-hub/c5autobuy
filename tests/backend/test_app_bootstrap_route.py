@@ -25,7 +25,7 @@ async def test_app_bootstrap_route_matches_existing_runtime_and_diagnostics_rout
     }
     assert payload["purchase_system"]["runtime_settings"] == {
         "per_batch_ip_fanout_limit": 1,
-        "max_inflight_per_account": 1,
+        "max_inflight_per_account": 3,
         "updated_at": None,
     }
     diagnostics_summary = diagnostics_response.json()["summary"]

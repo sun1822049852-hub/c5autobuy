@@ -4,7 +4,7 @@ async def test_get_purchase_runtime_settings_returns_default_limit(client):
     assert response.status_code == 200
     assert response.json() == {
         "per_batch_ip_fanout_limit": 1,
-        "max_inflight_per_account": 1,
+        "max_inflight_per_account": 3,
         "updated_at": None,
     }
 

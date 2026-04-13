@@ -739,7 +739,7 @@ class PurchaseRuntimeService:
         repository = self._settings_repository
         settings_payload = {
             "per_batch_ip_fanout_limit": 1,
-            "max_inflight_per_account": 1,
+            "max_inflight_per_account": 3,
         }
         if repository is not None:
             get_settings = getattr(repository, "get", None)
@@ -758,11 +758,11 @@ class PurchaseRuntimeService:
                     settings_payload["per_batch_ip_fanout_limit"] = 1
                 try:
                     settings_payload["max_inflight_per_account"] = max(
-                        int(purchase_settings.get("max_inflight_per_account", 1) or 1),
+                        int(purchase_settings.get("max_inflight_per_account", 3) or 3),
                         1,
                     )
                 except (TypeError, ValueError):
-                    settings_payload["max_inflight_per_account"] = 1
+                    settings_payload["max_inflight_per_account"] = 3
         if self._max_inflight_per_account is not None:
             settings_payload["max_inflight_per_account"] = max(int(self._max_inflight_per_account), 1)
         return settings_payload
@@ -1354,7 +1354,7 @@ class PurchaseRuntimeService:
         recovery_delay_seconds_provider: RecoveryDelaySecondsProvider | None = None,
         execution_gateway_factory: ExecutionGatewayFactory | None = None,
         per_batch_ip_fanout_limit: int = 1,
-        max_inflight_per_account: int = 1,
+        max_inflight_per_account: int = 3,
         queued_hit_timeout_seconds: float = 2.0,
         stats_sink=None,
     ):
@@ -1444,7 +1444,7 @@ class _DefaultPurchaseRuntime:
         recovery_delay_seconds_provider: RecoveryDelaySecondsProvider | None,
         execution_gateway_factory: ExecutionGatewayFactory,
         per_batch_ip_fanout_limit: int = 1,
-        max_inflight_per_account: int = 1,
+        max_inflight_per_account: int = 3,
         queued_hit_timeout_seconds: float = 2.0,
         stats_sink=None,
     ) -> None:

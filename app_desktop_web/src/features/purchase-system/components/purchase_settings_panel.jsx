@@ -51,7 +51,7 @@ export function PurchaseSettingsPanel({
             onMaxInflightPerAccountChange?.(event.target.value);
           }}
         />
-        <span className="form-hint">默认值为 1。单个购买账号最多同时执行这么多个购买任务；若当前已有任务在跑，新值会在本次购买完成后生效。</span>
+        <span className="form-hint">默认值为 3。单个购买账号最多同时执行这么多个购买任务；若当前已有任务在跑，新值会在本次购买完成后生效。</span>
       </label>
 
       {error ? <div className="purchase-settings-panel__error">{error}</div> : null}

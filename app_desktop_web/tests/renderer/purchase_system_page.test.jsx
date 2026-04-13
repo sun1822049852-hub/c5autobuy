@@ -409,7 +409,7 @@ function createFetchHarness({
   initialStatus,
   initialPurchaseRuntimeSettings = {
     per_batch_ip_fanout_limit: 1,
-    max_inflight_per_account: 1,
+    max_inflight_per_account: 3,
     updated_at: null,
   },
   initialQuerySettings = QUERY_SETTINGS,
@@ -419,7 +419,7 @@ function createFetchHarness({
   let purchaseRuntimeStatus = initialStatus || buildPurchaseRuntimeStatus();
   let purchaseRuntimeSettings = {
     per_batch_ip_fanout_limit: initialPurchaseRuntimeSettings?.per_batch_ip_fanout_limit ?? 1,
-    max_inflight_per_account: initialPurchaseRuntimeSettings?.max_inflight_per_account ?? 1,
+    max_inflight_per_account: initialPurchaseRuntimeSettings?.max_inflight_per_account ?? 3,
     updated_at: initialPurchaseRuntimeSettings?.updated_at ?? null,
   };
   let querySettings = JSON.parse(JSON.stringify(initialQuerySettings));
@@ -1152,7 +1152,7 @@ describe("purchase system page", () => {
     const harness = createFetchHarness({
       initialPurchaseRuntimeSettings: {
         per_batch_ip_fanout_limit: 1,
-        max_inflight_per_account: 1,
+        max_inflight_per_account: 3,
         updated_at: null,
       },
     });
@@ -1170,7 +1170,7 @@ describe("purchase system page", () => {
     const input = within(panel).getByLabelText("单批次单IP并发购买数");
     const inflightInput = within(panel).getByLabelText("单账号最大并发购买任务数");
     expect(input).toHaveValue(1);
-    expect(inflightInput).toHaveValue(1);
+    expect(inflightInput).toHaveValue(3);
 
     fireEvent.change(input, { target: { value: "4" } });
     fireEvent.change(inflightInput, { target: { value: "2" } });

@@ -31,7 +31,7 @@ def _serialize_purchase_settings(settings) -> PurchaseRuntimeSettingsResponse:
     return PurchaseRuntimeSettingsResponse.model_validate(
         {
             "per_batch_ip_fanout_limit": int(purchase_settings.get("per_batch_ip_fanout_limit", 1) or 1),
-            "max_inflight_per_account": int(purchase_settings.get("max_inflight_per_account", 1) or 1),
+            "max_inflight_per_account": int(purchase_settings.get("max_inflight_per_account", 3) or 3),
             "updated_at": settings.updated_at,
         }
     )

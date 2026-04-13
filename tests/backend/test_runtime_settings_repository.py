@@ -17,7 +17,7 @@ def test_runtime_settings_repository_returns_default_purchase_settings(tmp_path)
     assert settings.settings_id == "default"
     assert settings.purchase_settings_json == {
         "per_batch_ip_fanout_limit": 1,
-        "max_inflight_per_account": 1,
+        "max_inflight_per_account": 3,
     }
     assert settings.query_settings_json == {}
     assert settings.updated_at is None
