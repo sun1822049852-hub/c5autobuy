@@ -954,7 +954,7 @@ describe("purchase system page", () => {
     expect(screen.queryByRole("heading", { name: "扫货系统" })).not.toBeInTheDocument();
     expect(await screen.findByRole("region", { name: "扫货运行控制台" })).toBeInTheDocument();
     const actionRegion = screen.getByRole("region", { name: "扫货运行动作" });
-    expect(within(actionRegion).getByRole("button", { name: "最近事件" })).toBeInTheDocument();
+    expect(within(actionRegion).queryByRole("button", { name: "最近事件" })).not.toBeInTheDocument();
     expect(within(actionRegion).getByRole("button", { name: "查看账号详情" })).toBeInTheDocument();
   });
 
@@ -1196,7 +1196,7 @@ describe("purchase system page", () => {
     expect(screen.getByRole("dialog", { name: "购买设置" })).toBeInTheDocument();
   });
 
-  it("opens recent events and account details as independent floating modals", async () => {
+  it("opens account details without exposing a recent events modal entry", async () => {
     const harness = createFetchHarness();
     installDesktopApp(harness.fetchImpl);
     const user = userEvent.setup();
@@ -1206,28 +1206,13 @@ describe("purchase system page", () => {
 
     const actionRegion = screen.getByRole("region", { name: "扫货运行动作" });
 
-    await user.click(within(actionRegion).getByRole("button", { name: "最近事件" }));
-    const recentEventsDialog = await screen.findByRole("dialog", { name: "最近事件" });
-    expect(within(recentEventsDialog).getByText("命中已进入购买池")).toBeInTheDocument();
-    expect(within(recentEventsDialog).getByText("HTTP 202")).toBeInTheDocument();
-    expect(within(recentEventsDialog).getByText("POST /purchase-runtime/dispatch")).toBeInTheDocument();
-    expect(within(recentEventsDialog).getByText("原始状态：queued")).toBeInTheDocument();
-    expect(within(recentEventsDialog).getByText("购买失败 1 件")).toBeInTheDocument();
-    expect(within(recentEventsDialog).getByText("HTTP 401")).toBeInTheDocument();
-    expect(within(recentEventsDialog).getByText("POST /orders/submit")).toBeInTheDocument();
-    expect(within(recentEventsDialog).getByText("错误：not login")).toBeInTheDocument();
-    expect(within(recentEventsDialog).getByText("原始返回：not login")).toBeInTheDocument();
+    expect(within(actionRegion).queryByRole("button", { name: "最近事件" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "最近事件" })).not.toBeInTheDocument();
 
     await user.click(within(actionRegion).getByRole("button", { name: "查看账号详情" }));
     const accountDialog = await screen.findByRole("dialog", { name: "查看账号详情" });
     expect(within(accountDialog).getByRole("table", { name: "购买账号监控" })).toBeInTheDocument();
-
-    await user.click(within(recentEventsDialog).getByRole("button", { name: "关闭" }));
-
-    await waitFor(() => {
-      expect(screen.queryByRole("dialog", { name: "最近事件" })).not.toBeInTheDocument();
-    });
-    expect(screen.getByRole("dialog", { name: "查看账号详情" })).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "最近事件" })).not.toBeInTheDocument();
   });
 
   it("requires selecting a config before starting runtime", async () => {

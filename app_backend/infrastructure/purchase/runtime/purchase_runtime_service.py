@@ -43,6 +43,7 @@ _DISPATCH_SKIPPED = object()
 _REMOTE_REFRESH_UNSET = object()
 _POST_PROCESS_STOP = object()
 _HIT_INTAKE_STOP = object()
+_DIAGNOSTICS_EVENT_STOP = object()
 
 
 @dataclass(slots=True)
@@ -59,6 +60,13 @@ class _PostProcessOutcomeJob:
     outcome: PurchaseWorkerOutcome
     generation: int
     postprocess_epoch: int
+
+
+@dataclass(slots=True)
+class _DiagnosticsEventJob:
+    payload: object
+    event_epoch: int
+    notify: bool = False
 
 
 class _AccountDispatchRunner:
@@ -347,12 +355,14 @@ class PurchaseRuntimeService:
             self._publish_runtime_update()
         return True, "购买运行时已停止"
 
-    def get_status(self) -> dict[str, object]:
+    def get_status(self, *, include_recent_events: bool = True) -> dict[str, object]:
         runtime = self._runtime
         if runtime is None:
             self._runtime = None
             return self._build_idle_snapshot()
-        snapshot = self._snapshot_runtime_state(runtime)
+        snapshot = self._snapshot_runtime_state(runtime, include_recent_events=include_recent_events)
+        if not include_recent_events:
+            snapshot["recent_events"] = []
         if not bool(snapshot.get("running")):
             if self._runtime is runtime:
                 self._runtime = None
@@ -557,6 +567,26 @@ class PurchaseRuntimeService:
     def accept_query_hit(self, hit: dict[str, object]) -> dict[str, object]:
         return _run_coroutine_sync(self.accept_query_hit_async(hit))
 
+    async def accept_query_hit_fast_async(self, hit: dict[str, object]) -> dict[str, object]:
+        with self._runtime_lifecycle_lock:
+            if not self._has_running_runtime():
+                self._runtime = None
+                return {"accepted": False, "status": "ignored_not_running"}
+
+            runtime = self._runtime
+            accept_query_hit_fast = getattr(runtime, "accept_query_hit_fast_async", None)
+            if callable(accept_query_hit_fast):
+                return dict(await accept_query_hit_fast(hit))
+
+            accept_query_hit = getattr(runtime, "accept_query_hit_async", None)
+            if callable(accept_query_hit):
+                return dict(await accept_query_hit(hit))
+
+            accept_query_hit = getattr(runtime, "accept_query_hit", None)
+            if not callable(accept_query_hit):
+                return {"accepted": False, "status": "ignored_not_supported"}
+            return dict(accept_query_hit(hit))
+
     def enqueue_query_hit(self, hit: dict[str, object]) -> dict[str, object]:
         with self._runtime_lifecycle_lock:
             if not self._has_running_runtime():
@@ -616,6 +646,7 @@ class PurchaseRuntimeService:
         snapshot = GetPurchaseRuntimeStatusUseCase(
             self,
             self._query_runtime_service,
+            include_recent_events=False,
         ).execute()
         return PurchaseRuntimeStatusResponse.model_validate(snapshot).model_dump(mode="json")
 
@@ -623,6 +654,9 @@ class PurchaseRuntimeService:
         runtime = self._runtime
         if runtime is None:
             return False
+        running = self._runtime_running_state(runtime)
+        if running is not None:
+            return running
         snapshot = self._snapshot_runtime_state(runtime)
         return bool(snapshot.get("running"))
 
@@ -714,9 +748,38 @@ class PurchaseRuntimeService:
         return state_lock
 
     @classmethod
-    def _snapshot_runtime_state(cls, runtime) -> dict[str, object]:
+    def _runtime_running_state(cls, runtime) -> bool | None:
         with cls._runtime_state_guard(runtime):
-            snapshot = runtime.snapshot()
+            check_running = getattr(runtime, "is_running", None)
+            if callable(check_running):
+                try:
+                    return bool(check_running())
+                except Exception:
+                    return None
+            if hasattr(runtime, "_running"):
+                try:
+                    return bool(getattr(runtime, "_running"))
+                except Exception:
+                    return None
+            if hasattr(runtime, "running"):
+                try:
+                    return bool(getattr(runtime, "running"))
+                except Exception:
+                    return None
+        return None
+
+    @classmethod
+    def _snapshot_runtime_state(cls, runtime, *, include_recent_events: bool = True) -> dict[str, object]:
+        with cls._runtime_state_guard(runtime):
+            snapshot_without_recent_events = (
+                getattr(runtime, "snapshot_without_recent_events", None)
+                if not include_recent_events
+                else None
+            )
+            if callable(snapshot_without_recent_events):
+                snapshot = snapshot_without_recent_events()
+            else:
+                snapshot = runtime.snapshot()
         if not isinstance(snapshot, dict):
             return {}
         return snapshot
@@ -1426,6 +1489,15 @@ class _RuntimeAccountState:
         return str(getattr(self.account, "display_name", None) or getattr(self.account, "default_name", "") or "")
 
 
+for _method_name in (
+    "accept_query_hit",
+    "accept_query_hit_async",
+    "accept_query_hit_fast_async",
+    "enqueue_query_hit",
+):
+    setattr(getattr(PurchaseRuntimeService, _method_name), "_query_hit_readonly_safe", True)
+
+
 @dataclass(slots=True)
 class _SchedulerStateEffects:
     should_signal_drain: bool = False
@@ -1459,6 +1531,7 @@ class _TrackedDispatchBatch:
 
 class _DefaultPurchaseRuntime:
     _RECENT_EVENT_LIMIT = 500
+    _QUERY_HIT_BUSY_GRACE_SECONDS = 0.05
 
     def __init__(
         self,
@@ -1512,12 +1585,21 @@ class _DefaultPurchaseRuntime:
         self._tracked_dispatch_batches: dict[tuple[int, int], _TrackedDispatchBatch] = {}
         self._stats_aggregator = PurchaseStatsAggregator()
         self._pending_purchase_settings: dict[str, int] | None = None
+        self._bound_query_config_id: str | None = None
+        self._bound_query_config_name: str | None = None
+        self._bound_runtime_session_id: str | None = None
+        self._fast_path_idle_signal = threading.Condition()
+        self._fast_path_idle_signal_version = 0
         self._hit_intake_queue: Queue[object] = Queue()
         self._hit_intake_stop_signal = threading.Event()
         self._hit_intake_thread: threading.Thread | None = None
         self._post_process_queue: Queue[object] = Queue()
         self._post_process_stop_signal = threading.Event()
         self._post_process_thread: threading.Thread | None = None
+        self._diagnostics_event_queue: Queue[object] = Queue()
+        self._diagnostics_event_stop_signal = threading.Event()
+        self._diagnostics_event_thread: threading.Thread | None = None
+        self._recent_event_epoch = 0
 
     def set_availability_callbacks(
         self,
@@ -1547,6 +1629,11 @@ class _DefaultPurchaseRuntime:
         self._tracked_dispatch_batches = {}
         self._stats_aggregator = PurchaseStatsAggregator()
         self._pending_purchase_settings = None
+        self._bound_query_config_id = None
+        self._bound_query_config_name = None
+        self._bound_runtime_session_id = None
+        self._fast_path_idle_signal = threading.Condition()
+        self._fast_path_idle_signal_version = 0
         self._stats_aggregator.start()
         self._stats_aggregator.reset(
             runtime_session_id=None,
@@ -1561,9 +1648,13 @@ class _DefaultPurchaseRuntime:
         self._hit_intake_stop_signal = threading.Event()
         self._post_process_queue = Queue()
         self._post_process_stop_signal = threading.Event()
+        self._diagnostics_event_queue = Queue()
+        self._diagnostics_event_stop_signal = threading.Event()
+        self._recent_event_epoch += 1
         self._start_drain_worker()
         self._start_hit_intake_worker()
         self._start_post_process_worker()
+        self._start_diagnostics_event_worker()
 
     def stop(self) -> None:
         with self._state_lock:
@@ -1572,17 +1663,21 @@ class _DefaultPurchaseRuntime:
                 state.state_version += 1
                 state.postprocess_epoch += 1
             self._running = False
+            self._recent_event_epoch += 1
             self._cancel_all_recovery_checks()
             self._drain_stop_signal.set()
             self._drain_signal.set()
             self._hit_intake_stop_signal.set()
             self._post_process_stop_signal.set()
+            self._diagnostics_event_stop_signal.set()
+        self._notify_fast_path_idle_waiters()
         drain_thread = self._drain_thread
         if drain_thread is not None and drain_thread.is_alive():
             drain_thread.join(timeout=0.2)
         self._drain_thread = None
         self._stop_hit_intake_worker()
         self._stop_post_process_worker()
+        self._stop_diagnostics_event_worker()
         for dispatch_runner in list(self._dispatch_runners.values()):
             dispatch_runner.stop(timeout=0.2)
         self._dispatch_runners = {}
@@ -1597,13 +1692,18 @@ class _DefaultPurchaseRuntime:
         query_config_name: str | None,
         runtime_session_id: str | None,
     ) -> None:
+        normalized_query_config_id = str(query_config_id or "") or None
+        normalized_query_config_name = str(query_config_name or "") or None
+        normalized_runtime_session_id = str(runtime_session_id or "") or None
         with self._state_lock:
-            current_stats = self._stats_aggregator.snapshot()
             if (
-                current_stats.get("runtime_session_id") == runtime_session_id
-                and current_stats.get("query_config_id") == query_config_id
+                self._bound_runtime_session_id == normalized_runtime_session_id
+                and self._bound_query_config_id == normalized_query_config_id
             ):
                 return
+            self._bound_query_config_id = normalized_query_config_id
+            self._bound_query_config_name = normalized_query_config_name
+            self._bound_runtime_session_id = normalized_runtime_session_id
             self._dispatch_generation += 1
             for state in self._account_states.values():
                 state.postprocess_epoch += 1
@@ -1613,10 +1713,11 @@ class _DefaultPurchaseRuntime:
             self._drop_expired_backlog()
             self._forget_batches(self._scheduler.clear_queue_batches())
             self._recent_events = []
+            self._recent_event_epoch += 1
             self._stats_aggregator.reset(
-                runtime_session_id=runtime_session_id,
-                query_config_id=query_config_id,
-                query_config_name=query_config_name,
+                runtime_session_id=normalized_runtime_session_id,
+                query_config_id=normalized_query_config_id,
+                query_config_name=normalized_query_config_name,
             )
 
     def enqueue_query_hit(self, hit: dict[str, object]) -> dict[str, object]:
@@ -1633,8 +1734,33 @@ class _DefaultPurchaseRuntime:
         return {"accepted": True, "status": "queued"}
 
     async def accept_query_hit_async(self, hit: dict[str, object]) -> dict[str, object]:
-        payload = self._clone_hit_payload(hit)
-        return self._accept_query_hit_now(payload)
+        return self._accept_query_hit_now(hit)
+
+    async def accept_query_hit_fast_async(self, hit: dict[str, object]) -> dict[str, object]:
+        payload = hit
+        initial_result = self._prepare_fast_query_hit(payload)
+        if initial_result["batch"] is None:
+            return dict(initial_result["result"])
+
+        batch = initial_result["batch"]
+        deadline = self._queue_now() + self._QUERY_HIT_BUSY_GRACE_SECONDS
+        signal_version = self._current_fast_path_idle_signal_version()
+        while True:
+            claim_result = self._try_start_fast_query_hit(payload, batch)
+            if claim_result is not None:
+                return dict(claim_result)
+
+            remaining = deadline - self._queue_now()
+            if remaining <= 0:
+                return self._drop_fast_query_hit_after_grace(payload, batch)
+            next_signal_version = await asyncio.to_thread(
+                self._wait_for_fast_path_idle_signal,
+                signal_version,
+                remaining,
+            )
+            if next_signal_version == signal_version:
+                return self._drop_fast_query_hit_after_grace(payload, batch)
+            signal_version = next_signal_version
 
     def _accept_query_hit_now(self, hit: dict[str, object]) -> dict[str, object]:
         with self._state_lock:
@@ -1701,7 +1827,123 @@ class _DefaultPurchaseRuntime:
             )
             return {"accepted": True, "status": "queued"}
 
+    def _prepare_fast_query_hit(self, hit: dict[str, object]) -> dict[str, object]:
+        with self._state_lock:
+            if not self._running:
+                self._push_event(
+                    hit,
+                    status="ignored_not_running",
+                    message="购买运行时未启动，命中已忽略",
+                    notify=False,
+                )
+                return {"batch": None, "result": {"accepted": False, "status": "ignored_not_running"}}
+            if self._scheduler.active_account_count() <= 0:
+                self._push_event(
+                    hit,
+                    status="ignored_no_available_accounts",
+                    message="当前没有可用购买账号，命中已忽略",
+                    notify=False,
+                )
+                return {"batch": None, "result": {"accepted": False, "status": "ignored_no_available_accounts"}}
+
+            self._stats_aggregator.enqueue_hit(hit)
+            batch = self._hit_inbox.accept(hit)
+            if batch is None:
+                self._push_event(hit, status="duplicate_filtered", message="重复命中已忽略", notify=False)
+                return {"batch": None, "result": {"accepted": False, "status": "duplicate_filtered"}}
+        return {"batch": batch, "result": None}
+
+    def _try_start_fast_query_hit(self, hit: dict[str, object], batch) -> dict[str, object] | None:
+        with self._state_lock:
+            if not self._running:
+                self._forget_batches([batch])
+                self._push_event(
+                    hit,
+                    status="ignored_not_running",
+                    message="购买运行时未启动，命中已忽略",
+                    notify=False,
+                )
+                return {"accepted": False, "status": "ignored_not_running"}
+            if self._scheduler.active_account_count() <= 0:
+                self._forget_batches([batch])
+                self._push_event(
+                    hit,
+                    status="ignored_no_available_accounts",
+                    message="当前没有可用购买账号，命中已忽略",
+                    notify=False,
+                )
+                return {"accepted": False, "status": "ignored_no_available_accounts"}
+
+            claimed_account_ids = self._scheduler.claim_idle_accounts_by_bucket(
+                limit_per_bucket=self._get_per_batch_ip_fanout_limit(),
+            )
+            if not claimed_account_ids:
+                return None
+
+            started_account_ids = [
+                account_id
+                for account_id in claimed_account_ids
+                if self._start_account_dispatch(account_id, batch)
+            ]
+            if not started_account_ids:
+                if self._scheduler.active_account_count() <= 0:
+                    self._forget_batches([batch])
+                    self._push_event(
+                        hit,
+                        status="ignored_no_available_accounts",
+                        message="当前没有可用购买账号，命中已忽略",
+                        notify=False,
+                    )
+                    return {"accepted": False, "status": "ignored_no_available_accounts"}
+                return None
+
+            self._push_event(
+                hit,
+                status="queued",
+                message=f"已派发 {len(started_account_ids)} 个购买账号",
+                notify=False,
+            )
+            return {"accepted": True, "status": "queued"}
+
+    def _drop_fast_query_hit_after_grace(self, hit: dict[str, object], batch) -> dict[str, object]:
+        with self._state_lock:
+            if not self._running:
+                self._forget_batches([batch])
+                self._push_event(
+                    hit,
+                    status="ignored_not_running",
+                    message="购买运行时未启动，命中已忽略",
+                    notify=False,
+                )
+                return {"accepted": False, "status": "ignored_not_running"}
+            if self._scheduler.active_account_count() <= 0:
+                self._forget_batches([batch])
+                self._push_event(
+                    hit,
+                    status="ignored_no_available_accounts",
+                    message="当前没有可用购买账号，命中已忽略",
+                    notify=False,
+                )
+                return {"accepted": False, "status": "ignored_no_available_accounts"}
+
+            self._forget_batches([batch])
+            self._push_event(
+                hit,
+                status="dropped_busy_accounts_after_grace",
+                message="购买账号在 50ms 豁免窗口内仍忙碌，命中已丢弃",
+                notify=False,
+            )
+            return {"accepted": False, "status": "dropped_busy_accounts_after_grace"}
+
     def snapshot(self) -> dict[str, object]:
+        return self._snapshot_state(include_recent_events=True)
+
+    def snapshot_without_recent_events(self) -> dict[str, object]:
+        return self._snapshot_state(include_recent_events=False)
+
+    def _snapshot_state(self, *, include_recent_events: bool) -> dict[str, object]:
+        if include_recent_events:
+            self._drain_pending_diagnostics_events()
         self._drop_expired_backlog()
         stats_snapshot = self._stats_aggregator.snapshot()
         account_stats = {
@@ -1722,7 +1964,7 @@ class _DefaultPurchaseRuntime:
             "matched_product_count": int(stats_snapshot.get("matched_product_count", 0)),
             "purchase_success_count": int(stats_snapshot.get("purchase_success_count", 0)),
             "purchase_failed_count": int(stats_snapshot.get("purchase_failed_count", 0)),
-            "recent_events": list(self._recent_events),
+            "recent_events": list(self._recent_events) if include_recent_events else [],
             "accounts": [
                 {
                     "account_id": state.account_id,
@@ -2318,6 +2560,7 @@ class _DefaultPurchaseRuntime:
             state.recovery_due_at = None
         elif state.pool_state == PurchasePoolState.ACTIVE:
             self._scheduler.mark_available(state.account_id)
+            self._notify_fast_path_idle_waiters()
             effects.cancel_recovery_account_ids.append(state.account_id)
             state.recovery_due_at = None
         elif state.pool_state == PurchasePoolState.PAUSED_AUTH_INVALID:
@@ -2359,6 +2602,8 @@ class _DefaultPurchaseRuntime:
                 max_inflight=self._max_inflight_per_account,
             )
             dispatch_runner.update_max_concurrent(self._max_inflight_per_account)
+        if self._scheduler.active_account_count() > 0:
+            self._notify_fast_path_idle_waiters()
         return self._scheduler.queue_size() > 0
 
     def _apply_pending_purchase_settings_if_idle_locked(self) -> bool:
@@ -2467,14 +2712,17 @@ class _DefaultPurchaseRuntime:
             dispatch_generation = self._dispatch_generation if generation is None else int(generation)
             if state is None:
                 self._scheduler.release_account(account_id)
+                self._notify_fast_path_idle_waiters()
                 self._scheduler.mark_unavailable(account_id, reason="missing_account_state")
                 return False
             if not self._can_start_account_dispatch_locked(state, dispatch_generation):
                 self._scheduler.release_account(account_id)
+                self._notify_fast_path_idle_waiters()
                 return False
             dispatch_runner = self._dispatch_runners.get(account_id)
             if dispatch_runner is None:
                 self._scheduler.release_account(account_id)
+                self._notify_fast_path_idle_waiters()
                 self._scheduler.mark_unavailable(account_id, reason="missing_dispatch_runner")
                 return False
             state.busy = True
@@ -2541,6 +2789,7 @@ class _DefaultPurchaseRuntime:
                     )
 
             self._scheduler.release_account(account_id)
+            self._notify_fast_path_idle_waiters()
             if self._apply_pending_purchase_settings_if_idle_locked():
                 should_signal_drain = True
             should_signal_drain = should_signal_drain or self._scheduler.queue_size() > 0
@@ -2667,6 +2916,7 @@ class _DefaultPurchaseRuntime:
             if not current():
                 return
             if self._scheduler.active_account_count() > 0:
+                self._notify_fast_path_idle_waiters()
                 self._notify_accounts_available()
 
     def _dispatch_completion_effects_are_current(self, effects: _DispatchCompletionEffects) -> bool:
@@ -2948,9 +3198,8 @@ class _DefaultPurchaseRuntime:
             self._notify_state_change()
 
     def _push_runtime_event(self, state: _RuntimeAccountState, *, status: str, message: str, notify: bool = True) -> None:
-        self._recent_events.insert(
-            0,
-            {
+        self._enqueue_diagnostics_event(
+            lambda: {
                 "occurred_at": datetime.now().isoformat(timespec="seconds"),
                 "status": status,
                 "message": message,
@@ -2968,15 +3217,12 @@ class _DefaultPurchaseRuntime:
                 "total_wear_sum": None,
                 "source_mode_type": "",
             },
+            notify=notify,
         )
-        del self._recent_events[self._RECENT_EVENT_LIMIT :]
-        if notify:
-            self._notify_state_change()
 
     def _push_scheduler_event(self, *, status: str, message: str) -> None:
-        self._recent_events.insert(
-            0,
-            {
+        self._enqueue_diagnostics_event(
+            lambda: {
                 "occurred_at": datetime.now().isoformat(timespec="seconds"),
                 "status": status,
                 "message": message,
@@ -2994,9 +3240,8 @@ class _DefaultPurchaseRuntime:
                 "total_wear_sum": None,
                 "source_mode_type": "",
             },
+            notify=True,
         )
-        del self._recent_events[self._RECENT_EVENT_LIMIT :]
-        self._notify_state_change()
 
     @staticmethod
     def _build_purchase_debug_details(outcome) -> dict[str, object]:
@@ -3018,9 +3263,8 @@ class _DefaultPurchaseRuntime:
         notify: bool = True,
     ) -> None:
         details = debug_details or {}
-        self._recent_events.insert(
-            0,
-            {
+        self._enqueue_diagnostics_event(
+            lambda: {
                 "occurred_at": datetime.now().isoformat(timespec="seconds"),
                 "status": status,
                 "message": message,
@@ -3040,15 +3284,12 @@ class _DefaultPurchaseRuntime:
                 "request_body": details.get("request_body"),
                 "response_text": details.get("response_text"),
             },
+            notify=notify,
         )
-        del self._recent_events[self._RECENT_EVENT_LIMIT :]
-        if notify:
-            self._notify_state_change()
 
-    def _push_event(self, hit: dict[str, object], *, status: str, message: str) -> None:
-        self._recent_events.insert(
-            0,
-            {
+    def _push_event(self, hit: dict[str, object], *, status: str, message: str, notify: bool = True) -> None:
+        self._enqueue_diagnostics_event(
+            lambda: {
                 "occurred_at": datetime.now().isoformat(timespec="seconds"),
                 "status": status,
                 "message": message,
@@ -3067,9 +3308,63 @@ class _DefaultPurchaseRuntime:
                 ),
                 "source_mode_type": str(hit.get("mode_type") or ""),
             },
+            notify=notify,
         )
-        del self._recent_events[self._RECENT_EVENT_LIMIT :]
-        self._notify_state_change()
+
+    def _enqueue_diagnostics_event(self, payload: object, *, notify: bool) -> None:
+        with self._state_lock:
+            event_epoch = int(self._recent_event_epoch)
+            queue = self._diagnostics_event_queue
+        queue.put(
+            _DiagnosticsEventJob(
+                payload=payload,
+                event_epoch=event_epoch,
+                notify=bool(notify),
+            )
+        )
+
+    def _drain_pending_diagnostics_events(self) -> None:
+        stop_markers = 0
+        while True:
+            try:
+                queued_item = self._diagnostics_event_queue.get_nowait()
+            except Empty:
+                break
+            if queued_item is _DIAGNOSTICS_EVENT_STOP:
+                stop_markers += 1
+                continue
+            if not isinstance(queued_item, _DiagnosticsEventJob):
+                continue
+            self._apply_diagnostics_event_job(queued_item, allow_notify=False)
+        for _ in range(stop_markers):
+            self._diagnostics_event_queue.put(_DIAGNOSTICS_EVENT_STOP)
+
+    def _apply_diagnostics_event_job(self, job: _DiagnosticsEventJob, *, allow_notify: bool) -> None:
+        payload = self._materialize_diagnostics_event_payload(job.payload)
+        if payload is None:
+            return
+        should_notify = False
+        with self._state_lock:
+            if int(job.event_epoch) != int(self._recent_event_epoch):
+                return
+            self._recent_events.insert(0, payload)
+            del self._recent_events[self._RECENT_EVENT_LIMIT :]
+            should_notify = bool(job.notify)
+        if allow_notify and should_notify:
+            self._notify_state_change()
+
+    @staticmethod
+    def _materialize_diagnostics_event_payload(payload: object) -> dict[str, object] | None:
+        try:
+            if callable(payload):
+                materialized = payload()
+            else:
+                materialized = payload
+        except Exception:
+            return None
+        if not isinstance(materialized, dict):
+            return None
+        return dict(materialized)
 
     def _notify_state_change(self) -> None:
         callback = self._state_change_callback
@@ -3079,6 +3374,28 @@ class _DefaultPurchaseRuntime:
             callback()
         except Exception:
             return
+
+    def _notify_fast_path_idle_waiters(self) -> None:
+        with self._fast_path_idle_signal:
+            self._fast_path_idle_signal_version += 1
+            self._fast_path_idle_signal.notify_all()
+
+    def _current_fast_path_idle_signal_version(self) -> int:
+        with self._fast_path_idle_signal:
+            return int(self._fast_path_idle_signal_version)
+
+    def _wait_for_fast_path_idle_signal(self, signal_version: int, timeout_seconds: float) -> int:
+        timeout = max(float(timeout_seconds), 0.0)
+        with self._fast_path_idle_signal:
+            if self._fast_path_idle_signal_version != int(signal_version):
+                return int(self._fast_path_idle_signal_version)
+            if timeout <= 0:
+                return int(self._fast_path_idle_signal_version)
+            self._fast_path_idle_signal.wait_for(
+                lambda: self._fast_path_idle_signal_version != int(signal_version),
+                timeout=timeout,
+            )
+            return int(self._fast_path_idle_signal_version)
 
     @staticmethod
     def _invalidate_post_process_locked(state: _RuntimeAccountState) -> None:
@@ -3211,6 +3528,30 @@ class _DefaultPurchaseRuntime:
             thread.join(timeout=0.2)
         self._post_process_thread = None
 
+    def _start_diagnostics_event_worker(self) -> None:
+        if self._diagnostics_event_thread is not None and self._diagnostics_event_thread.is_alive():
+            return
+        queue = self._diagnostics_event_queue
+        stop_signal = self._diagnostics_event_stop_signal
+
+        def runner() -> None:
+            self._diagnostics_event_worker_loop(queue, stop_signal)
+
+        self._diagnostics_event_thread = threading.Thread(
+            target=runner,
+            name="purchase-runtime-diagnostics-events",
+            daemon=True,
+        )
+        self._diagnostics_event_thread.start()
+
+    def _stop_diagnostics_event_worker(self) -> None:
+        self._diagnostics_event_stop_signal.set()
+        self._diagnostics_event_queue.put(_DIAGNOSTICS_EVENT_STOP)
+        thread = self._diagnostics_event_thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=0.2)
+        self._diagnostics_event_thread = None
+
     def _signal_drain_worker(self) -> None:
         if not self._running or self._scheduler.active_account_count() <= 0:
             return
@@ -3230,7 +3571,7 @@ class _DefaultPurchaseRuntime:
             ):
                 try:
                     self._drop_expired_backlog()
-                    drain_result = asyncio.run(self._drain_scheduler())
+                    drain_result = self._drain_scheduler_once()
                     if drain_result == "dispatched":
                         continue
                     if drain_result == "retry":
@@ -3288,7 +3629,22 @@ class _DefaultPurchaseRuntime:
                     message=f"后台购买后处理线程异常: {exc}",
                 )
 
-    async def _drain_scheduler(self) -> str:
+    def _diagnostics_event_worker_loop(self, queue: Queue[object], stop_signal: threading.Event) -> None:
+        while not stop_signal.is_set():
+            try:
+                queued_item = queue.get(timeout=0.1)
+            except Empty:
+                continue
+            if queued_item is _DIAGNOSTICS_EVENT_STOP:
+                return
+            if not isinstance(queued_item, _DiagnosticsEventJob):
+                continue
+            try:
+                self._apply_diagnostics_event_job(queued_item, allow_notify=True)
+            except Exception:
+                continue
+
+    def _drain_scheduler_once(self) -> str:
         self._drop_expired_backlog()
         claimed_account_ids = self._scheduler.claim_idle_accounts_by_bucket(
             limit_per_bucket=self._get_per_batch_ip_fanout_limit(),
@@ -3324,6 +3680,9 @@ class _DefaultPurchaseRuntime:
         restore_result = self._restore_or_drop_undispatched_batch(batch, generation=dispatch_generation)
         return "retry" if restore_result == "requeued" else "idle"
 
+    async def _drain_scheduler(self) -> str:
+        return self._drain_scheduler_once()
+
     def _should_process_account_dispatch(self, account_id: str, generation: int) -> bool:
         with self._state_lock:
             if not self._running or int(generation) != self._dispatch_generation:
@@ -3355,14 +3714,11 @@ class _DefaultPurchaseRuntime:
         return (self._queue_now() - float(enqueued_at)) >= max_wait_seconds
 
     def _batch_matches_current_session_locked(self, batch) -> bool:
-        current_stats = self._stats_aggregator.snapshot()
-        current_runtime_session_id = str(current_stats.get("runtime_session_id") or "") or None
-        current_query_config_id = str(current_stats.get("query_config_id") or "") or None
         batch_runtime_session_id = str(getattr(batch, "runtime_session_id", "") or "") or None
         batch_query_config_id = str(getattr(batch, "query_config_id", "") or "") or None
         return (
-            current_runtime_session_id == batch_runtime_session_id
-            and current_query_config_id == batch_query_config_id
+            self._bound_runtime_session_id == batch_runtime_session_id
+            and self._bound_query_config_id == batch_query_config_id
         )
 
     def _forget_batches(self, batches: list[object]) -> None:

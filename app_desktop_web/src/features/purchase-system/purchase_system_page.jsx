@@ -3,7 +3,6 @@ import { useEffect, useRef } from "react";
 import { PurchaseAccountMonitorModal } from "./components/purchase_account_monitor_modal.jsx";
 import { PurchaseConfigSelectorDialog } from "./components/purchase_config_selector_dialog.jsx";
 import { PurchaseItemPanel } from "./components/purchase_item_panel.jsx";
-import { PurchaseRecentEventsModal } from "./components/purchase_recent_events_modal.jsx";
 import { PurchaseSettingsPanel } from "./components/purchase_settings_panel.jsx";
 import { QuerySettingsModal } from "./components/query_settings_modal.jsx";
 import { PurchaseRuntimeActions } from "./components/purchase_runtime_actions.jsx";
@@ -68,7 +67,6 @@ export function PurchaseSystemPage({ bootstrapConfig, client, isActive, onLeaveS
     isQuerySettingsLoading,
     isQuerySettingsOpen,
     isQuerySettingsSaving,
-    isRecentEventsOpen,
     isSubmitDisabled,
     isSubmittingDrafts,
     itemRows,
@@ -76,7 +74,6 @@ export function PurchaseSystemPage({ bootstrapConfig, client, isActive, onLeaveS
     onCloseAccountMonitor,
     onCloseConfigDialog,
     onClosePurchaseSettings,
-    onCloseRecentEvents,
     onConfigDialogSelect,
     onConfirmConfigDialog,
     onConfirmDiscardConfigSwitch,
@@ -87,7 +84,6 @@ export function PurchaseSystemPage({ bootstrapConfig, client, isActive, onLeaveS
     onOpenConfigDialog,
     onOpenPurchaseSettings,
     onOpenQuerySettings,
-    onOpenRecentEvents,
     onCloseQuerySettings,
     onPurchaseSettingsChange,
     onQuerySettingsChange,
@@ -102,8 +98,6 @@ export function PurchaseSystemPage({ bootstrapConfig, client, isActive, onLeaveS
     querySettingsDraft,
     querySettingsError,
     querySettingsWarnings,
-    recentEvents,
-    recentEventsModal,
     runtimeMessage,
     runtimeDrainNotice,
     selectedDialogConfigId,
@@ -178,7 +172,6 @@ export function PurchaseSystemPage({ bootstrapConfig, client, isActive, onLeaveS
         isSubmitPending={isSubmittingDrafts}
         onAction={onRuntimeAction}
         onOpenAccountDetails={onOpenAccountDetails}
-        onOpenRecentEvents={onOpenRecentEvents}
         onSubmitChanges={onSubmitRuntimeDrafts}
       />
 
@@ -249,16 +242,6 @@ export function PurchaseSystemPage({ bootstrapConfig, client, isActive, onLeaveS
           </section>
         </div>
       ) : null}
-
-      <PurchaseRecentEventsModal
-        events={recentEvents}
-        isOpen={isRecentEventsOpen}
-        onClose={onCloseRecentEvents}
-        onPositionChange={recentEventsModal.onPositionChange}
-        onSizeChange={recentEventsModal.onSizeChange}
-        position={recentEventsModal.position}
-        size={recentEventsModal.size}
-      />
 
       <PurchaseAccountMonitorModal
         isOpen={isAccountMonitorOpen}

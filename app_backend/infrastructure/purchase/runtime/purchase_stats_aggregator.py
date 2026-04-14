@@ -77,13 +77,13 @@ class PurchaseStatsAggregator:
             (
                 "hit",
                 {
-                    "runtime_session_id": self._normalize_optional_str(hit.get("runtime_session_id")),
-                    "query_item_id": self._normalize_optional_str(hit.get("query_item_id")),
-                    "timestamp": self._normalize_optional_str(hit.get("timestamp")),
-                    "mode_type": self._normalize_optional_str(hit.get("mode_type")),
-                    "account_id": self._normalize_optional_str(hit.get("account_id")),
-                    "account_display_name": self._normalize_optional_str(hit.get("account_display_name")),
-                    "product_list": self._normalize_product_list(hit.get("product_list")),
+                    "runtime_session_id": hit.get("runtime_session_id"),
+                    "query_item_id": hit.get("query_item_id"),
+                    "timestamp": hit.get("timestamp"),
+                    "mode_type": hit.get("mode_type"),
+                    "account_id": hit.get("account_id"),
+                    "account_display_name": hit.get("account_display_name"),
+                    "product_list": hit.get("product_list"),
                 },
             )
         )

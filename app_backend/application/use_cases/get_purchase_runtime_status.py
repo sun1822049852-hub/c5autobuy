@@ -2,12 +2,19 @@ from __future__ import annotations
 
 
 class GetPurchaseRuntimeStatusUseCase:
-    def __init__(self, runtime_service, query_runtime_service=None) -> None:
+    def __init__(
+        self,
+        runtime_service,
+        query_runtime_service=None,
+        *,
+        include_recent_events: bool = True,
+    ) -> None:
         self._runtime_service = runtime_service
         self._query_runtime_service = query_runtime_service
+        self._include_recent_events = bool(include_recent_events)
 
     def execute(self) -> dict[str, object]:
-        purchase_snapshot = dict(self._runtime_service.get_status())
+        purchase_snapshot = dict(self._read_runtime_status())
         if self._query_runtime_service is None:
             purchase_snapshot.setdefault("active_query_config", None)
             purchase_snapshot.setdefault("item_rows", [])
@@ -25,6 +32,21 @@ class GetPurchaseRuntimeStatusUseCase:
             query_snapshot.get("item_rows"),
         )
         return purchase_snapshot
+
+    def _read_runtime_status(self) -> dict[str, object]:
+        get_status = getattr(self._runtime_service, "get_status", None)
+        if not callable(get_status):
+            return {}
+        try:
+            snapshot = get_status(include_recent_events=self._include_recent_events)
+        except TypeError:
+            snapshot = get_status()
+        if not isinstance(snapshot, dict):
+            return {}
+        normalized_snapshot = dict(snapshot)
+        if not self._include_recent_events:
+            normalized_snapshot["recent_events"] = []
+        return normalized_snapshot
 
     @staticmethod
     def _build_active_query_config(query_snapshot: dict[str, object]) -> dict[str, object] | None:

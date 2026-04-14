@@ -6,23 +6,12 @@ export function PurchaseRuntimeActions({
   isSubmitPending,
   onAction,
   onOpenAccountDetails,
-  onOpenRecentEvents,
   onSubmitChanges,
 }) {
   return (
     <section aria-label="扫货运行动作" className="purchase-runtime-actions">
       <div className="purchase-runtime-actions__surface">
         <div className="purchase-runtime-actions__buttons">
-          <button
-            className="ghost-button purchase-runtime-actions__button purchase-runtime-actions__button--secondary"
-            type="button"
-            onClick={() => {
-              onOpenRecentEvents?.();
-            }}
-          >
-            最近事件
-          </button>
-
           <button
             className="ghost-button purchase-runtime-actions__button purchase-runtime-actions__button--secondary"
             type="button"

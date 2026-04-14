@@ -777,10 +777,6 @@ export function usePurchaseSystemPage({ client, isActive = true }) {
     || shouldFetchBootstrapUiPreferences
     || shouldFetchBootstrapRuntimeSettings
     || shouldFetchBootstrapConfigList;
-  const recentEventsModal = useFloatingRuntimeModalState({
-    initialPosition: { x: 96, y: 84 },
-    initialSize: { width: 680, height: 420 },
-  });
   const accountMonitorModal = useFloatingRuntimeModalState({
     initialPosition: { x: 180, y: 120 },
     initialSize: { width: 860, height: 460 },
@@ -1497,7 +1493,6 @@ export function usePurchaseSystemPage({ client, isActive = true }) {
     isQuerySettingsOpen,
     isQuerySettingsSaving,
     isPurchaseSettingsOpen,
-    isRecentEventsOpen: recentEventsModal.isOpen,
     isAccountMonitorOpen: accountMonitorModal.isOpen,
     isSubmitDisabled: !hasUnsavedRuntimeDrafts || !isSelectedConfigRunning || isSubmittingDrafts,
     isSubmittingDrafts,
@@ -1509,7 +1504,6 @@ export function usePurchaseSystemPage({ client, isActive = true }) {
     onCloseConfigDialog: closeConfigDialog,
     onClosePurchaseSettings: closePurchaseSettings,
     onCloseQuerySettings: closeQuerySettings,
-    onCloseRecentEvents: recentEventsModal.onClose,
     onConfigDialogSelect: setSelectorDraftId,
     onConfirmConfigDialog: confirmConfigSelection,
     onConfirmDiscardConfigSwitch: discardBeforeConfigSwitch,
@@ -1525,7 +1519,6 @@ export function usePurchaseSystemPage({ client, isActive = true }) {
     onOpenPurchaseSettings: openPurchaseSettings,
     onPurchaseSettingsChange,
     onOpenQuerySettings: openQuerySettings,
-    onOpenRecentEvents: recentEventsModal.onOpen,
     onSavePurchaseSettings,
     onQuerySettingsChange,
     onRuntimeAction,
@@ -1538,8 +1531,6 @@ export function usePurchaseSystemPage({ client, isActive = true }) {
     querySettingsDraft,
     querySettingsError,
     querySettingsWarnings,
-    recentEvents: status.recent_events,
-    recentEventsModal,
     runtimeMessage,
     runtimeDrainNotice,
     selectedDialogConfigId: selectorDraftId,

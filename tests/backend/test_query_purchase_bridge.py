@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from app_backend.domain.models.account import Account
 from app_backend.domain.models.query_config import QueryConfig, QueryItem, QueryModeSetting
 
@@ -113,6 +115,11 @@ class StubPurchaseRuntimeService:
         return True, "购买运行时已停止"
 
     def accept_query_hit(self, hit: dict[str, object]) -> dict[str, object]:
+        payload = dict(hit)
+        self.accepted_hits.append(payload)
+        return {"accepted": True, "status": "queued"}
+
+    async def accept_query_hit_fast_async(self, hit: dict[str, object]) -> dict[str, object]:
         payload = dict(hit)
         self.accepted_hits.append(payload)
         return {"accepted": True, "status": "queued"}
@@ -482,7 +489,7 @@ def test_query_runtime_service_passes_purchase_hit_sink_into_runtime_factory():
 
         def start(self) -> None:
             self.started = True
-            captured_hit_sink["sink"](
+            hit_result = captured_hit_sink["sink"](
                 {
                     "query_item_name": "AK",
                     "product_list": [{"productId": "p-1", "price": 88.0, "actRebateAmount": 0}],
@@ -491,6 +498,8 @@ def test_query_runtime_service_passes_purchase_hit_sink_into_runtime_factory():
                     "mode_type": "new_api",
                 }
             )
+            if asyncio.iscoroutine(hit_result):
+                asyncio.run(hit_result)
             captured_hit_sink["stats_sink"](
                 QueryExecutionStatsEvent(
                     timestamp="2026-03-16T10:00:00",
@@ -544,6 +553,6 @@ def test_query_runtime_service_passes_purchase_hit_sink_into_runtime_factory():
     assert callable(captured_hit_sink["sink"])
     assert callable(captured_hit_sink["stats_sink"])
     assert getattr(captured_hit_sink["sink"], "__self__", None) is purchase_service
-    assert getattr(captured_hit_sink["sink"], "__name__", "") == "enqueue_query_hit"
+    assert getattr(captured_hit_sink["sink"], "__name__", "") == "accept_query_hit_fast_async"
     assert purchase_service.accepted_hits[0]["query_item_name"] == "AK"
     assert len(stats_sink.events) == 1

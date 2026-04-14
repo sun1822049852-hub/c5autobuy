@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import threading
-from collections import deque
+from collections import OrderedDict, deque
 
 from .runtime_events import PurchaseHitBatch
 
@@ -11,6 +11,8 @@ class PurchaseScheduler:
         self._queue: deque[PurchaseHitBatch] = deque()
         self._account_status: dict[str, dict[str, object]] = {}
         self._available_account_ids: list[str] = []
+        self._idle_account_ids_by_bucket: dict[str, OrderedDict[str, None]] = {}
+        self._idle_account_bucket_by_account_id: dict[str, str] = {}
         self._current_index = 0
         self._lock = threading.RLock()
 
@@ -23,6 +25,8 @@ class PurchaseScheduler:
         max_inflight: int = 1,
     ) -> None:
         with self._lock:
+            self._remove_idle_account_locked(account_id)
+            self._remove_available_account_locked(account_id)
             inflight_limit = max(int(max_inflight), 1)
             self._account_status[account_id] = {
                 "available": bool(available),
@@ -32,8 +36,9 @@ class PurchaseScheduler:
                 "bucket_key": str(bucket_key or "direct"),
                 "disabled_reason": None if available else "no_available_inventory",
             }
-            if available and account_id not in self._available_account_ids:
-                self._available_account_ids.append(account_id)
+            if available:
+                self._add_available_account_locked(account_id)
+                self._add_idle_account_locked(account_id)
 
     def submit(self, batch: PurchaseHitBatch) -> None:
         with self._lock:
@@ -86,6 +91,65 @@ class PurchaseScheduler:
                     return account_id
             return None
 
+    @staticmethod
+    def _normalize_bucket_key(bucket_key: object) -> str:
+        return str(bucket_key or "direct")
+
+    @staticmethod
+    def _max_inflight_from_status(status: dict[str, object]) -> int:
+        return max(int(status.get("max_inflight", 1) or 1), 1)
+
+    @classmethod
+    def _can_accept_more_work(cls, status: dict[str, object]) -> bool:
+        inflight_count = int(status.get("inflight_count", 0) or 0)
+        return bool(status.get("available")) and inflight_count < cls._max_inflight_from_status(status)
+
+    def _add_available_account_locked(self, account_id: str) -> None:
+        if account_id not in self._available_account_ids:
+            self._available_account_ids.append(account_id)
+
+    def _remove_available_account_locked(self, account_id: str) -> None:
+        if account_id not in self._available_account_ids:
+            return
+        remove_index = self._available_account_ids.index(account_id)
+        self._available_account_ids.remove(account_id)
+        if self._available_account_ids:
+            if remove_index < self._current_index:
+                self._current_index -= 1
+            self._current_index %= len(self._available_account_ids)
+        else:
+            self._current_index = 0
+
+    def _add_idle_account_locked(self, account_id: str) -> None:
+        status = self._account_status.get(account_id)
+        if status is None or not self._can_accept_more_work(status):
+            self._remove_idle_account_locked(account_id)
+            return
+        bucket_key = self._normalize_bucket_key(status.get("bucket_key"))
+        existing_bucket_key = self._idle_account_bucket_by_account_id.get(account_id)
+        existing_bucket = self._idle_account_ids_by_bucket.get(bucket_key)
+        if (
+            existing_bucket_key == bucket_key
+            and existing_bucket is not None
+            and account_id in existing_bucket
+        ):
+            return
+        self._remove_idle_account_locked(account_id)
+        idle_bucket = self._idle_account_ids_by_bucket.setdefault(bucket_key, OrderedDict())
+        idle_bucket[account_id] = None
+        self._idle_account_bucket_by_account_id[account_id] = bucket_key
+
+    def _remove_idle_account_locked(self, account_id: str) -> None:
+        bucket_key = self._idle_account_bucket_by_account_id.pop(account_id, None)
+        if bucket_key is None:
+            return
+        idle_bucket = self._idle_account_ids_by_bucket.get(bucket_key)
+        if idle_bucket is None:
+            return
+        idle_bucket.pop(account_id, None)
+        if not idle_bucket:
+            self._idle_account_ids_by_bucket.pop(bucket_key, None)
+
     def mark_no_inventory(self, account_id: str) -> None:
         self.mark_unavailable(account_id, reason="no_available_inventory")
 
@@ -98,26 +162,21 @@ class PurchaseScheduler:
             status["available"] = False
             status["busy"] = False
             status["disabled_reason"] = reason
-            if account_id in self._available_account_ids:
-                remove_index = self._available_account_ids.index(account_id)
-                self._available_account_ids.remove(account_id)
-                if self._available_account_ids:
-                    if remove_index < self._current_index:
-                        self._current_index -= 1
-                    self._current_index %= len(self._available_account_ids)
-                else:
-                    self._current_index = 0
+            self._remove_idle_account_locked(account_id)
+            self._remove_available_account_locked(account_id)
 
     def mark_available(self, account_id: str) -> None:
         with self._lock:
             status = self._account_status.setdefault(account_id, {})
             status["available"] = True
+            status["bucket_key"] = self._normalize_bucket_key(status.get("bucket_key"))
+            status["max_inflight"] = self._max_inflight_from_status(status)
             status["disabled_reason"] = None
             inflight_count = int(status.get("inflight_count", 0) or 0)
-            max_inflight = max(int(status.get("max_inflight", 1) or 1), 1)
+            max_inflight = self._max_inflight_from_status(status)
             status["busy"] = inflight_count >= max_inflight
-            if account_id not in self._available_account_ids:
-                self._available_account_ids.append(account_id)
+            self._add_available_account_locked(account_id)
+            self._add_idle_account_locked(account_id)
 
     def release_account(self, account_id: str) -> None:
         with self._lock:
@@ -126,8 +185,9 @@ class PurchaseScheduler:
                 return
             inflight_count = max(int(status.get("inflight_count", 0) or 0) - 1, 0)
             status["inflight_count"] = inflight_count
-            max_inflight = max(int(status.get("max_inflight", 1) or 1), 1)
+            max_inflight = self._max_inflight_from_status(status)
             status["busy"] = bool(status.get("available")) and inflight_count >= max_inflight
+            self._add_idle_account_locked(account_id)
 
     def claim_idle_accounts_by_bucket(self, *, limit_per_bucket: int) -> list[str]:
         effective_limit = max(int(limit_per_bucket), 0)
@@ -135,25 +195,38 @@ class PurchaseScheduler:
             return []
 
         with self._lock:
-            idle_by_bucket: dict[str, list[str]] = {}
-            for account_id in self._available_account_ids:
-                status = self._account_status.get(account_id, {})
-                inflight_count = int(status.get("inflight_count", 0) or 0)
-                max_inflight = max(int(status.get("max_inflight", 1) or 1), 1)
-                if not bool(status.get("available")) or inflight_count >= max_inflight:
-                    continue
-                bucket_key = str(status.get("bucket_key") or "direct")
-                idle_by_bucket.setdefault(bucket_key, []).append(account_id)
-
             claimed: list[str] = []
-            for account_ids in idle_by_bucket.values():
-                for account_id in account_ids[:effective_limit]:
-                    status = self._account_status[account_id]
+            requeue_by_bucket: dict[str, list[str]] = {}
+            for bucket_key in tuple(self._idle_account_ids_by_bucket.keys()):
+                idle_bucket = self._idle_account_ids_by_bucket.get(bucket_key)
+                if not idle_bucket:
+                    continue
+                bucket_claimed = 0
+                while bucket_claimed < effective_limit and idle_bucket:
+                    account_id, _ = idle_bucket.popitem(last=False)
+                    self._idle_account_bucket_by_account_id.pop(account_id, None)
+                    status = self._account_status.get(account_id)
+                    if status is None or not self._can_accept_more_work(status):
+                        continue
+
                     inflight_count = int(status.get("inflight_count", 0) or 0) + 1
+                    max_inflight = self._max_inflight_from_status(status)
                     status["inflight_count"] = inflight_count
-                    max_inflight = max(int(status.get("max_inflight", 1) or 1), 1)
                     status["busy"] = inflight_count >= max_inflight
                     claimed.append(account_id)
+                    bucket_claimed += 1
+                    if inflight_count < max_inflight:
+                        requeue_by_bucket.setdefault(bucket_key, []).append(account_id)
+                if not idle_bucket:
+                    self._idle_account_ids_by_bucket.pop(bucket_key, None)
+
+            for bucket_key, account_ids in requeue_by_bucket.items():
+                idle_bucket = self._idle_account_ids_by_bucket.setdefault(bucket_key, OrderedDict())
+                for account_id in account_ids:
+                    if account_id in self._idle_account_bucket_by_account_id:
+                        continue
+                    idle_bucket[account_id] = None
+                    self._idle_account_bucket_by_account_id[account_id] = bucket_key
             return claimed
 
     def available_account_ids(self) -> list[str]:
@@ -173,6 +246,7 @@ class PurchaseScheduler:
             status["max_inflight"] = inflight_limit
             inflight_count = int(status.get("inflight_count", 0) or 0)
             status["busy"] = bool(status.get("available")) and inflight_count >= inflight_limit
+            self._add_idle_account_locked(account_id)
 
     def total_inflight_count(self) -> int:
         with self._lock:

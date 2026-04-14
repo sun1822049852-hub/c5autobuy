@@ -1249,3 +1249,154 @@ async def test_mode_runner_returns_without_waiting_for_slow_hit_sink():
 
     hit_sink_release.set()
     await runner.cleanup()
+
+
+async def test_mode_runner_reuses_single_serialized_event_payload_across_fanout(monkeypatch):
+    from app_backend.infrastructure.query.runtime.mode_runner import ModeRunner
+    from app_backend.infrastructure.query.runtime.runtime_events import QueryExecutionEvent
+
+    class FakeWorker:
+        def __init__(self, account: object) -> None:
+            self.account = account
+
+        def snapshot(self) -> dict[str, object]:
+            return {"account_id": self.account.account_id, "active": True}
+
+        async def run_once(self, query_item: QueryItem) -> QueryExecutionEvent:
+            return QueryExecutionEvent(
+                timestamp="2026-03-16T10:00:04",
+                level="info",
+                mode_type="new_api",
+                account_id=self.account.account_id,
+                account_display_name="查询账号",
+                query_item_id=query_item.query_item_id,
+                query_item_name="商品-1380979899390261111",
+                message="query completed",
+                match_count=1,
+                product_list=[{"productId": "p-1", "price": 88.0, "actRebateAmount": 0}],
+                total_price=88.0,
+                total_wear_sum=0.1234,
+                latency_ms=9.0,
+                error=None,
+            )
+
+    forwarded_hits: list[dict[str, object]] = []
+    forwarded_events: list[dict[str, object]] = []
+    stats_events: list[object] = []
+
+    runner = ModeRunner(
+        build_mode("new_api"),
+        [build_account("a1", api_key="api-1")],
+        query_items=[build_item("1380979899390261111")],
+        worker_factory=lambda mode_type, account: FakeWorker(account),
+        hit_sink=forwarded_hits.append,
+        event_sink=forwarded_events.append,
+        stats_sink=stats_events.append,
+    )
+
+    serialize_calls = 0
+    original_serialize = runner._serialize_event
+
+    def wrapped_serialize(event):
+        nonlocal serialize_calls
+        serialize_calls += 1
+        return original_serialize(event)
+
+    monkeypatch.setattr(runner, "_serialize_event", wrapped_serialize)
+
+    runner.start()
+
+    await runner.run_once()
+    await runner.cleanup()
+
+    assert len(forwarded_hits) == 1
+    assert len(forwarded_events) == 1
+    assert len(stats_events) == 2
+    assert serialize_calls == 1
+
+
+def test_mode_runner_reuses_serialized_payload_for_readonly_safe_hit_sink():
+    from app_backend.infrastructure.query.runtime.mode_runner import ModeRunner
+    from app_backend.infrastructure.query.runtime.runtime_events import QueryExecutionEvent
+
+    received: list[dict[str, object]] = []
+
+    def safe_hit_sink(payload: dict[str, object]) -> None:
+        received.append(payload)
+
+    safe_hit_sink._query_hit_readonly_safe = True
+
+    runner = ModeRunner(
+        build_mode("new_api"),
+        [build_account("a1", api_key="api-1")],
+        query_items=[build_item("1380979899390261111")],
+        worker_factory=lambda mode_type, account: None,
+        hit_sink=safe_hit_sink,
+    )
+
+    serialized_payload = {
+        "query_item_name": "AK",
+        "product_list": [{"productId": "p-1"}],
+    }
+
+    runner._dispatch_hit(
+        QueryExecutionEvent(
+            timestamp="2026-03-16T10:00:04",
+            level="info",
+            mode_type="new_api",
+            account_id="a1",
+            query_item_id="item-1",
+            query_item_name="AK",
+            message="query completed",
+            match_count=1,
+            latency_ms=9.0,
+            error=None,
+        ),
+        serialized_event=serialized_payload,
+    )
+
+    assert received == [serialized_payload]
+    assert received[0] is serialized_payload
+
+
+def test_mode_runner_keeps_detached_payload_for_regular_hit_sink():
+    from app_backend.infrastructure.query.runtime.mode_runner import ModeRunner
+    from app_backend.infrastructure.query.runtime.runtime_events import QueryExecutionEvent
+
+    received: list[dict[str, object]] = []
+
+    def regular_hit_sink(payload: dict[str, object]) -> None:
+        received.append(payload)
+
+    runner = ModeRunner(
+        build_mode("new_api"),
+        [build_account("a1", api_key="api-1")],
+        query_items=[build_item("1380979899390261111")],
+        worker_factory=lambda mode_type, account: None,
+        hit_sink=regular_hit_sink,
+    )
+
+    serialized_payload = {
+        "query_item_name": "AK",
+        "product_list": [{"productId": "p-1"}],
+    }
+
+    runner._dispatch_hit(
+        QueryExecutionEvent(
+            timestamp="2026-03-16T10:00:04",
+            level="info",
+            mode_type="new_api",
+            account_id="a1",
+            query_item_id="item-1",
+            query_item_name="AK",
+            message="query completed",
+            match_count=1,
+            latency_ms=9.0,
+            error=None,
+        ),
+        serialized_event=serialized_payload,
+    )
+
+    assert received == [{"query_item_name": "AK", "product_list": [{"productId": "p-1"}]}]
+    assert received[0] is not serialized_payload
+    assert received[0]["product_list"] is not serialized_payload["product_list"]

@@ -250,14 +250,14 @@ async def test_purchase_runtime_end_to_end_handles_hit(client, app):
     )
     response = await _wait_until_status(
         client,
-        lambda payload: payload["total_purchased_count"] == 1 and payload["recent_events"][0]["status"] == "success",
+        lambda payload: payload["total_purchased_count"] == 1,
     )
 
     assert result == {"accepted": True, "status": "queued"}
     assert response.status_code == 200
     assert response.json()["queue_size"] == 0
     assert response.json()["total_purchased_count"] == 1
-    assert response.json()["recent_events"][0]["status"] == "success"
+    assert response.json()["recent_events"] == []
 
 
 async def test_purchase_runtime_status_returns_selected_inventory_summary(client, app):
@@ -285,7 +285,7 @@ async def test_purchase_runtime_status_returns_selected_inventory_summary(client
 
 async def test_purchase_runtime_status_includes_stats_and_keeps_accounts_shape(client, app):
     class FakePurchaseRuntimeService:
-        def get_status(self) -> dict[str, object]:
+        def get_status(self, *, include_recent_events: bool = True) -> dict[str, object]:
             return {
                 "running": True,
                 "message": "运行中",
@@ -431,11 +431,7 @@ async def test_purchase_runtime_status_includes_stats_and_keeps_accounts_shape(c
     assert response.json()["matched_product_count"] == 3
     assert response.json()["purchase_success_count"] == 1
     assert response.json()["purchase_failed_count"] == 2
-    assert response.json()["recent_events"][0]["request_body"] == {
-        "bizOrderId": "order-1",
-        "receiveSteamId": "steam-1",
-    }
-    assert response.json()["recent_events"][0]["response_text"] == "{\"errorMsg\":\"订单数据发生变化,请刷新页面重试\"}"
+    assert response.json()["recent_events"] == []
     assert response.json()["accounts"][0]["submitted_product_count"] == 3
     assert response.json()["accounts"][0]["purchase_success_count"] == 1
     assert response.json()["accounts"][0]["purchase_failed_count"] == 2

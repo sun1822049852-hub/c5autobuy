@@ -517,34 +517,53 @@ class ModeRunner:
             return bool(stop_event is not None and stop_event.is_set())
         return await self._wait_for_stop(stop_event, delay)
 
-    def _record_event(self, event: QueryExecutionEvent) -> None:
-        self._recent_events.insert(0, self._serialize_event(event))
+    def _record_event(self, event: QueryExecutionEvent, *, serialized_event: dict[str, object] | None = None) -> None:
+        payload = serialized_event if serialized_event is not None else self._serialize_event(event)
+        self._recent_events.insert(0, self._clone_serialized_event_payload(payload))
         del self._recent_events[self._RECENT_EVENT_LIMIT :]
 
-    async def _forward_hit(self, event: QueryExecutionEvent) -> None:
+    async def _forward_hit(
+        self,
+        event: QueryExecutionEvent,
+        *,
+        serialized_event: dict[str, object] | None = None,
+    ) -> None:
         if self._hit_sink is None or int(getattr(event, "match_count", 0)) <= 0:
             return
 
-        result = self._hit_sink(self._serialize_event(event))
+        payload = serialized_event if serialized_event is not None else self._serialize_event(event)
+        result = self._hit_sink(self._prepare_hit_payload_for_sink(payload))
         if inspect.isawaitable(result):
             await result
 
     async def _await_forwarded_hit(self, result) -> None:
         await result
 
-    def _dispatch_hit(self, event: QueryExecutionEvent) -> None:
+    def _dispatch_hit(
+        self,
+        event: QueryExecutionEvent,
+        *,
+        serialized_event: dict[str, object] | None = None,
+    ) -> None:
         if self._hit_sink is None or int(getattr(event, "match_count", 0)) <= 0:
             return
 
-        result = self._hit_sink(self._serialize_event(event))
+        payload = serialized_event if serialized_event is not None else self._serialize_event(event)
+        result = self._hit_sink(self._prepare_hit_payload_for_sink(payload))
         if inspect.isawaitable(result):
             self._spawn_background_task(self._await_forwarded_hit(result))
 
-    async def _forward_event(self, event: QueryExecutionEvent) -> None:
+    async def _forward_event(
+        self,
+        event: QueryExecutionEvent,
+        *,
+        serialized_event: dict[str, object] | None = None,
+    ) -> None:
         if self._event_sink is None:
             return
 
-        result = self._event_sink(self._serialize_event(event))
+        payload = serialized_event if serialized_event is not None else self._serialize_event(event)
+        result = self._event_sink(self._clone_serialized_event_payload(payload))
         if inspect.isawaitable(result):
             await result
 
@@ -570,14 +589,24 @@ class ModeRunner:
         item_id = str(getattr(event, "query_item_id", "") or "")
         if item_id:
             self._item_query_counts[item_id] = self._item_query_counts.get(item_id, 0) + 1
+        serialized_event: dict[str, object] | None = None
+
+        def current_serialized_event() -> dict[str, object]:
+            nonlocal serialized_event
+            if serialized_event is None:
+                serialized_event = self._serialize_event(event)
+            return serialized_event
+
         if getattr(event, "error", None) or int(getattr(event, "match_count", 0)) > 0:
-            self._record_event(event)
+            self._record_event(event, serialized_event=current_serialized_event())
         if getattr(event, "error", None):
-            await self._forward_event(event)
+            await self._forward_event(event, serialized_event=current_serialized_event())
         else:
-            self._dispatch_hit(event)
+            self._dispatch_hit(event, serialized_event=current_serialized_event())
         if not getattr(event, "error", None):
-            self._spawn_background_task(self._forward_event(event))
+            self._spawn_background_task(
+                self._forward_event(event, serialized_event=current_serialized_event())
+            )
         self._spawn_background_task(self._forward_stats(event))
 
     def _spawn_background_task(self, coroutine) -> None:
@@ -754,6 +783,26 @@ class ModeRunner:
             "request_body": getattr(event, "request_body", None),
             "response_text": getattr(event, "response_text", None),
         }
+
+    @staticmethod
+    def _clone_serialized_event_payload(payload: dict[str, object]) -> dict[str, object]:
+        cloned = dict(payload)
+        cloned["product_list"] = list(payload.get("product_list") or [])
+        return cloned
+
+    def _prepare_hit_payload_for_sink(self, payload: dict[str, object]) -> dict[str, object]:
+        if self._hit_sink_accepts_readonly_payload(self._hit_sink):
+            return payload
+        return self._clone_serialized_event_payload(payload)
+
+    @staticmethod
+    def _hit_sink_accepts_readonly_payload(hit_sink) -> bool:
+        if hit_sink is None:
+            return False
+        if bool(getattr(hit_sink, "_query_hit_readonly_safe", False)):
+            return True
+        target = getattr(hit_sink, "__func__", None)
+        return bool(getattr(target, "_query_hit_readonly_safe", False))
 
     @staticmethod
     def _to_timestamp(value: datetime | float | int) -> float:

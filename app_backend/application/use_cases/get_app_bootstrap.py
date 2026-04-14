@@ -46,6 +46,7 @@ class GetAppBootstrapUseCase:
         purchase_runtime_status = GetPurchaseRuntimeStatusUseCase(
             self._purchase_runtime_service,
             self._query_runtime_service,
+            include_recent_events=False,
         ).execute()
         ui_preferences = GetPurchaseUiPreferencesUseCase(
             self._purchase_ui_preferences_repository,

@@ -53,6 +53,7 @@ def get_purchase_runtime_status(request: Request) -> PurchaseRuntimeStatusRespon
     use_case = GetPurchaseRuntimeStatusUseCase(
         _runtime_service(request),
         _query_runtime_service(request),
+        include_recent_events=False,
     )
     return PurchaseRuntimeStatusResponse.model_validate(use_case.execute())
 
@@ -125,7 +126,11 @@ def start_purchase_runtime(
     if not started:
         status_code = status.HTTP_404_NOT_FOUND if message == "查询配置不存在" else status.HTTP_409_CONFLICT
         raise HTTPException(status_code=status_code, detail=message)
-    snapshot = GetPurchaseRuntimeStatusUseCase(runtime_service, query_runtime_service).execute()
+    snapshot = GetPurchaseRuntimeStatusUseCase(
+        runtime_service,
+        query_runtime_service,
+        include_recent_events=False,
+    ).execute()
     return PurchaseRuntimeStatusResponse.model_validate(snapshot)
 
 
@@ -136,5 +141,9 @@ def stop_purchase_runtime(request: Request) -> PurchaseRuntimeStatusResponse:
     stopped, message = StopPurchaseRuntimeUseCase(query_runtime_service).execute()
     if not stopped:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=message)
-    snapshot = GetPurchaseRuntimeStatusUseCase(runtime_service, query_runtime_service).execute()
+    snapshot = GetPurchaseRuntimeStatusUseCase(
+        runtime_service,
+        query_runtime_service,
+        include_recent_events=False,
+    ).execute()
     return PurchaseRuntimeStatusResponse.model_validate(snapshot)

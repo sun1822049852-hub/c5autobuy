@@ -838,14 +838,17 @@ class QueryRuntimeService:
     def _resolve_hit_sink(self):
         if self._purchase_runtime_service is None:
             return None
-        enqueue_hit_sink = getattr(self._purchase_runtime_service, "enqueue_query_hit", None)
-        if callable(enqueue_hit_sink):
-            return enqueue_hit_sink
+        fast_async_hit_sink = getattr(self._purchase_runtime_service, "accept_query_hit_fast_async", None)
+        if callable(fast_async_hit_sink):
+            return fast_async_hit_sink
         async_hit_sink = getattr(self._purchase_runtime_service, "accept_query_hit_async", None)
         if callable(async_hit_sink):
             return async_hit_sink
         hit_sink = getattr(self._purchase_runtime_service, "accept_query_hit", None)
-        return hit_sink if callable(hit_sink) else None
+        if callable(hit_sink):
+            return hit_sink
+        enqueue_hit_sink = getattr(self._purchase_runtime_service, "enqueue_query_hit", None)
+        return enqueue_hit_sink if callable(enqueue_hit_sink) else None
 
     def _runtime_factory_accepts_parameter(self, parameter_name: str, *, allow_var_keyword: bool = True) -> bool:
         try:

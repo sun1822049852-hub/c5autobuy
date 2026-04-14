@@ -90,6 +90,7 @@ def _publish_runtime_snapshot_updates_for_active_config(request: Request, *, con
     purchase_status = GetPurchaseRuntimeStatusUseCase(
         _purchase_runtime_service(request),
         _query_runtime_service(request),
+        include_recent_events=False,
     ).execute()
     _runtime_update_hub(request).publish(
         event="purchase_runtime.updated",
