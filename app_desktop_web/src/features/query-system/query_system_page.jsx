@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { QueryConfigCreateDialog } from "./components/query_config_create_dialog.jsx";
 import { QueryConfigDeleteDialog } from "./components/query_config_delete_dialog.jsx";
@@ -7,7 +7,15 @@ import { QueryItemCreatePanel } from "./components/query_item_create_panel.jsx";
 import { QueryItemEditDialog } from "./components/query_item_edit_dialog.jsx";
 import { QueryItemTable } from "./components/query_item_table.jsx";
 import { QueryWorkbenchHeader } from "./components/query_workbench_header.jsx";
+import { UnsavedChangesDialog } from "../shell/unsaved_changes_dialog.jsx";
 import { useQuerySystemPage } from "./hooks/use_query_system_page.js";
+
+const EMPTY_CONFIG_SWITCH_PROMPT = {
+  error: "",
+  isOpen: false,
+  isSaving: false,
+  nextConfigId: null,
+};
 
 
 export function QuerySystemPage({ bootstrapConfig, client, isActive, onLeaveStateChange }) {
@@ -66,9 +74,77 @@ export function QuerySystemPage({ bootstrapConfig, client, isActive, onLeaveStat
   } = useQuerySystemPage({ client, isActive });
   const saveConfigRef = useRef(saveConfig);
   const discardDraftChangesRef = useRef(discardDraftChanges);
+  const selectConfigRef = useRef(selectConfig);
+  const [configSwitchPrompt, setConfigSwitchPrompt] = useState(EMPTY_CONFIG_SWITCH_PROMPT);
 
   saveConfigRef.current = saveConfig;
   discardDraftChangesRef.current = discardDraftChanges;
+  selectConfigRef.current = selectConfig;
+
+  const canPromptOnConfigSwitch = Boolean(currentConfig) && hasUnsavedChanges && !saveBarError;
+
+  const resetConfigSwitchPrompt = useCallback(() => {
+    setConfigSwitchPrompt(EMPTY_CONFIG_SWITCH_PROMPT);
+  }, []);
+
+  const handleSelectConfig = useCallback((nextConfigId) => {
+    if (!nextConfigId || nextConfigId === currentConfig?.config_id) {
+      return;
+    }
+
+    if (canPromptOnConfigSwitch) {
+      setConfigSwitchPrompt({
+        error: "",
+        isOpen: true,
+        isSaving: false,
+        nextConfigId,
+      });
+      return;
+    }
+
+    void selectConfigRef.current(nextConfigId);
+  }, [canPromptOnConfigSwitch, currentConfig?.config_id]);
+
+  const handleDiscardAndSwitchConfig = useCallback(async () => {
+    if (!configSwitchPrompt.nextConfigId) {
+      return;
+    }
+
+    const discarded = await discardDraftChangesRef.current();
+    if (!discarded) {
+      return;
+    }
+
+    const nextConfigId = configSwitchPrompt.nextConfigId;
+    resetConfigSwitchPrompt();
+    await selectConfigRef.current(nextConfigId);
+  }, [configSwitchPrompt.nextConfigId, resetConfigSwitchPrompt]);
+
+  const handleSaveAndSwitchConfig = useCallback(async () => {
+    if (!configSwitchPrompt.nextConfigId) {
+      return;
+    }
+
+    setConfigSwitchPrompt((current) => ({
+      ...current,
+      error: "",
+      isSaving: true,
+    }));
+
+    const nextConfigId = configSwitchPrompt.nextConfigId;
+    const saved = await saveConfigRef.current();
+    if (!saved) {
+      setConfigSwitchPrompt((current) => ({
+        ...current,
+        error: "保存失败，请先修复后再切换。",
+        isSaving: false,
+      }));
+      return;
+    }
+
+    resetConfigSwitchPrompt();
+    await selectConfigRef.current(nextConfigId);
+  }, [configSwitchPrompt.nextConfigId, resetConfigSwitchPrompt]);
 
   useEffect(() => {
     onLeaveStateChange?.({
@@ -93,16 +169,16 @@ export function QuerySystemPage({ bootstrapConfig, client, isActive, onLeaveStat
       ) : null}
 
       <div className="query-system-page__layout">
-        <QueryConfigNav
-          configs={configList}
-          isDeleteMode={isConfigDeleteMode}
-          isCreatingConfig={isCreatingConfig}
-          isLoading={isLoading}
-          onDeleteConfig={openDeleteConfigDialog}
-          onOpenCreateConfigDialog={openCreateConfigDialog}
-          onSelectConfig={selectConfig}
-          onToggleDeleteMode={toggleConfigDeleteMode}
-        />
+          <QueryConfigNav
+            configs={configList}
+            isDeleteMode={isConfigDeleteMode}
+            isCreatingConfig={isCreatingConfig}
+            isLoading={isLoading}
+            onDeleteConfig={openDeleteConfigDialog}
+            onOpenCreateConfigDialog={openCreateConfigDialog}
+            onSelectConfig={handleSelectConfig}
+            onToggleDeleteMode={toggleConfigDeleteMode}
+          />
 
         <div className="query-system-page__workbench">
           <QueryWorkbenchHeader
@@ -170,6 +246,14 @@ export function QuerySystemPage({ bootstrapConfig, client, isActive, onLeaveStat
         onClose={closeEditItemDialog}
         onFieldChange={updateEditingItemField}
         remainingByMode={editDialogRemainingByMode}
+      />
+
+      <UnsavedChangesDialog
+        error={configSwitchPrompt.error}
+        isOpen={configSwitchPrompt.isOpen}
+        isSaving={configSwitchPrompt.isSaving}
+        onDiscard={handleDiscardAndSwitchConfig}
+        onSave={handleSaveAndSwitchConfig}
       />
     </section>
   );

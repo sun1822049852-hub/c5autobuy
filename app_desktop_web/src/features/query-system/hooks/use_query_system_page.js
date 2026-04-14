@@ -93,6 +93,15 @@ function findConfigById(configs, configId) {
 }
 
 
+function findDetailedConfigById(configs, configId) {
+  const config = findConfigById(configs, configId);
+  if (!config || getConfigServerShape(config) !== QUERY_CONFIG_SERVER_SHAPE_DETAIL) {
+    return null;
+  }
+  return config;
+}
+
+
 function getConfigServerShape(config) {
   return config?.serverShape === QUERY_CONFIG_SERVER_SHAPE_DETAIL
     ? QUERY_CONFIG_SERVER_SHAPE_DETAIL
@@ -351,6 +360,13 @@ export function useQuerySystemPage({ client, isActive = true }) {
         return;
       }
 
+      const cachedDetailConfig = findDetailedConfigById(configs, preferredConfigId);
+      if (cachedDetailConfig) {
+        applyDraftFromConfig(cachedDetailConfig, preferredConfigId);
+        setIsLoading(false);
+        return;
+      }
+
       setIsLoading(true);
 
       try {
@@ -478,6 +494,14 @@ export function useQuerySystemPage({ client, isActive = true }) {
 
   async function selectConfig(configId) {
     setLoadError("");
+
+    const cachedDetailConfig = findDetailedConfigById(configs, configId);
+    if (cachedDetailConfig) {
+      applyDraftFromConfig(cachedDetailConfig, configId);
+      setIsLoading(false);
+      return;
+    }
+
     setIsLoading(true);
 
     try {

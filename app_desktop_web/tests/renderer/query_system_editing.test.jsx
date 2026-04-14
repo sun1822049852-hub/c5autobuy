@@ -323,6 +323,7 @@ function createFetchHarness({
     token: { mode_type: "token", available_account_count: 3 },
   },
   applyConfigRuntimeStatus = null,
+  detailDelayMsByConfigId = {},
   runtimeStatus = buildRuntimeStatus(),
   saveDelayMs = 0,
   secondaryDetail = null,
@@ -369,11 +370,14 @@ function createFetchHarness({
     const detailMatch = url.pathname.match(/^\/query-configs\/([^/]+)$/);
     if (detailMatch && method === "GET") {
       const configId = detailMatch[1];
+      const detailDelayMs = Number(detailDelayMsByConfigId[configId] ?? 0);
       if (configId === detail.config_id) {
-        return jsonResponse(detail);
+        return detailDelayMs > 0 ? delayedJsonResponse(detail, 200, detailDelayMs) : jsonResponse(detail);
       }
       if (secondaryDetail && configId === secondaryDetail.config_id) {
-        return jsonResponse(secondaryDetail);
+        return detailDelayMs > 0
+          ? delayedJsonResponse(secondaryDetail, 200, detailDelayMs)
+          : jsonResponse(secondaryDetail);
       }
     }
     if (url.pathname === "/query-items/parse-url" && method === "POST") {
@@ -471,6 +475,11 @@ function createFetchHarness({
     calls,
     fetchImpl,
   };
+}
+
+
+function countCalls(calls, { method, pathname }) {
+  return calls.filter((call) => call.method === method && call.pathname === pathname).length;
 }
 
 
@@ -923,6 +932,95 @@ describe("query system editing", () => {
     });
 
     expect(screen.queryByText("新配置已生效，仅影响后续新命中；已入队或已派发的旧扫货任务会按旧快照执行完毕。")).not.toBeInTheDocument();
+  });
+
+  it("reuses already-loaded config detail without showing repeated loading state", async () => {
+    const harness = createFetchHarness({
+      detailDelayMsByConfigId: {
+        "cfg-2": 40,
+      },
+      secondaryDetail: buildSecondaryConfigDetail(),
+    });
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    await openQuerySystem(user);
+
+    const nav = screen.getByRole("navigation", { name: "配置管理导航" });
+    await user.click(within(nav).getByRole("button", { name: /^夜刀配置/ }));
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "夜刀配置" })).toBeInTheDocument();
+    });
+
+    const cfg1DetailCallCount = countCalls(harness.calls, { method: "GET", pathname: "/query-configs/cfg-1" });
+    const cfg2DetailCallCount = countCalls(harness.calls, { method: "GET", pathname: "/query-configs/cfg-2" });
+    expect(cfg2DetailCallCount).toBeGreaterThan(0);
+
+    await user.click(within(nav).getByRole("button", { name: /^白天配置/ }));
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "白天配置" })).toBeInTheDocument();
+    });
+    expect(countCalls(harness.calls, { method: "GET", pathname: "/query-configs/cfg-1" })).toBe(cfg1DetailCallCount);
+
+    await user.click(within(nav).getByRole("button", { name: /^夜刀配置/ }));
+
+    expect(screen.queryByText("正在加载配置...")).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "夜刀配置" })).toBeInTheDocument();
+    });
+    expect(countCalls(harness.calls, { method: "GET", pathname: "/query-configs/cfg-2" })).toBe(cfg2DetailCallCount);
+  });
+
+  it("reuses the unsaved-changes flow when switching configs inside the query page", async () => {
+    const harness = createFetchHarness({
+      saveDelayMs: 40,
+      secondaryDetail: buildSecondaryConfigDetail(),
+    });
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    await openQuerySystem(user);
+    await setPriceDraft(user, "AK-47 | Redline", "188");
+
+    const nav = screen.getByRole("navigation", { name: "配置管理导航" });
+    await user.click(within(nav).getByRole("button", { name: /^夜刀配置/ }));
+
+    const confirmDialog = await screen.findByRole("dialog", { name: "未保存修改" });
+    expect(within(confirmDialog).getByText("当前修改尚未保存，离开前选择保存或直接丢弃。")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "白天配置" })).toBeInTheDocument();
+
+    await user.click(within(confirmDialog).getByRole("button", { name: "不保存" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "夜刀配置" })).toBeInTheDocument();
+    });
+    expect(
+      harness.calls.some(
+        (call) => call.method === "PATCH" && call.pathname === "/query-configs/cfg-1/items/item-1",
+      ),
+    ).toBe(false);
+
+    await user.click(within(nav).getByRole("button", { name: /^白天配置/ }));
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "白天配置" })).toBeInTheDocument();
+    });
+
+    await setPriceDraft(user, "AK-47 | Redline", "177");
+    await user.click(within(nav).getByRole("button", { name: /^夜刀配置/ }));
+
+    const saveDialog = await screen.findByRole("dialog", { name: "未保存修改" });
+    await user.click(within(saveDialog).getByRole("button", { name: "保存" }));
+
+    await waitFor(() => {
+      expect(
+        harness.calls.some(
+          (call) => call.method === "PATCH" && call.pathname === "/query-configs/cfg-1/items/item-1",
+        ),
+      ).toBe(true);
+    });
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "夜刀配置" })).toBeInTheDocument();
+    });
   });
 
   it("blocks save when dedicated allocations exceed the available capacity", async () => {

@@ -35,7 +35,10 @@ async def fetch_query_item_detail(
     payload: QueryItemDetailFetchRequest,
     request: Request,
 ) -> QueryItemDetailFetchResponse:
-    use_case = FetchQueryItemDetailUseCase(request.app.state.product_detail_collector)
+    use_case = FetchQueryItemDetailUseCase(
+        request.app.state.product_detail_collector,
+        request.app.state.query_config_repository,
+    )
     try:
         detail = await use_case.execute(
             external_item_id=payload.external_item_id,
@@ -43,6 +46,8 @@ async def fetch_query_item_detail(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     return QueryItemDetailFetchResponse(
         product_url=detail.product_url,

@@ -239,6 +239,78 @@ async def test_fetch_query_item_detail_returns_product_detail(client, app):
     }
 
 
+async def test_fetch_query_item_detail_persists_product_cache(client, app):
+    class FakeDetailCollector:
+        async def fetch_detail(self, *, external_item_id: str, product_url: str):
+            from app_backend.infrastructure.query.collectors.product_detail_collector import ProductDetail
+
+            return ProductDetail(
+                external_item_id=external_item_id,
+                product_url="http://www.c5game.com/csgo/730/asset/1380979899390267000",
+                item_name="AK-47 | Vulcan",
+                market_hash_name="AK-47 | Vulcan (Field-Tested)",
+                min_wear=0.07,
+                max_wear=0.8,
+                last_market_price=1999.0,
+            )
+
+    app.state.product_detail_collector = FakeDetailCollector()
+
+    response = await client.post(
+        "/query-items/fetch-detail",
+        json={
+            "product_url": "https://www.c5game.com/csgo/730/asset/1380979899390267000",
+            "external_item_id": "1380979899390267000",
+        },
+    )
+
+    assert response.status_code == 200
+    cached = app.state.query_config_repository.get_product("1380979899390267000")
+    assert cached is not None
+    assert cached.external_item_id == "1380979899390267000"
+    assert cached.product_url == "https://www.c5game.com/csgo/730/asset/1380979899390267000"
+    assert cached.item_name == "AK-47 | Vulcan"
+    assert cached.market_hash_name == "AK-47 | Vulcan (Field-Tested)"
+    assert cached.min_wear == 0.07
+    assert cached.max_wear == 0.8
+    assert cached.last_market_price == 1999.0
+    assert app.state.query_config_repository.list_configs() == []
+
+
+async def test_fetch_query_item_detail_returns_error_when_product_cache_persist_fails(client, app):
+    class FakeDetailCollector:
+        async def fetch_detail(self, *, external_item_id: str, product_url: str):
+            from app_backend.infrastructure.query.collectors.product_detail_collector import ProductDetail
+
+            return ProductDetail(
+                external_item_id=external_item_id,
+                product_url=product_url,
+                item_name="AK-47 | Vulcan",
+                market_hash_name="AK-47 | Vulcan (Field-Tested)",
+                min_wear=0.07,
+                max_wear=0.8,
+                last_market_price=1999.0,
+            )
+
+    def broken_upsert_product(**_kwargs):
+        raise RuntimeError("db write failed")
+
+    app.state.product_detail_collector = FakeDetailCollector()
+    app.state.query_config_repository.upsert_product = broken_upsert_product
+
+    response = await client.post(
+        "/query-items/fetch-detail",
+        json={
+            "product_url": "https://www.c5game.com/csgo/730/asset/1380979899390267000",
+            "external_item_id": "1380979899390267000",
+        },
+    )
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "商品缓存写入失败"
+    assert app.state.query_config_repository.get_product("1380979899390267000") is None
+
+
 async def test_add_query_item_uses_collectors_and_persists_thresholds(client, app):
     class FakeDetailCollector:
         async def fetch_detail(self, *, external_item_id: str, product_url: str):
