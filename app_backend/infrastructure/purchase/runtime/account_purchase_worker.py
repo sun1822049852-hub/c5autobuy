@@ -89,6 +89,7 @@ class AccountPurchaseWorker:
                 status_code=getattr(result, "status_code", None),
                 request_method=getattr(result, "request_method", None),
                 request_path=getattr(result, "request_path", None),
+                request_body=getattr(result, "request_body", None),
                 response_text=getattr(result, "response_text", None),
             )
 
@@ -120,6 +121,7 @@ class AccountPurchaseWorker:
             status_code=getattr(result, "status_code", None),
             request_method=getattr(result, "request_method", None),
             request_path=getattr(result, "request_path", None),
+            request_body=getattr(result, "request_body", None),
             response_text=getattr(result, "response_text", None),
         )
 

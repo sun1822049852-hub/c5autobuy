@@ -117,6 +117,11 @@ class PurchaseExecutionGateway:
                 error=None,
                 create_order_latency_ms=create_order_latency_ms,
                 submit_order_latency_ms=submit_order_latency_ms,
+                status_code=payment_debug_details.get("status_code"),
+                request_method=payment_debug_details.get("request_method"),
+                request_path=payment_debug_details.get("request_path"),
+                request_body=payment_debug_details.get("request_body"),
+                response_text=payment_debug_details.get("response_text"),
             )
         return PurchaseExecutionResult.success(
             purchased_count=purchased_count,
@@ -153,12 +158,14 @@ class PurchaseExecutionGateway:
             return False, None, str(exc), {
                 "request_method": "POST",
                 "request_path": f"/{self.ORDER_API_PATH}",
+                "request_body": request_body,
             }
 
         if headers is None:
             return False, None, "构建请求头失败", {
                 "request_method": "POST",
                 "request_path": f"/{self.ORDER_API_PATH}",
+                "request_body": request_body,
             }
 
         session = await runtime_account.get_global_session()
@@ -169,16 +176,27 @@ class PurchaseExecutionGateway:
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=self.ORDER_TIMEOUT_SECONDS),
             ) as response:
-                return self.parse_order_response(await response.text(), status_code=response.status)
+                text = await response.text()
+                success, order_id, error, details = self.parse_order_response(text, status_code=response.status)
+                return success, order_id, error, self._merge_debug_details(
+                    details,
+                    request_method="POST",
+                    request_path=f"/{self.ORDER_API_PATH}",
+                    request_body=request_body,
+                    status_code=response.status,
+                    response_text=text,
+                )
         except asyncio.TimeoutError:
             return False, None, "订单创建请求超时", {
                 "request_method": "POST",
                 "request_path": f"/{self.ORDER_API_PATH}",
+                "request_body": request_body,
             }
         except Exception as exc:
             return False, None, f"订单创建请求失败: {exc}", {
                 "request_method": "POST",
                 "request_path": f"/{self.ORDER_API_PATH}",
+                "request_body": request_body,
             }
 
     async def process_payment(
@@ -207,12 +225,14 @@ class PurchaseExecutionGateway:
             return False, 0, str(exc), {
                 "request_method": "POST",
                 "request_path": f"/{self.PAY_API_PATH}",
+                "request_body": request_body,
             }
 
         if headers is None:
             return False, 0, "构建请求头失败", {
                 "request_method": "POST",
                 "request_path": f"/{self.PAY_API_PATH}",
+                "request_body": request_body,
             }
 
         session = await runtime_account.get_global_session()
@@ -223,16 +243,27 @@ class PurchaseExecutionGateway:
                 headers=headers,
                 timeout=aiohttp.ClientTimeout(total=self.PAY_TIMEOUT_SECONDS),
             ) as response:
-                return self.parse_payment_response(await response.text(), status_code=response.status)
+                text = await response.text()
+                success, success_count, error, details = self.parse_payment_response(text, status_code=response.status)
+                return success, success_count, error, self._merge_debug_details(
+                    details,
+                    request_method="POST",
+                    request_path=f"/{self.PAY_API_PATH}",
+                    request_body=request_body,
+                    status_code=response.status,
+                    response_text=text,
+                )
         except asyncio.TimeoutError:
             return False, 0, "请求超时", {
                 "request_method": "POST",
                 "request_path": f"/{self.PAY_API_PATH}",
+                "request_body": request_body,
             }
         except Exception as exc:
             return False, 0, f"请求失败: {exc}", {
                 "request_method": "POST",
                 "request_path": f"/{self.PAY_API_PATH}",
+                "request_body": request_body,
             }
 
     @staticmethod
@@ -428,6 +459,7 @@ class PurchaseExecutionGateway:
                 status_code=details.get("status_code"),
                 request_method=details.get("request_method"),
                 request_path=details.get("request_path"),
+                request_body=details.get("request_body"),
                 response_text=details.get("response_text"),
             )
         normalized_status = cls._classify_error_status(
@@ -445,6 +477,7 @@ class PurchaseExecutionGateway:
             status_code=details.get("status_code"),
             request_method=details.get("request_method"),
             request_path=details.get("request_path"),
+            request_body=details.get("request_body"),
             response_text=details.get("response_text"),
         )
 
@@ -471,7 +504,7 @@ class PurchaseExecutionGateway:
         response_text: object,
     ) -> str:
         if cls._is_item_unavailable_error(error=error, response_text=response_text):
-            return "item_unavailable"
+            return "payment_success_no_items"
         return str(status or "")
 
     @staticmethod
@@ -494,6 +527,27 @@ class PurchaseExecutionGateway:
     @staticmethod
     def _elapsed_ms(started_at: float) -> float:
         return round((time.perf_counter() - float(started_at)) * 1000, 3)
+
+    @staticmethod
+    def _merge_debug_details(
+        details: dict[str, object] | None,
+        *,
+        request_method: str,
+        request_path: str,
+        request_body: dict[str, object] | None = None,
+        status_code: int | None = None,
+        response_text: str | None = None,
+    ) -> dict[str, object]:
+        merged = dict(details or {})
+        merged.setdefault("request_method", request_method)
+        merged.setdefault("request_path", request_path)
+        if request_body is not None:
+            merged.setdefault("request_body", request_body)
+        if status_code is not None:
+            merged.setdefault("status_code", status_code)
+        if response_text is not None:
+            merged.setdefault("response_text", response_text)
+        return merged
 
 
 @lru_cache(maxsize=1)

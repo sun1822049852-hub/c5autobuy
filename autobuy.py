@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+"""历史参考文件。
+
+警告：
+- `autobuy.py` 已退役，仅保留旧实现供排障和迁移对照。
+- 当前真实运行代码位于 `app_backend/` 与 `app_desktop_web/`。
+- 新需求、缺陷修复、接口与 UI 行为修改，禁止继续落到本文件。
+"""
+
 import asyncio
 import aiohttp
 import json

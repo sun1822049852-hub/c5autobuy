@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from types import SimpleNamespace
 
@@ -901,59 +902,39 @@ async def test_mode_runner_keeps_recent_hit_and_error_events():
     assert snapshot["recent_events"][1]["query_item_name"] == "商品-1380979899390261111"
 
 
-async def test_mode_runner_limits_recent_events_to_twenty_entries():
+async def test_mode_runner_limits_recent_events_to_five_hundred_entries():
     from app_backend.infrastructure.query.runtime.mode_runner import ModeRunner
     from app_backend.infrastructure.query.runtime.runtime_events import QueryExecutionEvent
-
-    class FakeWorker:
-        def __init__(self, account: Account) -> None:
-            self.account = account
-            self._events = [
-                QueryExecutionEvent(
-                    timestamp=f"2026-03-16T10:00:{index:02d}",
-                    level="info",
-                    mode_type="new_api",
-                    account_id=self.account.account_id,
-                    query_item_id="1380979899390261111",
-                    query_item_name="商品-1380979899390261111",
-                    message=f"查询完成-{index}",
-                    match_count=1,
-                    latency_ms=10.0 + index,
-                    error=None,
-                )
-                for index in range(25)
-            ]
-
-        def snapshot(self) -> dict[str, object]:
-            return {
-                "account_id": self.account.account_id,
-                "active": True,
-                "eligible": True,
-                "disabled_reason": None,
-                "last_query_at": None,
-                "last_success_at": None,
-                "last_error": None,
-            }
-
-        async def run_once(self, query_item: QueryItem) -> QueryExecutionEvent:
-            return self._events.pop(0)
 
     runner = ModeRunner(
         build_mode("new_api"),
         [build_account("a1", api_key="api-1")],
         query_items=[build_item("1380979899390261111")],
-        worker_factory=lambda mode_type, account: FakeWorker(account),
+        worker_factory=lambda mode_type, account: None,
     )
 
-    runner.start()
-    for _ in range(25):
-        await runner.run_once()
+    for _ in range(525):
+        index = _
+        runner._record_event(
+            QueryExecutionEvent(
+                timestamp=f"2026-03-16T10:00:{index:03d}",
+                level="info",
+                mode_type="new_api",
+                account_id="a1",
+                query_item_id="1380979899390261111",
+                query_item_name="商品-1380979899390261111",
+                message=f"查询完成-{index}",
+                match_count=1,
+                latency_ms=10.0 + index,
+                error=None,
+            )
+        )
 
     snapshot = runner.snapshot()
 
-    assert len(snapshot["recent_events"]) == 20
-    assert snapshot["recent_events"][0]["message"] == "查询完成-24"
-    assert snapshot["recent_events"][-1]["message"] == "查询完成-5"
+    assert len(snapshot["recent_events"]) == 500
+    assert snapshot["recent_events"][0]["message"] == "查询完成-524"
+    assert snapshot["recent_events"][-1]["message"] == "查询完成-25"
 
 
 def test_mode_runner_apply_mode_setting_forwards_item_cooldown_strategy_to_scheduler():
@@ -1124,6 +1105,147 @@ async def test_mode_runner_forwards_not_login_event_to_event_sink():
             "status_code": None,
             "request_method": None,
             "request_path": None,
+            "request_body": None,
             "response_text": None,
             }
         ]
+
+
+async def test_mode_runner_forwards_hit_without_waiting_for_event_or_stats_side_effects():
+    import asyncio
+
+    from app_backend.infrastructure.query.runtime.mode_runner import ModeRunner
+    from app_backend.infrastructure.query.runtime.runtime_events import QueryExecutionEvent
+
+    hit_events: list[dict[str, object]] = []
+    event_sink_started = asyncio.Event()
+    event_sink_release = asyncio.Event()
+    stats_sink_started = asyncio.Event()
+    stats_sink_release = asyncio.Event()
+
+    class FakeWorker:
+        def __init__(self, account: object) -> None:
+            self.account = account
+
+        def snapshot(self) -> dict[str, object]:
+            return {
+                "account_id": self.account.account_id,
+                "active": True,
+                "eligible": True,
+                "disabled_reason": None,
+                "last_query_at": None,
+                "last_success_at": None,
+                "last_error": None,
+            }
+
+        async def run_once(self, query_item: QueryItem) -> QueryExecutionEvent:
+            return QueryExecutionEvent(
+                timestamp="2026-03-16T10:00:02",
+                level="info",
+                mode_type="new_api",
+                account_id=self.account.account_id,
+                account_display_name="查询账号",
+                query_item_id=query_item.query_item_id,
+                query_item_name="商品-1380979899390261111",
+                message="query completed",
+                match_count=1,
+                product_list=[{"productId": "p-1", "price": 88.0, "actRebateAmount": 0}],
+                total_price=88.0,
+                total_wear_sum=0.1234,
+                latency_ms=9.0,
+                error=None,
+            )
+
+    async def slow_event_sink(event: dict[str, object]) -> None:
+        event_sink_started.set()
+        await event_sink_release.wait()
+
+    async def slow_stats_sink(_event: object) -> None:
+        stats_sink_started.set()
+        await stats_sink_release.wait()
+
+    async def hit_sink(event: dict[str, object]) -> None:
+        hit_events.append(event)
+
+    runner = ModeRunner(
+        build_mode("new_api"),
+        [build_account("a1", api_key="api-1")],
+        query_items=[build_item("1380979899390261111")],
+        worker_factory=lambda mode_type, account: FakeWorker(account),
+        hit_sink=hit_sink,
+        event_sink=slow_event_sink,
+        stats_sink=slow_stats_sink,
+    )
+
+    runner.start()
+    task = asyncio.create_task(runner.run_once())
+
+    await asyncio.sleep(0.05)
+
+    assert len(hit_events) == 1
+    assert task.done() is True
+    assert event_sink_started.is_set() is True
+    assert stats_sink_started.is_set() is True
+
+    event_sink_release.set()
+    stats_sink_release.set()
+    await runner.cleanup()
+
+
+async def test_mode_runner_returns_without_waiting_for_slow_hit_sink():
+    from app_backend.infrastructure.query.runtime.mode_runner import ModeRunner
+    from app_backend.infrastructure.query.runtime.runtime_events import QueryExecutionEvent
+
+    hit_sink_started = asyncio.Event()
+    hit_sink_release = asyncio.Event()
+    hit_events: list[dict[str, object]] = []
+
+    class FakeWorker:
+        def __init__(self, account: Account) -> None:
+            self.account = account
+
+        def snapshot(self) -> dict[str, object]:
+            return {"account_id": self.account.account_id, "active": True}
+
+        async def run_once(self, query_item: QueryItem) -> QueryExecutionEvent:
+            return QueryExecutionEvent(
+                timestamp="2026-03-16T10:00:03",
+                level="info",
+                mode_type="new_api",
+                account_id=self.account.account_id,
+                account_display_name="查询账号",
+                query_item_id=query_item.query_item_id,
+                query_item_name="商品-1380979899390261111",
+                message="query completed",
+                match_count=1,
+                product_list=[{"productId": "p-1", "price": 88.0, "actRebateAmount": 0}],
+                total_price=88.0,
+                total_wear_sum=0.1234,
+                latency_ms=9.0,
+                error=None,
+            )
+
+    async def slow_hit_sink(event: dict[str, object]) -> None:
+        hit_events.append(event)
+        hit_sink_started.set()
+        await hit_sink_release.wait()
+
+    runner = ModeRunner(
+        build_mode("new_api"),
+        [build_account("a1", api_key="api-1")],
+        query_items=[build_item("1380979899390261111")],
+        worker_factory=lambda mode_type, account: FakeWorker(account),
+        hit_sink=slow_hit_sink,
+    )
+
+    runner.start()
+    task = asyncio.create_task(runner.run_once())
+
+    await asyncio.sleep(0.05)
+
+    assert len(hit_events) == 1
+    assert hit_sink_started.is_set() is True
+    assert task.done() is True
+
+    hit_sink_release.set()
+    await runner.cleanup()

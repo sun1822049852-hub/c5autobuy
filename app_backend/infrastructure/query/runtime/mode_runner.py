@@ -23,7 +23,7 @@ from .window_scheduler import WindowScheduler
 
 
 class ModeRunner:
-    _RECENT_EVENT_LIMIT = 20
+    _RECENT_EVENT_LIMIT = 500
 
     def __init__(
         self,
@@ -77,6 +77,7 @@ class ModeRunner:
         self._recent_events: list[dict[str, object]] = []
         self._worker_cooldown_until: dict[str, float | None] = {}
         self._item_query_counts: dict[str, int] = {}
+        self._background_tasks: set[asyncio.Task] = set()
 
     def start(self, *, preserve_allocation_state: bool = False) -> None:
         with self._state_lock:
@@ -91,6 +92,7 @@ class ModeRunner:
                 str(query_item.query_item_id): 0
                 for query_item in self._query_items
             }
+            self._background_tasks = set()
 
             if not preserve_allocation_state:
                 self._query_item_scheduler.reset()
@@ -196,6 +198,10 @@ class ModeRunner:
         )
 
     async def cleanup(self) -> None:
+        background_tasks = list(self._background_tasks)
+        self._background_tasks = set()
+        if background_tasks:
+            await asyncio.gather(*background_tasks, return_exceptions=True)
         for worker in self._workers:
             cleanup = getattr(worker, "cleanup", None)
             if callable(cleanup):
@@ -512,8 +518,6 @@ class ModeRunner:
         return await self._wait_for_stop(stop_event, delay)
 
     def _record_event(self, event: QueryExecutionEvent) -> None:
-        if not getattr(event, "error", None) and int(getattr(event, "match_count", 0)) <= 0:
-            return
         self._recent_events.insert(0, self._serialize_event(event))
         del self._recent_events[self._RECENT_EVENT_LIMIT :]
 
@@ -524,6 +528,17 @@ class ModeRunner:
         result = self._hit_sink(self._serialize_event(event))
         if inspect.isawaitable(result):
             await result
+
+    async def _await_forwarded_hit(self, result) -> None:
+        await result
+
+    def _dispatch_hit(self, event: QueryExecutionEvent) -> None:
+        if self._hit_sink is None or int(getattr(event, "match_count", 0)) <= 0:
+            return
+
+        result = self._hit_sink(self._serialize_event(event))
+        if inspect.isawaitable(result):
+            self._spawn_background_task(self._await_forwarded_hit(result))
 
     async def _forward_event(self, event: QueryExecutionEvent) -> None:
         if self._event_sink is None:
@@ -555,10 +570,32 @@ class ModeRunner:
         item_id = str(getattr(event, "query_item_id", "") or "")
         if item_id:
             self._item_query_counts[item_id] = self._item_query_counts.get(item_id, 0) + 1
-        self._record_event(event)
-        await self._forward_event(event)
-        await self._forward_stats(event)
-        await self._forward_hit(event)
+        if getattr(event, "error", None) or int(getattr(event, "match_count", 0)) > 0:
+            self._record_event(event)
+        if getattr(event, "error", None):
+            await self._forward_event(event)
+        else:
+            self._dispatch_hit(event)
+        if not getattr(event, "error", None):
+            self._spawn_background_task(self._forward_event(event))
+        self._spawn_background_task(self._forward_stats(event))
+
+    def _spawn_background_task(self, coroutine) -> None:
+        try:
+            task = asyncio.create_task(coroutine)
+        except RuntimeError:
+            return
+        self._background_tasks.add(task)
+        task.add_done_callback(self._finalize_background_task)
+
+    def _finalize_background_task(self, task: asyncio.Task) -> None:
+        self._background_tasks.discard(task)
+        if task.cancelled():
+            return
+        try:
+            task.exception()
+        except Exception:
+            return
 
     @staticmethod
     def _build_rule_fingerprint(event: QueryExecutionEvent) -> str:
@@ -714,6 +751,7 @@ class ModeRunner:
             "status_code": getattr(event, "status_code", None),
             "request_method": getattr(event, "request_method", None),
             "request_path": getattr(event, "request_path", None),
+            "request_body": getattr(event, "request_body", None),
             "response_text": getattr(event, "response_text", None),
         }
 

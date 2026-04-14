@@ -12,7 +12,7 @@ from .query_item_scheduler import QueryItemScheduler
 
 
 class QueryTaskRuntime:
-    _RECENT_EVENT_LIMIT = 20
+    _RECENT_EVENT_LIMIT = 500
 
     def __init__(
         self,

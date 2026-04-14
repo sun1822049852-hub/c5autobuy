@@ -33,6 +33,7 @@ class PurchaseExecutionResult:
     status_code: int | None = None
     request_method: str | None = None
     request_path: str | None = None
+    request_body: dict[str, Any] | None = None
     response_text: str | None = None
 
     @classmethod
@@ -46,6 +47,7 @@ class PurchaseExecutionResult:
         status_code: int | None = None,
         request_method: str | None = None,
         request_path: str | None = None,
+        request_body: dict[str, Any] | None = None,
         response_text: str | None = None,
     ) -> "PurchaseExecutionResult":
         return cls(
@@ -58,6 +60,7 @@ class PurchaseExecutionResult:
             status_code=status_code,
             request_method=request_method,
             request_path=request_path,
+            request_body=request_body,
             response_text=response_text,
         )
 
@@ -72,6 +75,7 @@ class PurchaseExecutionResult:
         status_code: int | None = None,
         request_method: str | None = None,
         request_path: str | None = None,
+        request_body: dict[str, Any] | None = None,
         response_text: str | None = None,
     ) -> "PurchaseExecutionResult":
         return cls(
@@ -84,6 +88,7 @@ class PurchaseExecutionResult:
             status_code=status_code,
             request_method=request_method,
             request_path=request_path,
+            request_body=request_body,
             response_text=response_text,
         )
 
@@ -122,4 +127,5 @@ class PurchaseWorkerOutcome:
     status_code: int | None = None
     request_method: str | None = None
     request_path: str | None = None
+    request_body: dict[str, Any] | None = None
     response_text: str | None = None

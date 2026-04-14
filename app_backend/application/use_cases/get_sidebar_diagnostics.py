@@ -13,8 +13,8 @@ def _now() -> str:
 class GetSidebarDiagnosticsUseCase:
     _QUERY_ACCOUNT_LIMIT = 8
     _PURCHASE_ACCOUNT_LIMIT = 8
-    _QUERY_EVENT_LIMIT = 20
-    _PURCHASE_EVENT_LIMIT = 20
+    _QUERY_EVENT_LIMIT = 500
+    _PURCHASE_EVENT_LIMIT = 500
     _LOGIN_TASK_LIMIT = 12
     _LOGIN_TASK_SCAN_LIMIT = 64
     _LOGIN_EVENT_LIMIT = 3
@@ -45,11 +45,7 @@ class GetSidebarDiagnosticsUseCase:
             "query_running": bool(query_snapshot.get("running")),
             "purchase_running": bool(purchase_snapshot.get("running")),
             "active_query_config_name": query_snapshot.get("config_name") or None,
-            "last_error": self._first_non_empty(
-                query_snapshot.get("last_error"),
-                purchase_snapshot.get("last_error"),
-                self._latest_login_error(login_snapshot),
-            ),
+            "last_error": self._first_auth_invalid_error(query_snapshot, purchase_snapshot),
             "updated_at": updated_at,
         }
         return {
@@ -163,6 +159,9 @@ class GetSidebarDiagnosticsUseCase:
                         "status_code": self._coerce_optional_int(raw_event.get("status_code")),
                         "request_method": self._coerce_optional_str(raw_event.get("request_method")),
                         "request_path": self._coerce_optional_str(raw_event.get("request_path")),
+                        "request_body": deepcopy(raw_event.get("request_body"))
+                        if isinstance(raw_event.get("request_body"), dict)
+                        else None,
                         "response_text": self._coerce_optional_str(raw_event.get("response_text")),
                     }
                 )
@@ -250,6 +249,9 @@ class GetSidebarDiagnosticsUseCase:
                         "status_code": self._coerce_optional_int(raw_event.get("status_code")),
                         "request_method": self._coerce_optional_str(raw_event.get("request_method")),
                         "request_path": self._coerce_optional_str(raw_event.get("request_path")),
+                        "request_body": deepcopy(raw_event.get("request_body"))
+                        if isinstance(raw_event.get("request_body"), dict)
+                        else None,
                         "response_text": self._coerce_optional_str(raw_event.get("response_text")),
                     }
                 )
@@ -390,7 +392,80 @@ class GetSidebarDiagnosticsUseCase:
             "queued",
             "duplicate_filtered",
             "item_unavailable",
+            "payment_success_no_items",
         }
+
+    @classmethod
+    def _first_auth_invalid_error(
+        cls,
+        query_snapshot: dict[str, object],
+        purchase_snapshot: dict[str, object],
+    ) -> str | None:
+        candidates = [
+            query_snapshot.get("last_error"),
+            *[
+                row.get("last_error")
+                for row in query_snapshot.get("mode_rows") or []
+                if isinstance(row, dict)
+            ],
+            *[
+                row.get("last_error")
+                for row in query_snapshot.get("account_rows") or []
+                if isinstance(row, dict)
+            ],
+            *[
+                row.get("disabled_reason")
+                for row in query_snapshot.get("account_rows") or []
+                if isinstance(row, dict)
+            ],
+            *[
+                event.get("error")
+                for event in query_snapshot.get("recent_events") or []
+                if isinstance(event, dict)
+            ],
+            purchase_snapshot.get("last_error"),
+            *[
+                row.get("last_error")
+                for row in purchase_snapshot.get("account_rows") or []
+                if isinstance(row, dict)
+            ],
+            *[
+                row.get("purchase_pool_state")
+                for row in purchase_snapshot.get("account_rows") or []
+                if isinstance(row, dict)
+            ],
+            *[
+                event.get("message")
+                for event in purchase_snapshot.get("recent_events") or []
+                if isinstance(event, dict)
+            ],
+        ]
+        for candidate in candidates:
+            normalized = cls._normalize_auth_invalid_error(candidate)
+            if normalized:
+                return normalized
+        return None
+
+    @staticmethod
+    def _normalize_auth_invalid_error(value: object) -> str | None:
+        text = GetSidebarDiagnosticsUseCase._coerce_optional_str(value)
+        if not text:
+            return None
+        normalized = text.lower()
+        markers = (
+            "not login",
+            "token invalid",
+            "auth_invalid",
+            "paused_auth_invalid",
+            "登录已失效",
+            "未登录",
+            "http 403",
+        )
+        if not any(marker in normalized or marker in text for marker in markers):
+            return None
+        if normalized in {"auth_invalid", "paused_auth_invalid"}:
+            return "登录已失效"
+        return text
 
     @staticmethod
     def _latest_timestamp(*values: object) -> str | None:

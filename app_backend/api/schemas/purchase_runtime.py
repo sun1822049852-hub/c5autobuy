@@ -29,6 +29,11 @@ class PurchaseRuntimeRecentEventResponse(BaseModel):
     total_price: float | None
     total_wear_sum: float | None
     source_mode_type: str
+    status_code: int | None = None
+    request_method: str | None = None
+    request_path: str | None = None
+    request_body: dict[str, object] | None = None
+    response_text: str | None = None
 
 
 class PurchaseRuntimeAccountResponse(BaseModel):

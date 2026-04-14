@@ -87,6 +87,7 @@ class AccountQueryWorker:
             status_code=result.status_code,
             request_method=result.request_method,
             request_path=result.request_path,
+            request_body=result.request_body,
             response_text=result.response_text,
         )
 

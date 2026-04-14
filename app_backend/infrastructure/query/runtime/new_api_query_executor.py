@@ -75,11 +75,13 @@ class NewApiQueryExecutor:
         except ValueError as exc:
             return self._build_failure_result(str(exc), started_at=started_at)
 
+        request_body = self.build_request_body(query_item)
+
         try:
             async with active_session.post(
                 url=self.build_request_url(),
                 params=self.build_request_params(runtime_account),
-                json=self.build_request_body(query_item),
+                json=request_body,
                 headers=self.build_request_headers(),
                 timeout=self._build_request_timeout(),
             ) as response:
@@ -91,6 +93,7 @@ class NewApiQueryExecutor:
                 started_at=started_at,
                 request_method="POST",
                 request_path="/merchant/market/v2/products/search",
+                request_body=request_body,
             )
         except Exception as exc:
             if aiohttp is not None and isinstance(exc, aiohttp.ClientError):
@@ -102,12 +105,14 @@ class NewApiQueryExecutor:
                     started_at=started_at,
                     request_method="POST",
                     request_path="/merchant/market/v2/products/search",
+                    request_body=request_body,
                 )
             return self._build_failure_result(
                 f"请求失败: {exc}",
                 started_at=started_at,
                 request_method="POST",
                 request_path="/merchant/market/v2/products/search",
+                request_body=request_body,
             )
 
         if status == 429:
@@ -117,6 +122,7 @@ class NewApiQueryExecutor:
                 status_code=status,
                 request_method="POST",
                 request_path="/merchant/market/v2/products/search",
+                request_body=request_body,
                 response_text=text,
             )
         if status != 200:
@@ -126,6 +132,7 @@ class NewApiQueryExecutor:
                 status_code=status,
                 request_method="POST",
                 request_path="/merchant/market/v2/products/search",
+                request_body=request_body,
                 response_text=text,
             )
 
@@ -141,6 +148,7 @@ class NewApiQueryExecutor:
             status_code=None if success else status,
             request_method="POST",
             request_path="/merchant/market/v2/products/search",
+            request_body=request_body,
             response_text=None if success else text,
         )
 
@@ -158,6 +166,7 @@ class NewApiQueryExecutor:
         status_code: int | None = None,
         request_method: str | None = None,
         request_path: str | None = None,
+        request_body: dict[str, object] | None = None,
         response_text: str | None = None,
     ) -> QueryExecutionResult:
         return QueryExecutionResult(
@@ -171,6 +180,7 @@ class NewApiQueryExecutor:
             status_code=status_code,
             request_method=request_method,
             request_path=request_path,
+            request_body=request_body,
             response_text=response_text,
         )
 

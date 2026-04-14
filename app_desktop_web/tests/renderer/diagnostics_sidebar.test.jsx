@@ -79,6 +79,7 @@ function buildDiagnosticsSnapshot() {
           status_code: 401,
           request_method: "GET",
           request_path: "/openapi/query",
+          request_body: { page: 1, pageSize: 50 },
           response_text: "not login",
         },
       ],
@@ -114,6 +115,7 @@ function buildDiagnosticsSnapshot() {
           status_code: 409,
           request_method: "POST",
           request_path: "/purchase/orders",
+          request_body: { bizOrderId: "order-1", productIds: ["p-1"] },
           response_text: "{\"error\":\"sold out\"}",
         },
       ],
@@ -443,5 +445,9 @@ describe("diagnostics page", () => {
     const dialog = await screen.findByRole("dialog", { name: "购买事件日志" });
     expect(within(dialog).getByText("购买事件-1")).toBeInTheDocument();
     expect(within(dialog).getByText("2026-03-25T20:00:02")).toBeInTheDocument();
+    expect(
+      within(dialog).getByText('请求体：{"bizOrderId":"order-1","productIds":["p-1"]}'),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText('原始返回：{"error":"sold out"}')).toBeInTheDocument();
   });
 });

@@ -16,6 +16,7 @@ class QueryExecutionResult:
     status_code: int | None = None
     request_method: str | None = None
     request_path: str | None = None
+    request_body: dict[str, Any] | None = None
     response_text: str | None = None
 
 
@@ -45,4 +46,5 @@ class QueryExecutionEvent:
     status_code: int | None = None
     request_method: str | None = None
     request_path: str | None = None
+    request_body: dict[str, Any] | None = None
     response_text: str | None = None

@@ -227,10 +227,10 @@ async def test_sidebar_diagnostics_returns_query_purchase_and_login_sections(cli
 
 async def test_sidebar_diagnostics_prioritizes_abnormal_rows_and_caps_recent_history(client, app):
     app.state.query_runtime_service = FakeQueryRuntimeService(
-        _build_query_status(recent_event_count=25, abnormal_row_count=10)
+        _build_query_status(recent_event_count=520, abnormal_row_count=10)
     )
     app.state.purchase_runtime_service = FakePurchaseRuntimeService(
-        _build_purchase_status(recent_event_count=24, abnormal_account_count=10)
+        _build_purchase_status(recent_event_count=520, abnormal_account_count=10)
     )
 
     for index in range(15):
@@ -246,8 +246,8 @@ async def test_sidebar_diagnostics_prioritizes_abnormal_rows_and_caps_recent_his
 
     assert response.status_code == 200
     payload = response.json()
-    assert len(payload["query"]["recent_events"]) == 20
-    assert len(payload["purchase"]["recent_events"]) == 20
+    assert len(payload["query"]["recent_events"]) == 500
+    assert len(payload["purchase"]["recent_events"]) == 500
     assert len(payload["query"]["account_rows"]) == 8
     assert len(payload["purchase"]["account_rows"]) == 8
     assert all(row["last_error"] or row["disabled_reason"] for row in payload["query"]["account_rows"])
@@ -262,12 +262,14 @@ async def test_sidebar_diagnostics_exposes_raw_debug_fields_for_query_purchase_a
     query_status["recent_events"][0]["status_code"] = 401
     query_status["recent_events"][0]["request_method"] = "GET"
     query_status["recent_events"][0]["request_path"] = "/openapi/query"
+    query_status["recent_events"][0]["request_body"] = {"page": 1, "pageSize": 50}
     query_status["recent_events"][0]["response_text"] = "not login"
 
     purchase_status = _build_purchase_status(recent_event_count=1, abnormal_account_count=1)
     purchase_status["recent_events"][0]["status_code"] = 409
     purchase_status["recent_events"][0]["request_method"] = "POST"
     purchase_status["recent_events"][0]["request_path"] = "/purchase/orders"
+    purchase_status["recent_events"][0]["request_body"] = {"bizOrderId": "order-1"}
     purchase_status["recent_events"][0]["response_text"] = "{\"error\":\"sold out\"}"
 
     app.state.query_runtime_service = FakeQueryRuntimeService(query_status)
@@ -293,13 +295,36 @@ async def test_sidebar_diagnostics_exposes_raw_debug_fields_for_query_purchase_a
     assert payload["query"]["recent_events"][0]["status_code"] == 401
     assert payload["query"]["recent_events"][0]["request_method"] == "GET"
     assert payload["query"]["recent_events"][0]["request_path"] == "/openapi/query"
+    assert payload["query"]["recent_events"][0]["request_body"] == {"page": 1, "pageSize": 50}
     assert payload["query"]["recent_events"][0]["response_text"] == "not login"
     assert payload["purchase"]["recent_events"][0]["status_code"] == 409
     assert payload["purchase"]["recent_events"][0]["request_method"] == "POST"
     assert payload["purchase"]["recent_events"][0]["request_path"] == "/purchase/orders"
+    assert payload["purchase"]["recent_events"][0]["request_body"] == {"bizOrderId": "order-1"}
     assert payload["purchase"]["recent_events"][0]["response_text"] == "{\"error\":\"sold out\"}"
     assert payload["login_tasks"]["recent_tasks"][0]["events"][-1]["payload"]["status_code"] == 500
     assert payload["login_tasks"]["recent_tasks"][0]["events"][-1]["payload"]["request_path"] == "/accounts/a-1/login"
+
+
+async def test_sidebar_diagnostics_summary_only_reports_auth_invalid_errors(client, app):
+    query_status = _build_query_status(recent_event_count=0, abnormal_row_count=0)
+    for raw_mode in query_status["modes"].values():
+        raw_mode["last_error"] = None
+    purchase_status = _build_purchase_status(recent_event_count=0, abnormal_account_count=1)
+    purchase_status["accounts"][0]["purchase_pool_state"] = "paused_no_inventory"
+    purchase_status["accounts"][0]["last_error"] = "库存刷新失败"
+
+    app.state.query_runtime_service = FakeQueryRuntimeService(query_status)
+    app.state.purchase_runtime_service = FakePurchaseRuntimeService(purchase_status)
+    task = app.state.task_manager.create_task(task_type="login", message="创建任务")
+    app.state.task_manager.set_state(task.task_id, "failed", message="浏览器关闭")
+
+    response = await client.get("/diagnostics/sidebar")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["purchase"]["last_error"] == "库存刷新失败"
+    assert payload["summary"]["last_error"] is None
 
 
 async def test_sidebar_diagnostics_ignores_duplicate_and_item_unavailable_purchase_events_as_last_error(client, app):
@@ -320,8 +345,8 @@ async def test_sidebar_diagnostics_ignores_duplicate_and_item_unavailable_purcha
         },
         {
             "occurred_at": "2026-03-25T10:01:01",
-            "status": "item_unavailable",
-            "message": "支付失败: 订单数据发生变化,请刷新页面重试",
+            "status": "payment_success_no_items",
+            "message": "购买了但是没有买到物品：订单数据发生变化,请刷新页面重试",
             "query_item_name": "AK-47 | Redline",
             "product_list": [],
             "total_price": 123.45,
@@ -339,6 +364,6 @@ async def test_sidebar_diagnostics_ignores_duplicate_and_item_unavailable_purcha
     assert response.status_code == 200
     payload = response.json()
     assert payload["purchase"]["recent_events"][0]["status"] == "duplicate_filtered"
-    assert payload["purchase"]["recent_events"][1]["status"] == "item_unavailable"
+    assert payload["purchase"]["recent_events"][1]["status"] == "payment_success_no_items"
     assert payload["purchase"]["last_error"] is None
     assert payload["summary"]["last_error"] is None

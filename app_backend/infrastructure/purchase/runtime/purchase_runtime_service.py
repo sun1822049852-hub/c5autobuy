@@ -41,6 +41,8 @@ RecoveryDelaySecondsProvider = Callable[[], float]
 _DISPATCH_STOP = object()
 _DISPATCH_SKIPPED = object()
 _REMOTE_REFRESH_UNSET = object()
+_POST_PROCESS_STOP = object()
+_HIT_INTAKE_STOP = object()
 
 
 @dataclass(slots=True)
@@ -48,6 +50,15 @@ class _DispatchJob:
     batch: object
     generation: int
     dispatch_key: tuple[int, int] | None = None
+
+
+@dataclass(slots=True)
+class _PostProcessOutcomeJob:
+    account_id: str
+    batch: object
+    outcome: PurchaseWorkerOutcome
+    generation: int
+    postprocess_epoch: int
 
 
 class _AccountDispatchRunner:
@@ -545,6 +556,22 @@ class PurchaseRuntimeService:
 
     def accept_query_hit(self, hit: dict[str, object]) -> dict[str, object]:
         return _run_coroutine_sync(self.accept_query_hit_async(hit))
+
+    def enqueue_query_hit(self, hit: dict[str, object]) -> dict[str, object]:
+        with self._runtime_lifecycle_lock:
+            if not self._has_running_runtime():
+                self._runtime = None
+                return {"accepted": False, "status": "ignored_not_running"}
+
+            runtime = self._runtime
+            enqueue_query_hit = getattr(runtime, "enqueue_query_hit", None)
+            if callable(enqueue_query_hit):
+                return dict(enqueue_query_hit(hit))
+
+            accept_query_hit = getattr(runtime, "accept_query_hit", None)
+            if not callable(accept_query_hit):
+                return {"accepted": False, "status": "ignored_not_supported"}
+            return dict(accept_query_hit(hit))
 
     async def accept_query_hit_async(self, hit: dict[str, object]) -> dict[str, object]:
         with self._runtime_lifecycle_lock:
@@ -1388,6 +1415,7 @@ class _RuntimeAccountState:
     inventory_refreshed_at: str | None = None
     recovery_due_at: datetime | None = None
     state_version: int = 0
+    postprocess_epoch: int = 0
 
     @property
     def account_id(self) -> str:
@@ -1430,7 +1458,7 @@ class _TrackedDispatchBatch:
 
 
 class _DefaultPurchaseRuntime:
-    _RECENT_EVENT_LIMIT = 20
+    _RECENT_EVENT_LIMIT = 500
 
     def __init__(
         self,
@@ -1484,6 +1512,12 @@ class _DefaultPurchaseRuntime:
         self._tracked_dispatch_batches: dict[tuple[int, int], _TrackedDispatchBatch] = {}
         self._stats_aggregator = PurchaseStatsAggregator()
         self._pending_purchase_settings: dict[str, int] | None = None
+        self._hit_intake_queue: Queue[object] = Queue()
+        self._hit_intake_stop_signal = threading.Event()
+        self._hit_intake_thread: threading.Thread | None = None
+        self._post_process_queue: Queue[object] = Queue()
+        self._post_process_stop_signal = threading.Event()
+        self._post_process_thread: threading.Thread | None = None
 
     def set_availability_callbacks(
         self,
@@ -1523,21 +1557,32 @@ class _DefaultPurchaseRuntime:
         self._active_account_count = self._scheduler.active_account_count()
         self._drain_stop_signal = threading.Event()
         self._drain_signal = threading.Event()
+        self._hit_intake_queue = Queue()
+        self._hit_intake_stop_signal = threading.Event()
+        self._post_process_queue = Queue()
+        self._post_process_stop_signal = threading.Event()
         self._start_drain_worker()
+        self._start_hit_intake_worker()
+        self._start_post_process_worker()
 
     def stop(self) -> None:
         with self._state_lock:
             self._dispatch_generation += 1
             for state in self._account_states.values():
                 state.state_version += 1
+                state.postprocess_epoch += 1
             self._running = False
             self._cancel_all_recovery_checks()
             self._drain_stop_signal.set()
             self._drain_signal.set()
+            self._hit_intake_stop_signal.set()
+            self._post_process_stop_signal.set()
         drain_thread = self._drain_thread
         if drain_thread is not None and drain_thread.is_alive():
             drain_thread.join(timeout=0.2)
         self._drain_thread = None
+        self._stop_hit_intake_worker()
+        self._stop_post_process_worker()
         for dispatch_runner in list(self._dispatch_runners.values()):
             dispatch_runner.stop(timeout=0.2)
         self._dispatch_runners = {}
@@ -1560,6 +1605,8 @@ class _DefaultPurchaseRuntime:
             ):
                 return
             self._dispatch_generation += 1
+            for state in self._account_states.values():
+                state.postprocess_epoch += 1
             for dispatch_runner in self._dispatch_runners.values():
                 dispatch_runner.cancel_current_task()
             self._hit_inbox = PurchaseHitInbox(now_provider=self._queue_now)
@@ -1572,7 +1619,24 @@ class _DefaultPurchaseRuntime:
                 query_config_name=query_config_name,
             )
 
+    def enqueue_query_hit(self, hit: dict[str, object]) -> dict[str, object]:
+        payload = self._clone_hit_payload(hit)
+        with self._state_lock:
+            if not self._running:
+                self._push_event(
+                    payload,
+                    status="ignored_not_running",
+                    message="购买运行时未启动，命中已忽略",
+                )
+                return {"accepted": False, "status": "ignored_not_running"}
+            self._hit_intake_queue.put(payload)
+        return {"accepted": True, "status": "queued"}
+
     async def accept_query_hit_async(self, hit: dict[str, object]) -> dict[str, object]:
+        payload = self._clone_hit_payload(hit)
+        return self._accept_query_hit_now(payload)
+
+    def _accept_query_hit_now(self, hit: dict[str, object]) -> dict[str, object]:
         with self._state_lock:
             if not self._running:
                 self._push_event(
@@ -1729,6 +1793,7 @@ class _DefaultPurchaseRuntime:
                     else PurchasePoolState.PAUSED_NO_INVENTORY
                 )
             elif refresh_result.status == "auth_invalid":
+                self._invalidate_post_process_locked(state)
                 state.capability_state = PurchaseCapabilityState.EXPIRED
                 state.pool_state = PurchasePoolState.PAUSED_AUTH_INVALID
                 state.last_error = refresh_result.error
@@ -1780,6 +1845,7 @@ class _DefaultPurchaseRuntime:
             state = self._account_states.get(account_id)
             if state is None:
                 return
+            self._invalidate_post_process_locked(state)
             state.capability_state = PurchaseCapabilityState.EXPIRED
             state.pool_state = PurchasePoolState.PAUSED_AUTH_INVALID
             state.last_error = normalized_error
@@ -2048,12 +2114,23 @@ class _DefaultPurchaseRuntime:
                 notify=False,
             )
         elif outcome.status == "auth_invalid":
+            self._invalidate_post_process_locked(state)
             effects.scheduler_effects = self._sync_scheduler_state(state)
             effects.snapshot_payload = self._build_inventory_snapshot_payload(state, last_error=outcome.error)
             self._push_event_from_batch(
                 batch,
                 status="auth_invalid",
                 message=outcome.error or "登录已失效",
+                debug_details=self._build_purchase_debug_details(outcome),
+                notify=False,
+            )
+        elif outcome.status == "payment_success_no_items":
+            effects.scheduler_effects = self._sync_scheduler_state(state)
+            effects.snapshot_payload = self._build_inventory_snapshot_payload(state, last_error=state.last_error)
+            self._push_event_from_batch(
+                batch,
+                status="payment_success_no_items",
+                message=self._build_payment_success_no_items_message(outcome.error),
                 debug_details=self._build_purchase_debug_details(outcome),
                 notify=False,
             )
@@ -2097,7 +2174,7 @@ class _DefaultPurchaseRuntime:
 
     @staticmethod
     def _should_clear_account_error_for_outcome(outcome) -> bool:
-        return str(getattr(outcome, "status", "") or "") in {"item_unavailable"}
+        return str(getattr(outcome, "status", "") or "") in {"item_unavailable", "payment_success_no_items"}
 
     def _forward_stats_events(self, *, account_id: str, account_display_name: str, batch, outcome) -> None:
         if self._stats_sink is None:
@@ -2203,6 +2280,7 @@ class _DefaultPurchaseRuntime:
             return self._success_event_for_state(state, purchased_count=purchased_count)
 
         if refresh_result.status == "auth_invalid":
+            self._invalidate_post_process_locked(state)
             state.capability_state = PurchaseCapabilityState.EXPIRED
             state.pool_state = PurchasePoolState.PAUSED_AUTH_INVALID
             state.last_error = refresh_result.error
@@ -2410,10 +2488,7 @@ class _DefaultPurchaseRuntime:
 
     def _finish_account_dispatch(self, *, account_id: str, batch, outcome, generation: int, dispatch_key=None) -> None:
         should_signal_drain = False
-        deferred_success_outcome: PurchaseWorkerOutcome | None = None
-        deferred_state_version: int | None = None
-        deferred_account = None
-        deferred_inventory_state = None
+        post_process_job: _PostProcessOutcomeJob | None = None
         completion_effects: _DispatchCompletionEffects | None = None
         should_restore_skipped_batch = False
         with self._state_lock:
@@ -2454,49 +2529,27 @@ class _DefaultPurchaseRuntime:
                 and isinstance(normalized_outcome, PurchaseWorkerOutcome)
                 and int(generation) == self._dispatch_generation
             ):
-                if (
-                    normalized_outcome.status == "success"
-                    and self._success_requires_remote_reconcile(state, normalized_outcome)
-                ):
-                    deferred_success_outcome = normalized_outcome
-                    deferred_state_version = state.state_version
-                    deferred_account = state.account
-                    deferred_inventory_state = state.inventory_state
-                else:
+                if normalized_outcome.status == "auth_invalid":
                     completion_effects = self._apply_worker_outcome(state, batch, normalized_outcome)
+                else:
+                    post_process_job = _PostProcessOutcomeJob(
+                        account_id=account_id,
+                        batch=batch,
+                        outcome=normalized_outcome,
+                        generation=int(generation),
+                        postprocess_epoch=state.postprocess_epoch,
+                    )
 
-            if deferred_success_outcome is None:
-                self._scheduler.release_account(account_id)
-                if self._apply_pending_purchase_settings_if_idle_locked():
-                    should_signal_drain = True
-                should_signal_drain = self._scheduler.queue_size() > 0
+            self._scheduler.release_account(account_id)
+            if self._apply_pending_purchase_settings_if_idle_locked():
+                should_signal_drain = True
+            should_signal_drain = should_signal_drain or self._scheduler.queue_size() > 0
 
         if completion_effects is not None:
             self._run_dispatch_completion_effects(completion_effects)
 
-        if deferred_success_outcome is not None:
-            refresh_result = self._refresh_inventory_from_remote(deferred_account, deferred_inventory_state)
-            with self._state_lock:
-                state = self._account_states.get(account_id)
-                if (
-                    state is not None
-                    and int(generation) == self._dispatch_generation
-                    and deferred_state_version is not None
-                    and state.state_version == deferred_state_version
-                    and state.capability_state == PurchaseCapabilityState.BOUND
-                ):
-                    completion_effects = self._apply_worker_outcome(
-                        state,
-                        batch,
-                        deferred_success_outcome,
-                        reconcile_refresh_result=refresh_result,
-                    )
-                self._scheduler.release_account(account_id)
-                if self._apply_pending_purchase_settings_if_idle_locked():
-                    should_signal_drain = True
-                should_signal_drain = self._scheduler.queue_size() > 0
-            if completion_effects is not None:
-                self._run_dispatch_completion_effects(completion_effects)
+        if post_process_job is not None:
+            self._enqueue_post_process_job(post_process_job)
 
         if should_restore_skipped_batch:
             restore_result = self._restore_or_drop_undispatched_batch(batch, generation=int(generation))
@@ -2513,6 +2566,7 @@ class _DefaultPurchaseRuntime:
     ) -> _DispatchCompletionEffects:
         effects = _DispatchCompletionEffects()
         effects.account_id = state.account_id
+        self._invalidate_post_process_locked(state)
         state.capability_state = PurchaseCapabilityState.EXPIRED
         state.pool_state = PurchasePoolState.PAUSED_AUTH_INVALID
         state.last_error = outcome.error or state.last_error or "Not login"
@@ -2755,6 +2809,7 @@ class _DefaultPurchaseRuntime:
                         notify=False,
                     )
             elif refresh_result.status == "auth_invalid":
+                self._invalidate_post_process_locked(state)
                 state.capability_state = PurchaseCapabilityState.EXPIRED
                 state.pool_state = PurchasePoolState.PAUSED_AUTH_INVALID
                 state.last_error = refresh_result.error
@@ -2949,6 +3004,7 @@ class _DefaultPurchaseRuntime:
             "status_code": getattr(outcome, "status_code", None),
             "request_method": getattr(outcome, "request_method", None),
             "request_path": getattr(outcome, "request_path", None),
+            "request_body": getattr(outcome, "request_body", None),
             "response_text": getattr(outcome, "response_text", None),
         }
 
@@ -2981,6 +3037,7 @@ class _DefaultPurchaseRuntime:
                 "status_code": details.get("status_code"),
                 "request_method": details.get("request_method"),
                 "request_path": details.get("request_path"),
+                "request_body": details.get("request_body"),
                 "response_text": details.get("response_text"),
             },
         )
@@ -3023,6 +3080,75 @@ class _DefaultPurchaseRuntime:
         except Exception:
             return
 
+    @staticmethod
+    def _invalidate_post_process_locked(state: _RuntimeAccountState) -> None:
+        state.postprocess_epoch += 1
+
+    def _enqueue_post_process_job(self, job: _PostProcessOutcomeJob) -> None:
+        self._post_process_queue.put(job)
+
+    def _post_process_job_is_current_locked(
+        self,
+        job: _PostProcessOutcomeJob,
+        *,
+        state: _RuntimeAccountState | None = None,
+    ) -> bool:
+        if not self._running or int(job.generation) != self._dispatch_generation:
+            return False
+        current_state = state if state is not None else self._account_states.get(job.account_id)
+        if current_state is None:
+            return False
+        return int(job.postprocess_epoch) == current_state.postprocess_epoch
+
+    def _process_post_process_job(self, job: _PostProcessOutcomeJob) -> None:
+        completion_effects: _DispatchCompletionEffects | None = None
+        refresh_account = None
+        refresh_inventory_state = None
+
+        with self._state_lock:
+            state = self._account_states.get(job.account_id)
+            if not self._post_process_job_is_current_locked(job, state=state):
+                return
+            if state is None:
+                return
+            if job.outcome.status == "success" and self._success_requires_remote_reconcile(state, job.outcome):
+                refresh_account = state.account
+                refresh_inventory_state = state.inventory_state
+            else:
+                completion_effects = self._apply_worker_outcome(state, job.batch, job.outcome)
+
+        if refresh_account is not None:
+            refresh_result = self._refresh_inventory_from_remote(refresh_account, refresh_inventory_state)
+            with self._state_lock:
+                state = self._account_states.get(job.account_id)
+                if not self._post_process_job_is_current_locked(job, state=state):
+                    completion_effects = None
+                elif state is not None:
+                    completion_effects = self._apply_worker_outcome(
+                        state,
+                        job.batch,
+                        job.outcome,
+                        reconcile_refresh_result=refresh_result,
+                    )
+
+        if completion_effects is not None:
+            self._run_dispatch_completion_effects(completion_effects)
+
+    @staticmethod
+    def _clone_hit_payload(hit: dict[str, object]) -> dict[str, object]:
+        payload = dict(hit)
+        payload["product_list"] = list(hit.get("product_list") or [])
+        return payload
+
+    @staticmethod
+    def _build_payment_success_no_items_message(error: str | None) -> str:
+        text = str(error or "").strip()
+        if text.startswith("支付失败:"):
+            text = text.split(":", 1)[1].strip()
+        elif text.startswith("支付失败："):
+            text = text.split("：", 1)[1].strip()
+        return f"购买了但是没有买到物品：{text}" if text else "购买了但是没有买到物品"
+
     def _start_drain_worker(self) -> None:
         if self._drain_thread is not None and self._drain_thread.is_alive():
             return
@@ -3036,6 +3162,54 @@ class _DefaultPurchaseRuntime:
             daemon=True,
         )
         self._drain_thread.start()
+
+    def _start_hit_intake_worker(self) -> None:
+        if self._hit_intake_thread is not None and self._hit_intake_thread.is_alive():
+            return
+        queue = self._hit_intake_queue
+        stop_signal = self._hit_intake_stop_signal
+
+        def runner() -> None:
+            self._hit_intake_worker_loop(queue, stop_signal)
+
+        self._hit_intake_thread = threading.Thread(
+            target=runner,
+            name="purchase-runtime-hit-intake",
+            daemon=True,
+        )
+        self._hit_intake_thread.start()
+
+    def _stop_hit_intake_worker(self) -> None:
+        self._hit_intake_stop_signal.set()
+        self._hit_intake_queue.put(_HIT_INTAKE_STOP)
+        thread = self._hit_intake_thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=0.2)
+        self._hit_intake_thread = None
+
+    def _start_post_process_worker(self) -> None:
+        if self._post_process_thread is not None and self._post_process_thread.is_alive():
+            return
+        queue = self._post_process_queue
+        stop_signal = self._post_process_stop_signal
+
+        def runner() -> None:
+            self._post_process_worker_loop(queue, stop_signal)
+
+        self._post_process_thread = threading.Thread(
+            target=runner,
+            name="purchase-runtime-post-process",
+            daemon=True,
+        )
+        self._post_process_thread.start()
+
+    def _stop_post_process_worker(self) -> None:
+        self._post_process_stop_signal.set()
+        self._post_process_queue.put(_POST_PROCESS_STOP)
+        thread = self._post_process_thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=0.2)
+        self._post_process_thread = None
 
     def _signal_drain_worker(self) -> None:
         if not self._running or self._scheduler.active_account_count() <= 0:
@@ -3077,6 +3251,42 @@ class _DefaultPurchaseRuntime:
                         message=f"后台购买线程异常: {exc}",
                     )
                     break
+
+    def _hit_intake_worker_loop(self, queue: Queue[object], stop_signal: threading.Event) -> None:
+        while not stop_signal.is_set():
+            try:
+                queued_item = queue.get(timeout=0.1)
+            except Empty:
+                continue
+            if queued_item is _HIT_INTAKE_STOP:
+                return
+            if not isinstance(queued_item, dict):
+                continue
+            try:
+                self._accept_query_hit_now(queued_item)
+            except Exception as exc:  # pragma: no cover - defensive background worker guard
+                self._push_scheduler_event(
+                    status="hit_intake_worker_error",
+                    message=f"后台命中投递线程异常: {exc}",
+                )
+
+    def _post_process_worker_loop(self, queue: Queue[object], stop_signal: threading.Event) -> None:
+        while not stop_signal.is_set():
+            try:
+                queued_item = queue.get(timeout=0.1)
+            except Empty:
+                continue
+            if queued_item is _POST_PROCESS_STOP:
+                return
+            if not isinstance(queued_item, _PostProcessOutcomeJob):
+                continue
+            try:
+                self._process_post_process_job(queued_item)
+            except Exception as exc:  # pragma: no cover - defensive background worker guard
+                self._push_scheduler_event(
+                    status="post_process_worker_error",
+                    message=f"后台购买后处理线程异常: {exc}",
+                )
 
     async def _drain_scheduler(self) -> str:
         self._drop_expired_backlog()

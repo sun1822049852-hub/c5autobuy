@@ -55,6 +55,7 @@ export function getEventDetailLines(event = {}) {
   const path = event.request_path ?? event.path ?? event.url_path;
   const rawStatus = event.raw_status ?? event.rawState;
   const error = event.error ?? event.error_message;
+  const requestBody = event.request_body;
   const responseText = event.response_text ?? event.raw_response ?? event.response_body;
 
   if (httpStatus) {
@@ -71,6 +72,10 @@ export function getEventDetailLines(event = {}) {
 
   if (error) {
     lines.push(`错误：${stringifyDetailValue(error)}`);
+  }
+
+  if (requestBody) {
+    lines.push(`请求体：${stringifyDetailValue(requestBody)}`);
   }
 
   if (responseText) {

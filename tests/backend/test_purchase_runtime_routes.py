@@ -299,7 +299,23 @@ async def test_purchase_runtime_status_includes_stats_and_keeps_accounts_shape(c
                 "matched_product_count": 3,
                 "purchase_success_count": 1,
                 "purchase_failed_count": 2,
-                "recent_events": [],
+                "recent_events": [
+                    {
+                        "occurred_at": "2026-03-19T13:00:02",
+                        "status": "payment_success_no_items",
+                        "message": "购买了但是没有买到物品：订单数据发生变化,请刷新页面重试",
+                        "query_item_name": "AK-47 | Redline",
+                        "product_list": [{"productId": "p-1", "price": 88.0, "actRebateAmount": 0.0}],
+                        "total_price": 88.0,
+                        "total_wear_sum": 0.12,
+                        "source_mode_type": "new_api",
+                        "status_code": 409,
+                        "request_method": "POST",
+                        "request_path": "/pay/order/v1/pay",
+                        "request_body": {"bizOrderId": "order-1", "receiveSteamId": "steam-1"},
+                        "response_text": "{\"errorMsg\":\"订单数据发生变化,请刷新页面重试\"}",
+                    }
+                ],
                 "accounts": [
                     {
                         "account_id": "a1",
@@ -415,6 +431,11 @@ async def test_purchase_runtime_status_includes_stats_and_keeps_accounts_shape(c
     assert response.json()["matched_product_count"] == 3
     assert response.json()["purchase_success_count"] == 1
     assert response.json()["purchase_failed_count"] == 2
+    assert response.json()["recent_events"][0]["request_body"] == {
+        "bizOrderId": "order-1",
+        "receiveSteamId": "steam-1",
+    }
+    assert response.json()["recent_events"][0]["response_text"] == "{\"errorMsg\":\"订单数据发生变化,请刷新页面重试\"}"
     assert response.json()["accounts"][0]["submitted_product_count"] == 3
     assert response.json()["accounts"][0]["purchase_success_count"] == 1
     assert response.json()["accounts"][0]["purchase_failed_count"] == 2

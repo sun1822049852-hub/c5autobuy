@@ -335,7 +335,7 @@ async def test_purchase_execution_gateway_returns_payment_failed_for_regular_pay
 
 
 @pytest.mark.asyncio
-async def test_purchase_execution_gateway_classifies_order_changed_payment_as_item_unavailable(monkeypatch):
+async def test_purchase_execution_gateway_classifies_order_changed_payment_as_payment_success_no_items(monkeypatch):
     session = FakeSession(
         responses=[
             (200, json.dumps({"success": True, "data": "order-1"})),
@@ -350,9 +350,18 @@ async def test_purchase_execution_gateway_classifies_order_changed_payment_as_it
         selected_steam_id="steam-1",
     )
 
-    assert result.status == "item_unavailable"
+    assert result.status == "payment_success_no_items"
     assert result.status_code == 409
     assert result.error == "支付失败: 订单数据发生变化,请刷新页面重试"
+    assert result.request_method == "POST"
+    assert result.request_path == "/pay/order/v1/pay"
+    assert result.request_body == {
+        "bizOrderId": "order-1",
+        "orderType": 4,
+        "payAmount": "88.00",
+        "receiveSteamId": "steam-1",
+    }
+    assert result.response_text == json.dumps({"success": False, "errorMsg": "订单数据发生变化,请刷新页面重试"})
 
 
 @pytest.mark.asyncio
@@ -372,6 +381,15 @@ async def test_purchase_execution_gateway_returns_payment_success_no_items_when_
     )
 
     assert result.status == "payment_success_no_items"
+    assert result.request_method == "POST"
+    assert result.request_path == "/pay/order/v1/pay"
+    assert result.request_body == {
+        "bizOrderId": "order-1",
+        "orderType": 4,
+        "payAmount": "88.00",
+        "receiveSteamId": "steam-1",
+    }
+    assert result.response_text == json.dumps({"success": True, "data": {"successCount": 0}})
 
 
 @pytest.mark.asyncio

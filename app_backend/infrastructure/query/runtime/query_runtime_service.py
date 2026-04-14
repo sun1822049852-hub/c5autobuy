@@ -50,6 +50,9 @@ class QueryRuntimeService:
         self._pending_resume_runtime_session_id: str | None = None
         self._paused_at: str | None = None
         self._auto_stop_requested = False
+        self._runtime_update_thread_lock = threading.RLock()
+        self._runtime_update_pending = False
+        self._runtime_update_thread: threading.Thread | None = None
         self._register_purchase_runtime_callbacks()
 
     def start(self, *, config_id: str, resume: bool = False) -> tuple[bool, str]:
@@ -669,6 +672,7 @@ class QueryRuntimeService:
                     ),
                     "request_method": raw_event.get("request_method"),
                     "request_path": raw_event.get("request_path"),
+                    "request_body": raw_event.get("request_body"),
                     "response_text": raw_event.get("response_text"),
                 }
             )
@@ -834,6 +838,9 @@ class QueryRuntimeService:
     def _resolve_hit_sink(self):
         if self._purchase_runtime_service is None:
             return None
+        enqueue_hit_sink = getattr(self._purchase_runtime_service, "enqueue_query_hit", None)
+        if callable(enqueue_hit_sink):
+            return enqueue_hit_sink
         async_hit_sink = getattr(self._purchase_runtime_service, "accept_query_hit_async", None)
         if callable(async_hit_sink):
             return async_hit_sink
@@ -946,6 +953,36 @@ class QueryRuntimeService:
             payload=self.get_status(),
         )
 
+    def _schedule_runtime_update_publish(self) -> None:
+        if self._runtime_update_hub is None:
+            return
+        worker_to_start: threading.Thread | None = None
+        with self._runtime_update_thread_lock:
+            self._runtime_update_pending = True
+            worker = self._runtime_update_thread
+            if worker is None or not worker.is_alive():
+                worker = threading.Thread(
+                    target=self._drain_runtime_update_publishes,
+                    name="query-runtime-update-publisher",
+                    daemon=True,
+                )
+                self._runtime_update_thread = worker
+                worker_to_start = worker
+        if worker_to_start is not None:
+            worker_to_start.start()
+
+    def _drain_runtime_update_publishes(self) -> None:
+        while True:
+            with self._runtime_update_thread_lock:
+                if not self._runtime_update_pending:
+                    self._runtime_update_thread = None
+                    return
+                self._runtime_update_pending = False
+            try:
+                self._publish_runtime_update()
+            except Exception:
+                continue
+
     def _handle_runtime_event(self, event: dict[str, object]) -> None:
         if not isinstance(event, dict):
             return
@@ -961,7 +998,7 @@ class QueryRuntimeService:
             status_code=event.get("status_code"),
         ):
             self._mark_account_api_key_ip_invalid(account_id=account_id, error=error)
-        self._publish_runtime_update()
+        self._schedule_runtime_update_publish()
 
     def _mark_waiting_for_purchase_recovery(
         self,

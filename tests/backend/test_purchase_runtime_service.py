@@ -3836,6 +3836,178 @@ def test_purchase_runtime_service_success_reconcile_does_not_hang_stop_or_commit
             service.stop()
 
 
+def test_purchase_runtime_service_releases_account_before_success_post_process_finishes():
+    from app_backend.infrastructure.purchase.runtime.purchase_runtime_service import PurchaseRuntimeService
+    from app_backend.infrastructure.purchase.runtime.runtime_events import InventoryRefreshResult
+
+    class BlockingInventoryRefreshGateway:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+            self.refresh_started = threading.Event()
+            self.release_refresh = threading.Event()
+            self._call_index = 0
+
+        async def refresh(self, *, account):
+            self.calls.append({"account_id": account.account_id})
+            self._call_index += 1
+            if self._call_index == 1:
+                return InventoryRefreshResult.success(
+                    inventories=[
+                        {"steamId": "steam-1", "nickname": "主仓", "inventory_num": 945, "inventory_max": 1000},
+                    ]
+                )
+            self.refresh_started.set()
+            await asyncio.to_thread(self.release_refresh.wait, 1.0)
+            return InventoryRefreshResult.success(
+                inventories=[
+                    {"steamId": "steam-remote-1", "nickname": "刷新仓", "inventory_num": 920, "inventory_max": 1000},
+                ]
+            )
+
+    snapshot_repository = FakeInventorySnapshotRepository(
+        {
+            "a1": type(
+                "Snapshot",
+                (),
+                {
+                    "account_id": "a1",
+                    "selected_steam_id": "steam-1",
+                    "inventories": [
+                        {"steamId": "steam-1", "nickname": "主仓", "inventory_num": 945, "inventory_max": 1000},
+                    ],
+                    "refreshed_at": "2026-03-16T20:00:00",
+                    "last_error": None,
+                },
+            )()
+        }
+    )
+    purchase_gateway = StubExecutionGateway(PurchaseExecutionResult.success(purchased_count=10))
+    refresh_gateway = BlockingInventoryRefreshGateway()
+    service = PurchaseRuntimeService(
+        account_repository=FakeAccountRepository([build_account("a1")]),
+        settings_repository=FakeSettingsRepository(),
+        inventory_snapshot_repository=snapshot_repository,
+        inventory_refresh_gateway_factory=lambda: refresh_gateway,
+        execution_gateway_factory=lambda: purchase_gateway,
+        max_inflight_per_account=1,
+    )
+    service.start()
+    refresh_gateway.calls.clear()
+
+    try:
+        first = service.accept_query_hit(
+            {
+                "external_item_id": "1380979899390261111",
+                "query_item_name": "AK-ASYNC-1",
+                "product_url": "https://www.c5game.com/csgo/730/asset/1380979899390261111",
+                "product_list": [{"productId": "p-1", "price": 88.0, "actRebateAmount": 0}],
+                "total_price": 88.0,
+                "total_wear_sum": 0.1234,
+                "mode_type": "new_api",
+            }
+        )
+
+        assert first == {"accepted": True, "status": "queued"}
+        assert wait_until(refresh_gateway.refresh_started.is_set, timeout=1.0)
+
+        second = service.accept_query_hit(
+            {
+                "external_item_id": "1380979899390261112",
+                "query_item_name": "AK-ASYNC-2",
+                "product_url": "https://www.c5game.com/csgo/730/asset/1380979899390261112",
+                "product_list": [{"productId": "p-2", "price": 89.0, "actRebateAmount": 0}],
+                "total_price": 89.0,
+                "total_wear_sum": 0.2234,
+                "mode_type": "new_api",
+            }
+        )
+
+        assert second == {"accepted": True, "status": "queued"}
+        assert wait_until(lambda: len(purchase_gateway.calls) == 2, timeout=0.3)
+    finally:
+        refresh_gateway.release_refresh.set()
+        service.stop()
+
+
+def test_purchase_runtime_service_auth_invalid_drops_queued_success_post_process(monkeypatch):
+    from app_backend.infrastructure.purchase.runtime.purchase_runtime_service import PurchaseRuntimeService
+    from app_backend.infrastructure.purchase.runtime.runtime_events import PurchaseHitBatch, PurchaseWorkerOutcome
+
+    snapshot_repository = FakeInventorySnapshotRepository(
+        {
+            "a1": type(
+                "Snapshot",
+                (),
+                {
+                    "account_id": "a1",
+                    "selected_steam_id": "steam-1",
+                    "inventories": [
+                        {"steamId": "steam-1", "nickname": "主仓", "inventory_num": 910, "inventory_max": 1000},
+                    ],
+                    "refreshed_at": "2026-03-16T20:00:00",
+                    "last_error": None,
+                },
+            )()
+        }
+    )
+    service = PurchaseRuntimeService(
+        account_repository=FakeAccountRepository([build_account("a1")]),
+        settings_repository=FakeSettingsRepository(),
+        inventory_snapshot_repository=snapshot_repository,
+        execution_gateway_factory=lambda: RecordingAccountGateway(PurchaseExecutionResult.success(purchased_count=1)),
+        max_inflight_per_account=1,
+    )
+    service.start()
+    runtime = service._runtime
+    started = threading.Event()
+    release = threading.Event()
+    original_process = getattr(runtime, "_process_post_process_job")
+
+    def blocking_process(job):
+        started.set()
+        release.wait(1.0)
+        return original_process(job)
+
+    monkeypatch.setattr(runtime, "_process_post_process_job", blocking_process)
+
+    try:
+        runtime._finish_account_dispatch(
+            account_id="a1",
+            batch=PurchaseHitBatch(
+                query_item_name="AK-ASYNC-STALE",
+                product_list=[{"productId": "p-1", "price": 88.0, "actRebateAmount": 0}],
+                total_price=88.0,
+                total_wear_sum=0.1234,
+            ),
+            outcome=PurchaseWorkerOutcome(
+                status="success",
+                purchased_count=1,
+                submitted_count=1,
+                selected_steam_id="steam-1",
+                pool_state="active",
+                capability_state="bound",
+                requires_remote_refresh=False,
+                error=None,
+            ),
+            generation=runtime._dispatch_generation,
+        )
+
+        assert wait_until(started.is_set, timeout=1.0)
+        runtime.mark_account_auth_invalid(account_id="a1", error="Not login")
+        release.set()
+
+        assert wait_until(lambda: service.get_status()["accounts"][0]["purchase_pool_state"] == "paused_auth_invalid")
+        snapshot = service.get_status()
+        assert snapshot["accounts"][0]["purchase_capability_state"] == "expired"
+        assert snapshot["accounts"][0]["purchase_pool_state"] == "paused_auth_invalid"
+        assert snapshot["accounts"][0]["selected_inventory_remaining_capacity"] == 90
+        assert snapshot["accounts"][0]["last_error"] == "Not login"
+        assert snapshot["accounts"][0]["total_purchased_count"] == 0
+    finally:
+        release.set()
+        service.stop()
+
+
 def test_purchase_runtime_service_emits_purchase_stats_events():
     from app_backend.infrastructure.purchase.runtime.purchase_runtime_service import PurchaseRuntimeService
     from app_backend.infrastructure.purchase.runtime.runtime_events import PurchaseExecutionResult
@@ -4042,7 +4214,7 @@ def test_purchase_runtime_service_marks_account_auth_invalid_without_dropping_ca
     assert snapshot["recent_events"][0]["status"] == "auth_invalid"
 
 
-def test_purchase_runtime_service_treats_item_unavailable_as_product_contention_not_account_error():
+def test_purchase_runtime_service_treats_payment_success_no_items_as_product_contention_not_account_error():
     from app_backend.infrastructure.purchase.runtime.purchase_runtime_service import PurchaseRuntimeService
 
     account_repository = FakeAccountRepository([build_account("a1")])
@@ -4065,13 +4237,19 @@ def test_purchase_runtime_service_treats_item_unavailable_as_product_contention_
     )
     gateway = StubExecutionGateway(
         PurchaseExecutionResult(
-            status="item_unavailable",
+            status="payment_success_no_items",
             purchased_count=0,
             submitted_count=1,
             error="支付失败: 订单数据发生变化,请刷新页面重试",
             status_code=409,
             request_method="POST",
             request_path="/pay/order/v1/pay",
+            request_body={
+                "bizOrderId": "order-1",
+                "orderType": 4,
+                "payAmount": "88.00",
+                "receiveSteamId": "steam-1",
+            },
             response_text='{"errorMsg":"订单数据发生变化,请刷新页面重试"}',
         )
     )
@@ -4102,8 +4280,15 @@ def test_purchase_runtime_service_treats_item_unavailable_as_product_contention_
     persisted = account_repository.get_account("a1")
     assert snapshot["accounts"][0]["purchase_pool_state"] == "active"
     assert snapshot["accounts"][0]["last_error"] is None
-    assert snapshot["recent_events"][0]["status"] == "item_unavailable"
-    assert snapshot["recent_events"][0]["message"] == "支付失败: 订单数据发生变化,请刷新页面重试"
+    assert snapshot["recent_events"][0]["status"] == "payment_success_no_items"
+    assert snapshot["recent_events"][0]["message"] == "购买了但是没有买到物品：订单数据发生变化,请刷新页面重试"
+    assert snapshot["recent_events"][0]["request_body"] == {
+        "bizOrderId": "order-1",
+        "orderType": 4,
+        "payAmount": "88.00",
+        "receiveSteamId": "steam-1",
+    }
+    assert snapshot["recent_events"][0]["response_text"] == '{"errorMsg":"订单数据发生变化,请刷新页面重试"}'
     assert persisted.last_error is None
     assert persisted.purchase_pool_state == "active"
 

@@ -36,6 +36,11 @@ class QueryRuntimeRecentEventResponse(BaseModel):
     total_wear_sum: float | None
     latency_ms: float | None
     error: str | None
+    status_code: int | None = None
+    request_method: str | None = None
+    request_path: str | None = None
+    request_body: dict[str, object] | None = None
+    response_text: str | None = None
 
 
 class QueryRuntimeGroupRowResponse(BaseModel):

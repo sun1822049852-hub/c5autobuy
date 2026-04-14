@@ -93,6 +93,7 @@ def set_mode_target(query_item: QueryItem, mode_type: str, target: int) -> None:
 class StubPurchaseRuntimeService:
     def __init__(self) -> None:
         self.accepted_hits: list[dict[str, object]] = []
+        self.enqueued_hits: list[dict[str, object]] = []
         self.running = False
         self.start_calls = 0
         self.stop_calls = 0
@@ -113,6 +114,12 @@ class StubPurchaseRuntimeService:
 
     def accept_query_hit(self, hit: dict[str, object]) -> dict[str, object]:
         payload = dict(hit)
+        self.accepted_hits.append(payload)
+        return {"accepted": True, "status": "queued"}
+
+    def enqueue_query_hit(self, hit: dict[str, object]) -> dict[str, object]:
+        payload = dict(hit)
+        self.enqueued_hits.append(payload)
         self.accepted_hits.append(payload)
         return {"accepted": True, "status": "queued"}
 
@@ -294,6 +301,7 @@ async def test_mode_runner_emits_query_execution_and_hit_stats_events():
 
     runner.start()
     await runner.run_once()
+    await runner.cleanup()
 
     assert len(stats_sink.events) == 2
     assert isinstance(stats_sink.events[0], QueryExecutionStatsEvent)
@@ -535,5 +543,7 @@ def test_query_runtime_service_passes_purchase_hit_sink_into_runtime_factory():
     assert started is True
     assert callable(captured_hit_sink["sink"])
     assert callable(captured_hit_sink["stats_sink"])
+    assert getattr(captured_hit_sink["sink"], "__self__", None) is purchase_service
+    assert getattr(captured_hit_sink["sink"], "__name__", "") == "enqueue_query_hit"
     assert purchase_service.accepted_hits[0]["query_item_name"] == "AK"
     assert len(stats_sink.events) == 1
