@@ -115,3 +115,29 @@
 - 已完成：新增两盏红灯测试，锁死“按桶认领”和 fast-path 主链不得扫描总可用账号名单；购买调度器新增按桶常驻待命池，账号在注册可用、恢复可用、购买完成释放且仍有并发余量、以及并发额度调整后，都会主动回到对应待命桶；按桶认领改为直接从待命桶弹出账号，若该账号仍有剩余并发名额则回挂到桶尾，保持“同一次命中不重复拿同一账号、跨多次命中仍支持单账号多并发”的语义不变。
 - 当前进度：购买主链已正式去掉“每次命中扫描总账号表”这一层热路径过路费；`tests/backend/test_purchase_scheduler.py`、`tests/backend/test_purchase_runtime_service.py`、`tests/backend/test_query_purchase_bridge.py`、`tests/backend/test_query_runtime_service.py`、`tests/backend/test_mode_execution_runner.py`、`tests/backend/test_purchase_hit_inbox.py`、`tests/backend/test_purchase_runtime_routes.py`、`tests/backend/test_diagnostics_routes.py` 共 `219` 条回归已通过。
 - 下一步：若继续追杀大账号规模下的尾延迟，可再观察待命桶本身的出入队开销与桶级元数据，但当前主链结构已经稳定为“账号自报到桶内待命，命中直取桶中就绪账号”。
+
+## 2026-04-15 17:14 (Asia/Shanghai)
+- 背景：用户确认“失败”这一展示若按统计页理解，应改的是“查询统计”页；“账号能力统计”页继续只表达发单/购买阶段的速度表现，不改成失败件数字段。
+- 已完成：将查询统计页的副标题与列表列头从“失败”改为“下单失败件数”，保持后端统计口径不变；补红绿测试并跑通 `app_desktop_web/tests/renderer/query_stats_page.test.jsx` 共 `4` 条。
+- 当前进度：查询统计页文案已经与当前口径一致；账号能力统计页仍维持“发单速度 / 购买速度”展示。
+- 下一步：若还要继续统一口径，可再清查其他页面里所有“失败”字样，区分为“下单失败件数”“执行失败”“请求失败”等不同语义，避免同词多义。
+
+## 2026-04-15 01:13 (Asia/Shanghai)
+- 背景：用户已完成 GitHub 账号与 SSH key 配置，需要把本仓库迁移到用户自己的 GitHub，并尽量降低后续使用门槛。
+- 已完成：确认用户 GitHub 仓库 `sun1822049852-hub/c5autobuy` 已创建；本机 Git 全局身份切换到 GitHub；为 Git/SSH 链路补齐 GitHub 访问配置；将本仓 `origin` 切到 `git@github.com:sun1822049852-hub/c5autobuy.git` 并成功推送当前 `master` 分支；按用户“Gitee 不用管”的口径移除了本地 `gitee` 远端，避免后续混淆。
+- 当前进度：本仓当前只保留 GitHub 一个主远端，`master` 已绑定 `origin/master`；README 已核对，本次无需改动。
+- 下一步：后续日常提交直接使用 `git add`、`git commit`、`git push` 即可；若用户还要继续迁移其它项目，再按同一路径接入 GitHub。
+
+## 2026-04-18 22:55 (Asia/Shanghai)
+- 背景：用户确认先落实“白名单页临时注入/续期”方案，目标是让原始 Edge 打开 `open-api` 白名单页时继续复用已保存的 C5 登录态，不改购买链，也不提前实现 cookie 自动更新。
+- 已完成：补充设计与实现计划文档；为浏览器 profile store 新增“准备白名单页临时 session”逻辑，在 clone 出来的临时 session 中优先定位 Chromium `Default/Network/Cookies`（兼容回退 `Default/Cookies`），只续 `c5game.com` 现有 cookies 的本地过期时间与持久化标记，不改 cookie 值；白名单页 launcher 在 clone 后、启动 Edge 前调用该准备动作，若准备失败则只记日志并继续沿用旧行为；补充并跑通 profile store 与 launcher 的红绿测试。
+- 已做验证：使用进程内 `xsign` 最小桩跑通 `tests/backend/test_account_browser_profile_store.py` 与 `tests/backend/test_open_api_binding_page_launcher.py` 共 `7` 条；另对真实账号 `60bf1295-dd48-4875-aa25-ed5ffadca702` 的正式 profile 做临时副本验证，新逻辑命中 Chromium `Default/Network/Cookies` 并续期了 `8` 行 `c5game` cookies。
+- 当前进度：白名单页链路现在会在启动原始 Edge 之前先给临时 session 做本地 cookie 续期，现有 `clone -> launch -> cleanup/persist` 机制保持不变；购买链、`accounts.cookie_raw` 与数据库写回逻辑均未触碰。
+- 下一步：若用户继续推进，可直接在真实账号上打开一次白名单页做人工验证，确认无需重登；后续若再研究“cookie 自动更新”，需要另行定位能下发新认证 cookie 的真实接口，不能把这次本地续期误当成服务端刷新。
+
+## 2026-04-18 23:23 (Asia/Shanghai)
+- 背景：用户要求把“`xsign` 缺失时不得优先做单次命令临时注入，而应先查测试入口兜底”的规则沉淀为项目级长期约束，避免新会话重复试错。
+- 已完成：在项目 `AGENTS.md` 新增“重复性环境坑处理规则”，明确 backend pytest 遇到 `xsign` 缺失时的检查顺序与禁止项；同步将该规则提炼到 `docs/agent/memory.md`，作为跨会话稳定记忆。
+- 已做验证：本次为文档规则落盘，无自动化测试；已回读修改内容，确认落点仅限项目 `AGENTS.md`、`docs/agent/memory.md` 与本会话日志。
+- 当前进度：后续进入本仓库的新会话，默认应先按项目级规则处理 `xsign` 这类重复性环境坑，而不是再次从会话级临时注入开始试错。
+- 下一步：若用户继续推进，可把该规则对应的实际兜底实现补到 `tests/backend/conftest.py` 或统一测试脚本中，把“规则约束”再升级为“自动执行”。

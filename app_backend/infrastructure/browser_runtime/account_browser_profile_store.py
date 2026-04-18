@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import re
 import shutil
+import sqlite3
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from app_backend.infrastructure.browser_runtime.managed_browser_runtime import ManagedBrowserRuntime
@@ -9,6 +11,12 @@ from app_backend.infrastructure.browser_runtime.managed_browser_runtime import M
 
 class AccountBrowserProfileStore:
     DEFAULT_PROFILE_DIRECTORY = "Default"
+    OPEN_API_COOKIE_DB_RELATIVE_PATHS = (
+        Path(DEFAULT_PROFILE_DIRECTORY) / "Network" / "Cookies",
+        Path(DEFAULT_PROFILE_DIRECTORY) / "Cookies",
+    )
+    OPEN_API_COOKIE_EXPIRY_EXTENSION_DAYS = 30
+    OPEN_API_COOKIE_HOST_FRAGMENT = "c5game.com"
     TRANSIENT_RELATIVE_PATHS = (
         "SingletonCookie",
         "SingletonLock",
@@ -73,6 +81,22 @@ class AccountBrowserProfileStore:
         temp_root.replace(destination_root)
         return destination_root
 
+    def prepare_open_api_binding_session(self, session_root: Path) -> dict[str, object]:
+        normalized_session_root = Path(session_root)
+        refreshed_cookie_rows = 0
+        refreshed_cookie_dbs: list[str] = []
+        for relative_path in self.OPEN_API_COOKIE_DB_RELATIVE_PATHS:
+            cookie_db_path = normalized_session_root / relative_path
+            updated_rows = self._refresh_open_api_cookie_expiry(cookie_db_path)
+            if updated_rows <= 0:
+                continue
+            refreshed_cookie_rows += updated_rows
+            refreshed_cookie_dbs.append(str(cookie_db_path))
+        return {
+            "refreshed_cookie_rows": refreshed_cookie_rows,
+            "refreshed_cookie_dbs": refreshed_cookie_dbs,
+        }
+
     @classmethod
     def build_profile_payload(cls, profile_root: Path) -> dict[str, str]:
         return {
@@ -93,4 +117,42 @@ class AccountBrowserProfileStore:
                 shutil.rmtree(target, ignore_errors=True)
             else:
                 target.unlink(missing_ok=True)
+
+    @classmethod
+    def _refresh_open_api_cookie_expiry(cls, cookie_db_path: Path) -> int:
+        normalized_cookie_db_path = Path(cookie_db_path)
+        if not normalized_cookie_db_path.exists():
+            return 0
+
+        connection = sqlite3.connect(str(normalized_cookie_db_path))
+        try:
+            if not cls._cookies_table_exists(connection):
+                return 0
+            refresh_expiry_utc = cls._build_future_cookie_expiry_utc()
+            before_changes = connection.total_changes
+            connection.execute(
+                """
+                UPDATE cookies
+                SET expires_utc = ?, has_expires = 1, is_persistent = 1
+                WHERE instr(lower(host_key), ?) > 0
+                """,
+                (refresh_expiry_utc, cls.OPEN_API_COOKIE_HOST_FRAGMENT),
+            )
+            connection.commit()
+            return connection.total_changes - before_changes
+        finally:
+            connection.close()
+
+    @staticmethod
+    def _cookies_table_exists(connection: sqlite3.Connection) -> bool:
+        row = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'cookies' LIMIT 1"
+        ).fetchone()
+        return row is not None
+
+    @classmethod
+    def _build_future_cookie_expiry_utc(cls) -> int:
+        chrome_epoch = datetime(1601, 1, 1, tzinfo=timezone.utc)
+        expires_at = datetime.now(timezone.utc) + timedelta(days=cls.OPEN_API_COOKIE_EXPIRY_EXTENSION_DAYS)
+        return int((expires_at - chrome_epoch).total_seconds() * 1_000_000)
 

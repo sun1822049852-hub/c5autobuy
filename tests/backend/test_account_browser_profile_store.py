@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 from app_backend.infrastructure.browser_runtime.account_browser_profile_store import (
@@ -11,6 +12,72 @@ from app_backend.infrastructure.browser_runtime.managed_browser_runtime import M
 def _build_store(tmp_path: Path) -> AccountBrowserProfileStore:
     runtime = ManagedBrowserRuntime.from_app_private_dir(tmp_path / "app-private")
     return AccountBrowserProfileStore(runtime=runtime)
+
+
+def _create_cookie_store(cookie_db_path: Path) -> None:
+    cookie_db_path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(str(cookie_db_path))
+    try:
+        connection.execute(
+            """
+            CREATE TABLE cookies (
+                creation_utc INTEGER NOT NULL,
+                host_key TEXT NOT NULL,
+                top_frame_site_key TEXT NOT NULL,
+                name TEXT NOT NULL,
+                value TEXT NOT NULL,
+                encrypted_value BLOB NOT NULL,
+                path TEXT NOT NULL,
+                expires_utc INTEGER NOT NULL,
+                is_secure INTEGER NOT NULL,
+                is_httponly INTEGER NOT NULL,
+                last_access_utc INTEGER NOT NULL,
+                has_expires INTEGER NOT NULL,
+                is_persistent INTEGER NOT NULL,
+                priority INTEGER NOT NULL,
+                samesite INTEGER NOT NULL,
+                source_scheme INTEGER NOT NULL,
+                source_port INTEGER NOT NULL,
+                last_update_utc INTEGER NOT NULL,
+                source_type INTEGER NOT NULL,
+                has_cross_site_ancestor INTEGER NOT NULL
+            )
+            """
+        )
+        connection.executemany(
+            """
+            INSERT INTO cookies (
+                creation_utc,
+                host_key,
+                top_frame_site_key,
+                name,
+                value,
+                encrypted_value,
+                path,
+                expires_utc,
+                is_secure,
+                is_httponly,
+                last_access_utc,
+                has_expires,
+                is_persistent,
+                priority,
+                samesite,
+                source_scheme,
+                source_port,
+                last_update_utc,
+                source_type,
+                has_cross_site_ancestor
+            ) VALUES (?, ?, '', ?, '', X'', '/', ?, 0, 0, 0, 1, ?, 1, 0, 0, 0, 0, 0, 0)
+            """,
+            [
+                (1, "www.c5game.com", "NC5_accessToken", 100, 1),
+                (1, ".c5game.com", "NC5_crossAccessToken", 200, 1),
+                (1, ".example.com", "other_cookie", 300, 0),
+            ],
+        )
+        connection.commit()
+    finally:
+        connection.close()
 
 
 def test_account_browser_profile_store_clones_and_persists_account_session(tmp_path: Path):
@@ -32,4 +99,34 @@ def test_account_browser_profile_store_clones_and_persists_account_session(tmp_p
     assert persisted_root == account_root
     assert persisted_root.joinpath("Default", "Preferences").read_text(encoding="utf-8") == '{"ok":1}'
     assert persisted_root.joinpath("Default", "Cookies").read_text(encoding="utf-8") == "session-cookie"
+
+
+def test_account_browser_profile_store_prepares_open_api_binding_session_by_refreshing_c5_cookie_expiry(tmp_path: Path):
+    store = _build_store(tmp_path)
+    session_root = tmp_path / "session"
+    cookie_db_path = session_root / "Default" / "Network" / "Cookies"
+    _create_cookie_store(cookie_db_path)
+
+    summary = store.prepare_open_api_binding_session(session_root)
+
+    assert summary["refreshed_cookie_rows"] == 2
+    connection = sqlite3.connect(str(cookie_db_path))
+    try:
+        rows = list(
+            connection.execute(
+                "SELECT host_key, name, expires_utc, is_persistent, has_expires FROM cookies ORDER BY host_key, name"
+            )
+        )
+    finally:
+        connection.close()
+
+    refreshed = {
+        (host_key, name): (expires_utc, is_persistent, has_expires)
+        for host_key, name, expires_utc, is_persistent, has_expires in rows
+    }
+    assert refreshed[(".c5game.com", "NC5_crossAccessToken")][0] > 200
+    assert refreshed[(".c5game.com", "NC5_crossAccessToken")][1:] == (1, 1)
+    assert refreshed[("www.c5game.com", "NC5_accessToken")][0] > 100
+    assert refreshed[("www.c5game.com", "NC5_accessToken")][1:] == (1, 1)
+    assert refreshed[(".example.com", "other_cookie")] == (300, 0, 1)
 

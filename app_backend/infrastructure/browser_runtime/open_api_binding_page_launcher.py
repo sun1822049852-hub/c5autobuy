@@ -73,6 +73,27 @@ class OpenApiBindingPageLauncher:
         cleanup_callbacks: list = []
         if self._profile_store is not None and str(account_id or "").strip():
             session_root = self._profile_store.clone_session(str(account_id))
+            prepare_session = getattr(self._profile_store, "prepare_open_api_binding_session", None)
+            if callable(prepare_session):
+                try:
+                    preparation_summary = prepare_session(session_root)
+                    self._append_debug_log(
+                        "launch_session_prepared",
+                        {
+                            "account_id": account_id,
+                            "session_root": str(session_root),
+                            "preparation_summary": preparation_summary if isinstance(preparation_summary, dict) else {},
+                        },
+                    )
+                except Exception as exc:
+                    self._append_debug_log(
+                        "launch_session_prepare_failed",
+                        {
+                            "account_id": account_id,
+                            "session_root": str(session_root),
+                            "error": repr(exc),
+                        },
+                    )
         else:
             session_root = Path(normalized_profile_root)
         session_root = session_root.expanduser().resolve()
