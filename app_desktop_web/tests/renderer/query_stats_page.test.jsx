@@ -146,6 +146,7 @@ describe("query stats page", () => {
     await user.click(await screen.findByRole("button", { name: "查询统计" }));
 
     const table = await screen.findByRole("table", { name: "查询统计表" });
+    expect(within(table).getByText("下单失败件数")).toBeInTheDocument();
     expect(within(table).getByText("AK-47 | Redline")).toBeInTheDocument();
     expect(within(table).getByText("4")).toBeInTheDocument();
     expect(within(table).getByText("2")).toBeInTheDocument();
@@ -253,7 +254,7 @@ describe("query stats page", () => {
     await user.click(screen.getByRole("button", { name: "打开统计时间选择" }));
     expect(await screen.findByRole("dialog", { name: "选择统计日期" })).toBeInTheDocument();
 
-    await user.click(screen.getByText("按商品聚合命中、成功、失败与来源统计。"));
+    await user.click(screen.getByText("按商品聚合命中、成功、下单失败件数与来源统计。"));
 
     await waitFor(() => {
       expect(screen.queryByRole("dialog", { name: "选择统计日期" })).not.toBeInTheDocument();

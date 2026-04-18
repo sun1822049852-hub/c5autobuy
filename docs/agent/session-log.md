@@ -141,3 +141,24 @@
 - 已做验证：本次为文档规则落盘，无自动化测试；已回读修改内容，确认落点仅限项目 `AGENTS.md`、`docs/agent/memory.md` 与本会话日志。
 - 当前进度：后续进入本仓库的新会话，默认应先按项目级规则处理 `xsign` 这类重复性环境坑，而不是再次从会话级临时注入开始试错。
 - 下一步：若用户继续推进，可把该规则对应的实际兜底实现补到 `tests/backend/conftest.py` 或统一测试脚本中，把“规则约束”再升级为“自动执行”。
+
+## 2026-04-19 00:15 (Asia/Shanghai)
+- 背景：用户反馈购买成功件数在成功数量较大时会少记，要求排查当前代码里“记录件数”和“实际购买件数”对不上的问题。
+- 已完成：先补两盏红灯测试，锁住“批次里 1 条商品但实际购买 10 件”时，运行态 `purchase_success_count` 与统计事件 `success_count` 都必须按真实 `purchased_count` 记账；随后修正购买运行时旁路聚合与统计事件转发中的裁剪逻辑，不再把成功件数截断到 `product_list`/`submitted_count` 长度；同步修正一条沿用旧错误口径的历史测试预期。
+- 已做验证：先用 `./.venv/Scripts/python.exe -m pytest tests/backend/test_purchase_runtime_service.py -k "actual_purchased_count or actual_success_count" -q` 跑出 `2 failed`，确认缺陷真实存在；修复后再跑 `./.venv/Scripts/python.exe -m pytest tests/backend/test_purchase_runtime_service.py -k "counts_purchase_success_using_actual_purchased_count or emits_purchase_stats_events_with_actual_success_count or exposes_item_hit_source_summary or emits_purchase_stats_events or consumes_queued_hit_and_updates_runtime_snapshot" -q`，结果 `5 passed`。
+- 当前进度：新的购买运行态、账号维度统计、按商品聚合统计以及发往统计仓库的 submit-order 成功件数，已经统一按支付返回的真实成功件数记账；本次未触碰查询到购买主链调度结构。
+- 下一步：若用户还要追历史口径，可再评估是否需要对已落库的旧统计数据做一次性回补；当前修复只保证新产生的数据不再少记。
+
+## 2026-04-19 00:24 (Asia/Shanghai)
+- 背景：用户要求把“购买成功件数一多就少记”的定位路径沉淀下来，方便后续新会话直接命中根因。
+- 已完成：把该问题补进 `docs/agent/memory.md` 的长期记忆，明确下次若再出现“总购买件数与成功件数对不上”，优先检查购买运行时旁路聚合与统计事件转发是否又把真实 `purchased_count/successCount` 裁剪到 `piece_count/submitted_count`。
+- 已做验证：本次仅更新文档记忆；已回读 `docs/agent/memory.md` 与本会话日志，确认记录内容已落盘。
+- 当前进度：该问题现在既有修复记录，也有“优先检查文件 + 优先检查条件”的长期定位锚点。
+- 下一步：后续若真再撞上类似现象，可直接从 `purchase_stats_aggregator.py`、`purchase_runtime_service.py` 这两处数值裁剪口径开始排查，而不必再全链路重挖。
+
+## 2026-04-19 00:41 (Asia/Shanghai)
+- 背景：用户要求把前端“查询统计”页的现有文案改动也一并纳入本次提交，而不是只提交后端修复。
+- 已完成：确认前端仅包含查询统计页副标题与列表列头从“失败”调整为“下单失败件数”及对应测试更新；准备将该前端改动与“购买成功件数少记”后端修复、测试和文档记录合并为同一笔提交。
+- 已做验证：重新执行 `./.venv/Scripts/python.exe -m pytest tests/backend/test_purchase_runtime_service.py -k "counts_purchase_success_using_actual_purchased_count or emits_purchase_stats_events_with_actual_success_count or exposes_item_hit_source_summary or emits_purchase_stats_events or consumes_queued_hit_and_updates_runtime_snapshot" -q`，结果 `5 passed`；执行 `npm test -- tests/renderer/query_stats_page.test.jsx`，结果 `1 passed / 4 passed`。
+- 当前进度：前后端受影响验证均已通过，工作树处于可提交状态。
+- 下一步：按用户要求将前端与后端改动一起 stage 并创建本地 commit。

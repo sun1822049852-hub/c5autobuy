@@ -209,7 +209,7 @@ class PurchaseStatsAggregator:
         success_count = 0
         failed_count = 0
         if status == "success":
-            success_count = min(max(int(payload.get("purchased_count") or 0), 0), piece_count)
+            success_count = max(int(payload.get("purchased_count") or 0), 0)
             failed_count = max(piece_count - success_count, 0)
         else:
             failed_count = piece_count

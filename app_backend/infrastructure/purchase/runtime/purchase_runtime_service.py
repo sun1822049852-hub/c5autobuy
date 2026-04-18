@@ -2453,7 +2453,7 @@ class _DefaultPurchaseRuntime:
         if submit_order_latency_ms is None:
             return
 
-        success_count = min(max(int(outcome.purchased_count), 0), submitted_count)
+        success_count = max(int(outcome.purchased_count), 0)
         failed_count = max(submitted_count - success_count, 0)
         self._emit_stats_event(
             PurchaseSubmitOrderStatsEvent(

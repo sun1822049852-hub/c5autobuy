@@ -2684,13 +2684,13 @@ def test_purchase_runtime_service_exposes_item_hit_source_summary():
     )
 
     assert second == {"accepted": True, "status": "queued"}
-    assert wait_until(lambda: service.get_status()["purchase_success_count"] == 3)
+    assert wait_until(lambda: service.get_status()["purchase_success_count"] == 4)
     snapshot = service.get_status()
     assert snapshot["item_rows"] == [
         {
             "query_item_id": "item-1",
             "matched_product_count": 3,
-            "purchase_success_count": 3,
+            "purchase_success_count": 4,
             "purchase_failed_count": 0,
             "source_mode_stats": [
                 {
@@ -3308,6 +3308,88 @@ def test_purchase_runtime_service_consumes_queued_hit_and_updates_runtime_snapsh
     assert snapshot["recent_events"][0]["runtime_session_id"] == "run-1"
     assert gateway.calls[0]["selected_steam_id"] == "steam-1"
     assert snapshot_repository.saved_payloads[-1]["inventories"][0]["inventory_num"] == 912
+
+
+def test_purchase_runtime_service_counts_purchase_success_using_actual_purchased_count():
+    from app_backend.infrastructure.purchase.runtime.purchase_runtime_service import PurchaseRuntimeService
+
+    account_repository = FakeAccountRepository([build_account("a1")])
+    snapshot_repository = FakeInventorySnapshotRepository(
+        {
+            "a1": type(
+                "Snapshot",
+                (),
+                {
+                    "account_id": "a1",
+                    "selected_steam_id": "steam-1",
+                    "inventories": [
+                        {"steamId": "steam-1", "inventory_num": 910, "inventory_max": 1000},
+                    ],
+                    "refreshed_at": "2026-03-16T20:00:00",
+                    "last_error": None,
+                },
+            )()
+        }
+    )
+    gateway = StubExecutionGateway(PurchaseExecutionResult.success(purchased_count=10))
+    service = PurchaseRuntimeService(
+        account_repository=account_repository,
+        settings_repository=FakeSettingsRepository(),
+        inventory_snapshot_repository=snapshot_repository,
+        execution_gateway_factory=lambda: gateway,
+    )
+    service.start()
+
+    accepted = service.accept_query_hit(
+        {
+            "query_config_id": "cfg-1",
+            "query_item_id": "item-1",
+            "runtime_session_id": "run-1",
+            "external_item_id": "1380979899390261111",
+            "query_item_name": "AK",
+            "product_url": "https://www.c5game.com/csgo/730/asset/1380979899390261111",
+            "product_list": [{"productId": "p-1", "price": 88.0, "actRebateAmount": 0}],
+            "total_price": 88.0,
+            "total_wear_sum": 0.1234,
+            "mode_type": "new_api",
+        }
+    )
+
+    assert accepted == {"accepted": True, "status": "queued"}
+    assert wait_until(lambda: service.get_status()["purchase_success_count"] == 10)
+    snapshot = service.get_status()
+    assert snapshot["total_purchased_count"] == 10
+    assert snapshot["purchase_success_count"] == 10
+    assert snapshot["purchase_failed_count"] == 0
+    assert snapshot["accounts"][0]["submitted_product_count"] == 1
+    assert snapshot["accounts"][0]["purchase_success_count"] == 10
+    assert snapshot["accounts"][0]["purchase_failed_count"] == 0
+    assert snapshot["item_rows"] == [
+        {
+            "query_item_id": "item-1",
+            "matched_product_count": 1,
+            "purchase_success_count": 10,
+            "purchase_failed_count": 0,
+            "source_mode_stats": [
+                {
+                    "mode_type": "new_api",
+                    "hit_count": 1,
+                    "last_hit_at": None,
+                    "account_id": None,
+                    "account_display_name": None,
+                }
+            ],
+            "recent_hit_sources": [
+                {
+                    "mode_type": "new_api",
+                    "hit_count": 1,
+                    "last_hit_at": None,
+                    "account_id": None,
+                    "account_display_name": None,
+                }
+            ],
+        }
+    ]
 
 
 def test_purchase_runtime_service_reuses_runtime_account_adapter_across_batches():
@@ -4746,6 +4828,84 @@ def test_purchase_runtime_service_emits_purchase_stats_events():
         assert submit_event.success_count == 1
         assert submit_event.failed_count == 1
         assert submit_event.submit_order_latency_ms == 450.0
+        assert submit_event.status == "success"
+    finally:
+        service.stop()
+
+
+def test_purchase_runtime_service_emits_purchase_stats_events_with_actual_success_count():
+    from app_backend.infrastructure.purchase.runtime.purchase_runtime_service import PurchaseRuntimeService
+    from app_backend.infrastructure.stats.runtime.stats_events import (
+        PurchaseCreateOrderStatsEvent,
+        PurchaseSubmitOrderStatsEvent,
+    )
+
+    account_repository = FakeAccountRepository([build_account("a1")])
+    snapshot_repository = FakeInventorySnapshotRepository(
+        {
+            "a1": type(
+                "Snapshot",
+                (),
+                {
+                    "account_id": "a1",
+                    "selected_steam_id": "steam-1",
+                    "inventories": [
+                        {"steamId": "steam-1", "inventory_num": 910, "inventory_max": 1000},
+                    ],
+                    "refreshed_at": "2026-03-16T20:00:00",
+                    "last_error": None,
+                },
+            )()
+        }
+    )
+    gateway = StubExecutionGateway(
+        PurchaseExecutionResult(
+            status="success",
+            purchased_count=10,
+            submitted_count=1,
+            error=None,
+            create_order_latency_ms=210.0,
+            submit_order_latency_ms=450.0,
+        )
+    )
+    stats_sink = StubStatsSink()
+    service = PurchaseRuntimeService(
+        account_repository=account_repository,
+        settings_repository=FakeSettingsRepository(),
+        inventory_snapshot_repository=snapshot_repository,
+        execution_gateway_factory=lambda: gateway,
+        stats_sink=stats_sink,
+    )
+    service.start()
+
+    try:
+        accepted = service.accept_query_hit(
+            {
+                "query_config_id": "cfg-1",
+                "query_item_id": "item-1",
+                "runtime_session_id": "run-1",
+                "external_item_id": "1380979899390261111",
+                "query_item_name": "AK",
+                "product_url": "https://www.c5game.com/csgo/730/asset/1380979899390261111",
+                "product_list": [{"productId": "p-1", "price": 88.0, "actRebateAmount": 0}],
+                "total_price": 88.0,
+                "total_wear_sum": 0.1234,
+                "mode_type": "new_api",
+            }
+        )
+
+        assert accepted == {"accepted": True, "status": "queued"}
+        assert wait_until(lambda: service.get_status()["total_purchased_count"] == 10 and len(stats_sink.events) == 2)
+
+        create_event = stats_sink.events[0]
+        submit_event = stats_sink.events[1]
+        assert isinstance(create_event, PurchaseCreateOrderStatsEvent)
+        assert isinstance(submit_event, PurchaseSubmitOrderStatsEvent)
+        assert create_event.submitted_count == 1
+        assert create_event.status == "success"
+        assert submit_event.submitted_count == 1
+        assert submit_event.success_count == 10
+        assert submit_event.failed_count == 0
         assert submit_event.status == "success"
     finally:
         service.stop()

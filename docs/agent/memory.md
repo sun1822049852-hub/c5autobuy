@@ -21,6 +21,7 @@
 - 购买调度热路径已确认采用“账号按代理桶常驻待命池，命中按桶直取”的结构：账号在恢复可接单或释放出并发余量时主动回到对应待命桶；主链不再允许为每次命中扫描总可用账号名单，总名单仅保留给活跃账号统计与兼容性接口。
 - fast-path 热路径继续收薄：命中入口的“运行中”判断不得依赖完整 `snapshot`；`queued`/`duplicate`/`dropped_busy_accounts_after_grace` 这类中间命中态不再触发全量 `purchase_runtime.updated` 广播；命中统计标准化与 backlog 过期清理不得占用 fast-path 同步热路径。
 - 购买侧“最近事件”已拆成两层：运行页不再展示也不再依赖它，`/purchase-runtime/status` 与 runtime update 广播默认返回空 `recent_events`；真实最近购买日志仅保留给诊断链路，并通过旁路缓冲异步落库/落缓存，避免把人类可见信息上报重新拉回主链。
+- 购买成功件数的稳定口径已确认：运行态 `purchase_success_count`、按账号/按商品聚合统计，以及 submit-order 统计事件里的 `success_count`，都必须按支付接口返回的真实 `purchased_count` / `successCount` 记账；`submitted_product_count` 只表示本次批次载荷里的商品条目数，不能再拿它当成功件数上限。若后续再次出现“总购买件数与成功件数对不上、成功数量一多就少记”，优先检查 `app_backend/infrastructure/purchase/runtime/purchase_stats_aggregator.py` 与 `app_backend/infrastructure/purchase/runtime/purchase_runtime_service.py` 中是否又把 `purchased_count/successCount` 裁剪到 `piece_count/submitted_count`。
 - 购买侧去重当前已确认两条稳定约束：认货标准保持“按磨损计算结果”不动，不改成按原始挂单 `id`；固定去重窗默认采用 `10s`，优化方向优先是降低去重账本维护成本（到期顺序清理），而不是新增更复杂的去重层次。
 - 白名单页 `open-api` 的原始 Edge 复用链路现在会在 clone 出来的临时浏览器 session 启动前，续期 Chromium cookie 库中现有 `c5game.com` cookies 的本地过期时间；这只影响白名单页浏览器链，不改购买链请求头里的 `cookie_raw`/`x-access-token` 机制。
 - 本项目 backend 测试若在导入阶段因缺少 `xsign` 失败，后续默认先检查测试入口兜底（如 `tests/backend/conftest.py`）、统一测试脚本或现有 stub/fallback，不再优先采用单次命令临时注入；同类环境坑重复出现时应沉淀为仓库规则或自动兜底。

@@ -26,7 +26,7 @@ export function QueryStatsPage({ client }) {
         <div className="stats-toolbar__copy" style={NO_SELECT_STYLE}>
           <div className="stats-toolbar__eyebrow">Stats</div>
           <div className="stats-toolbar__title">查询统计</div>
-          <div className="stats-toolbar__subtitle">按商品聚合命中、成功、失败与来源统计。</div>
+          <div className="stats-toolbar__subtitle">按商品聚合命中、成功、下单失败件数与来源统计。</div>
         </div>
 
         <div className="stats-toolbar__controls">
@@ -51,7 +51,7 @@ export function QueryStatsPage({ client }) {
               <th scope="col" style={NO_SELECT_STYLE}>查询次数</th>
               <th scope="col" style={NO_SELECT_STYLE}>命中</th>
               <th scope="col" style={NO_SELECT_STYLE}>成功</th>
-              <th scope="col" style={NO_SELECT_STYLE}>失败</th>
+              <th scope="col" style={NO_SELECT_STYLE}>下单失败件数</th>
               <th scope="col" style={NO_SELECT_STYLE}>来源</th>
             </tr>
           </thead>
