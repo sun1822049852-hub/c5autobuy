@@ -284,3 +284,10 @@
 - 已做验证：先分别执行 `python -m pytest` 针对 `tests/backend/test_managed_edge_cdp_login_runner.py::test_managed_edge_cdp_login_runner_uses_account_profile_store`、`tests/backend/test_account_center_routes.py::{test_open_open_api_binding_page_route_prefers_saved_profile_bundle,test_open_open_api_binding_page_route_passes_bundle_debugger_address}`、`tests/backend/test_open_api_binding_page_launcher.py::{test_open_api_binding_page_launcher_prefers_live_login_debugger_before_saved_profile,test_open_api_binding_page_launcher_uses_login_session_root_after_login_window_closes}`，确认新增链路全部转绿。随后执行 `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_account_browser_profile_store.py tests/backend/test_managed_edge_cdp_login_runner.py tests/backend/test_open_api_binding_page_launcher.py tests/backend/test_account_center_routes.py tests/backend/test_login_task_flow.py tests/backend/test_login_conflict_flow.py -q`，结果 `55 passed`。仅剩既有 FastAPI `on_event("shutdown")` 弃用告警，无新失败。
 - 当前进度：白名单打开链已恢复到“优先吃最新登录 session”的状态，覆盖了登录窗口仍存活与刚关闭两种现场；不再只会死盯旧 profile，所以“关窗后立即添加白名单”不应再回到登录页。随后又按用户要求在 `AGENTS.md` 增补“关键行为保护（强制）”章节，把既有数据获取、数据保存/回写/持久化链路明确提升为关键行为，避免后续在缺少验证时再次被静默改坏。
 - 下一步：按本次白名单修复与关键行为规则补强一起提交；提交后等待用户按真实流程继续复测“登录成功 -> 关闭登录窗口 -> 立即添加白名单”。若仍出现登录页，再沿 open-api 页自身 cookie 续期或浏览器退出后的异步持久化竞态继续缩圈，但当前主链断口已被补上。
+
+## 2026-04-21 20:24 (Asia/Shanghai)
+- 背景：用户提出新的产品约束，希望“登录后的浏览器扫货默认改为关闭”，但随后明确边界不是“所有登录成功都关闭”，而是“仅首次绑定成功默认关闭；老账号重登保持原开关”。
+- 已完成：按 brainstorming 流程先收敛行为边界与风险，不直接改代码；已把确认后的设计落盘到 `docs/superpowers/specs/2026-04-21-login-browser-query-default-off-design.md`。设计已明确：首次绑定成功时写入 `token_enabled=False` 与 `browser_query_disabled_reason=\"manual_disabled\"`；命中已有老账号、老账号重登时不覆盖现有浏览器扫货开关；冲突分支中的 `create_new_account` / `replace_with_new_account` 都视为首次绑定。
+- 已做验证：本阶段仅做上下文审查与设计确认，未执行自动化测试，也未修改业务代码；已对照现有登录回写、冲突处理、查询模式字段与前端展示逻辑，确认本设计不要求新增 schema、协议字段或前端状态码。
+- 当前进度：设计已获用户批准，已进入“可写实现计划 / 可进入 TDD”状态，但业务实现尚未开始。
+- 下一步：等待用户确认规格文档后，进入实现计划与 TDD，先补登录链与冲突链回归灯，再做最小代码修改。
