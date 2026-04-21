@@ -1,4 +1,5 @@
 import { getEventDetailLines } from "../../shared/feedback_details.js";
+import { getLoginTaskStateLabel } from "../account-center/login_task_state_labels.js";
 import { DiagnosticsSummary } from "./diagnostics_summary.jsx";
 
 
@@ -23,13 +24,13 @@ export function LoginTaskDiagnosticsTab({ snapshot }) {
               <article key={task.task_id} className={`diagnostics-row${task.state === "failed" ? " is-danger" : ""}`}>
                 <div className="diagnostics-row__top">
                   <strong>{task.account_display_name || task.account_id || task.task_id}</strong>
-                  <span>{task.state}</span>
+                  <span>{getLoginTaskStateLabel(task.state)}</span>
                 </div>
                 <div className="diagnostics-row__meta">{task.last_message || "无进度信息"}</div>
                 <div className="diagnostics-timeline">
                   {task.events?.map((event) => (
                     <div key={`${task.task_id}-${event.timestamp}-${event.state}`} className="diagnostics-timeline__item">
-                      <span className="diagnostics-timeline__state">{event.state}</span>
+                      <span className="diagnostics-timeline__state">{getLoginTaskStateLabel(event.state)}</span>
                       <span className="diagnostics-timeline__message">{event.message || event.timestamp}</span>
                       {getEventDetailLines(event).length ? (
                         <div className="diagnostics-timeline__details">

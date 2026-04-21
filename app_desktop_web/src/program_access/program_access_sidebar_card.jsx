@@ -630,7 +630,7 @@ export function ProgramAccessSidebarCard({
           type="button"
           onClick={openDialog}
         >
-          <span className="program-access-sidebar-card__eyebrow">PROGRAM ACCESS</span>
+          <span className="program-access-sidebar-card__eyebrow">程序账号</span>
           <span className="program-access-sidebar-card__entry-title">账号登录</span>
           <strong className="program-access-sidebar-card__entry-identity">{sidebarAccountLabel}</strong>
           <span className="program-access-sidebar-card__entry-hint">{sidebarHint}</span>
@@ -650,7 +650,7 @@ export function ProgramAccessSidebarCard({
           <section aria-label="程序账号" className="dialog-surface program-access-dialog" role="dialog">
             <div className="surface-header">
               <div>
-                <div className="program-access-dialog__eyebrow">PROGRAM ACCESS</div>
+                <div className="program-access-dialog__eyebrow">程序账号</div>
                 <h2 className="surface-title">程序账号</h2>
               </div>
               <button className="ghost-button program-access-dialog__close" type="button" onClick={closeDialog}>

@@ -4,6 +4,7 @@ import { useProgramAccessGuard } from "../../../program_access/program_access_pr
 import { isProgramReadonlyLocked } from "../../../program_access/program_access_readonly.js";
 import { useProgramAccess } from "../../../runtime/use_app_runtime.js";
 import { useFloatingRuntimeModalState } from "../../purchase-system/hooks/use_floating_runtime_modal_state.js";
+import { getLoginTaskStateLabel } from "../login_task_state_labels.js";
 import { useLoginTaskStream } from "./use_login_task_stream.js";
 import { createUiStateStore } from "../state/ui_state_store.js";
 
@@ -17,8 +18,8 @@ const INITIAL_LOG_ENTRIES = [
   {
     id: "log-login-default",
     title: "最近登录任务",
-    message: "等待接入真实任务流",
-    meta: "登录抽屉与任务轮询会持续沉淀到这里。",
+    message: "尚未发起登录任务",
+    meta: "发起登录后，进度会记录在这里。",
   },
   {
     id: "log-error-default",
@@ -356,7 +357,7 @@ function getLoginTaskMeta(taskSnapshot) {
   }
 
   if (taskSnapshot.state) {
-    lines.push(`状态：${taskSnapshot.state}`);
+    lines.push(`状态：${getLoginTaskStateLabel(taskSnapshot.state)}`);
   }
 
   const latestMessage = getLatestTaskMessage(taskSnapshot);
@@ -420,6 +421,8 @@ export function useAccountCenterPage({ client }) {
   const [apiKeyDialogAccount, setApiKeyDialogAccount] = useState(null);
   const [browserProxyDialogAccount, setBrowserProxyDialogAccount] = useState(null);
   const [proxyDialogAccount, setProxyDialogAccount] = useState(null);
+  const [deleteDialogAccount, setDeleteDialogAccount] = useState(null);
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [openingBindingAccountIds, setOpeningBindingAccountIds] = useState({});
   const [purchaseDrawerState, setPurchaseDrawerState] = useState({
     account: null,
@@ -762,6 +765,12 @@ export function useAccountCenterPage({ client }) {
     closeCreateDialog() {
       setCreateDialogOpen(false);
     },
+    closeDeleteDialog() {
+      if (isDeletingAccount) {
+        return;
+      }
+      setDeleteDialogAccount(null);
+    },
     closeLoginDrawer() {
       setLoginDrawerAccount(null);
       loginTaskLogKeysRef.current.clear();
@@ -784,25 +793,34 @@ export function useAccountCenterPage({ client }) {
     closeRemarkDialog() {
       setRemarkDialogAccount(null);
     },
-    contextMenu,
-    createDialogOpen,
-    deleteAccount: async (account) => {
-      setContextMenu(null);
-
-      const confirmed = typeof globalThis.window?.confirm === "function"
-        ? globalThis.window.confirm(`确认删除账号“${getDisplayName(account)}”吗？`)
-        : true;
-
-      if (!confirmed) {
-        return;
+    confirmDeleteAccount: async () => {
+      if (!deleteDialogAccount || isDeletingAccount) {
+        return null;
       }
 
-      await handleAction(async () => {
+      const account = deleteDialogAccount;
+      setIsDeletingAccount(true);
+      const result = await handleAction(async () => {
         await client.deleteAccount(account.account_id);
         await refreshAccounts();
       }, `已删除账号：${getDisplayName(account)}`);
+      setIsDeletingAccount(false);
+
+      if (result !== null) {
+        setDeleteDialogAccount(null);
+      }
+
+      return result;
+    },
+    contextMenu,
+    createDialogOpen,
+    deleteDialogAccount,
+    deleteAccount: async (account) => {
+      setContextMenu(null);
+      setDeleteDialogAccount(account);
     },
     filteredRows,
+    isDeletingAccount,
     isReadonlyLocked,
     isLoading,
     loadError,

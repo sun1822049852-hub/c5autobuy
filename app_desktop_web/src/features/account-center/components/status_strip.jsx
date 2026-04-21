@@ -1,8 +1,8 @@
 const DEFAULT_ITEMS = [
   {
     title: "最近登录任务",
-    value: "等待接入真实任务流",
-    meta: "下一阶段接登录抽屉与任务状态。",
+    value: "尚未发起登录任务",
+    meta: "发起登录后，进度会记录在这里。",
   },
   {
     title: "最近错误",
@@ -20,7 +20,7 @@ const DEFAULT_ITEMS = [
 export function StatusStrip({
   backendStatus,
   recentError = "当前无错误记录",
-  recentLoginTask = "等待接入真实任务流",
+  recentLoginTask = "尚未发起登录任务",
   recentModification = "尚未发生配置改动",
 }) {
   const items = [

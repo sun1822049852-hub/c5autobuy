@@ -339,3 +339,30 @@
 - 已做验证：执行 `git status --short`，当前只剩 `.gitignore` 为工作树改动，`release/` 目录未再以未跟踪文件出现；执行 `git check-ignore -v -- "app_desktop_web/release/C5 交易助手 Setup 0.1.0.exe"`，确认该安装包已被 `.gitignore:11` 命中；回读 `app_desktop_web/release/BUILD_INFO.txt`，内容与本次要求一致。
 - 当前进度：安装包产物现已本地留档且默认忽略；按用户要求，本轮不提交。
 - 下一步：若后续重打一包，只需覆盖 `release/` 内容并刷新 `BUILD_INFO.txt` 时间即可，无需再改 Git 规则。
+
+## 2026-04-22 00:12 (Asia/Shanghai)
+- 背景：用户要求把 C5 账号登录相关的用户可见任务状态统一改成中文，明确指定 `waiting_for_browser_close` 必须显示为“等待关闭登录窗口”，并要求留下便于后续快速定位的集中映射落点。
+- 已完成：本轮已把登录任务状态中文化的维护点集中到 `app_desktop_web/src/features/account-center/login_task_state_labels.js`，由账号中心登录抽屉、诊断页登录任务标签页、账号中心日志 seed / 状态文案统一复用；同时补齐说明与计划文档 `docs/superpowers/specs/2026-04-22-login-task-state-localization-design.md`、`docs/superpowers/plans/2026-04-22-login-task-state-localization.md`。在本次续战里，进一步修正了 `app_desktop_web/tests/renderer/login_drawer.test.jsx` 与 `app_desktop_web/tests/renderer/diagnostics_sidebar.test.jsx` 的断言方式，使其接受“同一中文状态同时出现在状态卡片和事件时间线”的既定 UI 行为，不再把重复文本误判成失败。
+- 已做验证：
+  - `npm --prefix app_desktop_web test -- tests/renderer/login_drawer.test.jsx --run`，结果 `6 passed`。
+  - `npm --prefix app_desktop_web test -- tests/renderer/diagnostics_sidebar.test.jsx --run`，结果 `7 passed`。
+  - `npm --prefix app_desktop_web test -- tests/renderer/account_center_page.test.jsx --run`，结果 `7 passed`。
+  - `npm --prefix app_desktop_web test -- tests/renderer/login_drawer.test.jsx tests/renderer/diagnostics_sidebar.test.jsx tests/renderer/account_center_page.test.jsx --run`，结果 `20 passed`。
+- 当前进度：登录抽屉右侧状态、诊断页登录任务时间线、账号中心日志中的用户可见状态码都已切到正式中文口径；本轮剩余未提交内容主要是这批源码改动本身。
+- 余险：当前验证集中在 renderer 层，尚未额外做人工界面点验；若后续还有其它页面直接渲染原始登录任务状态码，需要继续沿同一映射文件排查接线，而不是再在组件内散写文案。
+- 下一步：等待用户继续决定是直接提交这一批中文化改动，还是继续做界面层人工巡检与补漏。
+
+## 2026-04-22 00:29 (Asia/Shanghai)
+- 背景：用户要求提交当前工作，并把账号中心“删除账号”的原生确认框改成符合当前项目风格的 UI，同时检查程序里是否还残留开发态提示或明显不对齐的用户文案。
+- 已完成：先补说明与计划文档 `docs/superpowers/specs/2026-04-22-account-delete-dialog-and-copy-alignment-design.md`、`docs/superpowers/plans/2026-04-22-account-delete-dialog-and-copy-alignment.md`，随后按 TDD 先改红灯，再做最小实现。账号中心现已新增站内删号弹层 `app_desktop_web/src/features/account-center/dialogs/account_delete_dialog.jsx`，删除流程从 `window.confirm(...)` 改为“右键菜单 -> 站内弹层 -> 确认删除”，仍复用原 DELETE + refresh + 日志链路。顺手把普通用户可见的英文眉标收口为中文：账号中心页 `ACCOUNT CENTER` 改为 `账号中心`，程序账号入口/弹窗中的 `PROGRAM ACCESS` 改为 `程序账号`，诊断面板的 `Diagnostics` 改为 `运行诊断`。额外复扫后确认：`本地调试模式` 只存在于显式本地放行调试分支，按既定边界保留；主导航上的 `Live` 标签仍是英文，但它属于视觉文案未完全汉化，不是开发态提示，本轮未扩范围处理。
+- 已做验证：
+  - 红灯：`npm --prefix app_desktop_web test -- tests/renderer/account_center_editing.test.jsx tests/renderer/account_center_page.test.jsx tests/renderer/program_access_sidebar_card.test.jsx tests/renderer/diagnostics_sidebar.test.jsx --run`，结果失败点准确落在旧的 `window.confirm` 与英文眉标。
+  - 绿灯：
+    - `npm --prefix app_desktop_web test -- tests/renderer/account_center_editing.test.jsx --run`，结果 `19 passed`
+    - `npm --prefix app_desktop_web test -- tests/renderer/account_center_page.test.jsx --run`，结果 `7 passed`
+    - `npm --prefix app_desktop_web test -- tests/renderer/program_access_sidebar_card.test.jsx --run`，结果 `6 passed`
+    - `npm --prefix app_desktop_web test -- tests/renderer/diagnostics_sidebar.test.jsx --run`，结果 `7 passed`
+    - `npm --prefix app_desktop_web test -- tests/renderer/account_center_editing.test.jsx tests/renderer/account_center_page.test.jsx tests/renderer/program_access_sidebar_card.test.jsx tests/renderer/diagnostics_sidebar.test.jsx --run`，结果 `39 passed`
+- 当前进度：账号中心删号确认和本轮锁定的三处用户可见眉标都已收口，当前剩余主要是等待提交。
+- 余险：主导航按钮上的 `Live` 标签仍是英文视觉词，不影响功能，但若后续要继续做整体文案统一，应把它纳入同一轮 UI 文案清理，而不是再零碎散改。
+- 下一步：提交本轮源码与文档改动；若用户继续要求清理 `Live` 这类剩余英文视觉词，再单开一个小范围 UI 文案收口任务。

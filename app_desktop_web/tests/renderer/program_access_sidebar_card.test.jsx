@@ -46,6 +46,8 @@ describe("program access sidebar card", () => {
     render(<ProgramAccessSidebarCard access={LOCAL_PROGRAM_ACCESS_FIXTURE} />);
 
     expect(screen.getByRole("button", { name: "打开程序账号窗口" })).toBeInTheDocument();
+    expect(screen.getByText("程序账号")).toBeInTheDocument();
+    expect(screen.queryByText("PROGRAM ACCESS")).not.toBeInTheDocument();
     expect(screen.getByText("未登录")).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "程序账号" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("程序会员登录账号")).not.toBeInTheDocument();
@@ -65,6 +67,8 @@ describe("program access sidebar card", () => {
     await user.click(screen.getByRole("button", { name: "打开程序账号窗口" }));
 
     expect(screen.getByRole("dialog", { name: "程序账号" })).toBeInTheDocument();
+    expect(screen.getAllByText("程序账号").length).toBeGreaterThan(0);
+    expect(screen.queryByText("PROGRAM ACCESS")).not.toBeInTheDocument();
     expect(screen.getByText("当前账号状态")).toBeInTheDocument();
     expect(screen.getByText("已生效")).toBeInTheDocument();
     expect(screen.getByText("运行中")).toBeInTheDocument();
@@ -89,6 +93,8 @@ describe("program access sidebar card", () => {
     await user.click(screen.getByRole("button", { name: "打开程序账号窗口" }));
 
     expect(screen.getByRole("dialog", { name: "程序账号" })).toBeInTheDocument();
+    expect(screen.getAllByText("程序账号").length).toBeGreaterThan(0);
+    expect(screen.queryByText("PROGRAM ACCESS")).not.toBeInTheDocument();
     expect(screen.queryByText("只读锁定")).not.toBeInTheDocument();
     expect(screen.queryByText("切换程序账号只会改变当前权限，不会切换本地数据。")).not.toBeInTheDocument();
     expect(screen.queryByText("当前本地数据继续保留，只能查看，关键功能已锁定。")).not.toBeInTheDocument();

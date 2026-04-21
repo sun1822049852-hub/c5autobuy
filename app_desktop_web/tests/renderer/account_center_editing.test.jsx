@@ -1190,7 +1190,6 @@ describe("account center editing flows", () => {
     const harness = createFetchHarness();
     installDesktopApp(harness.fetchImpl);
     const user = userEvent.setup();
-    window.confirm = vi.fn(() => true);
 
     render(<App />);
 
@@ -1198,6 +1197,11 @@ describe("account center editing flows", () => {
     fireEvent.contextMenu(row.closest("tr"));
 
     await user.click(screen.getByRole("button", { name: "删除账号" }));
+
+    const deleteDialog = await screen.findByRole("dialog", { name: "删除账号" });
+    expect(within(deleteDialog).getByText("账号 C")).toBeInTheDocument();
+    expect(within(deleteDialog).getByRole("button", { name: "取消" })).toBeInTheDocument();
+    await user.click(within(deleteDialog).getByRole("button", { name: "确认删除" }));
 
     await waitFor(() => {
       expect(harness.calls).toEqual(
@@ -1209,7 +1213,6 @@ describe("account center editing flows", () => {
         ]),
       );
     });
-    expect(window.confirm).toHaveBeenCalled();
     expect(screen.queryByText("账号 C")).not.toBeInTheDocument();
   });
 });

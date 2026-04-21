@@ -1,3 +1,5 @@
+import { getLoginTaskEventDisplayMessage, getLoginTaskStateLabel } from "../login_task_state_labels.js";
+
 function renderTaskEvents(task) {
   if (!task?.events?.length) {
     return (
@@ -11,7 +13,7 @@ function renderTaskEvents(task) {
     <div className="drawer-list">
       {task.events.map((event) => (
         <div key={`${event.state}-${event.timestamp}`} className="drawer-inventory">
-          <div className="drawer-inventory__title">{event.message || event.state}</div>
+          <div className="drawer-inventory__title">{getLoginTaskEventDisplayMessage(event)}</div>
           <div className="drawer-inventory__meta">{event.timestamp}</div>
         </div>
       ))}
@@ -37,7 +39,7 @@ export function LoginDrawer({
       <div className="surface-header">
         <div>
           <h2 className="surface-title">登录配置</h2>
-          <p className="surface-subtitle">这一版先把账号与代理上下文拉起来，任务状态下一阶段接入。</p>
+          <p className="surface-subtitle">登录会打开浏览器，请按页面提示完成扫码。</p>
         </div>
         <button className="ghost-button" type="button" onClick={onClose}>关闭</button>
       </div>
@@ -60,7 +62,7 @@ export function LoginDrawer({
 
         <div className="drawer-card">
           <div className="drawer-card__label">任务状态</div>
-          <div className="drawer-card__value">{task?.state || "idle"}</div>
+          <div className="drawer-card__value">{getLoginTaskStateLabel(task?.state)}</div>
         </div>
 
         {renderTaskEvents(task)}

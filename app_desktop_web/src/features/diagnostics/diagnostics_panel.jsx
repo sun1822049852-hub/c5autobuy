@@ -25,7 +25,7 @@ export function DiagnosticsPanel({ error, isLoading, isRefreshing, snapshot }) {
     <aside className="diagnostics-panel" aria-label="通用诊断面板">
       <header className="diagnostics-panel__header">
         <div>
-          <div className="diagnostics-panel__eyebrow">Diagnostics</div>
+          <div className="diagnostics-panel__eyebrow">运行诊断</div>
           <h2 className="diagnostics-panel__title">通用诊断面板</h2>
         </div>
         <div className="diagnostics-panel__status">

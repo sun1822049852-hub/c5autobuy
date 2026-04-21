@@ -483,12 +483,15 @@ describe("account center page", () => {
       expect(screen.getByText("C5 交易助手")).toBeInTheDocument();
     });
 
-    expect(screen.getByText("ACCOUNT CENTER")).toBeInTheDocument();
+    const heroCopy = screen.getByText("C5 交易助手").closest(".account-page__hero-copy");
+    expect(heroCopy).not.toBeNull();
+    expect(within(heroCopy).getByText("账号中心")).toBeInTheDocument();
+    expect(screen.queryByText("ACCOUNT CENTER")).not.toBeInTheDocument();
     expect(screen.queryByText(/统一管理账号备注/)).not.toBeInTheDocument();
     expect(screen.queryByText("后端状态：ready")).not.toBeInTheDocument();
 
     expect(screen.getByText("总账号")).toBeInTheDocument();
-    expect(screen.getByText("未登录")).toBeInTheDocument();
+    expect(screen.getAllByText("未登录").length).toBeGreaterThan(0);
     expect(screen.getByText("无 API Key")).toBeInTheDocument();
     expect(screen.getByText("可购买")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "日志 3" })).toBeInTheDocument();
@@ -527,7 +530,7 @@ describe("account center page", () => {
 
     await userEvent.setup().click(screen.getByRole("button", { name: "日志 3" }));
     const logDialog = await screen.findByRole("dialog", { name: "日志" });
-    expect(within(logDialog).getByText("等待接入真实任务流")).toBeInTheDocument();
+    expect(within(logDialog).getByText("尚未发起登录任务")).toBeInTheDocument();
     expect(within(logDialog).getByText("当前无错误记录")).toBeInTheDocument();
     expect(within(logDialog).getByText("尚未发生配置改动")).toBeInTheDocument();
   });

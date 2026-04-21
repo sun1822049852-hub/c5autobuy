@@ -18,7 +18,7 @@ export function ProgramAccessBanner({ access, guardError = null }) {
 
   return (
     <section className="program-access-banner" aria-label="程序访问状态" role="status">
-      <div className="program-access-banner__eyebrow">PROGRAM ACCESS</div>
+      <div className="program-access-banner__eyebrow">程序账号</div>
       {access?.message ? (
         <>
           <div className="program-access-banner__message">{access.message}</div>

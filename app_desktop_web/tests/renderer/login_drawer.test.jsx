@@ -250,12 +250,108 @@ describe("login drawer", () => {
       );
     });
 
-    expect(await within(drawer).findByText("登录完成")).toBeInTheDocument();
+    expect((await within(drawer).findAllByText("登录完成")).length).toBeGreaterThan(0);
+    const statusCard = within(drawer).getByText("任务状态").closest(".drawer-card");
+    expect(statusCard).not.toBeNull();
+    expect(within(statusCard).getByText("登录完成")).toBeInTheDocument();
+    expect(within(drawer).getByText("登录会打开浏览器，请按页面提示完成扫码。")).toBeInTheDocument();
+    expect(within(drawer).queryByText("这一版先把账号与代理上下文拉起来，任务状态下一阶段接入。")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /^日志 \d+$/ }));
     const logDialog = await screen.findByRole("dialog", { name: "日志" });
     expect(await within(logDialog).findByText("登录任务已完成：账号 B")).toBeInTheDocument();
-    expect(within(logDialog).getByText("状态：succeeded")).toBeInTheDocument();
+    expect(within(logDialog).getByText("状态：登录完成")).toBeInTheDocument();
     expect(await within(logDialog).findByText("steam-auto")).toBeInTheDocument();
+  });
+
+  it("localizes raw login task states in the drawer when the backend does not provide messages", async () => {
+    installDesktopApp(vi.fn(async (input, options = {}) => {
+      const url = new URL(input);
+      const method = String(options.method ?? "GET").toUpperCase();
+
+      if (url.pathname === "/account-center/accounts" && method === "GET") {
+        return jsonResponse(buildRows());
+      }
+
+      if (url.pathname === "/accounts/a-2/login" && method === "POST") {
+        return jsonResponse({
+          task_id: "task-login-2",
+          task_type: "login",
+          state: "pending",
+          created_at: "2026-03-18T12:10:00",
+          updated_at: "2026-03-18T12:10:00",
+          events: [
+            {
+              state: "pending",
+              timestamp: "2026-03-18T12:10:00",
+              message: null,
+              payload: null,
+            },
+          ],
+          result: null,
+          error: null,
+          pending_conflict: null,
+        }, 202);
+      }
+
+      if (url.pathname === "/tasks/task-login-2" && method === "GET") {
+        return jsonResponse({
+          task_id: "task-login-2",
+          task_type: "login",
+          state: "waiting_for_browser_close",
+          created_at: "2026-03-18T12:10:00",
+          updated_at: "2026-03-18T12:10:03",
+          events: [
+            {
+              state: "pending",
+              timestamp: "2026-03-18T12:10:00",
+              message: null,
+              payload: null,
+            },
+            {
+              state: "starting_browser",
+              timestamp: "2026-03-18T12:10:01",
+              message: null,
+              payload: null,
+            },
+            {
+              state: "waiting_for_scan",
+              timestamp: "2026-03-18T12:10:02",
+              message: null,
+              payload: null,
+            },
+            {
+              state: "waiting_for_browser_close",
+              timestamp: "2026-03-18T12:10:03",
+              message: null,
+              payload: null,
+            },
+          ],
+          result: null,
+          error: null,
+          pending_conflict: null,
+        });
+      }
+
+      throw new Error(`Unhandled request: ${method} ${url.pathname}`);
+    }));
+
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByText("账号 B");
+    await user.click(screen.getByRole("button", { name: "配置购买状态 账号 B" }));
+
+    const drawer = await screen.findByRole("complementary", { name: "登录配置" });
+    await user.click(within(drawer).getByRole("button", { name: "发起登录" }));
+
+    expect((await within(drawer).findAllByText("等待关闭登录窗口")).length).toBeGreaterThan(0);
+    expect(within(drawer).getByText("已创建")).toBeInTheDocument();
+    expect(within(drawer).getByText("正在启动浏览器")).toBeInTheDocument();
+    expect(within(drawer).getByText("等待扫码")).toBeInTheDocument();
+    expect(within(drawer).queryByText("pending")).not.toBeInTheDocument();
+    expect(within(drawer).queryByText("starting_browser")).not.toBeInTheDocument();
+    expect(within(drawer).queryByText("waiting_for_scan")).not.toBeInTheDocument();
+    expect(within(drawer).queryByText("waiting_for_browser_close")).not.toBeInTheDocument();
   });
 
   it("keeps raw http error details in logs when login start returns an unhandled string", async () => {
@@ -388,7 +484,7 @@ describe("login drawer", () => {
     const drawer = await screen.findByRole("complementary", { name: "登录配置" });
     await user.click(within(drawer).getByRole("button", { name: "发起登录" }));
 
-    expect(await within(drawer).findByText("登录完成")).toBeInTheDocument();
+    expect((await within(drawer).findAllByText("登录完成")).length).toBeGreaterThan(0);
     expect(await screen.findByText("steam-auto")).toBeInTheDocument();
     expect(taskPollCount).toBe(1);
     expect(accountListCallCount).toBeGreaterThanOrEqual(2);
@@ -495,7 +591,7 @@ describe("login drawer", () => {
     const drawer = await screen.findByRole("complementary", { name: "登录配置" });
     await user.click(within(drawer).getByRole("button", { name: "发起登录" }));
 
-    expect(await within(drawer).findByText("登录完成")).toBeInTheDocument();
+    expect((await within(drawer).findAllByText("登录完成")).length).toBeGreaterThan(0);
 
     await waitFor(() => {
       expect(accountListCallCount).toBe(2);

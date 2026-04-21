@@ -6,6 +6,7 @@ import { OverviewCards } from "./components/overview_cards.jsx";
 import { AccountApiKeyDialog } from "./dialogs/account_api_key_dialog.jsx";
 import { AccountBrowserProxyDialog } from "./dialogs/account_browser_proxy_dialog.jsx";
 import { AccountCreateDialog } from "./dialogs/account_create_dialog.jsx";
+import { AccountDeleteDialog } from "./dialogs/account_delete_dialog.jsx";
 import { AccountProxyDialog } from "./dialogs/account_proxy_dialog.jsx";
 import { AccountRemarkDialog } from "./dialogs/account_remark_dialog.jsx";
 import { LoginDrawer } from "./drawers/login_drawer.jsx";
@@ -23,7 +24,10 @@ export function AccountCenterPage({ client }) {
     closeBrowserProxyDialog,
     closeContextMenu,
     closeCreateDialog,
+    closeDeleteDialog,
     closeLoginDrawer,
+    confirmDeleteAccount,
+    deleteDialogAccount,
     logsModalState,
     closeProxyDialog,
     closePurchaseDrawer,
@@ -32,6 +36,7 @@ export function AccountCenterPage({ client }) {
     createDialogOpen,
     deleteAccount,
     filteredRows,
+    isDeletingAccount,
     isLoading,
     isReadonlyLocked,
     isOpeningBindingPage,
@@ -86,7 +91,7 @@ export function AccountCenterPage({ client }) {
       <header className="account-page__hero">
         <div className="account-page__hero-main">
           <div className="account-page__hero-copy" style={NO_SELECT_STYLE}>
-            <div className="account-page__eyebrow">ACCOUNT CENTER</div>
+            <div className="account-page__eyebrow">账号中心</div>
             <h1 className="account-page__title">
               {isLoading ? "账号中心加载中" : "C5 交易助手"}
             </h1>
@@ -157,6 +162,13 @@ export function AccountCenterPage({ client }) {
       </section>
 
       <AccountCreateDialog open={createDialogOpen} onClose={closeCreateDialog} onSubmit={submitCreate} />
+      <AccountDeleteDialog
+        account={deleteDialogAccount}
+        isDeleting={isDeletingAccount}
+        open={Boolean(deleteDialogAccount)}
+        onClose={closeDeleteDialog}
+        onConfirm={confirmDeleteAccount}
+      />
       <AccountRemarkDialog account={remarkDialogAccount} open={Boolean(remarkDialogAccount)} onClose={closeRemarkDialog} onSubmit={submitRemark} />
       <AccountApiKeyDialog account={apiKeyDialogAccount} open={Boolean(apiKeyDialogAccount)} onClose={closeApiKeyDialog} onSubmit={submitApiKey} />
       <AccountBrowserProxyDialog

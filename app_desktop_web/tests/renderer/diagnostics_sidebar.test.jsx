@@ -279,6 +279,8 @@ describe("diagnostics page", () => {
 
     const panel = await screen.findByRole("complementary", { name: "通用诊断面板" });
     expect(panel).toBeInTheDocument();
+    expect(within(panel).getByText("运行诊断")).toBeInTheDocument();
+    expect(within(panel).queryByText("Diagnostics")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "通用诊断" })).toHaveClass("is-active");
     expect(within(panel).getAllByText("查询配置A")).toHaveLength(2);
     expect(within(panel).getByRole("tab", { name: "查询" })).toBeInTheDocument();
@@ -290,6 +292,36 @@ describe("diagnostics page", () => {
     expect(within(panel).getByRole("button", { name: /查询事件日志/i })).toBeInTheDocument();
     expect(within(panel).getByText("1")).toBeInTheDocument();
     expect(within(panel).getAllByText("token invalid").length).toBeGreaterThan(0);
+  });
+
+  it("localizes login task states in diagnostics instead of exposing raw task codes", async () => {
+    const snapshot = buildDiagnosticsSnapshot();
+    snapshot.login_tasks.recent_tasks[0].last_message = "";
+    snapshot.login_tasks.recent_tasks[0].events = [
+      { state: "pending", timestamp: "2026-03-25T20:00:00", message: "" },
+      { state: "starting_browser", timestamp: "2026-03-25T20:00:01", message: "" },
+      { state: "waiting_for_scan", timestamp: "2026-03-25T20:00:02", message: "" },
+    ];
+    snapshot.login_tasks.recent_tasks[1].last_message = "";
+    snapshot.login_tasks.recent_tasks[1].events = [
+      { state: "pending", timestamp: "2026-03-25T19:59:00", message: "" },
+      { state: "conflict", timestamp: "2026-03-25T20:00:00", message: "" },
+    ];
+    installDesktopApp(createFetchHarness({ snapshots: [snapshot] }));
+    const user = userEvent.setup();
+
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "通用诊断" }));
+
+    const panel = await screen.findByRole("complementary", { name: "通用诊断面板" });
+    await user.click(within(panel).getByRole("tab", { name: "登录任务" }));
+
+    expect(within(panel).getAllByText("等待扫码").length).toBeGreaterThan(0);
+    expect(within(panel).getByText("正在启动浏览器")).toBeInTheDocument();
+    expect(within(panel).getAllByText("账号冲突，等待确认").length).toBeGreaterThan(0);
+    expect(within(panel).queryByText("waiting_for_scan")).not.toBeInTheDocument();
+    expect(within(panel).queryByText("starting_browser")).not.toBeInTheDocument();
+    expect(within(panel).queryByText("conflict")).not.toBeInTheDocument();
   });
 
   it("keeps showing captured summary and account errors even after later snapshots clear them", async () => {
