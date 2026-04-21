@@ -170,9 +170,15 @@ class ManagedEdgeCdpLoginRunner:
             )
             payload["debugger_address"] = debugger_address
             if account_profile_root is not None and account_id is not None:
-                self._profile_store.persist_session(str(account_id), session_root)
                 payload.update(AccountBrowserProfileStore.build_profile_payload(account_profile_root))
             await _safe_emit(callback, "captured_login_info")
+            if account_profile_root is not None and account_id is not None:
+                cleanup_callbacks.append(
+                    self._build_persist_session_callback(
+                        account_id=str(account_id),
+                        session_root=session_root,
+                    )
+                )
             captured = True
             self._schedule_delayed_cleanup(
                 process=browser_process,
@@ -327,6 +333,20 @@ class ManagedEdgeCdpLoginRunner:
                 cleanup()
             except Exception:
                 pass
+
+    def _build_persist_session_callback(
+        self,
+        *,
+        account_id: str,
+        session_root: Path,
+    ) -> Callable[[], None]:
+        def _persist_session() -> None:
+            profile_store = self._profile_store
+            if profile_store is None:
+                return
+            profile_store.persist_session(account_id, session_root)
+
+        return _persist_session
 
     def _wait_for_process_exit(
         process: subprocess.Popen[Any] | None,

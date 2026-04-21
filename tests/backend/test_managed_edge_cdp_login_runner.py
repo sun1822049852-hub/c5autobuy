@@ -437,7 +437,7 @@ def test_managed_edge_cdp_login_runner_launches_with_absolute_edge_and_session_p
     assert f"--user-data-dir={(tmp_path / 'data' / 'app-private' / 'browser-sessions' / 'session-fixed').resolve()}" in command
 
 
-async def test_managed_edge_cdp_login_runner_persists_profile_before_browser_exit(monkeypatch, tmp_path: Path):
+async def test_managed_edge_cdp_login_runner_persists_profile_after_browser_exit(monkeypatch, tmp_path: Path):
     from app_backend.infrastructure.browser_runtime.login_adapter import ManagedEdgeCdpLoginRunner
 
     runtime = _DummyRuntime(tmp_path)
@@ -498,11 +498,11 @@ async def test_managed_edge_cdp_login_runner_persists_profile_before_browser_exi
     payload = await runner.run(proxy_url=None, account_id="account-2")
 
     assert payload["profile_root"] == str(tmp_path / "browser-profiles" / "account-2")
-    assert persist_poll_results == [None]
+    assert persist_poll_results == [0]
     assert process.terminated is False
 
 
-async def test_managed_edge_cdp_login_runner_persists_profile_immediately_after_capture(monkeypatch, tmp_path: Path):
+async def test_managed_edge_cdp_login_runner_defers_profile_persist_until_cleanup_runs(monkeypatch, tmp_path: Path):
     from app_backend.infrastructure.browser_runtime.login_adapter import ManagedEdgeCdpLoginRunner
 
     runtime = _DummyRuntime(tmp_path)
@@ -543,12 +543,10 @@ async def test_managed_edge_cdp_login_runner_persists_profile_immediately_after_
 
     await runner.run(proxy_url=None, account_id="account-3")
 
-    assert len(profile_store.persist_calls) == 1
-    assert profile_store.persist_calls[0][0] == "account-3"
-    assert Path(profile_store.persist_calls[0][1]).name.startswith("login-account-3-")
+    assert profile_store.persist_calls == []
 
 
-async def test_managed_edge_cdp_login_runner_skips_invalid_profile_persist_after_browser_exit(monkeypatch, tmp_path: Path):
+async def test_managed_edge_cdp_login_runner_ignores_profile_persist_error_after_browser_exit(monkeypatch, tmp_path: Path):
     from app_backend.infrastructure.browser_runtime.login_adapter import ManagedEdgeCdpLoginRunner
 
     runtime = _DummyRuntime(tmp_path)
@@ -561,22 +559,7 @@ async def test_managed_edge_cdp_login_runner_skips_invalid_profile_persist_after
         close_delay_seconds=0.0,
     )
     process = _FakeProcess()
-    read_payloads = iter(
-        [
-            {
-                "c5_user_id": "10001",
-                "c5_nick_name": "纯净账号",
-                "cookie_raw": "NC5_accessToken=token-1; NC5_deviceId=device-1",
-                "target_url": "https://www.c5game.com/user/user/",
-            },
-            {
-                "c5_user_id": "10001",
-                "c5_nick_name": "",
-                "cookie_raw": "",
-                "target_url": "https://www.c5game.com/login",
-            },
-        ]
-    )
+    persist_attempts: list[tuple[str, str]] = []
 
     monkeypatch.setattr(
         "app_backend.infrastructure.browser_runtime.login_adapter.subprocess.Popen",
@@ -592,12 +575,23 @@ async def test_managed_edge_cdp_login_runner_skips_invalid_profile_persist_after
     )
     monkeypatch.setattr(
         "app_backend.infrastructure.browser_runtime.login_adapter.read_attached_session",
-        lambda debugger_address: next(read_payloads),
+        lambda debugger_address: {
+            "c5_user_id": "10001",
+            "c5_nick_name": "纯净账号",
+            "cookie_raw": "NC5_accessToken=token-1; NC5_deviceId=device-1",
+            "target_url": "https://www.c5game.com/user/user/",
+        },
     )
     monkeypatch.setattr(
         "app_backend.infrastructure.browser_runtime.login_adapter.ManagedEdgeCdpLoginRunner._wait_for_process_exit",
         lambda self, process, timeout_seconds: setattr(process, "_poll_result", 0),
     )
+
+    def _persist_session(account_id: str, session_root: Path) -> Path:
+        persist_attempts.append((account_id, str(session_root)))
+        raise RuntimeError("profile still locked")
+
+    monkeypatch.setattr(profile_store, "persist_session", _persist_session)
 
     class _ImmediateThread:
         def __init__(self, *, target, name=None, daemon=None):
@@ -608,11 +602,12 @@ async def test_managed_edge_cdp_login_runner_skips_invalid_profile_persist_after
 
     monkeypatch.setattr("app_backend.infrastructure.browser_runtime.login_adapter.threading.Thread", _ImmediateThread)
 
-    await runner.run(proxy_url=None, account_id="account-4")
+    payload = await runner.run(proxy_url=None, account_id="account-4")
 
-    assert len(profile_store.persist_calls) == 1
-    assert profile_store.persist_calls[0][0] == "account-4"
-    assert Path(profile_store.persist_calls[0][1]).name.startswith("login-account-4-")
+    assert payload["profile_root"] == str(tmp_path / "browser-profiles" / "account-4")
+    assert len(persist_attempts) == 1
+    assert persist_attempts[0][0] == "account-4"
+    assert Path(persist_attempts[0][1]).name.startswith("login-account-4-")
 
 
 async def test_managed_edge_cdp_login_runner_uses_dedicated_login_session_directory(monkeypatch, tmp_path: Path):

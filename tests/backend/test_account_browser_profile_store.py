@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 import sqlite3
 from pathlib import Path
 
@@ -129,4 +130,50 @@ def test_account_browser_profile_store_prepares_open_api_binding_session_by_refr
     assert refreshed[("www.c5game.com", "NC5_accessToken")][0] > 100
     assert refreshed[("www.c5game.com", "NC5_accessToken")][1:] == (1, 1)
     assert refreshed[(".example.com", "other_cookie")] == (300, 0, 1)
+
+
+def test_account_browser_profile_store_persists_live_session_even_when_cache_file_is_locked(
+    monkeypatch,
+    tmp_path: Path,
+):
+    store = _build_store(tmp_path)
+    session_root = tmp_path / "session"
+    default_root = session_root / "Default"
+    preferences_path = default_root / "Preferences"
+    cache_file_path = default_root / "Cache" / "Cache_Data" / "data_0"
+    preferences_path.parent.mkdir(parents=True, exist_ok=True)
+    preferences_path.write_text('{"ok":1}', encoding="utf-8")
+    cache_file_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_file_path.write_text("locked-cache", encoding="utf-8")
+
+    original_copytree = shutil.copytree
+
+    def _copytree(src, dst, *args, **kwargs):
+        src_path = Path(src)
+        if src_path != session_root:
+            return original_copytree(src, dst, *args, **kwargs)
+
+        ignore = kwargs.get("ignore")
+        ignored_names = set(ignore(str(default_root), ["Preferences", "Cache"])) if callable(ignore) else set()
+        if "Cache" not in ignored_names:
+            raise shutil.Error(
+                [
+                    (
+                        str(cache_file_path),
+                        str(Path(dst) / "Default" / "Cache" / "Cache_Data" / "data_0"),
+                        f"[Errno 13] Permission denied: '{cache_file_path}'",
+                    )
+                ]
+            )
+        return original_copytree(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(
+        "app_backend.infrastructure.browser_runtime.account_browser_profile_store.shutil.copytree",
+        _copytree,
+    )
+
+    persisted_root = store.persist_session("a-live", session_root)
+
+    assert persisted_root.joinpath("Default", "Preferences").read_text(encoding="utf-8") == '{"ok":1}'
+    assert not persisted_root.joinpath("Default", "Cache").exists()
 

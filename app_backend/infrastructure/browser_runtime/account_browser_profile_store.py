@@ -30,6 +30,14 @@ class AccountBrowserProfileStore:
         "Code Cache",
         "GPUCache",
         "Sessions",
+        Path(DEFAULT_PROFILE_DIRECTORY) / "Cache",
+        Path(DEFAULT_PROFILE_DIRECTORY) / "Code Cache",
+        Path(DEFAULT_PROFILE_DIRECTORY) / "GPUCache",
+        Path(DEFAULT_PROFILE_DIRECTORY) / "ShaderCache",
+        Path(DEFAULT_PROFILE_DIRECTORY) / "GrShaderCache",
+        Path(DEFAULT_PROFILE_DIRECTORY) / "DawnCache",
+        Path(DEFAULT_PROFILE_DIRECTORY) / "Sessions",
+        Path(DEFAULT_PROFILE_DIRECTORY) / "Service Worker" / "CacheStorage",
     )
 
     def __init__(
@@ -65,7 +73,7 @@ class AccountBrowserProfileStore:
             session_root = self._runtime.session_root / f"account-{self._safe_name(account_id)}"
         if session_root.exists():
             shutil.rmtree(session_root, ignore_errors=True)
-        shutil.copytree(source_root, session_root, dirs_exist_ok=True)
+        self._copytree(source_root, session_root)
         self._remove_transient_paths(session_root)
         return session_root
 
@@ -74,7 +82,7 @@ class AccountBrowserProfileStore:
         temp_root = destination_root.with_name(f"{destination_root.name}.tmp")
         if temp_root.exists():
             shutil.rmtree(temp_root, ignore_errors=True)
-        shutil.copytree(session_root, temp_root, dirs_exist_ok=True)
+        self._copytree(session_root, temp_root)
         self._remove_transient_paths(temp_root)
         if destination_root.exists():
             shutil.rmtree(destination_root, ignore_errors=True)
@@ -117,6 +125,39 @@ class AccountBrowserProfileStore:
                 shutil.rmtree(target, ignore_errors=True)
             else:
                 target.unlink(missing_ok=True)
+
+    @classmethod
+    def _copytree(cls, source: Path, destination: Path) -> None:
+        shutil.copytree(
+            source,
+            destination,
+            dirs_exist_ok=True,
+            ignore=cls._build_transient_copy_ignore(Path(source)),
+        )
+
+    @classmethod
+    def _build_transient_copy_ignore(cls, source_root: Path):
+        transient_relatives = {
+            cls._normalize_relative_path(relative_path)
+            for relative_path in cls.TRANSIENT_RELATIVE_PATHS
+        }
+
+        def _ignore(current_dir: str, names: list[str]) -> set[str]:
+            current_path = Path(current_dir)
+            current_relative = cls._normalize_relative_path(current_path.relative_to(source_root))
+            ignored_names: set[str] = set()
+            for name in names:
+                candidate_relative = current_relative + (name,)
+                if candidate_relative in transient_relatives:
+                    ignored_names.add(name)
+            return ignored_names
+
+        return _ignore
+
+    @staticmethod
+    def _normalize_relative_path(relative_path: str | Path) -> tuple[str, ...]:
+        parts = Path(relative_path).parts
+        return tuple(part for part in parts if part not in {"", "."})
 
     @classmethod
     def _refresh_open_api_cookie_expiry(cls, cookie_db_path: Path) -> int:
