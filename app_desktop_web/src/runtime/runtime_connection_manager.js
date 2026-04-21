@@ -73,6 +73,9 @@ function applyRuntimeUpdate(store, payload) {
     case "runtime_settings.updated":
       store.applyPurchaseSystemServer?.({ runtimeSettings: eventPayload });
       break;
+    case "program_access.updated":
+      store.applyProgramAccess?.(eventPayload);
+      break;
     default:
       break;
   }

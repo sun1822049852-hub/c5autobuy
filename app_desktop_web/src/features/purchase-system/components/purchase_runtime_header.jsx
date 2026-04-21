@@ -2,6 +2,7 @@ export function PurchaseRuntimeHeader({
   activeQueryConfig,
   configActionLabel,
   displayConfigName,
+  isConfigActionDisabled = false,
   isLoading,
   isPurchaseSettingsLoading,
   isQuerySettingsLoading,
@@ -53,6 +54,7 @@ export function PurchaseRuntimeHeader({
 
         <button
           className="ghost-button purchase-runtime-header__config-button"
+          disabled={isConfigActionDisabled}
           type="button"
           onClick={() => {
             onOpenConfigDialog?.();

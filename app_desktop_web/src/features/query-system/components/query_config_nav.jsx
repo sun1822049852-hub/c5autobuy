@@ -3,6 +3,7 @@ export function QueryConfigNav({
   isDeleteMode,
   isCreatingConfig,
   isLoading,
+  mutationsDisabled = false,
   onDeleteConfig,
   onOpenCreateConfigDialog,
   onSelectConfig,
@@ -20,7 +21,7 @@ export function QueryConfigNav({
             className="query-config-nav__icon-button query-config-nav__icon-button--create"
             type="button"
             aria-label="新建配置"
-            disabled={isCreatingConfig}
+            disabled={isCreatingConfig || mutationsDisabled}
             onClick={onOpenCreateConfigDialog}
           >
             +
@@ -29,6 +30,7 @@ export function QueryConfigNav({
             className={`query-config-nav__icon-button query-config-nav__icon-button--delete${isDeleteMode ? " is-active" : ""}`}
             type="button"
             aria-label="切换配置删除模式"
+            disabled={mutationsDisabled}
             onClick={onToggleDeleteMode}
           >
             -
@@ -57,6 +59,7 @@ export function QueryConfigNav({
                 className="query-config-nav__delete"
                 type="button"
                 aria-label={`删除配置 ${config.name}`}
+                disabled={mutationsDisabled}
                 onClick={() => onDeleteConfig(config)}
               >
                 -

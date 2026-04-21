@@ -25,6 +25,7 @@ export function QuerySettingsModal({
   error,
   isLoading,
   isOpen,
+  isReadonly = false,
   isSaving,
   onChange,
   onClose,
@@ -77,6 +78,7 @@ export function QuerySettingsModal({
                     <label className="drawer-checkbox">
                       <input
                         checked={Boolean(mode.enabled)}
+                        disabled={isReadonly}
                         type="checkbox"
                         onChange={(event) => {
                           onChange?.(mode.mode_type, "enabled", event.target.checked);
@@ -91,6 +93,7 @@ export function QuerySettingsModal({
                       <span className="form-label">{`${modeCopy.label} 基础冷却最小`}</span>
                       <input
                         className="form-input"
+                        disabled={isReadonly}
                         inputMode="decimal"
                         min={mode.mode_type === "new_api" ? "1" : (mode.mode_type === "fast_api" ? "0.2" : "0")}
                         step="0.01"
@@ -106,6 +109,7 @@ export function QuerySettingsModal({
                       <span className="form-label">{`${modeCopy.label} 基础冷却最大`}</span>
                       <input
                         className="form-input"
+                        disabled={isReadonly}
                         inputMode="decimal"
                         min={mode.mode_type === "new_api" ? "1" : (mode.mode_type === "fast_api" ? "0.2" : "0")}
                         step="0.01"
@@ -123,6 +127,7 @@ export function QuerySettingsModal({
                       <span className="form-label">{`${modeCopy.label} 商品最小冷却`}</span>
                       <input
                         className="form-input"
+                        disabled={isReadonly}
                         inputMode="decimal"
                         min="0"
                         step="0.01"
@@ -138,6 +143,7 @@ export function QuerySettingsModal({
                       <span className="form-label">{`${modeCopy.label} 商品冷却策略`}</span>
                       <select
                         className="form-select"
+                        disabled={isReadonly}
                         value={mode.item_min_cooldown_strategy}
                         onChange={(event) => {
                           onChange?.(mode.mode_type, "item_min_cooldown_strategy", event.target.value);
@@ -156,6 +162,7 @@ export function QuerySettingsModal({
                     <label className="drawer-checkbox">
                       <input
                         checked={Boolean(mode.random_delay_enabled)}
+                        disabled={isReadonly}
                         type="checkbox"
                         onChange={(event) => {
                           onChange?.(mode.mode_type, "random_delay_enabled", event.target.checked);
@@ -170,7 +177,7 @@ export function QuerySettingsModal({
                       <span className="form-label">{`${modeCopy.label} 随机冷却最小`}</span>
                       <input
                         className="form-input"
-                        disabled={!mode.random_delay_enabled}
+                        disabled={isReadonly || !mode.random_delay_enabled}
                         inputMode="decimal"
                         min="0"
                         step="0.01"
@@ -186,7 +193,7 @@ export function QuerySettingsModal({
                       <span className="form-label">{`${modeCopy.label} 随机冷却最大`}</span>
                       <input
                         className="form-input"
-                        disabled={!mode.random_delay_enabled}
+                        disabled={isReadonly || !mode.random_delay_enabled}
                         inputMode="decimal"
                         min="0"
                         step="0.01"
@@ -203,6 +210,7 @@ export function QuerySettingsModal({
                     <label className="drawer-checkbox">
                       <input
                         checked={Boolean(mode.window_enabled)}
+                        disabled={isReadonly}
                         type="checkbox"
                         onChange={(event) => {
                           onChange?.(mode.mode_type, "window_enabled", event.target.checked);
@@ -217,7 +225,7 @@ export function QuerySettingsModal({
                       <span className="form-label">{`${modeCopy.label} 开始时间`}</span>
                       <input
                         className="form-input"
-                        disabled={!mode.window_enabled}
+                        disabled={isReadonly || !mode.window_enabled}
                         step="60"
                         type="time"
                         value={mode.start_time}
@@ -231,7 +239,7 @@ export function QuerySettingsModal({
                       <span className="form-label">{`${modeCopy.label} 结束时间`}</span>
                       <input
                         className="form-input"
-                        disabled={!mode.window_enabled}
+                        disabled={isReadonly || !mode.window_enabled}
                         step="60"
                         type="time"
                         value={mode.end_time}
@@ -251,7 +259,7 @@ export function QuerySettingsModal({
           <button className="ghost-button" disabled={isSaving} type="button" onClick={onClose}>取消</button>
           <button
             className="accent-button"
-            disabled={isLoading || isSaving || !draft}
+            disabled={isLoading || isReadonly || isSaving || !draft}
             type="button"
             onClick={() => {
               onSave?.();

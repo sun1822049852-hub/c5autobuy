@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 
+import { useProgramAccessGuard } from "../../../program_access/program_access_provider.jsx";
+import { isProgramReadonlyLocked } from "../../../program_access/program_access_readonly.js";
 import {
   useApplyPurchaseSystemServer,
   useApplyQuerySystemServer,
   usePatchPurchaseSystemUi,
+  useProgramAccess,
   usePurchaseSystemServer,
   usePurchaseSystemServerHydrated,
   usePurchaseSystemUi,
@@ -702,6 +705,9 @@ function buildDraftPayloadItems(items, runtimeItemMap, manualAllocationDrafts) {
 
 
 export function usePurchaseSystemPage({ client, isActive = true }) {
+  const { runProgramAccessAction } = useProgramAccessGuard();
+  const programAccess = useProgramAccess();
+  const isReadonlyLocked = isProgramReadonlyLocked(programAccess);
   const purchaseServer = usePurchaseSystemServer();
   const purchaseServerHydrated = usePurchaseSystemServerHydrated();
   const purchaseUi = usePurchaseSystemUi();
@@ -865,6 +871,10 @@ export function usePurchaseSystemPage({ client, isActive = true }) {
   }
 
   function onPurchaseSettingsChange(field, value) {
+    if (isReadonlyLocked) {
+      return;
+    }
+
     setPurchaseSettingsDraft((currentDraft) => ({
       ...currentDraft,
       [field]: value,
@@ -875,6 +885,10 @@ export function usePurchaseSystemPage({ client, isActive = true }) {
   }
 
   async function onSavePurchaseSettings() {
+    if (isReadonlyLocked) {
+      return false;
+    }
+
     const limit = Number(purchaseSettingsDraft?.per_batch_ip_fanout_limit ?? "");
     const maxInflightPerAccount = Number(purchaseSettingsDraft?.max_inflight_per_account ?? "");
     if (!Number.isInteger(limit) || limit < 1) {
@@ -890,10 +904,10 @@ export function usePurchaseSystemPage({ client, isActive = true }) {
 
     setIsPurchaseSettingsSaving(true);
     try {
-      const savedSettings = await client.updatePurchaseRuntimeSettings({
+      const savedSettings = await runProgramAccessAction(() => client.updatePurchaseRuntimeSettings({
         per_batch_ip_fanout_limit: limit,
         max_inflight_per_account: maxInflightPerAccount,
-      });
+      }));
       applyPurchaseSystemServer({
         runtimeSettings: savedSettings,
       });
@@ -935,11 +949,19 @@ export function usePurchaseSystemPage({ client, isActive = true }) {
   }
 
   function onQuerySettingsChange(modeType, field, value) {
+    if (isReadonlyLocked) {
+      return;
+    }
+
     setQuerySettingsDraft((currentDraft) => updateQuerySettingsDraft(currentDraft, modeType, field, value));
     setQuerySettingsError("");
   }
 
   async function onSaveQuerySettings() {
+    if (isReadonlyLocked) {
+      return false;
+    }
+
     const nextState = validateAndBuildQuerySettingsPayload(querySettingsDraft);
     if (nextState.error) {
       setQuerySettingsError(nextState.error);
@@ -957,7 +979,7 @@ export function usePurchaseSystemPage({ client, isActive = true }) {
 
     setIsQuerySettingsSaving(true);
     try {
-      const savedSettings = await client.updateQuerySettings(nextState.payload);
+      const savedSettings = await runProgramAccessAction(() => client.updateQuerySettings(nextState.payload));
       const normalizedDraft = normalizeQuerySettingsDraft(savedSettings);
       setQuerySettingsDraft(normalizedDraft);
       setQuerySettingsWarnings(normalizedDraft.warnings);
@@ -1188,7 +1210,9 @@ export function usePurchaseSystemPage({ client, isActive = true }) {
     && isConfigActive(status, selectedConfigDetail.config_id);
   const actionLabel = isRuntimeRunning ? "停止扫货" : "开始扫货";
   const configActionLabel = isRuntimeRunning ? "切换配置" : "选择配置";
-  const isActionDisabled = isActionPending || (!isRuntimeRunning && !selectedConfigId);
+  const isActionDisabled = isActionPending
+    || (isReadonlyLocked && !isRuntimeRunning)
+    || (!isRuntimeRunning && !selectedConfigId);
   const dialogActionLabel = isRuntimeRunning ? "切换到该配置" : "使用该配置";
   const runtimeItemMap = useMemo(
     () => buildRuntimeItemMap(status, selectedConfigDetail?.config_id || null),
@@ -1264,7 +1288,7 @@ export function usePurchaseSystemPage({ client, isActive = true }) {
   ]);
 
   function adjustManualAllocation(queryItemId, modeType, delta) {
-    if (!isSelectedConfigRunning) {
+    if (isReadonlyLocked || !isSelectedConfigRunning) {
       return;
     }
 
@@ -1289,7 +1313,7 @@ export function usePurchaseSystemPage({ client, isActive = true }) {
   }
 
   async function onSubmitRuntimeDrafts() {
-    if (!selectedConfigDetail || !isSelectedConfigRunning || !draftPayloadItems.length) {
+    if (isReadonlyLocked || !selectedConfigDetail || !isSelectedConfigRunning || !draftPayloadItems.length) {
       return false;
     }
 
@@ -1321,13 +1345,15 @@ export function usePurchaseSystemPage({ client, isActive = true }) {
   }
 
   async function performConfigSelection(nextConfigId) {
-    if (!nextConfigId) {
+    if (isReadonlyLocked || !nextConfigId) {
       return false;
     }
 
     setIsActionPending(true);
     try {
-      const nextUiPreferences = await client.updatePurchaseUiPreferences(nextConfigId);
+      const nextUiPreferences = await runProgramAccessAction(
+        () => client.updatePurchaseUiPreferences(nextConfigId),
+      );
       applyPurchaseSystemServer({
         uiPreferences: normalizeUiPreferences(nextUiPreferences),
       });
@@ -1341,7 +1367,7 @@ export function usePurchaseSystemPage({ client, isActive = true }) {
         return true;
       }
 
-      const nextStatus = await client.startPurchaseRuntime(nextConfigId);
+      const nextStatus = await runProgramAccessAction(() => client.startPurchaseRuntime(nextConfigId));
       syncRuntimeStatus(nextStatus);
       setIsConfigDialogOpen(false);
       setSelectorDraftId(null);
@@ -1360,11 +1386,15 @@ export function usePurchaseSystemPage({ client, isActive = true }) {
       return;
     }
 
+    if (isReadonlyLocked && !isRuntimeRunning) {
+      return;
+    }
+
     setIsActionPending(true);
     try {
       const nextStatus = isRuntimeRunning
         ? await client.stopPurchaseRuntime()
-        : await client.startPurchaseRuntime(selectedConfigId);
+        : await runProgramAccessAction(() => client.startPurchaseRuntime(selectedConfigId));
       syncRuntimeStatus(nextStatus);
       setManualAllocationDrafts({});
       setLoadError("");
@@ -1376,6 +1406,10 @@ export function usePurchaseSystemPage({ client, isActive = true }) {
   }
 
   async function openConfigDialog() {
+    if (isReadonlyLocked) {
+      return;
+    }
+
     try {
       const nextConfigs = await refreshConfigList();
       const nextSelectionId = selectedConfigId || nextConfigs[0]?.config_id || null;
@@ -1489,12 +1523,13 @@ export function usePurchaseSystemPage({ client, isActive = true }) {
     isConfigLeavePromptOpen: configLeavePrompt.isOpen,
     isConfigLeavePromptSaving: configLeavePrompt.isSaving,
     isLoading,
+    isReadonlyLocked,
     isQuerySettingsLoading,
     isQuerySettingsOpen,
     isQuerySettingsSaving,
     isPurchaseSettingsOpen,
     isAccountMonitorOpen: accountMonitorModal.isOpen,
-    isSubmitDisabled: !hasUnsavedRuntimeDrafts || !isSelectedConfigRunning || isSubmittingDrafts,
+    isSubmitDisabled: isReadonlyLocked || !hasUnsavedRuntimeDrafts || !isSelectedConfigRunning || isSubmittingDrafts,
     isSubmittingDrafts,
     itemRows,
     loadError,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import asdict
 from datetime import datetime
 
 from app_backend.application.services.query_mode_capacity_service import QueryModeCapacityService
@@ -27,6 +28,7 @@ class GetAppBootstrapUseCase:
         runtime_settings_repository,
         task_manager,
         runtime_update_hub,
+        program_access_gateway,
     ) -> None:
         self._query_config_repository = query_config_repository
         self._account_repository = account_repository
@@ -36,6 +38,7 @@ class GetAppBootstrapUseCase:
         self._runtime_settings_repository = runtime_settings_repository
         self._task_manager = task_manager
         self._runtime_update_hub = runtime_update_hub
+        self._program_access_gateway = program_access_gateway
 
     def execute(self) -> dict[str, object]:
         query_configs = ListQueryConfigsUseCase(self._query_config_repository).execute()
@@ -79,6 +82,7 @@ class GetAppBootstrapUseCase:
             "diagnostics": {
                 "summary": diagnostics_summary,
             },
+            "program_access": asdict(self._program_access_gateway.get_summary()),
         }
 
     @staticmethod

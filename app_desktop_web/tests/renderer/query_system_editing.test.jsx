@@ -1128,7 +1128,7 @@ describe("query system editing", () => {
     await user.click(within(leaveDialog).getByRole("button", { name: "保存" }));
 
     await waitFor(() => {
-      expect(screen.getByText("C5 账号中心")).toBeInTheDocument();
+      expect(screen.getByText("C5 交易助手")).toBeInTheDocument();
     });
 
     expect(

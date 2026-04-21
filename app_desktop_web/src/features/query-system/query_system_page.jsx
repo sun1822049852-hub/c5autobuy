@@ -47,6 +47,7 @@ export function QuerySystemPage({ bootstrapConfig, client, isActive, onLeaveStat
     isDeletingConfig,
     isLoading,
     isItemDeleteMode,
+    isReadonlyLocked,
     isSaving,
     itemViewModels,
     loadError,
@@ -169,16 +170,17 @@ export function QuerySystemPage({ bootstrapConfig, client, isActive, onLeaveStat
       ) : null}
 
       <div className="query-system-page__layout">
-          <QueryConfigNav
-            configs={configList}
-            isDeleteMode={isConfigDeleteMode}
-            isCreatingConfig={isCreatingConfig}
-            isLoading={isLoading}
-            onDeleteConfig={openDeleteConfigDialog}
-            onOpenCreateConfigDialog={openCreateConfigDialog}
-            onSelectConfig={handleSelectConfig}
-            onToggleDeleteMode={toggleConfigDeleteMode}
-          />
+        <QueryConfigNav
+          configs={configList}
+          isDeleteMode={isConfigDeleteMode}
+          isCreatingConfig={isCreatingConfig}
+          isLoading={isLoading}
+          mutationsDisabled={isReadonlyLocked}
+          onDeleteConfig={openDeleteConfigDialog}
+          onOpenCreateConfigDialog={openCreateConfigDialog}
+          onSelectConfig={handleSelectConfig}
+          onToggleDeleteMode={toggleConfigDeleteMode}
+        />
 
         <div className="query-system-page__workbench">
           <QueryWorkbenchHeader
@@ -198,9 +200,10 @@ export function QuerySystemPage({ bootstrapConfig, client, isActive, onLeaveStat
 
           <div className="query-system-page__editor-grid">
             <QueryItemTable
-              canManageItems={Boolean(currentConfig)}
+              canManageItems={Boolean(currentConfig) && !isReadonlyLocked}
               isDeleteMode={isItemDeleteMode}
               items={itemViewModels}
+              readOnly={isReadonlyLocked}
               onDeleteItem={deleteDraftItem}
               onEditItem={openEditItemDialog}
               onToggleManualPause={toggleDraftItemManualPaused}
@@ -214,6 +217,7 @@ export function QuerySystemPage({ bootstrapConfig, client, isActive, onLeaveStat
       <QueryConfigCreateDialog
         form={createConfigForm}
         isOpen={isCreateConfigDialogOpen}
+        isReadonly={isReadonlyLocked}
         isSubmitting={isCreatingConfig}
         onClose={closeCreateConfigDialog}
         onFieldChange={updateCreateConfigField}
@@ -223,6 +227,7 @@ export function QuerySystemPage({ bootstrapConfig, client, isActive, onLeaveStat
       <QueryConfigDeleteDialog
         config={deleteConfigTarget}
         isDeleting={isDeletingConfig}
+        isReadonly={isReadonlyLocked}
         onClose={closeDeleteConfigDialog}
         onConfirm={confirmDeleteConfig}
       />
@@ -230,6 +235,7 @@ export function QuerySystemPage({ bootstrapConfig, client, isActive, onLeaveStat
       <QueryItemCreatePanel
         draft={createItemDraft}
         isOpen={isCreateItemDialogOpen}
+        isReadonly={isReadonlyLocked}
         onAdd={addDraftItem}
         onAllocationChange={updateCreateItemAllocation}
         onClose={closeCreateItemDialog}

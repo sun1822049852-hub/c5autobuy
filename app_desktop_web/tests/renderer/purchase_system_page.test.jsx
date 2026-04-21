@@ -161,6 +161,21 @@ function installDesktopApp(fetchImpl) {
 }
 
 
+function buildReadonlyLockedRuntimeStore() {
+  const runtimeStore = createAppRuntimeStore();
+  runtimeStore.applyProgramAccess({
+    mode: "remote_entitlement",
+    stage: "packaged_release",
+    guard_enabled: true,
+    message: "请先登录程序会员",
+    auth_state: null,
+    runtime_state: "stopped",
+    last_error_code: "program_auth_required",
+  });
+  return runtimeStore;
+}
+
+
 function buildQueryConfigDetail(configId = "cfg-1", overrides = {}) {
   if (configId === "cfg-2") {
     return {
@@ -723,7 +738,7 @@ describe("purchase system page", () => {
     const user = userEvent.setup();
 
     render(<App runtimeStore={runtimeStore} />);
-    await screen.findByText("C5 账号中心");
+    await screen.findByText("C5 交易助手");
 
     await user.click(screen.getByRole("button", { name: "扫货系统" }));
     const commandDeck = await screen.findByRole("region", { name: "扫货运行控制台" });
@@ -763,7 +778,7 @@ describe("purchase system page", () => {
     const user = userEvent.setup();
 
     render(<App runtimeStore={runtimeStore} />);
-    await screen.findByText("C5 账号中心");
+    await screen.findByText("C5 交易助手");
     await user.click(screen.getByRole("button", { name: "扫货系统" }));
     await screen.findByRole("region", { name: "扫货运行控制台" });
 
@@ -830,14 +845,14 @@ describe("purchase system page", () => {
     });
 
     render(<App runtimeStore={runtimeStore} />);
-    await screen.findByText("C5 账号中心");
+    await screen.findByText("C5 交易助手");
 
     await user.click(screen.getByRole("button", { name: "扫货系统" }));
     expect(await screen.findByRole("button", { name: "AK-47 | Redline" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Desert Eagle | Blaze" })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "账号中心" }));
-    await screen.findByText("C5 账号中心");
+    await screen.findByText("C5 交易助手");
 
     act(() => {
       runtimeStore.applyQuerySystemServer({
@@ -881,7 +896,7 @@ describe("purchase system page", () => {
 
     render(<App runtimeStore={runtimeStore} />);
 
-    await screen.findByText("C5 账号中心");
+    await screen.findByText("C5 交易助手");
     expect(findPurchasePayloadCalls(harness.calls)).toHaveLength(0);
 
     await user.click(screen.getByRole("button", { name: "扫货系统" }));
@@ -890,7 +905,7 @@ describe("purchase system page", () => {
     expect(findPurchasePayloadCalls(harness.calls)).toHaveLength(0);
 
     await user.click(screen.getByRole("button", { name: "账号中心" }));
-    await screen.findByText("C5 账号中心");
+    await screen.findByText("C5 交易助手");
 
     await user.click(screen.getByRole("button", { name: "扫货系统" }));
     expect(await screen.findByRole("region", { name: "扫货运行控制台" })).toBeInTheDocument();
@@ -904,7 +919,7 @@ describe("purchase system page", () => {
     const user = userEvent.setup();
 
     render(<App runtimeStore={runtimeStore} />);
-    await screen.findByText("C5 账号中心");
+    await screen.findByText("C5 交易助手");
 
     await user.click(screen.getByRole("button", { name: "扫货系统" }));
     const commandDeck = await screen.findByRole("region", { name: "扫货运行控制台" });
@@ -919,7 +934,7 @@ describe("purchase system page", () => {
     const purchasePayloadCallsBeforeHide = findPurchasePayloadCalls(harness.calls).length;
 
     await user.click(screen.getByRole("button", { name: "账号中心" }));
-    await screen.findByText("C5 账号中心");
+    await screen.findByText("C5 交易助手");
 
     act(() => {
       runtimeStore.applyPurchaseSystemServer({
@@ -1230,6 +1245,26 @@ describe("purchase system page", () => {
     expect(within(actionRegion).getByRole("button", { name: "开始扫货" })).toBeDisabled();
   });
 
+  it("disables starting runtime from a selected config when program access is readonly locked", async () => {
+    const harness = createFetchHarness({
+      initialUiPreferences: {
+        selected_config_id: "cfg-1",
+        updated_at: "2026-03-22T10:00:00",
+      },
+    });
+    const runtimeStore = buildReadonlyLockedRuntimeStore();
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App runtimeStore={runtimeStore} />);
+    await user.click(await screen.findByRole("button", { name: "扫货系统" }));
+
+    const commandDeck = screen.getByRole("region", { name: "扫货运行控制台" });
+    const actionRegion = screen.getByRole("region", { name: "扫货运行动作" });
+    expect(within(commandDeck).getByText("白天配置")).toBeInTheDocument();
+    expect(within(actionRegion).getByRole("button", { name: "开始扫货" })).toBeDisabled();
+  });
+
   it("renders the runtime bar as a compact header inside the item list panel", async () => {
     const harness = createFetchHarness({
       initialStatus: buildPurchaseRuntimeStatus({
@@ -1470,7 +1505,7 @@ describe("purchase system page", () => {
     await user.click(within(leaveDialog).getByRole("button", { name: "保存" }));
 
     await waitFor(() => {
-      expect(screen.getByText("C5 账号中心")).toBeInTheDocument();
+      expect(screen.getByText("C5 交易助手")).toBeInTheDocument();
     });
 
     expect(
@@ -1510,7 +1545,7 @@ describe("purchase system page", () => {
     await user.click(within(leaveDialog).getByRole("button", { name: "不保存" }));
 
     await waitFor(() => {
-      expect(screen.getByText("C5 账号中心")).toBeInTheDocument();
+      expect(screen.getByText("C5 交易助手")).toBeInTheDocument();
     });
 
     await user.click(screen.getByRole("button", { name: "扫货系统" }));
@@ -1587,7 +1622,7 @@ describe("purchase system page", () => {
 
     await user.click(screen.getByRole("button", { name: "账号中心" }));
     await waitFor(() => {
-      expect(screen.getByText("C5 账号中心")).toBeInTheDocument();
+      expect(screen.getByText("C5 交易助手")).toBeInTheDocument();
     });
 
     await new Promise((resolve) => {
@@ -1649,6 +1684,50 @@ describe("purchase system page", () => {
     expect(within(commandDeck).getByText("未选择配置")).toBeInTheDocument();
     expect(within(commandDeck).queryByText("白天配置")).not.toBeInTheDocument();
     expect(within(actionRegion).getByRole("button", { name: "开始扫货" })).toBeDisabled();
+  });
+
+  it("keeps readonly viewing on purchase page while disabling mutating controls", async () => {
+    const harness = createFetchHarness({
+      initialStatus: buildPurchaseRuntimeStatus({
+        running: true,
+        message: "运行中",
+        active_query_config: {
+          config_id: "cfg-1",
+          config_name: "白天配置",
+          state: "running",
+          message: "运行中",
+        },
+      }),
+      initialUiPreferences: {
+        selected_config_id: "cfg-1",
+        updated_at: "2026-03-22T10:00:00",
+      },
+    });
+    const runtimeStore = buildReadonlyLockedRuntimeStore();
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App runtimeStore={runtimeStore} />);
+    await user.click(await screen.findByRole("button", { name: "扫货系统" }));
+
+    const commandDeck = screen.getByRole("region", { name: "扫货运行控制台" });
+    const actionRegion = screen.getByRole("region", { name: "扫货运行动作" });
+    expect(within(commandDeck).getByRole("button", { name: "切换配置" })).toBeDisabled();
+    expect(within(actionRegion).getByRole("button", { name: "查看账号详情" })).not.toBeDisabled();
+    expect(within(actionRegion).getByRole("button", { name: "提交更改" })).toBeDisabled();
+    expect(within(actionRegion).getByRole("button", { name: "停止扫货" })).not.toBeDisabled();
+
+    await user.click(await screen.findByRole("button", { name: "AK-47 | Redline" }));
+    expect(screen.getAllByRole("button", { name: "浏览器查询器 增加实际分配" })[0]).toBeDisabled();
+
+    await user.click(within(commandDeck).getByRole("button", { name: "购买设置" }));
+    const purchaseDialog = await screen.findByRole("dialog", { name: "购买设置" });
+    expect(within(purchaseDialog).getByRole("button", { name: "保存购买设置" })).toBeDisabled();
+    await user.click(within(purchaseDialog).getByRole("button", { name: "关闭" }));
+
+    await user.click(within(commandDeck).getByRole("button", { name: "查询设置" }));
+    const queryDialog = await screen.findByRole("dialog", { name: "查询设置" });
+    expect(within(queryDialog).getByRole("button", { name: "保存" })).toBeDisabled();
   });
 
   it("opens query settings, blocks invalid minimums and warns before saving risky token cooldowns", async () => {

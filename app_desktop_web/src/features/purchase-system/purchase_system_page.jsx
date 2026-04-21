@@ -64,6 +64,7 @@ export function PurchaseSystemPage({ bootstrapConfig, client, isActive, onLeaveS
     isConfigLeavePromptSaving,
     isLoading,
     isPurchaseSettingsOpen,
+    isReadonlyLocked,
     isQuerySettingsLoading,
     isQuerySettingsOpen,
     isQuerySettingsSaving,
@@ -140,6 +141,7 @@ export function PurchaseSystemPage({ bootstrapConfig, client, isActive, onLeaveS
             activeQueryConfig={activeQueryConfig}
             configActionLabel={configActionLabel}
             displayConfigName={configDisplayName}
+            isConfigActionDisabled={isReadonlyLocked}
             isLoading={isLoading}
             isPurchaseSettingsLoading={isPurchaseSettingsSaving}
             isQuerySettingsLoading={isQuerySettingsLoading}
@@ -154,6 +156,7 @@ export function PurchaseSystemPage({ bootstrapConfig, client, isActive, onLeaveS
           <div className="purchase-system-page__items">
             {displayRows.map((row) => (
               <PurchaseItemPanel
+                allocationReadonly={isReadonlyLocked}
                 key={row.query_item_id}
                 row={row}
                 onDecreaseAllocation={onDecreaseAllocation}
@@ -191,6 +194,7 @@ export function PurchaseSystemPage({ bootstrapConfig, client, isActive, onLeaveS
         error={querySettingsError}
         isLoading={isQuerySettingsLoading}
         isOpen={isQuerySettingsOpen}
+        isReadonly={isReadonlyLocked}
         isSaving={isQuerySettingsSaving}
         onChange={onQuerySettingsChange}
         onClose={onCloseQuerySettings}
@@ -229,6 +233,7 @@ export function PurchaseSystemPage({ bootstrapConfig, client, isActive, onLeaveS
               fanoutLimit={purchaseSettingsDraft?.per_batch_ip_fanout_limit || "1"}
               maxInflightPerAccount={purchaseSettingsDraft?.max_inflight_per_account || "3"}
               notice={purchaseSettingsNotice}
+              isReadonly={isReadonlyLocked}
               isPending={isPurchaseSettingsSaving}
               isSaving={Boolean(purchaseSettingsDraft?.is_dirty)}
               onFanoutLimitChange={(value) => {

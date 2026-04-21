@@ -136,8 +136,8 @@ describe("electron remote runtime mode", () => {
       }
     }
 
-    expect(electronHarness.electron.app.setAppUserModelId).toHaveBeenCalledWith("com.c5.account-center");
-    expect(electronHarness.electron.app.setName).toHaveBeenCalledWith("C5 账号中心");
+    expect(electronHarness.electron.app.setAppUserModelId).toHaveBeenCalledWith("com.c5.trading-assistant");
+    expect(electronHarness.electron.app.setName).toHaveBeenCalledWith("C5 交易助手");
     expect(mkdirSync.mock.calls.map(([targetPath]) => normalizePathSeparators(targetPath))).toContain(
       "C:\\Users\\tester\\AppData\\Roaming\\C5AccountCenter",
     );

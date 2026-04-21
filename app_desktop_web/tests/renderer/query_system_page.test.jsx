@@ -33,6 +33,21 @@ function installDesktopApp(fetchImpl) {
 }
 
 
+function buildReadonlyLockedRuntimeStore() {
+  const runtimeStore = createAppRuntimeStore();
+  runtimeStore.applyProgramAccess({
+    mode: "remote_entitlement",
+    stage: "packaged_release",
+    guard_enabled: true,
+    message: "请先登录程序会员",
+    auth_state: null,
+    runtime_state: "stopped",
+    last_error_code: "program_auth_required",
+  });
+  return runtimeStore;
+}
+
+
 function buildIdleRuntimeStatus() {
   return {
     running: false,
@@ -384,7 +399,7 @@ describe("query system page", () => {
 
     render(<App runtimeStore={runtimeStore} />);
 
-    await screen.findByText("C5 账号中心");
+    await screen.findByText("C5 交易助手");
     await user.click(screen.getByRole("button", { name: "配置管理" }));
 
     expect(await screen.findByRole("heading", { name: "夜刀配置" })).toBeInTheDocument();
@@ -407,7 +422,7 @@ describe("query system page", () => {
 
     render(<App runtimeStore={runtimeStore} />);
 
-    await screen.findByText("C5 账号中心");
+    await screen.findByText("C5 交易助手");
     expect(findQueryPayloadCalls(harness.calls)).toHaveLength(0);
 
     await user.click(screen.getByRole("button", { name: "配置管理" }));
@@ -415,7 +430,7 @@ describe("query system page", () => {
     expect(findQueryPayloadCalls(harness.calls)).toHaveLength(0);
 
     await user.click(screen.getByRole("button", { name: "账号中心" }));
-    await screen.findByText("C5 账号中心");
+    await screen.findByText("C5 交易助手");
 
     await user.click(screen.getByRole("button", { name: "配置管理" }));
     expect(await screen.findByText("当前配置")).toBeInTheDocument();
@@ -430,7 +445,7 @@ describe("query system page", () => {
 
     render(<App runtimeStore={runtimeStore} />);
 
-    await screen.findByText("C5 账号中心");
+    await screen.findByText("C5 交易助手");
     await user.click(screen.getByRole("button", { name: "配置管理" }));
     await screen.findByRole("heading", { name: "白天配置" });
 
@@ -440,7 +455,7 @@ describe("query system page", () => {
 
     const queryPayloadCallsBeforeHide = findQueryPayloadCalls(harness.calls).length;
     await user.click(screen.getByRole("button", { name: "账号中心" }));
-    await screen.findByText("C5 账号中心");
+    await screen.findByText("C5 交易助手");
 
     act(() => {
       runtimeStore.applyQuerySystemServer({
@@ -475,12 +490,12 @@ describe("query system page", () => {
 
     render(<App runtimeStore={runtimeStore} />);
 
-    await screen.findByText("C5 账号中心");
+    await screen.findByText("C5 交易助手");
     await user.click(screen.getByRole("button", { name: "配置管理" }));
     expect(await screen.findByRole("heading", { name: "白天配置" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "账号中心" }));
-    await screen.findByText("C5 账号中心");
+    await screen.findByText("C5 交易助手");
 
     act(() => {
       runtimeStore.patchQueryUi({ selectedConfigId: "cfg-2" });
@@ -508,12 +523,12 @@ describe("query system page", () => {
 
     render(<App runtimeStore={runtimeStore} />);
 
-    await screen.findByText("C5 账号中心");
+    await screen.findByText("C5 交易助手");
     await user.click(screen.getByRole("button", { name: "配置管理" }));
     expect(await screen.findByRole("heading", { name: "白天配置" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "账号中心" }));
-    await screen.findByText("C5 账号中心");
+    await screen.findByText("C5 交易助手");
 
     const queryPayloadCallsBeforeShow = findQueryPayloadCalls(harness.calls).length;
     act(() => {
@@ -595,13 +610,13 @@ describe("query system page", () => {
 
     render(<App runtimeStore={runtimeStore} />);
 
-    await screen.findByText("C5 账号中心");
+    await screen.findByText("C5 交易助手");
     await user.click(screen.getByRole("button", { name: "配置管理" }));
     expect(await screen.findByRole("heading", { name: "白天配置" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "商品 AK-47 | Redline" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "账号中心" }));
-    await screen.findByText("C5 账号中心");
+    await screen.findByText("C5 交易助手");
 
     const queryPayloadCallsBeforeShow = findQueryPayloadCalls(harness.calls).length;
     act(() => {
@@ -663,13 +678,13 @@ describe("query system page", () => {
 
     render(<App runtimeStore={runtimeStore} />);
 
-    await screen.findByText("C5 账号中心");
+    await screen.findByText("C5 交易助手");
     await user.click(screen.getByRole("button", { name: "配置管理" }));
     expect(await screen.findByRole("heading", { name: "白天配置" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "商品 AK-47 | Redline" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "账号中心" }));
-    await screen.findByText("C5 账号中心");
+    await screen.findByText("C5 交易助手");
 
     const queryPayloadCallsBeforeShow = findQueryPayloadCalls(harness.calls).length;
     act(() => {
@@ -704,7 +719,7 @@ describe("query system page", () => {
 
     render(<App runtimeStore={runtimeStore} />);
 
-    await screen.findByText("C5 账号中心");
+    await screen.findByText("C5 交易助手");
     expect(findQueryPayloadCalls(harness.calls)).toHaveLength(0);
 
     await user.click(screen.getByRole("button", { name: "配置管理" }));
@@ -712,7 +727,7 @@ describe("query system page", () => {
     expect(findQueryPayloadCalls(harness.calls)).toHaveLength(0);
 
     await user.click(screen.getByRole("button", { name: "账号中心" }));
-    await screen.findByText("C5 账号中心");
+    await screen.findByText("C5 交易助手");
 
     await user.click(screen.getByRole("button", { name: "配置管理" }));
     expect(await screen.findByRole("heading", { name: "白天配置" })).toBeInTheDocument();
@@ -727,7 +742,7 @@ describe("query system page", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByText("C5 账号中心")).toBeInTheDocument();
+      expect(screen.getByText("C5 交易助手")).toBeInTheDocument();
     });
 
     await user.click(screen.getByRole("button", { name: "配置管理" }));
@@ -830,6 +845,62 @@ describe("query system page", () => {
         }),
       ]),
     );
+  });
+
+  it("keeps config browsing available but disables readonly mutations when program access is locked", async () => {
+    const runtimeStore = buildHydratedQueryRuntimeStore({
+      configOverrides: {
+        items: [
+          {
+            query_item_id: "item-1",
+            config_id: "cfg-1",
+            product_url: "https://example.com/item-1",
+            external_item_id: "item-1",
+            item_name: "AK-47 | Redline",
+            market_hash_name: "AK-47 | Redline (Field-Tested)",
+            min_wear: 0.1,
+            max_wear: 0.7,
+            detail_min_wear: 0.1,
+            detail_max_wear: 0.25,
+            max_price: 199,
+            last_market_price: 188.88,
+            last_detail_sync_at: "2026-03-19T10:00:00",
+            manual_paused: false,
+            mode_allocations: [],
+            sort_order: 0,
+            created_at: "2026-03-19T10:00:00",
+            updated_at: "2026-03-19T10:00:00",
+          },
+        ],
+      },
+    });
+    runtimeStore.applyProgramAccess({
+      mode: "remote_entitlement",
+      stage: "packaged_release",
+      guard_enabled: true,
+      message: "请先登录程序会员",
+      auth_state: null,
+      runtime_state: "stopped",
+      last_error_code: "program_auth_required",
+    });
+    const harness = createFetchHarness();
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App runtimeStore={runtimeStore} />);
+    await user.click(await screen.findByRole("button", { name: "配置管理" }));
+
+    const nav = screen.getByRole("navigation", { name: "配置管理导航" });
+    expect(await screen.findByRole("heading", { name: "白天配置" })).toBeInTheDocument();
+    expect(within(nav).getByRole("button", { name: /^白天配置/ })).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: "新建配置" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "切换配置删除模式" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "已保存" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "添加商品" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "切换商品删除模式" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "修改扫货价 AK-47 | Redline" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "修改磨损 AK-47 | Redline" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "切换手动暂停 AK-47 | Redline" })).toBeDisabled();
   });
 
   it("shows waiting status when backend reports a config is waiting for accounts", async () => {

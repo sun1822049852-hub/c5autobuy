@@ -17,6 +17,7 @@ function formatWearRange(item) {
 export function QueryItemRow({
   isDeleteMode,
   item,
+  readOnly = false,
   onDeleteItem,
   onEditItem,
   onToggleManualPause,
@@ -35,6 +36,7 @@ export function QueryItemRow({
           className="query-item-row__value query-item-row__value--price"
           type="button"
           aria-label={`修改扫货价 ${displayName}`}
+          disabled={readOnly}
           onClick={() => onEditItem({ queryItemId, kind: "price" })}
         >
           {formatValue(item.max_price)}
@@ -43,6 +45,7 @@ export function QueryItemRow({
           className="query-item-row__value"
           type="button"
           aria-label={`修改磨损 ${displayName}`}
+          disabled={readOnly}
           onClick={() => onEditItem({ queryItemId, kind: "wear" })}
         >
           {formatWearRange(item)}
@@ -53,6 +56,7 @@ export function QueryItemRow({
             className="query-item-row__value query-item-row__value--status"
             type="button"
             aria-label={`修改 ${modeType} ${displayName}`}
+            disabled={readOnly}
             onClick={() => onEditItem({ queryItemId, kind: "allocation", modeType })}
           >
             {item.statusByMode[modeType]?.status_message || "无可用账号"}
@@ -64,6 +68,7 @@ export function QueryItemRow({
           className="query-item-row__delete is-visible"
           type="button"
           aria-label={`删除商品 ${displayName}`}
+          disabled={readOnly}
           onClick={() => onDeleteItem(queryItemId)}
         >
           -
@@ -74,6 +79,7 @@ export function QueryItemRow({
           aria-pressed={Boolean(item.manual_paused)}
           className={`query-item-row__control${item.manual_paused ? " is-active" : ""}`}
           type="button"
+          disabled={readOnly}
           onClick={() => onToggleManualPause(queryItemId)}
         >
           手动暂停

@@ -73,11 +73,32 @@ function buildBackendExitError({ code, signal, stderrOutput }) {
 }
 
 
-function buildPythonBackendEnv(projectRoot, baseEnv = process.env) {
-  return {
+export function buildPythonBackendEnv(projectRoot, baseEnv = process.env, programAccessConfig = null) {
+  const explicitAppPrivateDir = typeof programAccessConfig?.appPrivateDir === "string"
+    ? programAccessConfig.appPrivateDir.trim()
+    : "";
+  const env = {
     ...baseEnv,
-    C5_APP_PRIVATE_DIR: path.join(projectRoot, ".runtime", "app-private"),
+    C5_APP_PRIVATE_DIR: explicitAppPrivateDir || path.join(projectRoot, ".runtime", "app-private"),
   };
+
+  const stage = typeof programAccessConfig?.stage === "string"
+    ? programAccessConfig.stage.trim()
+    : "";
+  const controlPlaneBaseUrl = typeof programAccessConfig?.controlPlaneBaseUrl === "string"
+    ? programAccessConfig.controlPlaneBaseUrl.trim()
+    : "";
+  if (stage) {
+    env.C5_PROGRAM_ACCESS_STAGE = stage;
+  }
+  if (controlPlaneBaseUrl) {
+    env.C5_PROGRAM_CONTROL_PLANE_BASE_URL = controlPlaneBaseUrl;
+    if (!stage) {
+      env.C5_PROGRAM_ACCESS_STAGE = "packaged_release";
+    }
+  }
+
+  return env;
 }
 
 
@@ -86,6 +107,7 @@ export async function startPythonBackend({
   dbPath,
   portProvider,
   pythonExecutable,
+  programAccessConfig = null,
   spawnProcess = defaultSpawnProcess,
   fetchImpl = globalThis.fetch,
   pollIntervalMs = 250,
@@ -97,7 +119,7 @@ export async function startPythonBackend({
     command: pythonExecutable,
     args,
     cwd: projectRoot,
-    env: buildPythonBackendEnv(projectRoot),
+    env: buildPythonBackendEnv(projectRoot, process.env, programAccessConfig),
   });
   const baseUrl = `http://127.0.0.1:${port}`;
   const startedAt = Date.now();

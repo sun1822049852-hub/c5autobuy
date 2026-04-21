@@ -6,6 +6,7 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { createElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 
+import { EMPTY_PROGRAM_ACCESS } from "../../src/program_access/program_access_runtime.js";
 import { createRuntimeConnectionManager } from "../../src/runtime/runtime_connection_manager.js";
 import { AppRuntimeProvider } from "../../src/runtime/app_runtime_provider.jsx";
 import { createAppRuntimeStore } from "../../src/runtime/app_runtime_store.js";
@@ -107,6 +108,10 @@ describe("app runtime store", () => {
     expect(store.getSnapshot()).toEqual({
       bootstrap: { state: "idle", hydratedAt: null, version: 0 },
       connection: { state: "idle", stale: false, lastSyncAt: null, lastEventVersion: 0, lastError: "" },
+      programAccess: {
+        ...EMPTY_PROGRAM_ACCESS,
+        username: "",
+      },
       querySystem: {
         serverHydrated: false,
         server: {
@@ -671,6 +676,19 @@ describe("runtime connection manager", () => {
         item_rows: [],
       },
     });
+    FakeWebSocket.instances[0].emitMessage({
+      version: 8,
+      event: "program_access.updated",
+      updated_at: "2026-03-31T12:35:03.000Z",
+      payload: {
+        mode: "remote_entitlement",
+        stage: "packaged_release",
+        guard_enabled: true,
+        message: "程序会员控制面已接入",
+        auth_state: "active",
+        runtime_state: "running",
+      },
+    });
 
     expect(store.getSnapshot().querySystem.server.runtimeStatus).toEqual({
       running: true,
@@ -685,8 +703,16 @@ describe("runtime connection manager", () => {
       accounts: [{ account_id: "acc-1" }],
       item_rows: [],
     });
-    expect(store.getSnapshot().connection.lastEventVersion).toBe(7);
-    expect(store.getSnapshot().connection.lastSyncAt).toBe("2026-03-31T12:35:02.000Z");
+    expect(store.getSnapshot().programAccess).toMatchObject({
+      mode: "remote_entitlement",
+      stage: "packaged_release",
+      guardEnabled: true,
+      message: "程序会员控制面已接入",
+      authState: "active",
+      runtimeState: "running",
+    });
+    expect(store.getSnapshot().connection.lastEventVersion).toBe(8);
+    expect(store.getSnapshot().connection.lastSyncAt).toBe("2026-03-31T12:35:03.000Z");
 
     disconnect();
   });

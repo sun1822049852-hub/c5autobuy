@@ -1,4 +1,11 @@
-export function AccountContextMenu({ menu, onClose, onDelete, onOpenOpenApiBindingPage, onSyncOpenApi }) {
+export function AccountContextMenu({
+  menu,
+  mutationsDisabled = false,
+  onClose,
+  onDelete,
+  onOpenOpenApiBindingPage,
+  onSyncOpenApi,
+}) {
   if (!menu) {
     return null;
   }
@@ -15,6 +22,7 @@ export function AccountContextMenu({ menu, onClose, onDelete, onOpenOpenApiBindi
       <button
         className="context-menu__button"
         type="button"
+        disabled={mutationsDisabled}
         onClick={() => {
           onSyncOpenApi?.(menu.account);
           onClose?.();
@@ -25,6 +33,7 @@ export function AccountContextMenu({ menu, onClose, onDelete, onOpenOpenApiBindi
       <button
         className="context-menu__button"
         type="button"
+        disabled={mutationsDisabled}
         onClick={() => {
           onOpenOpenApiBindingPage?.(menu.account);
           onClose?.();
@@ -35,6 +44,7 @@ export function AccountContextMenu({ menu, onClose, onDelete, onOpenOpenApiBindi
       <button
         className="context-menu__button"
         type="button"
+        disabled={mutationsDisabled}
         onClick={() => {
           onDelete?.(menu.account);
           onClose?.();

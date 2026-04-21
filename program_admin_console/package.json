@@ -1,0 +1,19 @@
+{
+  "name": "program_admin_console",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/server.js",
+    "admin:init": "node tools/initProgramControlPlaneAdmin.js",
+    "test:mail-config": "node tests/mail_config.test.js",
+    "test:mail-service": "node tests/mail_service.test.js",
+    "test:store": "node tests/control-plane-store.test.js",
+    "test:server": "node tests/control-plane-server.test.js",
+    "test:ui": "node tests/control-plane-ui.test.js",
+    "test": "npm run test:mail-config && npm run test:mail-service && npm run test:store && npm run test:server && npm run test:ui"
+  },
+  "dependencies": {
+    "nodemailer": "^6.10.0"
+  }
+}

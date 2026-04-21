@@ -1,6 +1,7 @@
 export function PurchaseSettingsPanel({
   error,
   fanoutLimit,
+  isReadonly = false,
   maxInflightPerAccount,
   notice,
   isPending,
@@ -24,7 +25,7 @@ export function PurchaseSettingsPanel({
           id="purchase-fanout-limit"
           aria-label="单批次单IP并发购买数"
           className="form-input"
-          disabled={isPending}
+          disabled={isPending || isReadonly}
           min="1"
           step="1"
           type="number"
@@ -42,7 +43,7 @@ export function PurchaseSettingsPanel({
           id="purchase-max-inflight-per-account"
           aria-label="单账号最大并发购买任务数"
           className="form-input"
-          disabled={isPending}
+          disabled={isPending || isReadonly}
           min="1"
           step="1"
           type="number"
@@ -60,7 +61,7 @@ export function PurchaseSettingsPanel({
       <div className="purchase-settings-panel__actions">
         <button
           className="accent-button"
-          disabled={isPending || !isSaving}
+          disabled={isPending || isReadonly || !isSaving}
           type="button"
           onClick={() => {
             onSave?.();

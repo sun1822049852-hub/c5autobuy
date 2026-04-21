@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>C5 交易助手 控制台</title>
+    <link rel="stylesheet" href="/admin/styles.css">
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="shell-sidebar">
+        <div class="brand">
+          <div class="brand-mark">C5</div>
+          <div>
+            <strong>C5 交易助手 控制台</strong>
+            <p>用户控制台</p>
+          </div>
+        </div>
+        <div class="sidebar-copy">
+          <h1>初始化超级管理员</h1>
+          <p>只保留当前项目需要的管理员登录、用户列表、用户详情与设备会话控制。</p>
+        </div>
+        <div class="sidebar-session">
+          <div id="sessionSummary">尚未登录</div>
+          <button id="logoutButton" type="button" hidden>退出控制台</button>
+        </div>
+      </aside>
+
+      <main class="shell-main">
+        <header class="page-header">
+          <p class="eyebrow">Remote Control Plane</p>
+          <h2>用户列表与成员资格控制</h2>
+          <p>计划只允许 <span class="token">inactive</span> 与 <span class="token">member</span>。</p>
+        </header>
+
+        <section id="authPanel" class="panel auth-panel">
+          <div class="panel-head">
+            <h3 id="authTitle">管理员登录</h3>
+            <p id="authHint">使用管理员账号进入控制台。</p>
+          </div>
+
+          <div id="authMessage" class="notice" hidden></div>
+
+          <form id="bootstrapForm" class="stack" hidden>
+            <label>
+              <span>管理员用户名</span>
+              <input id="bootstrapUsername" value="admin" autocomplete="username">
+            </label>
+            <label>
+              <span>管理员密码</span>
+              <input id="bootstrapPassword" type="password" autocomplete="new-password">
+            </label>
+            <button type="submit">初始化超级管理员</button>
+          </form>
+
+          <form id="loginForm" class="stack" hidden>
+            <label>
+              <span>管理员用户名</span>
+              <input id="loginUsername" value="admin" autocomplete="username">
+            </label>
+            <label>
+              <span>管理员密码</span>
+              <input id="loginPassword" type="password" autocomplete="current-password">
+            </label>
+            <button type="submit">登录控制台</button>
+          </form>
+        </section>
+
+        <section id="workspace" class="workspace" hidden>
+          <div id="workspaceMessage" class="notice workspace-message" hidden></div>
+
+          <section class="panel">
+            <div class="panel-head">
+              <h3>用户列表</h3>
+              <p>选择用户后，在右侧调整计划到期时间并吊销设备。</p>
+            </div>
+            <div id="usersList" class="user-list"></div>
+          </section>
+
+          <section class="detail-column">
+            <section class="panel">
+              <div class="panel-head">
+                <h3>用户详情</h3>
+                <p id="detailHint">选择左侧用户后即可编辑。</p>
+              </div>
+
+              <form id="userForm" class="stack" hidden>
+                <div class="readout-grid">
+                  <div>
+                    <span class="field-label">用户名</span>
+                    <strong id="detailUsername">-</strong>
+                  </div>
+                  <div>
+                    <span class="field-label">邮箱</span>
+                    <strong id="detailEmail">-</strong>
+                  </div>
+                </div>
+
+                <label>
+                  <span>会员计划</span>
+                  <select id="userPlan">
+                    <option value="inactive">inactive</option>
+                    <option value="member">member</option>
+                  </select>
+                </label>
+
+                <div class="expiry-grid">
+                  <label>
+                    <span>到期日期</span>
+                    <input id="userExpiryDate" type="date">
+                  </label>
+                  <label>
+                    <span>到期时间</span>
+                    <input id="userExpiryTime" type="time" step="60" value="23:59">
+                  </label>
+                </div>
+
+                <div id="membershipMeta" class="meta-card"></div>
+                <button type="submit">保存用户配置</button>
+              </form>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <h3>设备会话</h3>
+                <p>可以逐个吊销当前用户的 refresh session。</p>
+              </div>
+              <div id="deviceList" class="device-list"></div>
+            </section>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <script src="/admin/app.js"></script>
+  </body>
+</html>

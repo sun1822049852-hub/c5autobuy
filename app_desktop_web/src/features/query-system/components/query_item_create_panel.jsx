@@ -7,6 +7,7 @@ const ALL_MODES = ["new_api", "fast_api", "token"];
 export function QueryItemCreatePanel({
   draft,
   isOpen,
+  isReadonly = false,
   onAdd,
   onAllocationChange,
   onClose,
@@ -53,6 +54,7 @@ export function QueryItemCreatePanel({
               type="url"
               value={draft.productUrl}
               aria-label="商品链接"
+              disabled={isReadonly}
               onChange={(event) => onFieldChange("productUrl", event.target.value)}
             />
           </label>
@@ -61,7 +63,7 @@ export function QueryItemCreatePanel({
             <button
               className="ghost-button query-item-dialog__lookup-action"
               type="button"
-              disabled={draft.isFetching || !String(draft.productUrl || "").trim()}
+              disabled={isReadonly || draft.isFetching || !String(draft.productUrl || "").trim()}
               onClick={onLookup}
             >
               {draft.isFetching ? "查找中..." : "查找商品信息"}
@@ -98,6 +100,7 @@ export function QueryItemCreatePanel({
               <input
                 className="form-input"
                 type="number"
+                disabled={isReadonly}
                 min="0"
                 max="1"
                 step="0.01"
@@ -112,6 +115,7 @@ export function QueryItemCreatePanel({
               <input
                 className="form-input"
                 type="number"
+                disabled={isReadonly}
                 min="0"
                 max="1"
                 step="0.01"
@@ -126,6 +130,7 @@ export function QueryItemCreatePanel({
               <input
                 className="form-input"
                 type="number"
+                disabled={isReadonly}
                 min="0"
                 step="0.01"
                 value={draft.maxPrice}
@@ -139,6 +144,7 @@ export function QueryItemCreatePanel({
                 type="checkbox"
                 checked={Boolean(draft.manualPaused)}
                 aria-label="手动暂停"
+                disabled={isReadonly}
                 onChange={(event) => onFieldChange("manualPaused", event.target.checked)}
               />
               <span>手动暂停</span>
@@ -160,7 +166,7 @@ export function QueryItemCreatePanel({
         </div>
 
         <div className="surface-actions">
-          <button className="accent-button" type="submit" disabled={draft.isFetching || !draft.itemName}>
+          <button className="accent-button" type="submit" disabled={isReadonly || draft.isFetching || !draft.itemName}>
             加入当前配置
           </button>
         </div>

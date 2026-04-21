@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request, status
 
+from app_backend.api.program_access_guard import guard_program_action
 from app_backend.api.schemas.purchase_runtime import (
     PurchaseRuntimeInventoryDetailResponse,
     PurchaseRuntimeStartRequest,
@@ -72,6 +73,7 @@ def update_purchase_runtime_ui_preferences(
     payload: PurchaseRuntimeUiPreferencesRequest,
     request: Request,
 ) -> PurchaseRuntimeUiPreferencesResponse:
+    guard_program_action(request, "runtime.switch_config")
     use_case = UpdatePurchaseUiPreferencesUseCase(
         _purchase_ui_preferences_repository(request),
         _query_config_repository(request),
@@ -118,6 +120,7 @@ def start_purchase_runtime(
     payload: PurchaseRuntimeStartRequest,
     request: Request,
 ) -> PurchaseRuntimeStatusResponse:
+    guard_program_action(request, "runtime.start")
     runtime_service = _runtime_service(request)
     query_runtime_service = _query_runtime_service(request)
     started, message = StartPurchaseRuntimeUseCase(query_runtime_service).execute(

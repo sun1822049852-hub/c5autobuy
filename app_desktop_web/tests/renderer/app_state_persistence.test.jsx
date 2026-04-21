@@ -129,7 +129,7 @@ describe("app state persistence", () => {
     const user = userEvent.setup();
 
     const firstRender = render(<App />);
-    await screen.findByText("C5 账号中心");
+    await screen.findByText("C5 交易助手");
 
     await user.click(screen.getByRole("button", { name: "配置管理" }));
     expect(await screen.findByRole("heading", { name: "白天配置" })).toBeInTheDocument();
@@ -151,7 +151,7 @@ describe("app state persistence", () => {
     const user = userEvent.setup();
 
     const firstRender = render(<App />);
-    await screen.findByText("C5 账号中心");
+    await screen.findByText("C5 交易助手");
 
     await user.click(screen.getByRole("button", { name: "配置管理" }));
     await screen.findByRole("heading", { name: "白天配置" });

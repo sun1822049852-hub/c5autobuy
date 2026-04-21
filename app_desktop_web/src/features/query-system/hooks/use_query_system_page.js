@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { useProgramAccessGuard } from "../../../program_access/program_access_provider.jsx";
+import { isProgramReadonlyLocked } from "../../../program_access/program_access_readonly.js";
 import {
   useApplyQuerySystemServer,
   usePatchQuerySystemDraft,
   usePatchQuerySystemUi,
+  useProgramAccess,
   useQuerySystemDraft,
   useQuerySystemServer,
   useQuerySystemServerHydrated,
@@ -180,6 +183,9 @@ function buildSyncedDraftConfig(currentDraft, serverConfig) {
 
 
 export function useQuerySystemPage({ client, isActive = true }) {
+  const { runProgramAccessAction } = useProgramAccessGuard();
+  const programAccess = useProgramAccess();
+  const isReadonlyLocked = isProgramReadonlyLocked(programAccess);
   const queryServer = useQuerySystemServer();
   const queryUi = useQuerySystemUi();
   const queryDraft = useQuerySystemDraft();
@@ -480,7 +486,7 @@ export function useQuerySystemPage({ client, isActive = true }) {
   );
 
   function updateDraftConfig(updater) {
-    if (!draftConfig) {
+    if (isReadonlyLocked || !draftConfig) {
       return;
     }
 
@@ -514,6 +520,10 @@ export function useQuerySystemPage({ client, isActive = true }) {
   }
 
   function openCreateConfigDialog() {
+    if (isReadonlyLocked) {
+      return;
+    }
+
     setCreateConfigForm(EMPTY_CONFIG_FORM);
     setIsCreateConfigDialogOpen(true);
   }
@@ -524,6 +534,10 @@ export function useQuerySystemPage({ client, isActive = true }) {
   }
 
   function updateCreateConfigField(field, value) {
+    if (isReadonlyLocked) {
+      return;
+    }
+
     setCreateConfigForm((current) => ({
       ...current,
       [field]: value,
@@ -531,6 +545,10 @@ export function useQuerySystemPage({ client, isActive = true }) {
   }
 
   async function submitCreateConfig() {
+    if (isReadonlyLocked) {
+      return;
+    }
+
     const nextName = String(createConfigForm.name || "").trim();
     if (!nextName) {
       return;
@@ -559,10 +577,18 @@ export function useQuerySystemPage({ client, isActive = true }) {
   }
 
   function openDeleteConfigDialog(config) {
+    if (isReadonlyLocked) {
+      return;
+    }
+
     setDeleteConfigTarget(config);
   }
 
   function toggleConfigDeleteMode() {
+    if (isReadonlyLocked) {
+      return;
+    }
+
     setIsConfigDeleteMode((current) => !current);
   }
 
@@ -571,7 +597,7 @@ export function useQuerySystemPage({ client, isActive = true }) {
   }
 
   async function confirmDeleteConfig() {
-    if (!deleteConfigTarget) {
+    if (isReadonlyLocked || !deleteConfigTarget) {
       return;
     }
 
@@ -602,11 +628,19 @@ export function useQuerySystemPage({ client, isActive = true }) {
   }
 
   function openCreateItemDialog() {
+    if (isReadonlyLocked) {
+      return;
+    }
+
     setCreateItemDraft(createBlankItemDraft());
     setIsCreateItemDialogOpen(true);
   }
 
   function toggleItemDeleteMode() {
+    if (isReadonlyLocked) {
+      return;
+    }
+
     setIsItemDeleteMode((current) => !current);
   }
 
@@ -616,6 +650,10 @@ export function useQuerySystemPage({ client, isActive = true }) {
   }
 
   function updateCreateItemField(field, value) {
+    if (isReadonlyLocked) {
+      return;
+    }
+
     setCreateItemDraft((current) => {
       if (field === "productUrl") {
         return {
@@ -632,6 +670,10 @@ export function useQuerySystemPage({ client, isActive = true }) {
   }
 
   function updateCreateItemAllocation(modeType, value) {
+    if (isReadonlyLocked) {
+      return;
+    }
+
     setCreateItemDraft((current) => ({
       ...current,
       modeAllocations: {
@@ -642,6 +684,10 @@ export function useQuerySystemPage({ client, isActive = true }) {
   }
 
   async function lookupCreateItemDetail() {
+    if (isReadonlyLocked) {
+      return;
+    }
+
     const normalizedUrl = String(createItemDraft.productUrl || "").trim();
     if (!normalizedUrl) {
       return;
@@ -694,7 +740,7 @@ export function useQuerySystemPage({ client, isActive = true }) {
   }
 
   function addDraftItem() {
-    if (!currentConfig || !createItemDraft.itemName) {
+    if (isReadonlyLocked || !currentConfig || !createItemDraft.itemName) {
       return;
     }
 
@@ -794,7 +840,7 @@ export function useQuerySystemPage({ client, isActive = true }) {
   }
 
   function openEditItemDialog(nextContext) {
-    if (!currentConfig) {
+    if (isReadonlyLocked || !currentConfig) {
       return;
     }
 
@@ -852,7 +898,7 @@ export function useQuerySystemPage({ client, isActive = true }) {
   }
 
   async function saveConfig() {
-    if (!draftConfig) {
+    if (isReadonlyLocked || !draftConfig) {
       return false;
     }
 
@@ -875,7 +921,9 @@ export function useQuerySystemPage({ client, isActive = true }) {
         draftConfig,
       });
       if (isCurrentConfigRuntimeActive) {
-        const nextRuntimeStatus = await client.applyQueryRuntimeConfig(draftConfig.config_id);
+        const nextRuntimeStatus = await runProgramAccessAction(
+          () => client.applyQueryRuntimeConfig(draftConfig.config_id),
+        );
         applyQuerySystemServer({
           runtimeStatus: normalizeRuntimeStatus(nextRuntimeStatus),
         });
@@ -930,6 +978,7 @@ export function useQuerySystemPage({ client, isActive = true }) {
     isDeletingConfig,
     isLoading,
     isItemDeleteMode,
+    isReadonlyLocked,
     isSaving,
     itemViewModels,
     loadError,
@@ -954,7 +1003,7 @@ export function useQuerySystemPage({ client, isActive = true }) {
     toggleDraftItemManualPaused,
     toggleItemDeleteMode,
     runtimeMessage: runtimeStatus.message || "未运行",
-    saveBarDisabled: !currentConfig || isSaving || !hasUnsavedChanges,
+    saveBarDisabled: !currentConfig || isReadonlyLocked || isSaving || !hasUnsavedChanges,
     saveBarLabel: (
       !currentConfig
         ? "请选择配置"

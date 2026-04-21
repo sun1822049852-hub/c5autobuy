@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { useProgramAccessGuard } from "../../../program_access/program_access_provider.jsx";
+import { isProgramReadonlyLocked } from "../../../program_access/program_access_readonly.js";
+import { useProgramAccess } from "../../../runtime/use_app_runtime.js";
 import { useFloatingRuntimeModalState } from "../../purchase-system/hooks/use_floating_runtime_modal_state.js";
 import { useLoginTaskStream } from "./use_login_task_stream.js";
 import { createUiStateStore } from "../state/ui_state_store.js";
@@ -402,6 +405,9 @@ function getErrorMeta(error) {
 
 
 export function useAccountCenterPage({ client }) {
+  const { runProgramAccessAction } = useProgramAccessGuard();
+  const programAccess = useProgramAccess();
+  const isReadonlyLocked = isProgramReadonlyLocked(programAccess);
   const [rows, setRows] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -615,7 +621,7 @@ export function useAccountCenterPage({ client }) {
 
   async function handleAction(action, successMessageBuilder) {
     try {
-      const result = await action();
+      const result = await runProgramAccessAction(action);
       const nextMessage = typeof successMessageBuilder === "function"
         ? successMessageBuilder(result)
         : successMessageBuilder;
@@ -797,6 +803,7 @@ export function useAccountCenterPage({ client }) {
       }, `已删除账号：${getDisplayName(account)}`);
     },
     filteredRows,
+    isReadonlyLocked,
     isLoading,
     loadError,
     loginDrawerAccount,
@@ -916,7 +923,10 @@ export function useAccountCenterPage({ client }) {
       }
 
       try {
-        await client.updateAccount(account.account_id, buildAccountUpdatePayload(account, payload));
+        await runProgramAccessAction(() => client.updateAccount(
+          account.account_id,
+          buildAccountUpdatePayload(account, payload),
+        ));
         await client.clearPurchaseCapability(account.account_id);
         setBrowserProxyDialogAccount(null);
         appendModificationLog(`已更新浏览器代理，账号进入未登录状态：${getDisplayName(account)}`);

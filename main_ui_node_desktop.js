@@ -182,15 +182,14 @@ function ensureElectronRuntime(
     spawnSync: spawnSyncImpl = spawnSync,
   } = {},
 ) {
-  const cliScript = resolveElectronCliScript(rootDirectory);
-  const installScript = resolveElectronInstallScript(rootDirectory);
-
-  if (!existsSync(cliScript) || !existsSync(installScript)) {
-    throw new Error("未找到 Electron 安装脚本，请先执行 npm --prefix app_desktop_web install");
-  }
-
   if (isElectronRuntimeInstalled(rootDirectory, { existsSync, readFileSync })) {
     return;
+  }
+
+  const installScript = resolveElectronInstallScript(rootDirectory);
+
+  if (!existsSync(installScript)) {
+    throw new Error("未找到 Electron 安装脚本，请先执行 npm --prefix app_desktop_web install");
   }
 
   const installResult = spawnSyncImpl(process.execPath, [installScript], {

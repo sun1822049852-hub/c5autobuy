@@ -3,6 +3,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  buildPythonBackendEnv,
   buildPythonLaunchArgs,
   resolvePythonExecutable,
   startPythonBackend,
@@ -128,6 +129,65 @@ describe("python backend manager", () => {
       env: expect.objectContaining({
         C5_APP_PRIVATE_DIR: buildExpectedAppPrivateDir("C:/demo/project"),
       }),
+    }));
+  });
+
+  it("injects packaged control-plane env when a release config is provided", () => {
+    const env = buildPythonBackendEnv(
+      "C:/demo/project",
+      {
+        PATH: "C:/Windows/System32",
+      },
+      {
+        controlPlaneBaseUrl: "http://8.138.39.139:18787",
+      },
+    );
+
+    expect(env).toEqual(expect.objectContaining({
+      PATH: "C:/Windows/System32",
+      C5_APP_PRIVATE_DIR: buildExpectedAppPrivateDir("C:/demo/project"),
+      C5_PROGRAM_CONTROL_PLANE_BASE_URL: "http://8.138.39.139:18787",
+      C5_PROGRAM_ACCESS_STAGE: "packaged_release",
+    }));
+  });
+
+  it("keeps packaged release stage fail-closed even before the control-plane base url is available", () => {
+    const env = buildPythonBackendEnv(
+      "C:/demo/project",
+      {
+        PATH: "C:/Windows/System32",
+      },
+      {
+        stage: "packaged_release",
+      },
+    );
+
+    expect(env).toEqual(expect.objectContaining({
+      PATH: "C:/Windows/System32",
+      C5_APP_PRIVATE_DIR: buildExpectedAppPrivateDir("C:/demo/project"),
+      C5_PROGRAM_ACCESS_STAGE: "packaged_release",
+    }));
+    expect("C5_PROGRAM_CONTROL_PLANE_BASE_URL" in env).toBe(false);
+  });
+
+  it("prefers an explicit packaged app-private directory when provided", () => {
+    const env = buildPythonBackendEnv(
+      "C:/demo/project",
+      {
+        PATH: "C:/Windows/System32",
+      },
+      {
+        controlPlaneBaseUrl: "http://8.138.39.139:18787",
+        stage: "packaged_release",
+        appPrivateDir: "C:/Users/tester/AppData/Roaming/C5AccountCenter/app-private",
+      },
+    );
+
+    expect(env).toEqual(expect.objectContaining({
+      PATH: "C:/Windows/System32",
+      C5_APP_PRIVATE_DIR: "C:/Users/tester/AppData/Roaming/C5AccountCenter/app-private",
+      C5_PROGRAM_CONTROL_PLANE_BASE_URL: "http://8.138.39.139:18787",
+      C5_PROGRAM_ACCESS_STAGE: "packaged_release",
     }));
   });
 

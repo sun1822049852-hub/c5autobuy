@@ -19,5 +19,6 @@ def get_app_bootstrap(request: Request) -> AppBootstrapResponse:
         runtime_settings_repository=request.app.state.runtime_settings_repository,
         task_manager=request.app.state.task_manager,
         runtime_update_hub=request.app.state.runtime_update_hub,
+        program_access_gateway=request.app.state.program_access_gateway,
     ).execute()
     return AppBootstrapResponse.model_validate(payload)

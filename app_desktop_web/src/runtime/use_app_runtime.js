@@ -35,6 +35,11 @@ export function useConnectionRuntime() {
 }
 
 
+export function useProgramAccess() {
+  return useAppRuntimeSelector((snapshot) => snapshot.programAccess);
+}
+
+
 export function useQuerySystemServer() {
   return useAppRuntimeSelector((snapshot) => snapshot.querySystem.server);
 }

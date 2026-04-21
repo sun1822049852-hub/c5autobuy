@@ -17,6 +17,7 @@ function formatSourceModeLabel(source) {
 
 
 export function PurchaseItemPanel({
+  allocationReadonly = false,
   onDecreaseAllocation,
   onIncreaseAllocation,
   row,
@@ -102,7 +103,7 @@ export function PurchaseItemPanel({
                       actualCount={modeRow?.actual_dedicated_count ?? 0}
                       canDecrease={Boolean(modeRow?.can_decrease)}
                       canIncrease={Boolean(modeRow?.can_increase)}
-                      disabled={false}
+                      disabled={allocationReadonly}
                       modeType={modeType}
                       sharedAvailableCount={modeRow?.shared_available_count ?? 0}
                       statusMessage={modeRow?.status_message ?? "未运行"}

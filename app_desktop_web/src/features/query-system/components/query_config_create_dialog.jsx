@@ -1,6 +1,7 @@
 export function QueryConfigCreateDialog({
   form,
   isOpen,
+  isReadonly = false,
   isSubmitting,
   onClose,
   onFieldChange,
@@ -45,6 +46,7 @@ export function QueryConfigCreateDialog({
               type="text"
               value={form.name}
               aria-label="配置名称"
+              disabled={isReadonly}
               onChange={(event) => onFieldChange("name", event.target.value)}
             />
           </label>
@@ -56,13 +58,18 @@ export function QueryConfigCreateDialog({
               type="text"
               value={form.description}
               aria-label="配置说明"
+              disabled={isReadonly}
               onChange={(event) => onFieldChange("description", event.target.value)}
             />
           </label>
         </div>
 
         <div className="surface-actions">
-          <button className="accent-button" type="submit" disabled={isSubmitting || !String(form.name || "").trim()}>
+          <button
+            className="accent-button"
+            type="submit"
+            disabled={isReadonly || isSubmitting || !String(form.name || "").trim()}
+          >
             {isSubmitting ? "保存中..." : "保存配置"}
           </button>
         </div>

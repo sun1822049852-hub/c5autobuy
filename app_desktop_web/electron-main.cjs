@@ -7,15 +7,15 @@ const {
   DEFAULT_DESKTOP_BOOTSTRAP_CONFIG,
   resolveDesktopRuntimeMode,
 } = require("./electron_runtime_mode.cjs");
+const { readProgramAccessConfig } = require("./program_access_config.cjs");
 const { appendRendererDiagnostic } = require("./renderer_diagnostics_logger.cjs");
 
 
 const projectRoot = path.resolve(__dirname, "..");
 const rendererEntryPath = path.join(__dirname, "dist", "index.html");
-const dbPath = path.join(projectRoot, "data", "app.db");
-const desktopAppDisplayName = "C5 账号中心";
+const desktopAppDisplayName = "C5 交易助手";
 const desktopAppDirectoryName = "C5AccountCenter";
-const desktopAppUserModelId = "com.c5.account-center";
+const desktopAppUserModelId = "com.c5.trading-assistant";
 const sessionMigrationMarkerName = ".c5-session-migrated";
 const migratableSessionEntryNames = new Set([
   "Cookies",
@@ -166,6 +166,34 @@ function resolveDesktopStoragePaths({
     userData: legacyUserDataPath && existsSync(legacyUserDataPath)
       ? legacyUserDataPath
       : dedicatedUserDataPath,
+  };
+}
+
+
+function resolveEmbeddedBackendPaths({
+  appApi = app,
+  pathApi = path,
+  packaged = appApi?.isPackaged === true,
+  projectRootPath = projectRoot,
+} = {}) {
+  if (!packaged) {
+    return {
+      appPrivateDir: pathApi.join(projectRootPath, ".runtime", "app-private"),
+      dbPath: pathApi.join(projectRootPath, "data", "app.db"),
+    };
+  }
+
+  const userDataPath = readAppPath(appApi, "userData");
+  if (userDataPath) {
+    return {
+      appPrivateDir: pathApi.join(userDataPath, "app-private"),
+      dbPath: pathApi.join(userDataPath, "data", "app.db"),
+    };
+  }
+
+  return {
+    appPrivateDir: pathApi.join(projectRootPath, ".runtime", "app-private"),
+    dbPath: pathApi.join(projectRootPath, "data", "app.db"),
   };
 }
 
@@ -413,57 +441,93 @@ function findAvailablePort() {
   });
 }
 
-
-function createWindow() {
-  const windowState = loadWindowState();
-
-  mainWindow = new BrowserWindow({
-    ...windowState,
-    show: false,
-    title: "C5 账号中心",
-    backgroundColor: "#111317",
-    webPreferences: {
-      contextIsolation: true,
-      nodeIntegration: false,
-      preload: path.join(__dirname, "electron-preload.cjs"),
-    },
-  });
-
-  mainWindow.on("close", () => {
-    if (!mainWindow) {
-      return;
-    }
-
-    saveWindowState(mainWindow.getBounds());
-  });
-
-  mainWindow.once("ready-to-show", () => {
-    mainWindow?.show();
-  });
-
-  mainWindow.loadFile(rendererEntryPath);
+function buildLoadingWindowHtml() {
+  return `data:text/html;charset=utf-8,<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>${desktopAppDisplayName}</title></head><body style="margin:0;font-family:'Microsoft YaHei UI',sans-serif;background:#111317;color:#f3efe6;display:grid;place-items:center;height:100vh"><main style="max-width:560px;padding:32px;border:1px solid rgba(255,255,255,.1);border-radius:20px;background:rgba(255,255,255,.04);text-align:center"><h1 style="margin:0 0 12px">${desktopAppDisplayName}</h1><p style="margin:0;color:rgba(243,239,230,.82)">正在启动，请稍后...</p></main></body></html>`;
 }
 
 
-function buildStartupFailureCopy(runtimeMode) {
-  if (runtimeMode?.backendMode === "remote") {
-    return "远程模式启动失败，请检查远程模式配置、服务状态或网络连通性。";
+function createWindow({ mode = "app" } = {}) {
+  const windowState = loadWindowState();
+
+  if (!mainWindow) {
+    mainWindow = new BrowserWindow({
+      ...windowState,
+      show: false,
+      title: desktopAppDisplayName,
+      backgroundColor: "#111317",
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+        preload: path.join(__dirname, "electron-preload.cjs"),
+      },
+    });
+
+    mainWindow.on("close", () => {
+      if (!mainWindow) {
+        return;
+      }
+
+      saveWindowState(mainWindow.getBounds());
+    });
+
+    mainWindow.once("ready-to-show", () => {
+      mainWindow?.show();
+    });
+  }
+
+  if (typeof mainWindow.setTitle === "function") {
+    mainWindow.setTitle(desktopAppDisplayName);
+  }
+
+  if (mode === "loading") {
+    mainWindow.loadURL(buildLoadingWindowHtml());
+    return mainWindow;
+  }
+
+  mainWindow.loadFile(rendererEntryPath);
+  return mainWindow;
+}
+
+
+function buildStartupFailureCopy(runtimeMode, { isPackaged = app?.isPackaged === true } = {}) {
+  if (isPackaged || runtimeMode?.backendMode === "remote") {
+    return "服务器连接失败，请稍后重试。";
   }
 
   return "Python 后端未能成功拉起，请先确认 .venv 与 data/app.db 是否存在。";
 }
 
 
-function createFailureWindow(error, runtimeMode) {
+function shouldRevealStartupFailureDetails(runtimeMode, { isPackaged = app?.isPackaged === true } = {}) {
+  return !isPackaged && runtimeMode?.backendMode !== "remote";
+}
+
+
+function createFailureWindow(
+  error,
+  runtimeMode,
+  {
+    BrowserWindowImpl = BrowserWindow,
+    isPackaged = app?.isPackaged === true,
+  } = {},
+) {
   const message = encodeURIComponent(String(error instanceof Error ? error.message : error));
-  const copy = encodeURIComponent(buildStartupFailureCopy(runtimeMode));
-  const html = `data:text/html;charset=utf-8,<!doctype html><html lang="zh-CN"><body style="margin:0;font-family:'Microsoft YaHei UI',sans-serif;background:#111317;color:#f3efe6;display:grid;place-items:center;height:100vh"><main style="max-width:680px;padding:32px;border:1px solid rgba(255,255,255,.1);border-radius:20px;background:rgba(255,255,255,.04)"><h1 style="margin-top:0">账号中心桌面端启动失败</h1><p>${copy}</p><pre style="white-space:pre-wrap;color:#ffb0b0">${message}</pre></main></body></html>`;
-  const failureWindow = new BrowserWindow({
+  const copy = encodeURIComponent(buildStartupFailureCopy(runtimeMode, { isPackaged }));
+  const detailsHtml = shouldRevealStartupFailureDetails(runtimeMode, { isPackaged })
+    ? `<pre style="white-space:pre-wrap;color:#ffb0b0">${message}</pre>`
+    : "";
+  const html = `data:text/html;charset=utf-8,<!doctype html><html lang="zh-CN"><body style="margin:0;font-family:'Microsoft YaHei UI',sans-serif;background:#111317;color:#f3efe6;display:grid;place-items:center;height:100vh"><main style="max-width:680px;padding:32px;border:1px solid rgba(255,255,255,.1);border-radius:20px;background:rgba(255,255,255,.04)"><h1 style="margin-top:0">C5 交易助手启动失败</h1><p>${copy}</p>${detailsHtml}</main></body></html>`;
+  const failureWindow = mainWindow ?? new BrowserWindowImpl({
     width: 880,
     height: 620,
     backgroundColor: "#111317",
   });
+  if (typeof failureWindow.setTitle === "function") {
+    failureWindow.setTitle(desktopAppDisplayName);
+  }
   failureWindow.loadURL(html);
+  failureWindow.show?.();
+  mainWindow = failureWindow;
 }
 
 
@@ -474,6 +538,7 @@ async function bootstrapApplication({
   ensureBackendDependenciesImpl = ensureBackendDependencies,
   ensureWindowStateDependenciesImpl = ensureWindowStateDependencies,
   findAvailablePortImpl = findAvailablePort,
+  readProgramAccessConfigImpl = readProgramAccessConfig,
   resolvePythonExecutableImpl = null,
   startPythonBackendImpl = null,
 } = {}) {
@@ -497,19 +562,43 @@ async function bootstrapApplication({
         ...bootstrapConfig,
         backendStatus: "ready",
       };
-      createWindowImpl();
+      createWindowImpl({ mode: "app" });
       return;
     }
 
+    createWindowImpl({ mode: "loading" });
     await ensureBackendDependenciesImpl();
     const port = await findAvailablePortImpl();
     const selectedResolvePythonExecutable = resolvePythonExecutableImpl ?? resolvePythonExecutable;
     const selectedStartPythonBackend = startPythonBackendImpl ?? startPythonBackend;
+    const rawProgramAccessConfig = readProgramAccessConfigImpl({
+      appApi: app,
+    });
+    const embeddedBackendPaths = resolveEmbeddedBackendPaths({
+      appApi: app,
+      projectRootPath: projectRoot,
+    });
+    const packagedRelease = app?.isPackaged === true;
+    const controlPlaneBaseUrl = typeof rawProgramAccessConfig?.controlPlaneBaseUrl === "string"
+      ? rawProgramAccessConfig.controlPlaneBaseUrl.trim()
+      : "";
+    if (packagedRelease && !controlPlaneBaseUrl) {
+      throw new Error("Packaged release requires a control plane base url.");
+    }
+    const programAccessConfig = packagedRelease
+      ? {
+          ...rawProgramAccessConfig,
+          appPrivateDir: embeddedBackendPaths.appPrivateDir,
+          controlPlaneBaseUrl,
+          stage: "packaged_release",
+        }
+      : rawProgramAccessConfig;
     const pythonExecutable = selectedResolvePythonExecutable(projectRoot);
     backend = await selectedStartPythonBackend({
-      dbPath,
+      dbPath: embeddedBackendPaths.dbPath,
       pollIntervalMs: 250,
       portProvider: () => port,
+      programAccessConfig,
       projectRoot,
       pythonExecutable,
       timeoutMs: 15000,
@@ -519,7 +608,7 @@ async function bootstrapApplication({
       apiBaseUrl: backend.baseUrl,
       backendStatus: "ready",
     };
-    createWindowImpl();
+    createWindowImpl({ mode: "app" });
   } catch (error) {
     bootstrapConfig = {
       ...bootstrapConfig,
@@ -570,8 +659,10 @@ app.on("activate", async () => {
 module.exports = {
   bootstrapApplication,
   buildStartupFailureCopy,
+  createFailureWindow,
   configureDesktopStoragePaths,
   deriveLocalAppDataRoot,
   migrateLegacySessionData,
+  resolveEmbeddedBackendPaths,
   resolveDesktopStoragePaths,
 };

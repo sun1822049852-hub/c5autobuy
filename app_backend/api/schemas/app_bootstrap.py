@@ -31,9 +31,22 @@ class AppBootstrapDiagnosticsResponse(BaseModel):
     summary: SidebarDiagnosticsSummaryResponse
 
 
+class AppBootstrapProgramAccessResponse(BaseModel):
+    mode: str
+    stage: str
+    guard_enabled: bool
+    message: str
+    username: str | None = None
+    auth_state: str | None = None
+    runtime_state: str | None = None
+    grace_expires_at: str | None = None
+    last_error_code: str | None = None
+
+
 class AppBootstrapResponse(BaseModel):
     version: int
     generated_at: str
     query_system: AppBootstrapQuerySystemResponse
     purchase_system: AppBootstrapPurchaseSystemResponse
     diagnostics: AppBootstrapDiagnosticsResponse
+    program_access: AppBootstrapProgramAccessResponse

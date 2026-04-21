@@ -60,6 +60,7 @@ function getPurchaseStatusDisplay(row) {
 function renderBody({
   isLoading,
   loadError,
+  mutationsDisabled,
   onApiKeyClick,
   onApiKeyEdit,
   onApiQueryToggle,
@@ -114,6 +115,7 @@ function renderBody({
             aria-label={`编辑昵称 ${displayName}`}
             className="account-table__action"
             type="button"
+            disabled={mutationsDisabled}
             onClick={() => onNicknameClick?.(row)}
           >
             <div className="account-table__nickname">
@@ -128,6 +130,7 @@ function renderBody({
               aria-label={`切换 API 查询 ${displayName}`}
               className="account-table__action account-table__action--query"
               type="button"
+              disabled={mutationsDisabled}
               onClick={() => onApiQueryToggle?.(row)}
             >
               <span className={`account-table__pill ${getQueryTone(row.api_query_status_code, row.api_query_disable_reason_code)}`}>
@@ -141,6 +144,7 @@ function renderBody({
               aria-label={`编辑 API Key ${displayName}`}
               className="account-table__inline-link"
               type="button"
+              disabled={mutationsDisabled}
               onClick={() => (onApiKeyEdit ?? onApiKeyClick)?.(row)}
             >
               编辑 key
@@ -152,6 +156,7 @@ function renderBody({
             aria-label={`切换浏览器查询 ${displayName}`}
             className="account-table__action account-table__action--query"
             type="button"
+            disabled={mutationsDisabled}
             onClick={() => onBrowserQueryToggle?.(row)}
           >
             <span className={`account-table__pill ${getQueryTone(row.browser_query_status_code, row.browser_query_disable_reason_code)}`}>
@@ -167,6 +172,7 @@ function renderBody({
             aria-label={`配置购买状态 ${displayName}`}
             className="account-table__action"
             type="button"
+            disabled={mutationsDisabled}
             onClick={() => onPurchaseStatusClick?.(row)}
           >
             <span className={`account-table__pill ${getStatusTone(row.purchase_status_code)}`}>
@@ -179,6 +185,7 @@ function renderBody({
             aria-label={`编辑浏览器 IP ${displayName}`}
             className="account-table__action account-table__action--proxy"
             type="button"
+            disabled={mutationsDisabled}
             onClick={() => onBrowserProxyClick?.(row)}
           >
             <div className="account-table__nickname">
@@ -193,6 +200,7 @@ function renderBody({
             aria-label={`编辑API IP ${displayName}`}
             className="account-table__action account-table__action--proxy"
             type="button"
+            disabled={mutationsDisabled}
             onClick={() => onProxyClick?.(row)}
           >
             <div className="account-table__nickname">
@@ -216,6 +224,7 @@ function renderBody({
 export function AccountTable({
   isLoading,
   loadError,
+  mutationsDisabled = false,
   onApiKeyClick,
   onApiKeyEdit,
   onApiQueryToggle,
@@ -247,6 +256,7 @@ export function AccountTable({
         {renderBody({
           isLoading,
           loadError,
+          mutationsDisabled,
           onApiKeyClick,
           onApiKeyEdit,
           onApiQueryToggle,

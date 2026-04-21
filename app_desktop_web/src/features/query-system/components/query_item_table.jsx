@@ -5,6 +5,7 @@ export function QueryItemTable({
   canManageItems,
   isDeleteMode,
   items,
+  readOnly = false,
   onDeleteItem,
   onEditItem,
   onToggleManualPause,
@@ -57,6 +58,7 @@ export function QueryItemTable({
               key={item.query_item_id}
               isDeleteMode={isDeleteMode}
               item={item}
+              readOnly={readOnly}
               onDeleteItem={onDeleteItem}
               onEditItem={onEditItem}
               onToggleManualPause={onToggleManualPause}

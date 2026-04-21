@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request, status
 
+from app_backend.api.program_access_guard import guard_program_action
 from app_backend.api.schemas.query_runtime import (
     QueryRuntimeManualAllocationRequest,
     QueryRuntimePrepareRequest,
@@ -36,6 +37,7 @@ def start_query_runtime(
     payload: QueryRuntimeStartRequest,
     request: Request,
 ) -> QueryRuntimeStatusResponse:
+    guard_program_action(request, "runtime.start")
     runtime_service = _runtime_service(request)
     started, message = StartQueryRuntimeUseCase(runtime_service).execute(config_id=payload.config_id)
     if not started:
@@ -95,6 +97,7 @@ def apply_query_runtime_config(
     config_id: str,
     request: Request,
 ) -> QueryRuntimeStatusResponse:
+    guard_program_action(request, "runtime.switch_config")
     runtime_service = _runtime_service(request)
     try:
         snapshot = runtime_service.apply_runtime_config(config_id=config_id)

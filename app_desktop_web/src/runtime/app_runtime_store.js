@@ -1,3 +1,10 @@
+import {
+  EMPTY_PROGRAM_ACCESS,
+  normalizeProgramAccess,
+  resolveProgramAccessPayload,
+} from "../program_access/program_access_runtime.js";
+
+
 function isPlainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -52,6 +59,7 @@ function createInitialSnapshot() {
   return finalizeValue({
     bootstrap: { state: "idle", hydratedAt: null, version: 0 },
     connection: { state: "idle", stale: false, lastSyncAt: null, lastEventVersion: 0, lastError: "" },
+    programAccess: EMPTY_PROGRAM_ACCESS,
     querySystem: {
       serverHydrated: false,
       server: {
@@ -340,6 +348,7 @@ export function createAppRuntimeStore() {
     applyBootstrap(payload = {}) {
       const hasQueryPayload = resolveQueryServerPayload(payload) !== undefined;
       const hasPurchasePayload = resolvePurchaseServerPayload(payload) !== undefined;
+      const programAccessPayload = resolveProgramAccessPayload(payload);
       const nextQueryServer = hasQueryPayload
         ? mergeBootstrapValue(
             SNAPSHOT_TEMPLATE.querySystem.server,
@@ -354,6 +363,13 @@ export function createAppRuntimeStore() {
             resolvePurchaseServerPayload(payload),
           )
         : snapshot.purchaseSystem.server;
+      const nextProgramAccess = programAccessPayload !== undefined
+        ? mergeBootstrapValue(
+            SNAPSHOT_TEMPLATE.programAccess,
+            snapshot.programAccess,
+            normalizeProgramAccess(programAccessPayload),
+          )
+        : snapshot.programAccess;
       const nextBootstrap = resolveBootstrapMetadata(payload, snapshot.bootstrap);
       const nextQueryServerHydrated = hasQueryPayload ? true : snapshot.querySystem.serverHydrated;
       const nextPurchaseServerHydrated = hasPurchasePayload ? true : snapshot.purchaseSystem.serverHydrated;
@@ -380,6 +396,7 @@ export function createAppRuntimeStore() {
 
       if (
         nextBootstrap === snapshot.bootstrap
+        && nextProgramAccess === snapshot.programAccess
         && nextQuerySystem === snapshot.querySystem
         && nextPurchaseSystem === snapshot.purchaseSystem
       ) {
@@ -389,6 +406,7 @@ export function createAppRuntimeStore() {
       return setSnapshot({
         ...snapshot,
         bootstrap: nextBootstrap,
+        programAccess: nextProgramAccess,
         querySystem: nextQuerySystem,
         purchaseSystem: nextPurchaseSystem,
       });
@@ -452,6 +470,22 @@ export function createAppRuntimeStore() {
     },
     applyPurchaseSystemServer(serverPatch = {}) {
       return applyPurchaseServerSnapshot(serverPatch, { markHydrated: true });
+    },
+    applyProgramAccess(programAccessPayload = {}) {
+      const nextProgramAccess = mergeBootstrapValue(
+        SNAPSHOT_TEMPLATE.programAccess,
+        snapshot.programAccess,
+        normalizeProgramAccess(programAccessPayload),
+      );
+
+      if (nextProgramAccess === snapshot.programAccess) {
+        return snapshot;
+      }
+
+      return setSnapshot({
+        ...snapshot,
+        programAccess: nextProgramAccess,
+      });
     },
     patchPurchaseUi(patch = {}) {
       const nextUi = mergePatchValue(snapshot.purchaseSystem.ui, patch);

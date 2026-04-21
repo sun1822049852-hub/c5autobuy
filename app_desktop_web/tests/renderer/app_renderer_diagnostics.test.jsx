@@ -101,7 +101,7 @@ describe("app renderer diagnostics", () => {
     const user = userEvent.setup();
 
     render(<App />);
-    await screen.findByText("C5 账号中心");
+    await screen.findByText("C5 交易助手");
 
     await waitFor(() => {
       expect(logRendererDiagnostic).toHaveBeenCalledWith(expect.objectContaining({
@@ -130,7 +130,7 @@ describe("app renderer diagnostics", () => {
     const logRendererDiagnostic = installDesktopApp(fetchImpl);
 
     render(<App />);
-    await screen.findByText("C5 账号中心");
+    await screen.findByText("C5 交易助手");
 
     const windowError = new Error("renderer exploded");
     window.dispatchEvent(new ErrorEvent("error", {

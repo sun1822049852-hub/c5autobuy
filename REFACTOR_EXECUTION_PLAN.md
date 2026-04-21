@@ -6,13 +6,13 @@
 - `autobuy.py` 已退出默认运行链路，但源码当前仍保留在仓库中作为参考。
 - `c5_layered` 兼容 UI 层已从仓库删除。
 - 旧 `PySide6` 的 `app_frontend/` 已从仓库删除。
-- 当前运行入口为 `run_app.py -> main_ui_account_center_desktop.js -> app_desktop_web/electron-main.cjs -> app_backend.main.create_app()`。
+- 当前运行入口为 `run_app.py -> main_ui_node_desktop.js -> app_desktop_web/electron-main.cjs -> app_backend.main.create_app()`。
 - 查询、购买、库存刷新、登录运行时都已收口到 `app_backend`。
 
 ## 2. 当前代码边界
 
 ### 前端
-- `main_ui_account_center_desktop.js`
+- `main_ui_node_desktop.js`
 - `app_desktop_web/electron-main.cjs`
 - `app_desktop_web/src/`
 

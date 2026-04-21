@@ -9,7 +9,7 @@
 - `autobuy.py` 目前保留在仓库中作为参考，但不属于默认运行链路
 - `c5_layered` 已从仓库删除
 - `app_frontend` 这套旧 `PySide6` UI 已从仓库删除
-- 当前运行入口是 `run_app.py -> main_ui_account_center_desktop.js -> app_desktop_web/app_backend`
+- 当前运行入口是 `run_app.py -> main_ui_node_desktop.js -> app_desktop_web/app_backend`
 - 历史文档里提到的 `app_backend/infrastructure/selenium` 在当前代码中已迁到 `app_backend/infrastructure/browser_runtime`
 - 历史文档里提到的 `SeleniumLoginAdapter` 在当前代码中已改名为 `BrowserLoginAdapter`
 

@@ -34,17 +34,25 @@ const NAV_ITEMS = [
 ];
 
 
-export function AppShell({ activeItem, children, onSelect, reloadNotice = null }) {
+export function AppShell({
+  activeItem,
+  children,
+  onSelect,
+  reloadNotice = null,
+  sidebarTopContent = null,
+}) {
   return (
     <div className="app-shell">
       <aside className="app-shell__sidebar" aria-label="主导航">
-        <div className="app-shell__brand" style={NO_SELECT_STYLE}>
-          <div className="app-shell__brand-mark">Desktop Web</div>
-          <div className="app-shell__brand-title">C5 控制台</div>
-          <div className="app-shell__brand-copy">
-            新桌面壳复用现有 Python 后端，逐步接管旧 UI。
+        {sidebarTopContent || (
+          <div className="app-shell__brand" style={NO_SELECT_STYLE}>
+            <div className="app-shell__brand-mark">Desktop Web</div>
+            <div className="app-shell__brand-title">C5 交易助手</div>
+            <div className="app-shell__brand-copy">
+              新桌面壳复用现有 Python 后端，逐步接管旧 UI。
+            </div>
           </div>
-        </div>
+        )}
         <nav className="app-shell__nav">
           {NAV_ITEMS.map((item) => (
             <button

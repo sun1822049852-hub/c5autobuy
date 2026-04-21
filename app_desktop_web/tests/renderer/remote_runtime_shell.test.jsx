@@ -263,7 +263,7 @@ describe("remote runtime shell keep alive", () => {
 
     render(<App />);
 
-    await screen.findByText("C5 账号中心");
+    await screen.findByText("C5 交易助手");
     expect(
       harness.calls.some((call) => call.pathname === "/purchase-runtime/status"),
     ).toBe(false);
@@ -316,7 +316,7 @@ describe("remote runtime shell keep alive", () => {
     try {
       render(<App />);
 
-      await screen.findByText("C5 账号中心");
+      await screen.findByText("C5 交易助手");
 
       await waitFor(() => {
         expect(

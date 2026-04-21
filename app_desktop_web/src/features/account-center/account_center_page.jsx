@@ -33,6 +33,7 @@ export function AccountCenterPage({ client }) {
     deleteAccount,
     filteredRows,
     isLoading,
+    isReadonlyLocked,
     isOpeningBindingPage,
     loadError,
     loginDrawerAccount,
@@ -87,7 +88,7 @@ export function AccountCenterPage({ client }) {
           <div className="account-page__hero-copy" style={NO_SELECT_STYLE}>
             <div className="account-page__eyebrow">ACCOUNT CENTER</div>
             <h1 className="account-page__title">
-              {isLoading ? "账号中心加载中" : "C5 账号中心"}
+              {isLoading ? "账号中心加载中" : "C5 交易助手"}
             </h1>
           </div>
         </div>
@@ -127,7 +128,12 @@ export function AccountCenterPage({ client }) {
             value={searchTerm}
             onChange={(event) => setSearchTerm(event.target.value)}
           />
-          <button className="accent-button account-page__toolbar-button" type="button" onClick={openCreateDialog}>
+          <button
+            className="accent-button account-page__toolbar-button"
+            type="button"
+            disabled={isReadonlyLocked}
+            onClick={openCreateDialog}
+          >
             添加账号
           </button>
         </div>
@@ -141,6 +147,7 @@ export function AccountCenterPage({ client }) {
           onApiQueryToggle={toggleApiQueryMode}
           onBrowserProxyClick={openBrowserProxyDialog}
           onBrowserQueryToggle={toggleBrowserQueryMode}
+          mutationsDisabled={isReadonlyLocked}
           onNicknameClick={openNicknameDialog}
           onProxyClick={openProxyDialog}
           onPurchaseStatusClick={openPurchaseStatus}
@@ -193,7 +200,14 @@ export function AccountCenterPage({ client }) {
         position={logsModalState.position}
         size={logsModalState.size}
       />
-      <AccountContextMenu menu={contextMenu} onClose={closeContextMenu} onDelete={deleteAccount} onOpenOpenApiBindingPage={openAccountOpenApiBindingPage} onSyncOpenApi={syncAccountOpenApi} />
+      <AccountContextMenu
+        menu={contextMenu}
+        mutationsDisabled={isReadonlyLocked}
+        onClose={closeContextMenu}
+        onDelete={deleteAccount}
+        onOpenOpenApiBindingPage={openAccountOpenApiBindingPage}
+        onSyncOpenApi={syncAccountOpenApi}
+      />
     </section>
   );
 }

@@ -1,0 +1,8 @@
+node_modules
+tmp/
+data/
+*.sqlite
+coverage
+test-results
+npm-debug.log*
+.DS_Store

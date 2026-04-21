@@ -1,6 +1,7 @@
 export function QueryConfigDeleteDialog({
   config,
   isDeleting,
+  isReadonly = false,
   onClose,
   onConfirm,
 }) {
@@ -31,7 +32,7 @@ export function QueryConfigDeleteDialog({
 
         <div className="surface-actions">
           <button className="ghost-button" type="button" onClick={onClose}>取消</button>
-          <button className="accent-button" type="button" disabled={isDeleting} onClick={onConfirm}>
+          <button className="accent-button" type="button" disabled={isReadonly || isDeleting} onClick={onConfirm}>
             {isDeleting ? "删除中..." : "确认删除"}
           </button>
         </div>

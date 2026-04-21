@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useState } from "react";
 
 import { createAccountCenterClient } from "./api/account_center_client.js";
+import { createProgramAuthClient } from "./api/program_auth_client.js";
 import { getDesktopBootstrapConfig } from "./desktop/bridge.js";
 import {
   buildUnhandledRejectionDetails,
@@ -15,6 +16,11 @@ import { PurchaseSystemPage } from "./features/purchase-system/purchase_system_p
 import { QueryStatsPage } from "./features/query-stats/query_stats_page.jsx";
 import { QuerySystemPage } from "./features/query-system/query_system_page.jsx";
 import { AppShell } from "./features/shell/app_shell.jsx";
+import { ProgramAccessSidebarCard } from "./program_access/program_access_sidebar_card.jsx";
+import {
+  ProgramAccessProvider,
+  useProgramAccessGuard,
+} from "./program_access/program_access_provider.jsx";
 import {
   initializeRendererReloadNotice,
   readAppShellState,
@@ -25,6 +31,7 @@ import { UnsavedChangesDialog } from "./features/shell/unsaved_changes_dialog.js
 import { AppRuntimeProvider } from "./runtime/app_runtime_provider.jsx";
 import { createAppRuntimeStore } from "./runtime/app_runtime_store.js";
 import { createRuntimeConnectionManager } from "./runtime/runtime_connection_manager.js";
+import { useProgramAccess } from "./runtime/use_app_runtime.js";
 
 
 const EMPTY_QUERY_SYSTEM_LEAVE_STATE = {
@@ -47,6 +54,37 @@ const EMPTY_NAV_PROMPT = {
 };
 
 
+function ProgramAccessShellBanner() {
+  const programAccess = useProgramAccess();
+  const {
+    lastGuardError,
+    lastProgramAuthError,
+    refreshProgramAuthStatus,
+    loginProgramAuth,
+    logoutProgramAuth,
+    sendRegisterCode,
+    registerProgramAuth,
+    sendResetPasswordCode,
+    resetProgramAuthPassword,
+  } = useProgramAccessGuard();
+
+  return (
+    <ProgramAccessSidebarCard
+      access={programAccess}
+      guardError={lastGuardError}
+      lastProgramAuthError={lastProgramAuthError}
+      refreshProgramAuthStatus={refreshProgramAuthStatus}
+      loginProgramAuth={loginProgramAuth}
+      logoutProgramAuth={logoutProgramAuth}
+      sendRegisterCode={sendRegisterCode}
+      registerProgramAuth={registerProgramAuth}
+      sendResetPasswordCode={sendResetPasswordCode}
+      resetProgramAuthPassword={resetProgramAuthPassword}
+    />
+  );
+}
+
+
 export function App({ runtimeStore }) {
   const [initialAppShellState] = useState(() => readAppShellState());
   const [bootstrapConfig] = useState(() => getDesktopBootstrapConfig());
@@ -66,6 +104,9 @@ export function App({ runtimeStore }) {
   const [client] = useState(() => createAccountCenterClient({
     apiBaseUrl: bootstrapConfig.apiBaseUrl,
     pollIntervalMs: 25,
+  }));
+  const [programAuthClient] = useState(() => createProgramAuthClient({
+    apiBaseUrl: bootstrapConfig.apiBaseUrl,
   }));
   const [runtimeConnectionManager] = useState(() => createRuntimeConnectionManager({
     client,
@@ -249,78 +290,81 @@ export function App({ runtimeStore }) {
 
   return (
     <AppRuntimeProvider store={appRuntimeStore}>
-      <>
-      <AppShell
-        activeItem={activeItem}
-        onSelect={handleSelectItem}
-        reloadNotice={reloadNotice}
-      >
-        {mountedKeepAliveItems["query-system"] ? (
-          <div hidden={activeItem !== "query-system"}>
-            <QuerySystemPage
-              bootstrapConfig={bootstrapConfig}
-              client={client}
-              isActive={activeItem === "query-system"}
-              onLeaveStateChange={handleQuerySystemLeaveStateChange}
-            />
-          </div>
-        ) : null}
-        {activeItem === "query-stats" ? (
-          <QueryStatsPage
-            bootstrapConfig={bootstrapConfig}
-            client={client}
-          />
-        ) : activeItem === "account-capability-stats" ? (
-          <AccountCapabilityStatsPage
-            bootstrapConfig={bootstrapConfig}
-            client={client}
-          />
-        ) : null}
-        {mountedKeepAliveItems["purchase-system"] ? (
-          <div hidden={activeItem !== "purchase-system"}>
-            <PurchaseSystemPage
-              bootstrapConfig={bootstrapConfig}
-              client={client}
-              isActive={activeItem === "purchase-system"}
-              onLeaveStateChange={handlePurchaseSystemLeaveStateChange}
-            />
-          </div>
-        ) : null}
-        {activeItem === "diagnostics" ? (
-          <DiagnosticsPanel
-            error={diagnostics.error}
-            isLoading={diagnostics.isLoading}
-            isRefreshing={diagnostics.isRefreshing}
-            snapshot={diagnostics.snapshot}
-          />
-        ) : null}
-        {activeItem === "account-center" ? (
-          <AccountCenterPage
-            bootstrapConfig={bootstrapConfig}
-            client={client}
-          />
-        ) : null}
-        {activeItem !== "query-system"
-        && activeItem !== "query-stats"
-        && activeItem !== "account-capability-stats"
-        && activeItem !== "purchase-system"
-        && activeItem !== "diagnostics"
-        && activeItem !== "account-center" ? (
-          <AccountCenterPage
-            bootstrapConfig={bootstrapConfig}
-            client={client}
-          />
-        ) : null}
-      </AppShell>
+      <ProgramAccessProvider programAuthClient={programAuthClient} runtimeStore={appRuntimeStore}>
+        <>
+          <AppShell
+            activeItem={activeItem}
+            onSelect={handleSelectItem}
+            reloadNotice={reloadNotice}
+            sidebarTopContent={<ProgramAccessShellBanner />}
+          >
+            {mountedKeepAliveItems["query-system"] ? (
+              <div hidden={activeItem !== "query-system"}>
+                <QuerySystemPage
+                  bootstrapConfig={bootstrapConfig}
+                  client={client}
+                  isActive={activeItem === "query-system"}
+                  onLeaveStateChange={handleQuerySystemLeaveStateChange}
+                />
+              </div>
+            ) : null}
+            {activeItem === "query-stats" ? (
+              <QueryStatsPage
+                bootstrapConfig={bootstrapConfig}
+                client={client}
+              />
+            ) : activeItem === "account-capability-stats" ? (
+              <AccountCapabilityStatsPage
+                bootstrapConfig={bootstrapConfig}
+                client={client}
+              />
+            ) : null}
+            {mountedKeepAliveItems["purchase-system"] ? (
+              <div hidden={activeItem !== "purchase-system"}>
+                <PurchaseSystemPage
+                  bootstrapConfig={bootstrapConfig}
+                  client={client}
+                  isActive={activeItem === "purchase-system"}
+                  onLeaveStateChange={handlePurchaseSystemLeaveStateChange}
+                />
+              </div>
+            ) : null}
+            {activeItem === "diagnostics" ? (
+              <DiagnosticsPanel
+                error={diagnostics.error}
+                isLoading={diagnostics.isLoading}
+                isRefreshing={diagnostics.isRefreshing}
+                snapshot={diagnostics.snapshot}
+              />
+            ) : null}
+            {activeItem === "account-center" ? (
+              <AccountCenterPage
+                bootstrapConfig={bootstrapConfig}
+                client={client}
+              />
+            ) : null}
+            {activeItem !== "query-system"
+            && activeItem !== "query-stats"
+            && activeItem !== "account-capability-stats"
+            && activeItem !== "purchase-system"
+            && activeItem !== "diagnostics"
+            && activeItem !== "account-center" ? (
+              <AccountCenterPage
+                bootstrapConfig={bootstrapConfig}
+                client={client}
+              />
+            ) : null}
+          </AppShell>
 
-      <UnsavedChangesDialog
-        error={navPrompt.error}
-        isOpen={navPrompt.isOpen}
-        isSaving={navPrompt.isSaving}
-        onDiscard={handleDiscardAndLeave}
-        onSave={handleSaveAndLeave}
-      />
-      </>
+          <UnsavedChangesDialog
+            error={navPrompt.error}
+            isOpen={navPrompt.isOpen}
+            isSaving={navPrompt.isSaving}
+            onDiscard={handleDiscardAndLeave}
+            onSave={handleSaveAndLeave}
+          />
+        </>
+      </ProgramAccessProvider>
     </AppRuntimeProvider>
   );
 }

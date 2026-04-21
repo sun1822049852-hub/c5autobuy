@@ -1,3 +1,10 @@
+from pathlib import Path
+
+from httpx import ASGITransport, AsyncClient
+
+from app_backend.main import create_app
+
+
 async def test_app_bootstrap_route_matches_existing_runtime_and_diagnostics_routes(client, app):
     bootstrap_response = await client.get("/app/bootstrap")
     query_runtime_response = await client.get("/query-runtime/status")
@@ -37,6 +44,17 @@ async def test_app_bootstrap_route_matches_existing_runtime_and_diagnostics_rout
     assert isinstance(payload["diagnostics"]["summary"]["updated_at"], str)
     assert payload["diagnostics"]["summary"]["updated_at"]
     assert payload["generated_at"] is not None
+    assert payload["program_access"] == {
+        "mode": "local_pass_through",
+        "stage": "prepackaging",
+        "guard_enabled": False,
+        "message": "当前为本地放行模式，远端程序会员控制面尚未接入正式链路",
+        "username": None,
+        "auth_state": None,
+        "runtime_state": None,
+        "grace_expires_at": None,
+        "last_error_code": None,
+    }
 
 
 async def test_app_bootstrap_route_clears_deleted_selected_config(client):
@@ -108,3 +126,33 @@ async def test_app_bootstrap_route_reads_non_zero_runtime_update_hub_version(cli
     assert response.status_code == 200
     assert response.json()["version"] == app.state.runtime_update_hub.current_version()
     assert response.json()["version"] > 0
+
+
+async def test_app_bootstrap_route_reports_readonly_locked_program_access_when_packaged_release_has_no_cached_auth(
+    tmp_path: Path,
+):
+    app = create_app(
+        db_path=tmp_path / "desktop-web.db",
+        program_access_stage="packaged_release",
+        program_access_app_data_root=tmp_path / "program-access-data",
+        program_access_secret_stage="local_dev",
+        program_access_control_plane_base_url="http://8.138.39.139:18787",
+        program_access_start_refresh_scheduler=False,
+    )
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/app/bootstrap")
+
+    assert response.status_code == 200
+    assert response.json()["program_access"] == {
+        "mode": "remote_entitlement",
+        "stage": "packaged_release",
+        "guard_enabled": True,
+        "message": "请先登录程序会员",
+        "username": None,
+        "auth_state": None,
+        "runtime_state": "stopped",
+        "grace_expires_at": None,
+        "last_error_code": "program_auth_required",
+    }

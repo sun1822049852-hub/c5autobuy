@@ -2,11 +2,12 @@
 
 import "@testing-library/jest-dom/vitest";
 
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "../../src/App.jsx";
+import { createAppRuntimeStore } from "../../src/runtime/app_runtime_store.js";
 
 
 function installDesktopApp(fetchImpl) {
@@ -19,6 +20,21 @@ function installDesktopApp(fetchImpl) {
       };
     },
   };
+}
+
+
+function buildReadonlyLockedRuntimeStore() {
+  const runtimeStore = createAppRuntimeStore();
+  runtimeStore.applyProgramAccess({
+    mode: "remote_entitlement",
+    stage: "packaged_release",
+    guard_enabled: true,
+    message: "请先登录程序会员",
+    auth_state: null,
+    runtime_state: "stopped",
+    last_error_code: "program_auth_required",
+  });
+  return runtimeStore;
 }
 
 
@@ -464,7 +480,7 @@ describe("account center page", () => {
     expect(screen.getByRole("button", { name: "扫货系统" })).toBeInTheDocument();
 
     await waitFor(() => {
-      expect(screen.getByText("C5 账号中心")).toBeInTheDocument();
+      expect(screen.getByText("C5 交易助手")).toBeInTheDocument();
     });
 
     expect(screen.getByText("ACCOUNT CENTER")).toBeInTheDocument();
@@ -585,6 +601,40 @@ describe("account center page", () => {
     expect(screen.getByRole("button", { name: "编辑 API Key 账号 D" })).toBeInTheDocument();
   });
 
+  it("disables mutating account actions when program access is readonly locked", async () => {
+    installDesktopApp(
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => queryModeRows(),
+      }),
+    );
+
+    const runtimeStore = buildReadonlyLockedRuntimeStore();
+    render(<App runtimeStore={runtimeStore} />);
+
+    await screen.findByText("账号 D");
+
+    const toolbar = screen.getByRole("searchbox", { name: "搜索账号" }).closest(".account-page__toolbar");
+    expect(within(toolbar).getByRole("button", { name: "刷新" })).not.toBeDisabled();
+    expect(within(toolbar).getByRole("button", { name: "添加账号" })).toBeDisabled();
+
+    const row = screen.getByText("账号 A").closest("tr");
+    expect(row).not.toBeNull();
+    expect(within(row).getByRole("button", { name: "编辑昵称 账号 A" })).toBeDisabled();
+    expect(within(row).getByRole("button", { name: "切换 API 查询 账号 A" })).toBeDisabled();
+    expect(within(row).getByRole("button", { name: "编辑 API Key 账号 A" })).toBeDisabled();
+    expect(within(row).getByRole("button", { name: "切换浏览器查询 账号 A" })).toBeDisabled();
+    expect(within(row).getByRole("button", { name: "配置购买状态 账号 A" })).toBeDisabled();
+    expect(within(row).getByRole("button", { name: "编辑浏览器 IP 账号 A" })).toBeDisabled();
+    expect(within(row).getByRole("button", { name: "编辑API IP 账号 A" })).toBeDisabled();
+
+    fireEvent.contextMenu(row);
+    const menu = await screen.findByRole("menu");
+    expect(within(menu).getByRole("button", { name: "重新同步 API 白名单" })).toBeDisabled();
+    expect(within(menu).getByRole("button", { name: "打开 API 绑定页" })).toBeDisabled();
+    expect(within(menu).getByRole("button", { name: "删除账号" })).toBeDisabled();
+  });
+
   it("keeps chrome copy non-selectable while preserving input selection", async () => {
     installDesktopApp(
       vi.fn().mockResolvedValue({
@@ -596,11 +646,11 @@ describe("account center page", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByText("C5 账号中心")).toBeInTheDocument();
+      expect(screen.getByText("C5 交易助手")).toBeInTheDocument();
     });
 
     const navButton = screen.getByRole("button", { name: "账号中心" });
-    const pageTitle = screen.getByText("C5 账号中心");
+    const pageTitle = screen.getByText("C5 交易助手");
     const tableHeader = screen.getByRole("columnheader", { name: "C5昵称" });
     const searchbox = screen.getByRole("searchbox", { name: "搜索账号" });
 

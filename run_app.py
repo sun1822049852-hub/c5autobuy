@@ -7,7 +7,7 @@ import sys
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-DESKTOP_LAUNCHER = PROJECT_ROOT / "main_ui_account_center_desktop.js"
+DESKTOP_LAUNCHER = PROJECT_ROOT / "main_ui_node_desktop.js"
 
 
 def resolve_node_executable() -> str | None:
@@ -30,14 +30,14 @@ def launch_desktop(
 def main() -> int:
     if not DESKTOP_LAUNCHER.exists():
         sys.stderr.write(
-            "未找到桌面启动脚本 main_ui_account_center_desktop.js。\n",
+            "未找到桌面启动脚本 main_ui_node_desktop.js。\n",
         )
         return 1
 
     node_executable = resolve_node_executable()
     if not node_executable:
         sys.stderr.write(
-            "未找到 Node.js，请先安装 Node.js 或直接使用 node main_ui_account_center_desktop.js。\n",
+            "未找到 Node.js，请先安装 Node.js 或直接使用 node main_ui_node_desktop.js。\n",
         )
         return 1
 
