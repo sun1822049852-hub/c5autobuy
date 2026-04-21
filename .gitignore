@@ -8,3 +8,4 @@ __pycache__/
 proxy_auth_plugin_*.zip
 .runtime/
 data/
+app_desktop_web/release/

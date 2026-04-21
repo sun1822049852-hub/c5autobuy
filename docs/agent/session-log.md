@@ -332,3 +332,10 @@
 - 已做验证：先执行 `npm --prefix app_desktop_web test -- tests/electron/desktop_launcher.test.js tests/electron/program_access_packaging.test.js tests/electron/python_backend.test.js --run`，结果 `30 passed`；再执行 `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_remove_legacy_cli_entry.py -q`，结果 `4 passed`。唯一残留仍是既有 FastAPI `on_event("shutdown")` 弃用告警，无新失败。
 - 当前进度：显式双入口已落地并通过定向回归；现在本地可稳定区分“本地放行调试”和“模拟用户登录测试”，不再依赖删配置文件这种隐式切换。
 - 下一步：等待用户亲自使用两条入口各点一遍；若还要继续收口，可再决定是否把这两个入口补成桌面快捷方式或批处理脚本，但当前代码主线已足够使用。
+
+## 2026-04-21 23:36 (Asia/Shanghai)
+- 背景：用户要求把安装包产物目录做成本地忽略，不参与提交，同时在本地留下一个可读的打包时间标记文件。
+- 已完成：在 `.gitignore` 新增 `app_desktop_web/release/` 忽略规则；本地新增 `app_desktop_web/release/BUILD_INFO.txt`，记录最近打包时间 `2026-04-21 18:46:58 (Asia/Shanghai)`、当前安装包名 `C5 交易助手 Setup 0.1.0.exe`，并注明 `release/` 仅作为本地产物目录使用。
+- 已做验证：执行 `git status --short`，当前只剩 `.gitignore` 为工作树改动，`release/` 目录未再以未跟踪文件出现；执行 `git check-ignore -v -- "app_desktop_web/release/C5 交易助手 Setup 0.1.0.exe"`，确认该安装包已被 `.gitignore:11` 命中；回读 `app_desktop_web/release/BUILD_INFO.txt`，内容与本次要求一致。
+- 当前进度：安装包产物现已本地留档且默认忽略；按用户要求，本轮不提交。
+- 下一步：若后续重打一包，只需覆盖 `release/` 内容并刷新 `BUILD_INFO.txt` 时间即可，无需再改 Git 规则。
