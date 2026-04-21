@@ -66,14 +66,17 @@ class AccountBrowserProfileStore:
 
     def clone_session(self, account_id: str, *, session_name: str | None = None) -> Path:
         source_root = self.ensure_account_profile(account_id)
+        return self.clone_session_from_root(source_root, session_name=session_name or f"account-{self._safe_name(account_id)}")
+
+    def clone_session_from_root(self, source_root: Path, *, session_name: str | None = None) -> Path:
+        normalized_source_root = Path(source_root)
         normalized_session_name = str(session_name or "").strip()
-        if normalized_session_name:
-            session_root = self._runtime.session_root / self._safe_name(normalized_session_name)
-        else:
-            session_root = self._runtime.session_root / f"account-{self._safe_name(account_id)}"
+        if not normalized_session_name:
+            normalized_session_name = normalized_source_root.name or f"session-{self._safe_name(datetime.now().isoformat())}"
+        session_root = self._runtime.session_root / self._safe_name(normalized_session_name)
         if session_root.exists():
             shutil.rmtree(session_root, ignore_errors=True)
-        self._copytree(source_root, session_root)
+        self._copytree(normalized_source_root, session_root)
         self._remove_transient_paths(session_root)
         return session_root
 

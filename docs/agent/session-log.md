@@ -162,3 +162,125 @@
 - 已做验证：重新执行 `./.venv/Scripts/python.exe -m pytest tests/backend/test_purchase_runtime_service.py -k "counts_purchase_success_using_actual_purchased_count or emits_purchase_stats_events_with_actual_success_count or exposes_item_hit_source_summary or emits_purchase_stats_events or consumes_queued_hit_and_updates_runtime_snapshot" -q`，结果 `5 passed`；执行 `npm test -- tests/renderer/query_stats_page.test.jsx`，结果 `1 passed / 4 passed`。
 - 当前进度：前后端受影响验证均已通过，工作树处于可提交状态。
 - 下一步：按用户要求将前端与后端改动一起 stage 并创建本地 commit。
+
+## 2026-04-19 20:59 (Asia/Shanghai)
+- 背景：用户连续澄清程序会员语义，最终确认“本地共享工作区不随程序账号切换；程序账号只负责权限续期；无会员时数据只读可见，关键动作锁死”。
+- 已完成：新增冻结 spec `docs/superpowers/specs/2026-04-19-program-membership-shared-workspace-design.md`，写死“单一本地共享工作区 + 远端统一鉴权 + 切账号只换权限、不换数据”的最终边界；同时为 `2026-04-06-membership-auth-design.md` 与 `2026-04-13-local-program-access-extension-design.md` 增加状态更新提示，标明过期与补充关系；把该产品语义同步提炼到 `docs/agent/memory.md`。
+- 当前进度：仓库内关于程序会员的主语义已重新对齐：保留 Program Access 骨架与关键动作守卫，停止把本地业务数据继续推向 `owner_user_id` 多租户隔离方向。
+- 下一步：若继续实现，应先把只读锁定态、远端程序账号登录/刷新/切号、以及 guard 的真实远端判定链落成可执行方案，再碰代码。
+
+## 2026-04-20 17:46 (Asia/Shanghai)
+- 背景：用户要求把“会员控制面公网暴露需要收口”留作跨会话锚点，并确认当前距离会员落地与发行还剩哪些工作。
+- 已完成：通过 SSH 拿到远端 `admin@8.138.39.139` 权限，确认并保留旧服务 `cs2-admin`；将新会员控制面部署到远端独立端口 `18787`，验证 `health`、公钥下发、bootstrap 状态均可公网访问；用户已完成后台超级管理员初始化，`needs_bootstrap` 已变为 `false`；同步把“管理端口不得长期全网开放，正式发行前需收口”写入 `docs/agent/memory.md`。
+- 当前进度：远端统一鉴权控制面已实际跑通，后台入口可用；当前最大的未收口项不再是服务器部署，而是桌面端与该远端的真实登录/会员解锁联调，以及发行前的网络暴露策略与打包链收尾。
+- 下一步：优先做一遍“桌面端真实登录 -> 拉取远端权限 -> 本地关键功能解锁/锁死”的烟测；随后处理发行链剩余事项，包括管理员端口收口、`build:win` 的签名/构建链整理、以及 `.venv` 发行便携性的最终确认。
+
+## 2026-04-21 12:35 (Asia/Shanghai)
+- 背景：用户质疑最近安装包与会员改动落在错误 worktree，要求先判断旧 worktree 是否还应保留，再决定清理。
+- 已完成：复核全部 worktree 的最后提交时间、与 `master` 的偏离、脏/净状态和会员相关性；确认根工作树 `master` 才是可信桌面主线，且当前根线未提交改动仍仅限文档/spec，会员与控制面代码主要散落在 `feature/local-program-access-extension` 与 `feature/program-control-plane-chunk1`；新增 `docs/superpowers/references/2026-04-21-worktree-disposition-reference.md` 给出“保留回收源 / 导出后删除 / 可直接删除”清单，并把“以后只能从 `master + main_ui_account_center_desktop.js` 打包”写入长期记忆。
+- 当前进度：worktree 处置建议已落盘，但尚未执行任何删除；会员功能仍未真正回收到可发行主线。
+- 下一步：等用户确认后，按清单清理无关旧树，并把会员/控制面能力从两条保留 worktree 拆件回收回 `master`，再重新打包验证。
+
+## 2026-04-21 13:05 (Asia/Shanghai)
+- 背景：用户确认可以继续，要求按清单清理旧 worktree，并开始把会员能力回收到 `master`。
+- 已完成：实际删除 7 条无关旧 worktree，仅保留 `feature/local-program-access-extension`、`feature/membership-auth-v1`、`feature/program-control-plane-chunk1` 三条会员相关来源；其中 `purchase-page-ui-freeze` 与 `remote-runtime-state-sync-exec` 先由 `git worktree remove` 注销，再按绝对路径校验后手工删除残留目录。同步更新 `docs/superpowers/references/2026-04-21-worktree-disposition-reference.md` 为已执行状态，并新增 `docs/superpowers/plans/2026-04-21-program-membership-master-recovery.md`，明确从哪条 worktree 回收哪些模块、以及哪些入口/命名漂移坚决不带回 `master`。
+- 当前进度：现场 worktree 已收口，下一阶段进入 `master` 回收实施；代码尚未开始回收，当前只完成清理与执行计划落盘。
+- 下一步：按恢复计划先把 Program Access 骨架、只读锁定 UI 和远端控制面适配层回收到 `master`，随后补打包链并只从根工作树重新出包。
+
+## 2026-04-21 13:26 (Asia/Shanghai)
+- 背景：继续执行 `docs/superpowers/plans/2026-04-21-program-membership-master-recovery.md` 的 Chunk 1，目标是在 `master` 上先回收前端 Program Access 骨架，并把“共享工作区只读可见、关键功能锁死”落实到现有桌面页。
+- 已完成：从 `feature/local-program-access-extension` 回收 `app_desktop_web/src/program_access/` 与 `app_desktop_web/src/api/program_auth_client.js`，把 `programAccess` snapshot 接入 `App`、`AppShell`、runtime store 与 runtime hooks；补齐侧栏“程序会员”卡片与 provider 错误出口。随后新增并跑通账号页 / 配置页 / 扫货页的 readonly 红灯测试，按最小集合给 account-center、query-system、purchase-system 接上 `isReadonlyLocked`，使新增/编辑/删除/启动/保存/提交等关键动作在锁定态 disabled，而查看与停止运行保留。额外补上 `runtime_connection_manager` 对 `program_access.updated` websocket 事件的接收，保证远端续权状态能实时落到前端。
+- 已做验证：执行 `npm test -- tests/renderer/program_access_provider.test.jsx tests/renderer/program_access_sidebar_card.test.jsx tests/renderer/app_remote_bootstrap.test.jsx tests/renderer/account_center_page.test.jsx tests/renderer/query_system_page.test.jsx tests/renderer/purchase_system_page.test.jsx tests/renderer/runtime_connection_manager.test.js --run`，结果 `7 passed / 85 passed`。
+- 当前进度：Chunk 1 的前端骨架与 readonly 锁定主干已回到 `master`，并维持“单一共享工作区 + 程序账号只换权限钥匙”的冻结语义；尚未进入远端控制面服务、Python 远端适配层与正式注册/找回密码链路的回收。
+- 下一步：继续按计划进入 Chunk 2，回收 `program_admin_console/`、SMTP 注册/找回密码链路，以及 Python 侧远端 entitlement adapter，再做桌面端真实登录联调。
+
+## 2026-04-21 16:32 (Asia/Shanghai)
+- 背景：继续执行 `docs/superpowers/plans/2026-04-21-program-membership-master-recovery.md` 的 Chunk 2，目标是把远端控制面与 Python 远端 entitlement adapter 从保留 worktree 回收到 `master`，并保持“共享本地数据 + 远端统一鉴权 + 失效后只读可见”语义不漂移。
+- 已完成：回收 `program_admin_console/` 全套 Node 控制面（store/server/admin UI/SMTP 文档与测试），并把 UI 与邮件品牌统一到 `C5 交易助手`，README 中的部署/联调口径固定指向 `http://8.138.39.139:18787`，未带回 `data/control-plane.sqlite`。同时把 Python 侧 `program_auth` 路由、remote control plane client、签名验签器、remote entitlement gateway、refresh scheduler 及配套测试恢复到主线；`create_app()` 现可装配远端控制面客户端、挂上 `/program-auth/*` 路由、持有刷新调度器，并在 packaged release 场景下使用远端 entitlement 语义而不改共享工作区边界。
+- 已做验证：执行 `npm --prefix program_admin_console test`，结果 mail/store/server/ui 全部通过；执行 `./.venv/Scripts/python.exe -m pytest tests/backend/test_app_bootstrap_route.py tests/backend/test_desktop_web_backend_bootstrap.py tests/backend/test_program_access_guard_routes.py tests/backend/test_remote_control_plane_client.py tests/backend/test_remote_entitlement_gateway.py tests/backend/test_program_access_refresh_scheduler.py tests/backend/test_program_auth_routes.py -q`，结果 `60 passed`。唯一残留仅为 FastAPI `on_event("shutdown")` 的既有弃用告警，本次未扩到 lifespan 重构。
+- 当前进度：Chunk 2 的控制面与本地后端远端鉴权链已回到 `master`，注册/验证码/找回密码/登录/刷新/退出的本地代理链已存在；主线现在具备继续做桌面端真实登录联调与打包配置回收的基础。
+- 下一步：继续执行后续恢复计划，把桌面端 Program Access 面板与 Electron/打包侧控制面配置回收到主线，并做“真实程序账号登录 -> 权限解锁/锁死 -> 切号不换本地数据”的整链烟测。
+
+## 2026-04-21 18:08 (Asia/Shanghai)
+- 背景：继续执行恢复计划的桌面端与打包收口，目标是把主线上的 Program Access 从“只剩状态卡 + 登录/退出”补到“注册/验证码/找回密码完整可用”，同时把 packaged release 的控制面配置与安装器约束回收到根主线。
+- 已完成：前端 `program_auth_client`、`program_access_provider`、`ProgramAccessSidebarCard` 已接回完整注册链，侧栏现支持登录、发送注册验证码、提交注册、发送找回密码验证码、重置密码，并保持“共享工作区不切换、无会员只读可见”的文案与状态不漂移。并行回收了 Electron 打包配置：新增 `app_desktop_web/program_access_config.cjs`、`electron-builder-*.cjs`、`tests/electron/program_access_packaging.test.js`，`python_backend.js` 现会把 `controlPlaneBaseUrl` 注入嵌入式 Python 后端，`client_config.release.json` 默认指向 `http://8.138.39.139:18787`，同时保留 `main_ui_account_center_desktop.js` 作为可信启动入口。
+- 已做验证：执行 `npm --prefix app_desktop_web test -- tests/renderer/program_auth_client.test.js tests/renderer/program_access_provider.test.jsx tests/renderer/program_access_sidebar_card.test.jsx tests/renderer/app_remote_bootstrap.test.jsx tests/renderer/account_center_page.test.jsx tests/renderer/purchase_system_page.test.jsx tests/renderer/query_system_page.test.jsx tests/renderer/runtime_connection_manager.test.js tests/electron/python_backend.test.js tests/electron/desktop_launcher.test.js tests/electron/program_access_packaging.test.js --run`，结果 `113 passed`；再次执行 `npm --prefix program_admin_console test` 结果全绿；后端聚焦回归维持 `60 passed`。Node SQLite 仍会给出实验性告警，FastAPI 仍有 `on_event("shutdown")` 弃用告警，但本轮功能验证未失败。
+- 当前进度：桌面端会员入口、远端登录/注册/找回密码链、Electron packaged-release 控制面配置、可信 launcher 约束都已回到主线，当前已具备继续做“真实账号烟测 + 真正出包”的条件。
+- 下一步：剩余关键差距已缩到两刀：1. 跑一遍真实程序账号登录/切号/锁定解锁烟测；2. 从根 `master` 真正执行 `npm --prefix app_desktop_web run build:win`，记录安装包输出路径与实际安装体验。
+
+## 2026-04-21 18:14 (Asia/Shanghai)
+- 背景：用户确认可以继续清理旧 worktree，要求把明显过期、会误导后续打包与会员排查的现场收口。
+- 已完成：重新审查剩余三棵会员相关 worktree；确认 `feature/membership-auth-v1` 相对 `master` 已无提交级独占内容，剩下的只是“本地多租户用户/会员模型”这条已被废弃语义的脏现场，因此执行 `git worktree remove --force .worktrees/membership-auth-v1` 并删除本地分支 `feature/membership-auth-v1`。同步更新 `docs/superpowers/references/2026-04-21-worktree-disposition-reference.md` 与 `docs/agent/memory.md`，把它标记为已移除漂移源。
+- 已做验证：执行 `git diff --stat master...feature/membership-auth-v1`，结果为空，确认无提交级独占内容；执行 `git worktree list --porcelain`，当前仅剩根工作树、`feature/local-program-access-extension`、`feature/program-control-plane-chunk1` 三项；执行 `git branch --list feature/membership-auth-v1`，结果为空，确认分支已删除。
+- 当前进度：现场 worktree 已进一步收口，后续会员回收与发行排查只需围绕根工作树 `master` 以及两条仍保留的回收源进行，不再需要旧的本地多租户分支干扰判断。
+- 下一步：继续集中处理发行收口剩余两刀，即真实程序账号烟测，以及 Windows 打包环境的 `winCodeSign` / 符号链接权限问题。
+
+## 2026-04-21 18:18 (Asia/Shanghai)
+- 背景：用户确认继续推进，目标是把 Windows 本地出包链真正打通，而不是停留在“理论上只差环境权限”。
+- 已完成：先复现 `npm --prefix app_desktop_web run pack:win` 的真实失败栈，确认并非 NSIS 或会员代码问题，而是 `electron-builder` 在 Windows 上执行 EXE 元信息编辑时，会下载 `winCodeSign-2.6.0.7z` 并要求 7-Zip 解出其中的 symlink 文件；当前普通本地环境无该权限，因此在缓存目录解压阶段失败。随后做最小假设实验，把 `win.signAndEditExecutable` 关闭后重新测试，证明确实可以绕过 `rcedit/winCodeSign` 链并成功产出 `win-unpacked`；最终将该设置固化到 `app_desktop_web/electron-builder.config.cjs`，并在 `tests/electron/program_access_packaging.test.js` 中补断言锁定该约束。
+- 已做验证：执行 `npm test -- tests/electron/program_access_packaging.test.js --run`，结果 `8 passed`；执行 `npm run build:win`，成功生成安装包 `app_desktop_web/release/C5 账号中心 Setup 0.1.0.exe` 以及对应 `.blockmap`，同时保留 `release/win-unpacked/`。本次构建仍有既有警告：`package.json` 缺 `description/author`，且未配置自定义应用图标，因此继续使用默认 Electron 图标，但不影响出包成功。
+- 当前进度：Windows 本地发行包已从根主线实际产出，之前卡住的 `winCodeSign` / symlink 权限阻塞已被主线配置规避；当前发行链剩余重点转为“真实程序账号烟测”和“是否要进一步整理产品名/图标/元信息”。
+- 下一步：优先让用户用刚产出的安装包做本机安装验证，并跑一遍真实程序账号登录/注册/锁定解锁/切号不切数据的烟测；若用户对安装包名称、图标或 EXE 元信息有要求，再单独收一轮发行品牌整理。
+
+## 2026-04-21 18:24 (Asia/Shanghai)
+- 背景：用户要求把安装包名改成 `C5 交易助手`，但未要求同步改运行时页面标题、窗口标题或本地数据目录。
+- 已完成：采用最小改动路线，只修改 `app_desktop_web/electron-builder.config.cjs` 中的 `productName`，把安装包 / EXE 产物名从 `C5 账号中心` 改为 `C5 交易助手`；同时先补红灯，再在 `tests/electron/program_access_packaging.test.js` 中锁定该打包品牌，避免后续回退。此次未改 `electron-main.cjs`、`index.html`、导航文案和 `C5AccountCenter` 数据目录常量，因此不会引入本地数据迁移。
+- 已做验证：先执行 `npm test -- tests/electron/program_access_packaging.test.js --run`，得到 `1 failed`，失败点为 `expected 'C5 账号中心' to be 'C5 交易助手'`；修复后再次执行同命令，结果 `8 passed`。随后执行 `npm run build:win`，成功生成 `app_desktop_web/release/C5 交易助手 Setup 0.1.0.exe` 与对应 `.blockmap`，并在构建日志中确认 `release/win-unpacked/C5 交易助手.exe` 已同步生效。
+- 当前进度：安装包外显名已切到 `C5 交易助手`，但程序运行时仍保持 `C5 账号中心` 文案；这样能满足“改安装包名”的诉求，同时避免额外 UI 与数据目录回归。
+- 下一步：等用户做安装验证；若后续还要把窗口标题、HTML title、侧栏标题等也统一改成 `C5 交易助手`，再单独收一刀品牌统一。
+
+## 2026-04-21 17:06 (Asia/Shanghai)
+- 背景：用户明确否定 `C5 账号中心` 作为整机品牌，要求以真正程序入口 `main_ui_node_desktop.js` 为准，把运行时整套外显名统一改成 `C5 交易助手`，并及时清理过期构建产物。
+- 已完成：补齐 `tests/renderer/query_system_page.test.jsx` 中残留的旧品牌断言，使运行时品牌测试闭环；当前主线运行时外显名已统一为 `C5 交易助手`，覆盖 Electron `app.setName`、窗口标题、启动失败页、HTML title、侧栏品牌标题与账号首页主标题，同时保持内部模块名 `账号中心 / 配置管理 / 扫货系统` 不变，也未触碰本地数据目录常量。同步修正 `README.md` 与 `docs/agent/memory.md`，把真实桌面入口锚定为 `main_ui_node_desktop.js`，并标明 `main_ui_account_center_desktop.js` 只是兼容转发壳。随后清理过期产物：删除根工作树 `.vite/`、`app_desktop_web/build/`，以及保留回收源 worktree 中残留的旧版 `C5 账号中心` 安装包与 `win-unpacked` EXE，避免后续再误拿旧包做发行判断。
+- 已做验证：执行 `npm test -- tests/renderer/query_system_page.test.jsx --run`，结果 `15 passed`；执行 `npm test -- tests/renderer/account_center_page.test.jsx tests/renderer/app_renderer_diagnostics.test.jsx tests/renderer/app_state_persistence.test.jsx tests/renderer/purchase_system_page.test.jsx tests/renderer/query_system_editing.test.jsx tests/renderer/query_system_page.test.jsx tests/renderer/remote_runtime_shell.test.jsx --run`，结果 `72 passed`；执行 `npm test -- tests/electron/program_access_packaging.test.js --run`，结果 `8 passed`；执行 `npm test -- tests/electron/electron_remote_mode.test.js --run -t "configures dedicated desktop storage paths before the app bootstraps"`，结果 `1 passed`；执行 `npm run build:win`，成功生成 `app_desktop_web/release/C5 交易助手 Setup 0.1.0.exe`。清理后再次全仓搜索 `C5 账号中心` 构建产物与 `.vite/build` 残留，结果为空。
+- 当前进度：当前可直接交付给用户安装测试的有效发布产物只剩 `app_desktop_web/release/C5 交易助手 Setup 0.1.0.exe`（及本次构建附带的 `.blockmap` / `win-unpacked` 运行目录）；旧品牌运行时与旧安装包残骸已从主线和保留 worktree 中清掉。
+- 下一步：等待用户做本机安装验证；若还要继续收口，可再决定是否把 `run_app.py`、兼容包装脚本提示语和 README 更深层旧称呼统一到 `main_ui_node_desktop.js` 口径。
+
+## 2026-04-21 17:12 (Asia/Shanghai)
+- 背景：用户进一步确认 `main_ui_account_center_desktop.js` 已几乎不参与主进程，希望直接把这层兼容壳从主线清掉，避免后续继续误判入口。
+- 已完成：先用测试把入口契约切到 `main_ui_node_desktop.js`，确认红灯确实打在 `run_app.py` 对旧壳文件名的硬编码上；随后把 `run_app.py`、README、`docs/superpowers/README.md`、worktree 处置参考、恢复计划与长期记忆全部改成“唯一真实桌面入口 = main_ui_node_desktop.js”的口径，并已删除 `main_ui_account_center_desktop.js` 兼容壳文件。
+- 已做验证：红灯阶段执行 `./.venv/Scripts/python.exe -m pytest tests/backend/test_remove_legacy_cli_entry.py -q`，结果 `1 failed, 2 passed`，失败点为 `run_app.py` 仍未包含 `main_ui_node_desktop.js`；绿灯阶段再次执行 `./.venv/Scripts/python.exe -m pytest tests/backend/test_remove_legacy_cli_entry.py -q`，结果 `3 passed`；执行 `npm test -- tests/electron/desktop_launcher.test.js --run`，结果 `5 passed`；执行 `Test-Path main_ui_account_center_desktop.js`，结果 `False`，确认兼容壳文件已从根工作树删除。
+- 当前进度：当前主线代码与当前口径文档都已切到真实入口，兼容壳已从根工作树删除。
+- 下一步：保留对历史计划文档中旧入口名的检索能力即可；后续若再排查启动链，统一从 `run_app.py -> main_ui_node_desktop.js` 开始。
+
+## 2026-04-21 17:19 (Asia/Shanghai)
+- 背景：用户要求把新包重打一遍；首次重打虽然成功产出 `C5 交易助手 Setup 0.1.0.exe`，但构建日志明确警告 `app_desktop_web/build/client_config.release.json` 缺失，存在发行包丢失远端控制面地址配置的风险。
+- 已完成：按根因排查确认，问题不是 `electron-builder` 生成失败，而是此前清理过期产物时误删了 `app_desktop_web/build/client_config.release.json`；该文件本身就是发行必带静态配置，而 `electron-builder-preflight.cjs` 只校验嵌入式 Python，不会自动重建它。随后补回 `app_desktop_web/build/client_config.release.json`，内容固定为 `http://8.138.39.139:18787`，再清空 `app_desktop_web/release/` 并重新执行 `build:win`。
+- 已做验证：先执行 `npm test -- tests/electron/program_access_packaging.test.js --run`，红灯结果 `1 failed / 7 passed`，失败点为 `ENOENT ... app_desktop_web/build/client_config.release.json`；补回文件后再次执行同命令，结果 `8 passed`。随后执行 `npm run build:win`，成功生成新的 `app_desktop_web/release/C5 交易助手 Setup 0.1.0.exe`（时间戳 `2026-04-21 17:18:34`）；并回读 `app_desktop_web/release/win-unpacked/resources/client_config.release.json`，确认包内已携带 `controlPlaneBaseUrl = http://8.138.39.139:18787`。
+- 当前进度：当前 `release/` 下的新安装包已是带完整远端控制面配置的有效发行包，不再是之前那个“外表成功、内里缺 release config”的半成品。
+- 下一步：可直接交给用户做本机安装验证；若还要继续收口发行细节，下一刀是补 `package.json` 的 `description/author` 与自定义应用图标，去掉构建日志里的剩余警告。
+
+## 2026-04-21 18:48 (Asia/Shanghai)
+- 背景：用户反馈账号中心“新增账号后立即发起登录”被改坏，登录成功后的浏览器会话落盘阶段抛出 `Permission denied`，并怀疑最近的白名单 `cookie` 续期改动误伤了登录链。
+- 已完成：按登录链与白名单链逐段排查后，确认白名单 `cookie` 续期只在“打开 open-api 绑定页”时触发；真正炸点是登录成功后立即持久化活跃 Chromium session 时，`shutil.copytree()` 试图复制仍被 Edge 占用的 `Default/Cache/Cache_Data`。为此在 `AccountBrowserProfileStore` 中新增“复制阶段即忽略瞬态目录”的复制器，跳过 `Default/Cache`、`Default/Code Cache`、`Default/GPUCache`、`Default/Service Worker/CacheStorage` 等缓存目录，同时保留 `Cookies` / `Preferences` / `Local State`。另补一盏回归测试，模拟 Windows 风格的锁文件错误，锁定“活跃 session 即时持久化不得因缓存锁而失败”。
+- 已做验证：先用 `python -m pytest tests/backend/test_account_browser_profile_store.py -q` 跑出红灯，确认旧实现会在模拟的 `Cache_Data/data_0` 权限错误上失败；修复后执行 `python -m pytest tests/backend/test_account_browser_profile_store.py tests/backend/test_managed_edge_cdp_login_runner.py tests/backend/test_open_api_binding_page_launcher.py -q`，结果 `20 passed`。测试过程另确认直接 `pytest` 在当前环境下不会自动挂载仓库根目录，需使用 `python -m pytest`。
+- 当前进度：账号登录链已回到“仍保持即时 profile 持久化，但不再复制活跃浏览器锁住的瞬态缓存”的状态；白名单页 cookie 续期逻辑未回退，登录链与 open-api 复用链已重新对齐。
+- 下一步：等待用户在真实账号上重新跑一遍“新增账号 -> 登录 -> 立即打开白名单页 / 继续后续购买准备”的人工验证；若仍有现场异常，再沿活跃 session 中其他可能被锁的 Chromium 瞬态目录继续补白名单。
+
+## 2026-04-21 19:05 (Asia/Shanghai)
+- 背景：用户反馈当前项目桌面程序已无法打开，要求先排查源码启动链，不继续打包。
+- 已完成：先复现 `node main_ui_node_desktop.js` 的启动失败，确认桌面启动器此前已修到“不再错误依赖 `electron/cli.js`”，但当前真正阻塞点已下沉到本机 Electron 运行时损坏。现网现场先报 `chrome_100_percent.pak` 缺失；继续追查发现不只是 `dist/` 残缺，连 `app_desktop_web/node_modules/electron/checksums.json` 也缺失，导致 `install.js` 自愈脚本无法运行。随后执行最小修复：仅删除损坏的 `app_desktop_web/node_modules/electron/` 包目录，并在 `app_desktop_web/` 下用 `npm install electron@37.2.0 --no-save --package-lock=false` 重新拉起 Electron 包与运行时，未触碰业务源码与打包流程。
+- 已做验证：检查 `app_desktop_web/node_modules/electron/checksums.json`、`dist/electron.exe`、`dist/chrome_100_percent.pak` 均已恢复；再次用 `Start-Process node main_ui_node_desktop.js` 做 8 秒烟测，进程保持存活且 `stderr` 为空，不再出现缺包报错；执行 `npm test -- tests/electron/desktop_launcher.test.js --run`，结果 `6 passed`。
+- 当前进度：当前源码态桌面程序已恢复到“可正常拉起 Electron 壳”的状态，本轮阻塞属于本机依赖层损坏，不是会员链或业务主进程再次改坏。
+- 下一步：等用户亲手点开程序确认窗口是否正常进入；若仍有“开得慢 / 标题不对 / 某页空白”等二次现象，再沿运行时 UI 链继续收束，但无需回退这次 Electron 依赖修复。
+
+## 2026-04-21 19:31 (Asia/Shanghai)
+- 背景：用户明确要求不要继续“瞎改”，而是找回“以前登录完全成功”的历史实现；经 git 历史比对，确认 `49d4d9b fix: defer login profile persistence until browser exit` 才是旧成功语义，而 `0248d5e fix: persist account browser sessions immediately` 把 `persist_session()` 挪进了登录主链。
+- 已完成：新增实现计划 `docs/superpowers/plans/2026-04-21-login-success-chain-restore.md`，随后先把 `tests/backend/test_managed_edge_cdp_login_runner.py` 改回旧契约并补上“持久化报错也不能阻断登录”的回归灯，确认红灯后，仅在 `app_backend/infrastructure/browser_runtime/login_adapter.py` 做最小修复：保留独立登录 session 目录与阻塞调用桥接，但把 `persist_session()` 从登录成功前移回 delayed cleanup callback，恢复“先返回登录成功，再做 best-effort profile 落盘”的语义。同时修正 `docs/agent/memory.md` 中此前错误沉淀的“必须立即持久化”结论。
+- 已做验证：先执行 `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_managed_edge_cdp_login_runner.py -k "persists_profile_after_browser_exit or defers_profile_persist_until_cleanup_runs or ignores_profile_persist_error_after_browser_exit" -q`，红灯结果 `3 failed`，失败点均为当前代码仍在登录主链里立即持久化。修复后重跑同命令，结果 `3 passed`。随后执行 `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_account_browser_profile_store.py tests/backend/test_managed_edge_cdp_login_runner.py tests/backend/test_open_api_binding_page_launcher.py tests/backend/test_login_task_flow.py tests/backend/test_login_conflict_flow.py -q`，结果 `36 passed`。两轮验证均仅有既有 FastAPI `on_event("shutdown")` 弃用告警，无新失败。
+- 当前进度：账号中心登录链已恢复到旧成功语义，`persist_session()` 的锁文件异常不再能直接打断“新增账号登录成功”；先前为缓存锁做的 `AccountBrowserProfileStore` 瞬态目录忽略仍保留，但已从“拯救登录主链”降级为“降低后续落盘失败概率”的辅助措施。
+- 下一步：等待用户在真实账号上复测“新增账号 -> 登录成功”；若仍有白名单页复用时序问题，再单独决定是否为 open-api 复用链补显式“等待浏览器退出后再打开”提示或单独重刷机制，但不再把这类补强重新绑回登录主链。
+
+## 2026-04-21 19:43 (Asia/Shanghai)
+- 背景：用户继续指出账号中心当前真实流程是“先新建账号壳，再登录后回写 `c5_user_id`”，并反馈现在同一 C5 账号重复登录时会生成两个相同账号，要求恢复旧处理而不是默认复制出第二个同号账号。
+- 已完成：复核 `app_backend/workers/tasks/login_task.py` 与 `tests/backend/test_login_conflict_flow.py` 后，确认重复号并非因为“先建壳”本身，而是 `399da66 feat: finish remote runtime authoritative state sync` 把登录归并逻辑从 `57e0d99 fix: align login reconciliation and account update pushes` 的“命中已有同 `c5_user_id` 就并回老账号”收窄成了“只有 API-only 来源才并回老账号”，并新增了错误测试来锁死“普通空壳登录命中老号时保留新号、制造重复账号”。随后先把该测试改成正确契约并跑出红灯，再仅在 `login_task.py` 做最小修复：`matched_account` 一旦命中，无论来源账号是否 API-only，都优先作为 `final_account`；只有未命中且来源为 API-only 时，才额外派生新已登录账号。这样既保留“先建壳、后拿 `c5_user_id`”的现实链路，也恢复“同号不重复写进新壳”的归并规则。
+- 已做验证：先执行 `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_login_conflict_flow.py -k "regular_new_account_routes_to_existing_c5_account_when_existing_match_found" -q`，红灯结果 `1 failed`，失败点为当前实现仍把 `task_payload["result"]["account_id"]` 指向新壳账号。修复后执行 `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_login_conflict_flow.py -k "regular_new_account_routes_to_existing_c5_account_when_existing_match_found or api_only_account_routes_to_existing_c5_account or api_only_account_creates_new_logged_in_account_without_inheriting_source_config" -q`，结果 `3 passed`。仅有既有 FastAPI `on_event("shutdown")` 弃用告警，无新失败。
+- 当前进度：当前登录归并规则已恢复到“同一 `c5_user_id` 默认并回已有账号”，不再把重复登录写成第二个同号账号；普通空壳账号在命中老号时会保持未绑定空壳状态，不自动删除。
+- 下一步：继续跑包含登录主链与归并链的总回归，然后只提交本次相关文件，避开工作树里其它未收口改动。
+
+## 2026-04-21 20:06 (Asia/Shanghai)
+- 背景：用户继续反馈“登录成功后关闭窗口，再点添加白名单，拉起的网页要求重新登录”。这说明问题不只是“窗口未关时白名单链没有复用活跃浏览器”，而是“窗口刚关后，最新登录态尚未稳定落入 canonical profile，白名单链又只会去拉旧 profile”。
+- 已完成：沿 `accounts.py -> open_api_binding_page_launcher.py -> account_browser_profile_store.py` 排查后，确认旧实现存在两处断口：1. 路由虽然能从 active bundle 读到 `profile_root`，但并不会把 `debugger_address` 或最新登录 session 根路径往下传；2. launcher 在有 `profile_store + account_id` 时会忽略 bundle 里的显式 `profile_root`，直接 clone canonical account profile，因此“刚登录/刚关窗”的最新态天然可能丢失。随后先补红灯：锁定路由必须把 `debugger_address/login_session_root` 透传给 launcher，launcher 必须优先复用活跃登录 debugger，其次复用 `login_session_root`，最后才退回保存型 profile。再做最小修复：`ManagedEdgeCdpLoginRunner` 把 `login_session_root` 带进登录 payload；`AccountBrowserProfileStore` 新增 `clone_session_from_root()`；`open_open_api_binding_page` 允许基于 `debugger_address/login_session_root/profile_root` 三者任一继续打开白名单页；`OpenApiBindingPageLauncher.launch()` 现会优先导航活跃登录浏览器到 open-api，若浏览器已关则优先从 `login_session_root` 克隆最新 session，再退回旧 profile。这样既保住“登录成功不被落盘失败打断”，又恢复“关窗后立刻加白名单仍拿到最新登录态”。
+- 已做验证：先分别执行 `python -m pytest` 针对 `tests/backend/test_managed_edge_cdp_login_runner.py::test_managed_edge_cdp_login_runner_uses_account_profile_store`、`tests/backend/test_account_center_routes.py::{test_open_open_api_binding_page_route_prefers_saved_profile_bundle,test_open_open_api_binding_page_route_passes_bundle_debugger_address}`、`tests/backend/test_open_api_binding_page_launcher.py::{test_open_api_binding_page_launcher_prefers_live_login_debugger_before_saved_profile,test_open_api_binding_page_launcher_uses_login_session_root_after_login_window_closes}`，确认新增链路全部转绿。随后执行 `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_account_browser_profile_store.py tests/backend/test_managed_edge_cdp_login_runner.py tests/backend/test_open_api_binding_page_launcher.py tests/backend/test_account_center_routes.py tests/backend/test_login_task_flow.py tests/backend/test_login_conflict_flow.py -q`，结果 `55 passed`。仅剩既有 FastAPI `on_event("shutdown")` 弃用告警，无新失败。
+- 当前进度：白名单打开链已恢复到“优先吃最新登录 session”的状态，覆盖了登录窗口仍存活与刚关闭两种现场；不再只会死盯旧 profile，所以“关窗后立即添加白名单”不应再回到登录页。随后又按用户要求在 `AGENTS.md` 增补“关键行为保护（强制）”章节，把既有数据获取、数据保存/回写/持久化链路明确提升为关键行为，避免后续在缺少验证时再次被静默改坏。
+- 下一步：按本次白名单修复与关键行为规则补强一起提交；提交后等待用户按真实流程继续复测“登录成功 -> 关闭登录窗口 -> 立即添加白名单”。若仍出现登录页，再沿 open-api 页自身 cookie 续期或浏览器退出后的异步持久化竞态继续缩圈，但当前主链断口已被补上。

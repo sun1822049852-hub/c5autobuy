@@ -169,6 +169,7 @@ class ManagedEdgeCdpLoginRunner:
                 browser_process=browser_process,
             )
             payload["debugger_address"] = debugger_address
+            payload["login_session_root"] = str(session_root)
             if account_profile_root is not None and account_id is not None:
                 payload.update(AccountBrowserProfileStore.build_profile_payload(account_profile_root))
             await _safe_emit(callback, "captured_login_info")

@@ -394,6 +394,7 @@ async def test_managed_edge_cdp_login_runner_uses_account_profile_store(monkeypa
     assert payload["profile_root"] == str(tmp_path / "browser-profiles" / "account-1")
     assert payload["profile_directory"] == "Default"
     assert payload["profile_kind"] == "account"
+    assert Path(payload["login_session_root"]).name.startswith("login-account-1-")
     assert profile_store.clone_calls == ["account-1"]
     assert len(profile_store.persist_calls) == 1
     persisted_session_root = Path(profile_store.persist_calls[0][1])

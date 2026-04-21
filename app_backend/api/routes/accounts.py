@@ -208,7 +208,9 @@ async def open_open_api_binding_page(account_id: str, request: Request) -> dict[
     bundle_payload = active_bundle.payload if active_bundle is not None and isinstance(active_bundle.payload, dict) else {}
     profile_root = str(bundle_payload.get("profile_root") or "").strip()
     profile_directory = str(bundle_payload.get("profile_directory") or "").strip() or None
-    if not profile_root:
+    login_session_root = str(bundle_payload.get("login_session_root") or "").strip() or None
+    debugger_address = str(bundle_payload.get("debugger_address") or "").strip() or None
+    if not profile_root and not login_session_root and not debugger_address:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="当前账号缺少可复用登录会话，请重新登录后再添加白名单",
@@ -218,6 +220,8 @@ async def open_open_api_binding_page(account_id: str, request: Request) -> dict[
         account_id=account_id,
         profile_root=profile_root or None,
         profile_directory=profile_directory,
+        login_session_root=login_session_root,
+        debugger_address=debugger_address,
         proxy_url=getattr(account, "browser_proxy_url", None),
         sync_service=request.app.state.open_api_binding_sync_service,
     )

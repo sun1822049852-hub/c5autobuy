@@ -485,6 +485,8 @@ async def test_open_open_api_binding_page_route_prefers_saved_profile_bundle(cli
             account_id: str | None = None,
             profile_root: str | None = None,
             profile_directory: str | None = None,
+            login_session_root: str | None = None,
+            debugger_address: str | None = None,
             proxy_url: str | None = None,
             sync_service=None,
         ) -> dict[str, object]:
@@ -493,6 +495,8 @@ async def test_open_open_api_binding_page_route_prefers_saved_profile_bundle(cli
                     "account_id": account_id,
                     "profile_root": profile_root,
                     "profile_directory": profile_directory,
+                    "login_session_root": login_session_root,
+                    "debugger_address": debugger_address,
                     "proxy_url": proxy_url,
                     "sync_service": sync_service,
                 }
@@ -508,8 +512,75 @@ async def test_open_open_api_binding_page_route_prefers_saved_profile_bundle(cli
     assert calls[0]["account_id"] == "open-open-api-profile"
     assert calls[0]["profile_root"] == "C:/profiles/open-open-api-profile"
     assert calls[0]["profile_directory"] == "Default"
+    assert calls[0]["login_session_root"] is None
+    assert calls[0]["debugger_address"] is None
     assert calls[0]["proxy_url"] == "http://127.0.0.1:9021"
     assert calls[0]["sync_service"] is app.state.open_api_binding_sync_service
+
+
+async def test_open_open_api_binding_page_route_passes_bundle_debugger_address(client, app):
+    account = _build_account(
+        "open-open-api-live",
+        remark_name="打开绑定页复用活跃登录浏览器",
+        api_key="api-key",
+    )
+    app.state.account_repository.create_account(account)
+    bundle_repository = app.state.account_session_bundle_repository
+    staged = bundle_repository.stage_bundle(
+        account_id="open-open-api-live",
+        captured_c5_user_id="10001",
+        payload={
+            "cookie_raw": "NC5_accessToken=token",
+            "profile_root": "C:/profiles/open-open-api-live",
+            "profile_directory": "Default",
+            "profile_kind": "account",
+            "login_session_root": "C:/sessions/login-open-open-api-live",
+            "debugger_address": "127.0.0.1:9555",
+        },
+    )
+    bundle_repository.activate_bundle(
+        bundle_repository.mark_bundle_verified(staged.bundle_id).bundle_id,
+        account_id="open-open-api-live",
+    )
+
+    calls = []
+
+    class FakeLauncher:
+        def launch(
+            self,
+            *,
+            account_id: str | None = None,
+            profile_root: str | None = None,
+            profile_directory: str | None = None,
+            login_session_root: str | None = None,
+            debugger_address: str | None = None,
+            proxy_url: str | None = None,
+            sync_service=None,
+        ) -> dict[str, object]:
+            calls.append(
+                {
+                    "account_id": account_id,
+                    "profile_root": profile_root,
+                    "profile_directory": profile_directory,
+                    "login_session_root": login_session_root,
+                    "debugger_address": debugger_address,
+                    "proxy_url": proxy_url,
+                    "sync_service": sync_service,
+                }
+            )
+            return {"open_api_url": "https://www.c5game.com/user/user/open-api"}
+
+    app.state.open_api_binding_page_launcher = FakeLauncher()
+
+    response = await client.post("/accounts/open-open-api-live/open-api/open")
+
+    assert response.status_code == 200
+    assert response.json()["launched"] is True
+    assert calls[0]["account_id"] == "open-open-api-live"
+    assert calls[0]["profile_root"] == "C:/profiles/open-open-api-live"
+    assert calls[0]["profile_directory"] == "Default"
+    assert calls[0]["login_session_root"] == "C:/sessions/login-open-open-api-live"
+    assert calls[0]["debugger_address"] == "127.0.0.1:9555"
 
 
 async def test_open_open_api_binding_page_route_rejects_not_logged_in_account(client, app):

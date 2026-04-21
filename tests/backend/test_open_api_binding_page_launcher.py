@@ -23,12 +23,21 @@ class _FakeProfileStore:
     def __init__(self, root: Path) -> None:
         self.root = root
         self.clone_calls: list[str] = []
+        self.clone_root_calls: list[tuple[str, str]] = []
         self.persist_calls: list[tuple[str, str]] = []
         self.prepared_session_roots: list[str] = []
 
     def clone_session(self, account_id: str) -> Path:
         self.clone_calls.append(account_id)
         session_root = self.root / f"account-{account_id}"
+        session_root.mkdir(parents=True, exist_ok=True)
+        return session_root
+
+    def clone_session_from_root(self, source_root: Path, *, session_name: str | None = None) -> Path:
+        normalized_source_root = Path(source_root)
+        normalized_session_name = str(session_name or "").strip() or f"from-{normalized_source_root.name}"
+        self.clone_root_calls.append((str(normalized_source_root), normalized_session_name))
+        session_root = self.root / normalized_session_name
         session_root.mkdir(parents=True, exist_ok=True)
         return session_root
 
@@ -60,6 +69,95 @@ class _SequenceProcess:
 
     def kill(self):
         self._poll_results = [0]
+
+
+def test_open_api_binding_page_launcher_prefers_live_login_debugger_before_saved_profile(monkeypatch, tmp_path: Path):
+    from app_backend.infrastructure.browser_runtime.open_api_binding_page_launcher import (
+        OpenApiBindingPageLauncher,
+    )
+
+    profile_store = _FakeProfileStore(tmp_path / "profiles")
+    launcher = OpenApiBindingPageLauncher(runtime=_RelativeRuntime(), profile_store=profile_store)
+    navigate_calls: list[tuple[str, str]] = []
+    watch_calls: list[tuple[str, str | None]] = []
+
+    class _FakeSyncService:
+        def schedule_account_watch(self, account_id: str, debugger_address: str | None = None) -> None:
+            watch_calls.append((account_id, debugger_address))
+
+    monkeypatch.setattr(
+        "app_backend.infrastructure.browser_runtime.open_api_binding_page_launcher.navigate_attached_session",
+        lambda debugger_address, url: navigate_calls.append((debugger_address, url)) or {"frameId": "1"},
+    )
+    monkeypatch.setattr(
+        "app_backend.infrastructure.browser_runtime.open_api_binding_page_launcher.subprocess.Popen",
+        lambda command: (_ for _ in ()).throw(AssertionError("should not launch a new browser")),
+    )
+
+    result = launcher.launch(
+        account_id="a-1",
+        profile_root="data/app-private/browser-sessions/account-1",
+        profile_directory="Default",
+        debugger_address="127.0.0.1:9555",
+        proxy_url=None,
+        sync_service=_FakeSyncService(),
+    )
+
+    assert result["open_api_url"] == "https://www.c5game.com/user/user/open-api"
+    assert result["debugger_address"] == "127.0.0.1:9555"
+    assert navigate_calls == [("127.0.0.1:9555", "https://www.c5game.com/user/user/open-api")]
+    assert watch_calls == [("a-1", "127.0.0.1:9555")]
+    assert profile_store.clone_calls == []
+    assert profile_store.clone_root_calls == []
+    assert profile_store.prepared_session_roots == []
+
+
+def test_open_api_binding_page_launcher_uses_login_session_root_after_login_window_closes(monkeypatch, tmp_path: Path):
+    from app_backend.infrastructure.browser_runtime.open_api_binding_page_launcher import (
+        OpenApiBindingPageLauncher,
+    )
+
+    profile_store = _FakeProfileStore(tmp_path / "profiles")
+    launcher = OpenApiBindingPageLauncher(runtime=_RelativeRuntime(), profile_store=profile_store)
+    process = _FakeProcess()
+    login_session_root = tmp_path / "login-sessions" / "login-a-1"
+    login_session_root.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(
+        "app_backend.infrastructure.browser_runtime.open_api_binding_page_launcher.reserve_debug_port",
+        lambda: 9771,
+    )
+    monkeypatch.setattr(
+        "app_backend.infrastructure.browser_runtime.open_api_binding_page_launcher.wait_for_debugger_port",
+        lambda port, process: None,
+    )
+    monkeypatch.setattr(
+        "app_backend.infrastructure.browser_runtime.open_api_binding_page_launcher.subprocess.Popen",
+        lambda command: process,
+    )
+    monkeypatch.setattr(
+        "app_backend.infrastructure.browser_runtime.open_api_binding_page_launcher.OpenApiBindingPageLauncher._schedule_cleanup",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "app_backend.infrastructure.browser_runtime.open_api_binding_page_launcher.OpenApiBindingPageLauncher._schedule_watch",
+        lambda *args, **kwargs: None,
+    )
+
+    result = launcher.launch(
+        account_id="a-1",
+        profile_root=str(tmp_path / "saved-profiles" / "account-a-1"),
+        profile_directory="Default",
+        login_session_root=str(login_session_root),
+        debugger_address=None,
+        proxy_url=None,
+    )
+
+    assert result["debugger_address"] == "127.0.0.1:9771"
+    assert profile_store.clone_calls == []
+    assert profile_store.clone_root_calls == [
+        (str(login_session_root), "open-api-a-1")
+    ]
 
 
 def test_open_api_binding_page_launcher_uses_absolute_launch_paths(monkeypatch, tmp_path: Path):

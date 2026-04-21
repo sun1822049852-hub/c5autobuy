@@ -11,6 +11,7 @@ from app_backend.infrastructure.browser_runtime.account_browser_profile_store im
     AccountBrowserProfileStore,
 )
 from app_backend.infrastructure.browser_runtime.cdp_session_reader import (
+    navigate_attached_session,
     read_attached_session,
     read_open_api_page_state,
 )
@@ -45,11 +46,15 @@ class OpenApiBindingPageLauncher:
         account_id: str | None = None,
         profile_root: str | None = None,
         profile_directory: str | None = None,
+        login_session_root: str | None = None,
+        debugger_address: str | None = None,
         proxy_url: str | None = None,
         sync_service=None,
     ) -> dict[str, object]:
         normalized_profile_root = str(profile_root or "").strip()
-        if not normalized_profile_root:
+        normalized_login_session_root = str(login_session_root or "").strip()
+        normalized_debugger_address = str(debugger_address or "").strip()
+        if not normalized_profile_root and not normalized_login_session_root and not normalized_debugger_address:
             raise RuntimeError("当前账号缺少可复用登录会话，无法打开 API 绑定页")
         normalized_account_id = str(account_id or "").strip()
         if normalized_account_id:
@@ -70,9 +75,54 @@ class OpenApiBindingPageLauncher:
                     }
                 self._active_launches.pop(normalized_account_id, None)
 
+        if normalized_debugger_address:
+            try:
+                navigate_attached_session(normalized_debugger_address, self.OPEN_API_URL)
+                self._schedule_watch(
+                    account_id=account_id,
+                    debugger_address=normalized_debugger_address,
+                    sync_service=sync_service,
+                )
+                self._append_debug_log(
+                    "launch_reused_login_debugger",
+                    {
+                        "account_id": account_id,
+                        "debugger_address": normalized_debugger_address,
+                    },
+                )
+                return {
+                    "open_api_url": self.OPEN_API_URL,
+                    "debugger_address": normalized_debugger_address,
+                }
+            except Exception as exc:
+                self._append_debug_log(
+                    "launch_reuse_login_debugger_failed",
+                    {
+                        "account_id": account_id,
+                        "debugger_address": normalized_debugger_address,
+                        "error": repr(exc),
+                    },
+                )
+
         cleanup_callbacks: list = []
         if self._profile_store is not None and str(account_id or "").strip():
-            session_root = self._profile_store.clone_session(str(account_id))
+            source_root = None
+            if normalized_login_session_root:
+                candidate_login_session_root = Path(normalized_login_session_root).expanduser()
+                if candidate_login_session_root.exists():
+                    source_root = candidate_login_session_root
+            if source_root is None and normalized_profile_root:
+                candidate_profile_root = Path(normalized_profile_root).expanduser()
+                if candidate_profile_root.exists():
+                    source_root = candidate_profile_root
+            clone_from_root = getattr(self._profile_store, "clone_session_from_root", None)
+            if source_root is not None and callable(clone_from_root):
+                session_root = clone_from_root(
+                    source_root,
+                    session_name=f"open-api-{str(account_id or '').strip()}",
+                )
+            else:
+                session_root = self._profile_store.clone_session(str(account_id))
             prepare_session = getattr(self._profile_store, "prepare_open_api_binding_session", None)
             if callable(prepare_session):
                 try:
@@ -82,6 +132,7 @@ class OpenApiBindingPageLauncher:
                         {
                             "account_id": account_id,
                             "session_root": str(session_root),
+                            "source_root": str(source_root) if source_root is not None else None,
                             "preparation_summary": preparation_summary if isinstance(preparation_summary, dict) else {},
                         },
                     )
@@ -91,11 +142,12 @@ class OpenApiBindingPageLauncher:
                         {
                             "account_id": account_id,
                             "session_root": str(session_root),
+                            "source_root": str(source_root) if source_root is not None else None,
                             "error": repr(exc),
                         },
                     )
         else:
-            session_root = Path(normalized_profile_root)
+            session_root = Path(normalized_login_session_root or normalized_profile_root)
         session_root = session_root.expanduser().resolve()
         session_root.mkdir(parents=True, exist_ok=True)
 
