@@ -10,7 +10,7 @@ def test_run_app_delegates_to_desktop_launcher(monkeypatch, tmp_path):
     import run_app
 
     captured: dict[str, object] = {}
-    launcher_path = tmp_path / "main_ui_account_center_desktop.js"
+    launcher_path = tmp_path / "main_ui_node_desktop.js"
     launcher_path.write_text("// launcher", encoding="utf-8")
 
     def _fake_resolve_node_executable() -> str:
@@ -38,3 +38,17 @@ def test_run_app_source_has_no_c5_layered_reference():
     content = (PROJECT_ROOT / "run_app.py").read_text(encoding="utf-8")
 
     assert "c5_layered" not in content
+
+
+def test_run_app_source_points_to_main_ui_node_desktop():
+    content = (PROJECT_ROOT / "run_app.py").read_text(encoding="utf-8")
+
+    assert "main_ui_node_desktop.js" in content
+    assert "main_ui_account_center_desktop.js" not in content
+
+
+def test_run_app_local_debug_source_points_to_local_debug_launcher():
+    content = (PROJECT_ROOT / "run_app_local_debug.py").read_text(encoding="utf-8")
+
+    assert "main_ui_node_desktop_local_debug.js" in content
+    assert "main_ui_node_desktop.js" not in content.replace("main_ui_node_desktop_local_debug.js", "")

@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 
 const require = createRequire(import.meta.url);
-const launcher = require("../../../main_ui_account_center_desktop.js");
+const launcher = require("../../../main_ui_node_desktop.js");
 
 
 describe("desktop launcher", () => {
@@ -109,6 +109,32 @@ describe("desktop launcher", () => {
     );
   });
 
+  it("does not require electron cli.js when the runtime executable is already installed", () => {
+    const rootDir = "C:/demo/project";
+    const electronDir = path.join(rootDir, "app_desktop_web", "node_modules", "electron");
+    const installScript = path.join(electronDir, "install.js");
+    const pathFile = path.join(electronDir, "path.txt");
+    const runtimeExe = path.join(electronDir, "dist", "electron.exe");
+    const spawnSync = vi.fn();
+
+    launcher.ensureElectronRuntime(rootDir, {
+      existsSync: (targetPath) => (
+        targetPath === installScript
+        || targetPath === pathFile
+        || targetPath === runtimeExe
+      ),
+      readFileSync: (targetPath) => {
+        if (targetPath === pathFile) {
+          return "electron.exe";
+        }
+        throw new Error(`unexpected path read: ${targetPath}`);
+      },
+      spawnSync,
+    });
+
+    expect(spawnSync).not.toHaveBeenCalled();
+  });
+
   it("rebuilds the renderer through node plus npm cli to avoid windows npm.cmd spawn errors", () => {
     const appDirectory = "C:/demo/project/app_desktop_web";
     const distEntryPath = path.join(appDirectory, "dist", "index.html");
@@ -180,5 +206,18 @@ describe("desktop launcher", () => {
         stdio: "inherit",
       }),
     );
+  });
+
+  it("provides an explicit local debug launcher that forces prepackaging mode", () => {
+    const localDebugLauncher = require("../../../main_ui_node_desktop_local_debug.js");
+    const env = localDebugLauncher.buildLocalDebugLaunchEnv({
+      PATH: "C:/Windows/System32",
+    });
+
+    expect(env).toEqual(expect.objectContaining({
+      PATH: "C:/Windows/System32",
+      C5_PROGRAM_ACCESS_STAGE: "prepackaging",
+      CLIENT_CONFIG_FILE: expect.stringMatching(/client_config\.local_debug\.json$/),
+    }));
   });
 });

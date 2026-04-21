@@ -291,3 +291,24 @@
 - 已做验证：本阶段仅做上下文审查与设计确认，未执行自动化测试，也未修改业务代码；已对照现有登录回写、冲突处理、查询模式字段与前端展示逻辑，确认本设计不要求新增 schema、协议字段或前端状态码。
 - 当前进度：设计已获用户批准，已进入“可写实现计划 / 可进入 TDD”状态，但业务实现尚未开始。
 - 下一步：等待用户确认规格文档后，进入实现计划与 TDD，先补登录链与冲突链回归灯，再做最小代码修改。
+
+## 2026-04-21 21:09 (Asia/Shanghai)
+- 背景：用户要求把左侧程序账号入口改成“只显示未登录/用户名的可交互状态卡”，具体登录/注册/找回密码改为屏幕中央弹窗；已登录时弹窗不能再显示登录表单，只显示当前账号状态。
+- 已完成：先把设计与实现计划分别落盘到 `docs/superpowers/specs/2026-04-21-program-access-dialog-design.md` 和 `docs/superpowers/plans/2026-04-21-program-access-dialog-implementation.md`，随后按 TDD 先改红灯，再做最小实现。后端侧为 `ProgramAccessSummary`、bootstrap schema、program-auth schema 正式补入可选 `username`，并在 `remote_entitlement_gateway` / `cached_program_access_gateway` 中从已验签 snapshot 读取用户名，保证程序重开后左侧仍能回显当前程序账号。前端侧把 `program_access_sidebar_card.jsx` 从“侧栏内整块表单”重构为“两层交互”：左侧只剩入口卡，状态文字只显示 `未登录/用户名`；点击后弹出居中 `dialog-surface`，未登录场景在弹窗里承载登录/注册/找回密码，已登录场景只显示当前账号状态与 `刷新状态` / `退出`。同步调整了 `program_access_runtime.js` 与相关 renderer/backend 测试预期。
+- 已做验证：先执行 `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_app_bootstrap_route.py tests/backend/test_remote_entitlement_gateway.py -q`，红灯结果 `3 failed`，确认当前 summary 缺少 `username`；执行 `npm --prefix app_desktop_web test -- tests/renderer/program_access_sidebar_card.test.jsx --run`，红灯结果 `6 failed`，确认当前组件仍在侧栏内直出表单。修复后重新执行 `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_app_bootstrap_route.py tests/backend/test_remote_entitlement_gateway.py -q`，结果 `23 passed`；执行 `npm --prefix app_desktop_web test -- tests/renderer/program_access_sidebar_card.test.jsx --run`，结果 `6 passed`。随后补跑旁路回归：`npm --prefix app_desktop_web test -- tests/renderer/program_access_provider.test.jsx tests/renderer/app_remote_bootstrap.test.jsx tests/renderer/runtime_connection_manager.test.js --run`，结果 `28 passed`；`C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_program_auth_routes.py -q`，结果 `12 passed`。所有本轮验证仅保留既有 FastAPI `on_event("shutdown")` 弃用告警，无新失败。
+- 当前进度：程序账号入口已从“侧栏表单堆叠”收口为“状态入口卡 + 中央弹窗”，且用户名已进入稳定 summary 链路。
+- 下一步：等待用户在真实界面里确认交互手感；若还要继续精修，只需收弹窗文案、关闭方式或卡片视觉，不必再动后端鉴权语义。
+
+## 2026-04-21 21:28 (Asia/Shanghai)
+- 背景：用户要求把程序账号弹窗里“权限钥匙 / 共享数据 / 当前权限 / 说明 / 只读锁定”等说明块全部移除，并追问为什么从 `main_ui_node_desktop.js` 进源码态时未登录仍能执行关键功能。
+- 已完成：继续按 TDD 先把 `program_access_sidebar_card` 与 `program_access_packaging` 测试改成新契约，确认红灯后，仅做两处最小修复：1. `program_access_sidebar_card.jsx` 删除弹窗副标题与未登录说明块，未登录场景只保留登录/注册/找回密码表单，已登录场景只保留账号状态与 `刷新状态 / 退出`；2. `program_access_config.cjs` 新增源码态候选配置路径，`main_ui_node_desktop.js` 现在会在源码启动时读取 `app_desktop_web/build/client_config.release.json`，从而把本地嵌入式后端切到正式远端鉴权，而不是默认掉回 `prepackaging` 本地放行。同步把该入口语义写入 `README.md` 与长期记忆。
+- 已做验证：先执行 `npm --prefix app_desktop_web test -- tests/renderer/program_access_sidebar_card.test.jsx --run`，红灯结果 `3 failed / 3 passed`，失败点为弹窗仍残留副标题与“只读锁定”说明块；执行 `npm --prefix app_desktop_web test -- tests/electron/program_access_packaging.test.js --run`，红灯结果 `1 failed / 10 passed`，失败点为源码态未读取 `build/client_config.release.json`。修复后执行 `npm --prefix app_desktop_web test -- tests/renderer/program_access_sidebar_card.test.jsx tests/renderer/program_access_provider.test.jsx tests/renderer/app_remote_bootstrap.test.jsx tests/renderer/runtime_connection_manager.test.js tests/electron/program_access_packaging.test.js tests/electron/python_backend.test.js --run`，结果 `56 passed`。
+- 当前进度：程序账号弹窗已去掉共享数据说明块；当前根工作树的源码桌面入口也已具备正式程序会员鉴权能力，不再天然是“未登录放行”的调试壳。
+- 下一步：等待用户亲自从源码入口点一遍，确认未登录下关键功能已锁、登录后可恢复；若还要保留显式本地放行调试态，再单独决定是否补一个明确命名的开发入口，而不是继续让 `main_ui_node_desktop.js` 兼任两种语义。
+
+## 2026-04-21 22:40 (Asia/Shanghai)
+- 背景：用户确认要正式把“本地放行调试”和“模拟用户登录调试”拆成显式双入口，避免继续让同一个入口靠缺配置隐式切模式。
+- 已完成：先按 TDD 补红灯，锁定三件事：1. 必须存在 `main_ui_node_desktop_local_debug.js` 显式本地调试入口；2. 必须存在 `app_desktop_web/build/client_config.local_debug.json` 明确关闭控制面地址；3. 必须存在对称的 `run_app_local_debug.py` 包装入口。随后做最小实现：新增本地调试 launcher，仅注入 `CLIENT_CONFIG_FILE=client_config.local_debug.json` 与 `C5_PROGRAM_ACCESS_STAGE=prepackaging` 后再委托给 `main_ui_node_desktop.js`；新增 Python 本地调试包装入口；README 与长期记忆同步补齐双入口口径，主用户入口仍固定为 `main_ui_node_desktop.js` / `run_app.py`。
+- 已做验证：先执行 `npm --prefix app_desktop_web test -- tests/electron/desktop_launcher.test.js tests/electron/program_access_packaging.test.js tests/electron/python_backend.test.js --run`，结果 `30 passed`；再执行 `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_remove_legacy_cli_entry.py -q`，结果 `4 passed`。唯一残留仍是既有 FastAPI `on_event("shutdown")` 弃用告警，无新失败。
+- 当前进度：显式双入口已落地并通过定向回归；现在本地可稳定区分“本地放行调试”和“模拟用户登录测试”，不再依赖删配置文件这种隐式切换。
+- 下一步：等待用户亲自使用两条入口各点一遍；若还要继续收口，可再决定是否把这两个入口补成桌面快捷方式或批处理脚本，但当前代码主线已足够使用。
