@@ -101,6 +101,12 @@ def _is_api_key_only_account(account) -> bool:
     ) and not bool(str(getattr(account, "cookie_raw", "") or "").strip())
 
 
+def _has_bound_login_identity(account) -> bool:
+    return bool(str(getattr(account, "c5_user_id", "") or "").strip()) or bool(
+        str(getattr(account, "cookie_raw", "") or "").strip()
+    )
+
+
 def _create_login_result_account(repository) -> object:
     return CreateAccountUseCase(repository).execute(
         remark_name=None,
@@ -244,18 +250,25 @@ async def run_login_task(
         if final_account is None:
             final_account = source_account
 
+        is_first_bind = not _has_bound_login_identity(final_account)
         task_manager.set_state(task_id, "saving_account")
         now = datetime.now().isoformat(timespec="seconds")
+        update_changes = {
+            "c5_user_id": capture.c5_user_id,
+            "c5_nick_name": capture.c5_nick_name,
+            "cookie_raw": capture.cookie_raw,
+            "purchase_capability_state": PurchaseCapabilityState.BOUND,
+            "purchase_pool_state": PurchasePoolState.NOT_CONNECTED,
+            "last_login_at": now,
+            "last_error": None,
+            "updated_at": now,
+        }
+        if is_first_bind:
+            update_changes["token_enabled"] = False
+            update_changes["browser_query_disabled_reason"] = "manual_disabled"
         updated = repository.update_account(
             str(getattr(final_account, "account_id", "") or account_id),
-            c5_user_id=capture.c5_user_id,
-            c5_nick_name=capture.c5_nick_name,
-            cookie_raw=capture.cookie_raw,
-            purchase_capability_state=PurchaseCapabilityState.BOUND,
-            purchase_pool_state=PurchasePoolState.NOT_CONNECTED,
-            last_login_at=now,
-            last_error=None,
-            updated_at=now,
+            **update_changes,
         )
         bundle_repository.activate_bundle(staged_bundle_id, account_id=updated.account_id)
         bundle_activated = True

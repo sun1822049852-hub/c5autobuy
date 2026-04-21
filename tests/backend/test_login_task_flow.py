@@ -94,9 +94,59 @@ async def test_login_task_binds_purchase_capability_and_persists_account(app, cl
     assert account_payload["cookie_raw"] == "foo=bar"
     assert account_payload["purchase_capability_state"] == "bound"
     assert account_payload["purchase_pool_state"] == "not_connected"
+    assert account_payload["token_enabled"] is False
+    assert account_payload["browser_query_disabled_reason"] == "manual_disabled"
     assert active_bundle is not None
     assert active_bundle.payload["cookie_raw"] == "foo=bar"
     assert active_bundle.payload["c5_user_id"] == "90001"
+
+
+async def test_login_task_relogin_preserves_existing_browser_query_state(app, client):
+    class FakeLoginAdapter:
+        async def run_login(self, *, proxy_url: str | None, emit_state=None) -> LoginCapture:
+            await emit_state("waiting_for_scan")
+            await emit_state("captured_login_info")
+            await emit_state("waiting_for_browser_close")
+            return LoginCapture(
+                c5_user_id="90088",
+                c5_nick_name="重登账号",
+                cookie_raw="foo=relogin",
+            )
+
+    app.state.login_adapter = FakeLoginAdapter()
+
+    create_response = await client.post(
+        "/accounts",
+        json={
+            "remark_name": "已绑定老账号",
+            "browser_proxy_mode": "direct",
+            "browser_proxy_url": None,
+            "api_proxy_mode": "direct",
+            "api_proxy_url": None,
+            "api_key": None,
+        },
+    )
+    account_id = create_response.json()["account_id"]
+    app.state.account_repository.update_account(
+        account_id,
+        c5_user_id="90088",
+        c5_nick_name="旧昵称",
+        cookie_raw="foo=old",
+        token_enabled=True,
+        browser_query_disabled_reason=None,
+    )
+
+    start_response = await client.post(f"/accounts/{account_id}/login")
+    task_payload = await _wait_for_task(client, start_response.json()["task_id"], "succeeded")
+
+    assert task_payload["state"] == "succeeded"
+    account_response = await client.get(f"/accounts/{account_id}")
+    account_payload = account_response.json()
+    assert account_payload["c5_user_id"] == "90088"
+    assert account_payload["c5_nick_name"] == "重登账号"
+    assert account_payload["cookie_raw"] == "foo=relogin"
+    assert account_payload["token_enabled"] is True
+    assert account_payload["browser_query_disabled_reason"] is None
 
 
 async def test_login_task_persists_profile_metadata_from_login_result(app, client):

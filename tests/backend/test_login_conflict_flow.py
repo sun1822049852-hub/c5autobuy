@@ -227,6 +227,8 @@ async def test_resolve_login_conflict_create_new_account_keeps_old_account(app, 
     assert new_account["c5_user_id"] == "30003"
     assert new_account["c5_nick_name"] == "新增账号"
     assert new_account["cookie_raw"] == "new=create"
+    assert new_account["token_enabled"] is False
+    assert new_account["browser_query_disabled_reason"] == "manual_disabled"
     active_bundle = app.state.account_session_bundle_repository.get_active_bundle(new_account["account_id"])
     assert active_bundle is not None
     assert active_bundle.bundle_id == bundle_id
@@ -378,6 +380,8 @@ async def test_resolve_login_conflict_replace_with_new_account_recreates_account
     assert new_account["c5_user_id"] == "40004"
     assert new_account["c5_nick_name"] == "替换账号"
     assert new_account["cookie_raw"] == "new=replace"
+    assert new_account["token_enabled"] is False
+    assert new_account["browser_query_disabled_reason"] == "manual_disabled"
 
 
 async def test_resolve_login_conflict_replace_with_new_account_deletes_old_active_bundle(app, client):
@@ -697,8 +701,8 @@ async def test_login_task_on_api_only_account_creates_new_logged_in_account_with
     assert payload["browser_proxy_url"] is None
     assert payload["api_proxy_url"] is None
     assert payload["api_key"] is None
-    assert payload["token_enabled"] is True
-    assert payload["browser_query_disabled_reason"] is None
+    assert payload["token_enabled"] is False
+    assert payload["browser_query_disabled_reason"] == "manual_disabled"
     assert payload["c5_user_id"] == "50005"
     assert payload["c5_nick_name"] == "新增登录账号"
 

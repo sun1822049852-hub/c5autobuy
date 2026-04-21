@@ -69,6 +69,8 @@ class ResolveLoginConflictUseCase:
             c5_user_id=captured_login["c5_user_id"],
             c5_nick_name=captured_login["c5_nick_name"],
             cookie_raw=captured_login["cookie_raw"],
+            token_enabled=False,
+            browser_query_disabled_reason="manual_disabled",
             purchase_capability_state=PurchaseCapabilityState.BOUND,
             purchase_pool_state=PurchasePoolState.NOT_CONNECTED,
             last_login_at=now,
