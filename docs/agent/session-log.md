@@ -292,6 +292,26 @@
 - 当前进度：设计已获用户批准，已进入“可写实现计划 / 可进入 TDD”状态，但业务实现尚未开始。
 - 下一步：等待用户确认规格文档后，进入实现计划与 TDD，先补登录链与冲突链回归灯，再做最小代码修改。
 
+## 2026-04-21 20:36 (Asia/Shanghai)
+- 背景：用户确认规格文档无异议，要求继续推进实现。
+- 已完成：为避免根工作树 `master` 上的大量无关脏改干扰本次登录链修复，已新建隔离工作树 `.worktrees/first-login-browser-query-default-off`，分支为 `feature/first-login-browser-query-default-off`。随后在该工作树先执行登录相关基线验证 `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_login_task_flow.py tests/backend/test_login_conflict_flow.py -q`，结果 `16 passed`，确认当前登录/冲突基线为绿。基于已批准的设计，新增实现计划 `docs/superpowers/plans/2026-04-21-first-login-browser-query-default-off.md`，把 TDD 顺序、受影响文件和最终验证命令全部写死。
+- 已做验证：隔离工作树创建成功；基线测试 `16 passed in 3.82s`。
+- 当前进度：已进入实现前最后准备阶段；下一步是在新工作树里按计划先补红灯，再修改登录回写与冲突分支。
+- 下一步：执行计划 Chunk 1，先写失败测试锁定“首次绑定默认关闭、老账号重登保持原开关”的行为。
+
+## 2026-04-21 20:52 (Asia/Shanghai)
+- 背景：用户确认可以继续后，目标是把“浏览器扫货默认关闭”限定在首次绑定成功，不误伤老账号重登和已有账号归并。
+- 已完成：在隔离工作树中按 TDD 执行。先修改 `tests/backend/test_login_task_flow.py` 与 `tests/backend/test_login_conflict_flow.py`，把以下行为锁成红灯：1. 空账号首次登录成功后默认关闭浏览器扫货；2. 老账号重登保持原开关；3. API-only 派生的新登录账号默认关闭；4. 冲突分支 `create_new_account` / `replace_with_new_account` 生成的新账号默认关闭。确认红灯后，仅修改两个后端落点：`app_backend/workers/tasks/login_task.py` 在最终写回目标账号前判断是否为首次绑定，只有首次绑定才额外写入 `token_enabled=False` 与 `browser_query_disabled_reason=\"manual_disabled\"`；`app_backend/application/use_cases/resolve_login_conflict.py` 在冲突新建账号绑定时写入同样的默认关闭状态。未改前端协议、未改查询模式接口、未改白名单复用与登录主链其它已恢复逻辑。
+- 已做验证：
+  - 红灯 1：`C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_login_task_flow.py -k "binds_purchase_capability_and_persists_account or relogin_preserves_existing_browser_query_state" -q`，结果 `1 failed, 1 passed`，失败点为首次绑定后 `token_enabled` 仍为 `True`。
+  - 红灯 2：`C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_login_conflict_flow.py -k "api_only_account_creates_new_logged_in_account_without_inheriting_source_config or resolve_login_conflict_create_new_account_keeps_old_account or resolve_login_conflict_replace_with_new_account_recreates_account" -q`，结果 `3 failed`，失败点均为新登录账号仍保持 `token_enabled=True`。
+  - 绿灯 1：同一组 `test_login_task_flow.py` 目标测试重跑，结果 `2 passed`。
+  - 绿灯 2：同一组 `test_login_conflict_flow.py` 目标测试重跑，结果 `3 passed`。
+  - 总回归：`C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_login_task_flow.py tests/backend/test_login_conflict_flow.py tests/backend/test_account_query_mode_settings.py tests/backend/test_account_routes.py -q`，结果 `31 passed in 6.84s`。
+- 当前进度：实现与聚焦回归都已完成，根目录业务修复已另行提交为 `3515cbe fix: default browser query off on first login bind`，剩余只要继续让日志跟上当前事实即可。
+- 余险：当前仍沿用 `browser_query_disabled_reason=\"manual_disabled\"` 复用既有展示文案，因此界面上仍会显示“手动禁用”；这是本轮刻意接受的低风险折中，不代表未来不能引入更精确的 reason code。
+- 下一步：继续保持关键行为先立约束、再补红绿灯、最后才改实现的节奏，避免登录链、白名单链、数据保存链再次被静默改坏。
+
 ## 2026-04-21 21:09 (Asia/Shanghai)
 - 背景：用户要求把左侧程序账号入口改成“只显示未登录/用户名的可交互状态卡”，具体登录/注册/找回密码改为屏幕中央弹窗；已登录时弹窗不能再显示登录表单，只显示当前账号状态。
 - 已完成：先把设计与实现计划分别落盘到 `docs/superpowers/specs/2026-04-21-program-access-dialog-design.md` 和 `docs/superpowers/plans/2026-04-21-program-access-dialog-implementation.md`，随后按 TDD 先改红灯，再做最小实现。后端侧为 `ProgramAccessSummary`、bootstrap schema、program-auth schema 正式补入可选 `username`，并在 `remote_entitlement_gateway` / `cached_program_access_gateway` 中从已验签 snapshot 读取用户名，保证程序重开后左侧仍能回显当前程序账号。前端侧把 `program_access_sidebar_card.jsx` 从“侧栏内整块表单”重构为“两层交互”：左侧只剩入口卡，状态文字只显示 `未登录/用户名`；点击后弹出居中 `dialog-surface`，未登录场景在弹窗里承载登录/注册/找回密码，已登录场景只显示当前账号状态与 `刷新状态` / `退出`。同步调整了 `program_access_runtime.js` 与相关 renderer/backend 测试预期。
