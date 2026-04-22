@@ -36,7 +36,7 @@
 - 用户可见的正式入口文案继续冻结一条风格约束：普通用户直接能看到的页眉/眉标默认优先中文，不再保留 `ACCOUNT CENTER`、`PROGRAM ACCESS`、`Diagnostics` 这类英文眉标；只有显式本地调试分支里的提示，例如 `本地调试模式`，才允许保留调试口径作为区分标记。
 - 当前会员控制面已部署到远端 `8.138.39.139:18787`，后台入口为 `/admin`；该入口当前用于测试联调。稳定收口要求一并冻结：管理端口不得长期保持 `0.0.0.0/0` 全网开放，正式发行前至少要改成“仅用户固定公网 IP 可访问”，或进一步收口为 `80/443 + 域名/反向代理/额外鉴权`。
 - 当前桌面发行主线已确认只能以根工作树 `master` 为准；`main_ui_node_desktop.js` 是唯一真实桌面主入口。任何 side worktree 若删除或替换这条真实入口链路，都只能作为局部回收源，不能直接用于打包发行。
-- 当前桌面源码态已显式分成两条启动路：`main_ui_node_desktop.js` / `run_app.py` 用于模拟用户态与正式程序会员鉴权测试；`main_ui_node_desktop_local_debug.js` / `run_app_local_debug.py` 用于本地放行调试。后续不得再通过“删 release 配置文件”这种隐式方式切模式。
+- 当前桌面对外启动口径已收口为 JS-only：`main_ui_node_desktop.js` 用于模拟用户态与正式程序会员鉴权测试，`main_ui_node_desktop_local_debug.js` 用于本地放行调试；顶层 Python 包装入口已移除，`app_backend/main.py` 只保留给 JS 桌面壳内部拉起 backend 使用。后续不得再通过“删 release 配置文件”这种隐式方式切模式，也不得再把 Python 包装壳恢复成对外主入口。
 - `feature/membership-auth-v1` 已确认为过时的本地多租户漂移源并从现场移除；后续会员排查只参考根工作树 `master`、`feature/local-program-access-extension` 与 `feature/program-control-plane-chunk1`。
 - 当前桌面打包控制面配置已回到根主线：`app_desktop_web/program_access_config.cjs` 负责读取 `client_config.json` / `client_config.release.json` / 环境变量中的 `controlPlaneBaseUrl`，默认 release 配置文件为 `app_desktop_web/build/client_config.release.json`，当前值固定为 `http://8.138.39.139:18787`；本地放行调试则固定走 `app_desktop_web/build/client_config.local_debug.json`。这两份静态配置都不得在“清理过期产物”时当作临时构建垃圾删除。Electron 安装器约束为 `nsis.oneClick=false`、允许用户自定义安装目录、创建桌面快捷方式与开始菜单快捷方式。
 - 当前本地 Windows 打包环境不具备 `winCodeSign` 归档所需的 symlink 权限；为保证常规用户态可直接出包，`app_desktop_web/electron-builder.config.cjs` 已固定 `win.signAndEditExecutable=false`，绕过 `rcedit` / `winCodeSign` 下载解压链。后续若要恢复 EXE 元信息编辑或签名，再单独切到具备 Developer Mode / 提权 / 专用签名环境的发行机处理。

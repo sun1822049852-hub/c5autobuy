@@ -6,7 +6,7 @@
 
 - 前端：`app_desktop_web/`
 - 后端：`app_backend/`
-- 桌面真实启动入口：`main_ui_node_desktop.js`
+- 桌面对外启动入口：`main_ui_node_desktop.js`（用户态） / `main_ui_node_desktop_local_debug.js`（本地调试态）
 
 旧版 `autobuy.py` 已退出当前运行链路，后续维护不要再按单文件脚本思路理解项目。当前 UI 只负责输入、展示和调用后端接口，实际业务状态和运行时逻辑都在后端。
 
@@ -41,7 +41,8 @@ node main_ui_node_desktop.js
 
 程序账号补充：
 
-- `main_ui_node_desktop.js` 仍是唯一真实桌面入口，不存在另一条单独的“用户版 GUI 启动器”
+- `main_ui_node_desktop.js` 是默认用户态桌面入口
+- `main_ui_node_desktop_local_debug.js` 是本地放行调试入口
 - 只要仓库中的 `app_desktop_web/build/client_config.release.json` 存在，源码启动也会读取远端控制面地址，程序账号照样走正式鉴权，不会因为是源码态就自动放行关键功能
 - 只有显式移除这份 release 配置，或手动把环境变量切回 `prepackaging`，源码入口才会退回本地放行调试态
 - 当前仓库现已补回显式双入口：`main_ui_node_desktop.js` 用于模拟用户态登录测试，`main_ui_node_desktop_local_debug.js` 用于本地放行调试；不再建议靠删配置文件临时切模式
@@ -49,35 +50,18 @@ node main_ui_node_desktop.js
 登录补充说明：
 
 - 通过桌面入口 `node main_ui_node_desktop.js` 启动时，Python backend 会收到 `C5_APP_PRIVATE_DIR`，默认落到仓库根目录 `.runtime/app-private`
-- 如果单独执行 `python -m app_backend.main` 且未显式设置 `C5_APP_PRIVATE_DIR`，fallback 才会落到 `data/app-private`
 - Python backend 会把账号相关运行时数据落到 `app-private/`，包括账号独立 profile、临时 browser session 和 session bundle
 - 登录成功不再只看扫码跳转，后端会强制 refresh `https://www.c5game.com/user/user/` 做二次验真
 - 登录成功后会为账号写入加密 session bundle；当前仍保留 `cookie_raw` 字段，旧账号与旧运行链可继续兼容
 - 直连账号会优先复用账号独立 profile，并在需要时附着真实 Microsoft Edge 会话；自定义代理账号继续走隔离临时浏览器链
 
-### Python 包装入口
+### 本地放行调试入口
 
 ```bash
-python run_app.py
+node main_ui_node_desktop_local_debug.js
 ```
 
-这个入口现在只是一个轻量包装：内部会调用 `node main_ui_node_desktop.js`。适合保留旧使用习惯，但仍然要求本机已安装 Node.js。
-
-### Python 本地调试入口
-
-```bash
-python run_app_local_debug.py
-```
-
-这个入口会调用 `node main_ui_node_desktop_local_debug.js`，显式进入本地放行调试态，便于本机开发与功能排查。
-
-### 仅启动后端
-
-```bash
-python -m app_backend.main
-```
-
-这个入口主要用于接口调试或单独联调，日常使用还是以 `python run_app.py` 为准。
+这个入口显式进入本地放行调试态，便于本机开发与功能排查；它和用户态入口共用同一套桌面壳与 backend，只是启动模式不同。
 
 补充说明：
 
@@ -137,14 +121,8 @@ python -m app_backend.main
 
 ## 入口与调用链
 
-- `run_app.py`
-  - Python 包装入口
-  - 只负责调用 `node main_ui_node_desktop.js`
-- `run_app_local_debug.py`
-  - Python 本地调试包装入口
-  - 只负责调用 `node main_ui_node_desktop_local_debug.js`
 - `main_ui_node_desktop.js`
-  - 桌面对外总入口
+  - 用户态桌面对外总入口
   - 校验 Electron 运行时与前端构建产物
   - 源码态同样会读取 `app_desktop_web/build/client_config.release.json` 中的程序会员控制面地址
   - 启动 `app_desktop_web/` 桌面壳
@@ -153,7 +131,9 @@ python -m app_backend.main
   - 显式注入 `prepackaging` 与 `client_config.local_debug.json`
   - 仍复用同一套 Electron 主进程与 backend 链路
 - `app_backend/main.py`
+  - JS 桌面壳内部使用的 backend 装配模块
   - 组装 FastAPI 应用、仓储、运行时服务和任务管理器
+  - 不再作为对外启动入口宣传
 
 ## 目录说明
 
@@ -226,7 +206,7 @@ python -m pytest -q
 
 ## 接手建议
 
-- 先从 `run_app.py`、`main_ui_node_desktop.js`、`app_backend/main.py` 看启动链路
+- 先从 `main_ui_node_desktop.js`、`main_ui_node_desktop_local_debug.js`、`app_backend/main.py` 看启动链路
 - 业务变更优先看 `tests/` 里是否已有对应约束
 - 如果历史文档与当前代码冲突，以当前源码和测试为准
 - 如果要排查旧 `autobuy.py` 与新 backend 的实现差异，先看 `docs/superpowers/references/2026-03-19-autobuy-backend-semantic-drift-reference.md`

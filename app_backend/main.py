@@ -409,7 +409,3 @@ def main(*, db_path: Path | None = None, host: str = "127.0.0.1", port: int = 80
         log_level="info",
     )
 
-
-if __name__ == "__main__":
-    main()
-

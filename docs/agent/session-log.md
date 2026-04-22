@@ -366,3 +366,15 @@
 - 当前进度：账号中心删号确认和本轮锁定的三处用户可见眉标都已收口，当前剩余主要是等待提交。
 - 余险：主导航按钮上的 `Live` 标签仍是英文视觉词，不影响功能，但若后续要继续做整体文案统一，应把它纳入同一轮 UI 文案清理，而不是再零碎散改。
 - 下一步：提交本轮源码与文档改动；若用户继续要求清理 `Live` 这类剩余英文视觉词，再单开一个小范围 UI 文案收口任务。
+
+## 2026-04-22 21:39 (Asia/Shanghai)
+- 背景：用户要求把项目对外入口收口为 JS-only，移除无效且易混淆的顶层 Python 启动入口，但不能破坏 JS 桌面壳内部拉起 Python backend 的既有链路。
+- 已完成：先补红灯测试锁定“根目录不再保留 `run_app.py` / `run_app_local_debug.py`、README 与 `docs/superpowers/README.md` 不再把 Python 当启动入口、`app_backend/main.py` 不再保留直接脚本启动口”，随后删除两个顶层 Python 包装入口，移除 `app_backend/main.py` 的 `__main__` 启动 guard，并将主 README 与 superpowers 说明统一收口为“用户态入口 = `main_ui_node_desktop.js`，本地调试入口 = `main_ui_node_desktop_local_debug.js`，Python backend 仅供 JS 桌面壳内部使用”。
+- 已做验证：
+  - 红灯：`python -m pytest tests/backend/test_remove_legacy_cli_entry.py -q`，结果 `4 failed`，失败点准确落在旧 Python 包装入口、README 旧文案、以及 `app_backend/main.py` 仍保留直接执行入口。
+  - 绿灯：`python -m pytest tests/backend/test_remove_legacy_cli_entry.py tests/backend/test_backend_main_entry.py -q`，结果 `9 passed`。
+  - JS 启动器回归：`npm --prefix app_desktop_web test -- tests/electron/desktop_launcher.test.js --run`，结果 `7 passed`。
+  - 复扫：`rg -n "python run_app|run_app\.py|run_app_local_debug\.py|python -m app_backend\.main" README.md docs/superpowers/README.md tests/backend/test_remove_legacy_cli_entry.py app_backend/main.py`，当前仅命中新的约束测试，不再命中 README、辅助说明或 backend 源码。
+- 当前进度：项目对外入口口径已正式收口为 JS-only；JS 桌面壳内部拉起 backend 的实现未动，登录/查询/购买主链路未受影响。
+- 余险：历史计划文档、历史 spec 与旧会话日志中仍会提到 `run_app.py`，它们属于历史材料而非当前入口契约；若后续还要继续清理历史文档，需要单开文档治理任务，不能把历史记录当成现行说明误删。
+- 下一步：等待用户确认新的入口口径是否满足预期；若还要进一步减少歧义，可继续把少数历史参考文档里的旧入口描述补上“历史口径”标记。

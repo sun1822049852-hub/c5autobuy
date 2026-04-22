@@ -6,49 +6,30 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_run_app_delegates_to_desktop_launcher(monkeypatch, tmp_path):
-    import run_app
-
-    captured: dict[str, object] = {}
-    launcher_path = tmp_path / "main_ui_node_desktop.js"
-    launcher_path.write_text("// launcher", encoding="utf-8")
-
-    def _fake_resolve_node_executable() -> str:
-        captured["resolved"] = True
-        return "node.exe"
-
-    def _fake_launch_desktop(node_executable: str, launcher_path: Path | None = None) -> int:
-        captured["node_executable"] = node_executable
-        captured["launcher_path"] = launcher_path
-        return 7
-
-    monkeypatch.setattr(run_app, "DESKTOP_LAUNCHER", launcher_path)
-    monkeypatch.setattr(run_app, "resolve_node_executable", _fake_resolve_node_executable)
-    monkeypatch.setattr(run_app, "launch_desktop", _fake_launch_desktop)
-
-    assert run_app.main() == 7
-    assert captured == {
-        "resolved": True,
-        "node_executable": "node.exe",
-        "launcher_path": None,
-    }
+def test_python_wrapper_entrypoints_are_removed():
+    assert not (PROJECT_ROOT / "run_app.py").exists()
+    assert not (PROJECT_ROOT / "run_app_local_debug.py").exists()
 
 
-def test_run_app_source_has_no_c5_layered_reference():
-    content = (PROJECT_ROOT / "run_app.py").read_text(encoding="utf-8")
+def test_readme_only_documents_js_entrypoints():
+    content = (PROJECT_ROOT / "README.md").read_text(encoding="utf-8")
 
-    assert "c5_layered" not in content
+    assert "python run_app.py" not in content
+    assert "python run_app_local_debug.py" not in content
+    assert "python -m app_backend.main" not in content
+    assert "node main_ui_node_desktop.js" in content
+    assert "node main_ui_node_desktop_local_debug.js" in content
 
 
-def test_run_app_source_points_to_main_ui_node_desktop():
-    content = (PROJECT_ROOT / "run_app.py").read_text(encoding="utf-8")
+def test_backend_main_has_no_direct_python_cli_guard():
+    content = (PROJECT_ROOT / "app_backend/main.py").read_text(encoding="utf-8")
 
+    assert 'if __name__ == "__main__"' not in content
+
+
+def test_superpowers_readme_describes_js_only_public_entry():
+    content = (PROJECT_ROOT / "docs/superpowers/README.md").read_text(encoding="utf-8")
+
+    assert "run_app.py" not in content
+    assert "run_app_local_debug.py" not in content
     assert "main_ui_node_desktop.js" in content
-    assert "main_ui_account_center_desktop.js" not in content
-
-
-def test_run_app_local_debug_source_points_to_local_debug_launcher():
-    content = (PROJECT_ROOT / "run_app_local_debug.py").read_text(encoding="utf-8")
-
-    assert "main_ui_node_desktop_local_debug.js" in content
-    assert "main_ui_node_desktop.js" not in content.replace("main_ui_node_desktop_local_debug.js", "")
