@@ -50,3 +50,4 @@
 - Windows 源码态桌面若再次出现“程序完全打不开”，当前已确认一条稳定排障顺序：先看 `main_ui_node_desktop.js` 启动器是否误把缺失的 `electron/cli.js` 当成阻塞，再检查 `app_desktop_web/node_modules/electron/checksums.json`、`dist/electron.exe`、`dist/chrome_100_percent.pak` 是否齐全。`electron/install.js` 的 `isInstalled()` 只看 `version/path.txt/electron.exe`，无法识别 `.pak` 缺失这类半损坏现场；若包本体连 `checksums.json` 都没了，优先最小重装 `electron@37.2.0`（如 `npm install electron@37.2.0 --no-save --package-lock=false`），不要误判成业务代码故障。
 - 程序账号注册弹窗新增一条稳定恢复约束：三段式注册在第二段验证码页时，只在当前 renderer 会话内保留草稿；关闭弹窗、切页后再次打开必须直接回到第二段，并保留脱敏邮箱、`register_session_id` 与当前倒计时。只有主动切到“登录/找回密码”、点击“修改邮箱”或注册成功时，才允许清空这份注册草稿。
 - 程序账号弹窗视觉也新增一条稳定 UI 约束：默认 `program_auth_required / 请先登录程序会员` 不再作为顶部异常提示展示；登录/注册/找回密码输入区默认使用输入框内 `placeholder`，右上角关闭控件保持红底正方形 `X`，但访问名仍必须是“关闭”。
+- 当前桌面发行瘦身主线已冻结：packaged release 不再允许整包内置开发 `.venv`；首刀方案固定为“首次启动从 Python 官方下载固定版本 Windows embeddable runtime，失败则阻断进入程序并允许重试”。开发态仍保留 `.venv/Scripts/python.exe` 解析；实现时不得回到“复制整套开发环境发行”的旧路径。

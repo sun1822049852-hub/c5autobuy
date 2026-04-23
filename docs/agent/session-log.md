@@ -534,3 +534,18 @@
   - 本轮只覆盖注册发码链路，不改登录/找回密码链，也不改已完成的注册三步主状态机结构。
   - 邮箱 typo 域名当前只显式拦截已确认的常见误写 `qq.co`；若后续再出现新的高频 typo，再按同一白名单策略补充，不在本轮顺手扩大规则面。
 - 下一步：`git add -A` 后提交本轮 bugfix，建议 message 为 `fix: harden program access registration send-code`；提交后再次核对 `git status --short --branch` 确认工作树收口。
+
+## 2026-04-23 20:13 (Asia/Shanghai)
+- 背景：用户转而追查桌面发行包体积异常膨胀，希望确认“真正的空框架大小”并制定瘦身路线；经盘点，当前 `win-unpacked` 约 `1.02GB`，主要肥肉不是前端代码，而是 packaged release 直接打入完整 `.venv`，其中无运行引用的 `PySide6 + shiboken6` 约 `623.35MB`。
+- 已完成：
+  - 完成只读盘点：确认 Git 跟踪代码本体约 `40.55MB`，`app.asar` 约 `21.07MB`，真实前端 `src` 仅约 `0.50MB`；当前肥胖主因是 `app_desktop_web/electron-builder.config.cjs` 把根目录 `.venv` 整包带入发行包。
+  - 与用户确认新的发行边界：接受首次启动联网下载 Python runtime；下载源首刀使用 Python 官方 Windows embeddable package；若首启网络不可用、下载失败、校验失败或解压失败，则阻断进入程序并允许重试；不采用“要求用户自行安装 Python”与“继续内置完整 `.venv`”。
+  - 已把设计落盘到 `docs/superpowers/specs/2026-04-23-packaged-python-runtime-bootstrap-design.md`，内容覆盖打包清单收口、packaged runtime bootstrap、官方 runtime 下载校验、失败阻断、开发态兼容、最小 Python 依赖资源边界、验证与回退方案。
+- 已做验证：
+  - 只读体积盘点与现状核对：根仓库总量、一级目录体积、最大文件、`win-unpacked` 组成、`.venv` 体积拆分、builder config 与 `pyproject.toml` 依赖清单。
+  - 本轮尚未进入实现，因此没有新的自动化测试或打包验证结果。
+- 当前进度：设计已获用户口头确认并落盘；当前断点位于“准备把 spec 转成 implementation plan，并用 TDD 改 packaged Python runtime bootstrap”。
+- 余险：
+  - 当前 spec 已锁定“runtime 走官方 embeddable package”，但 Python 业务依赖的最小投递方式仍待 implementation plan 细化，候选是随包携带最小 vendor/wheels，而不是继续整包 `.venv`。
+  - 由于当前会话未获用户授权启用子 agent，spec review loop 只能先做主线程本地自审；后续若需要额外 spec reviewer，再由用户显式授权。
+- 下一步：请用户审阅 `docs/superpowers/specs/2026-04-23-packaged-python-runtime-bootstrap-design.md`；用户确认后，按 `writing-plans` 把实现拆成测试与代码步骤，再进入 TDD 实施。
