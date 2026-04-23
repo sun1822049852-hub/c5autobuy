@@ -900,7 +900,9 @@ describe("query system page", () => {
     expect(screen.getByRole("button", { name: "切换商品删除模式" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "修改扫货价 AK-47 | Redline" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "修改磨损 AK-47 | Redline" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "切换手动暂停 AK-47 | Redline" })).toBeDisabled();
+    const pauseControl = screen.getByRole("button", { name: "切换手动暂停 AK-47 | Redline" });
+    expect(pauseControl).toBeDisabled();
+    expect(pauseControl).toHaveClass("query-item-row__status-toggle");
   });
 
   it("shows waiting status when backend reports a config is waiting for accounts", async () => {

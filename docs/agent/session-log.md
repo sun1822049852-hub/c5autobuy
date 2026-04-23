@@ -562,3 +562,20 @@
   - 计划已选用“打包最小 `python_deps` 资源并在首启安装到托管 runtime”的具体实现路线；真实裁剪排除名单是否足够，必须靠后续 import smoke + packaged smoke 验证，不可凭静态推断宣称可用。
   - 当前会话未获用户授权启用子 agent；即便 harness 支持多 agent，实现阶段也必须默认在主线程本地执行。
 - 下一步：提交计划文档与 session-log 更新，然后进入 `executing-plans` / `test-driven-development` 阶段，先补 Electron 侧 failing tests。
+
+## 2026-04-23 22:16 (Asia/Shanghai)
+- 背景：用户要求把配置管理里的商品级“手动暂停”从行外独立文案按钮改成真正的行内状态位，让人一眼看出暂停还是运行。
+- 已完成：
+  - 新增设计文档 `docs/superpowers/specs/2026-04-23-query-config-inline-pause-status-design.md` 与实现计划 `docs/superpowers/plans/2026-04-23-query-config-inline-pause-status.md`，锁定边界为“只改配置管理前端状态表达，不改后端 `manual_paused` 语义、不改统一保存机制、不碰主链路”。
+  - `app_desktop_web/src/features/query-system/components/query_item_table.jsx` 已为商品列表补上 `状态` 列；`app_desktop_web/src/features/query-system/components/query_item_row.jsx` 已把原先挂在行外的暂停/删除控制位收回商品行内容网格，正常模式显示图标状态，删除模式在同一格位原地替换成 `-`。
+  - `app_desktop_web/src/styles/app.css` 已把商品行布局改为八列同排，并新增图标状态样式：`manual_paused=true` 显示红色三角形，`manual_paused=false` 显示绿色双竖线；界面不再显示“手动暂停”文字，只保留无障碍标签。
+  - `app_desktop_web/tests/renderer/query_system_editing.test.jsx` 与 `app_desktop_web/tests/renderer/query_system_page.test.jsx` 已补回归，锁定“状态位在行内、运行/暂停图标类名正确、删除模式原地替换、只读锁定态仍可禁用”；`docs/agent/memory.md` 也已同步沉淀该 UI 约束。
+- 已做验证：
+  - 红灯：`npm --prefix app_desktop_web test -- tests/renderer/query_system_editing.test.jsx --run` -> `2 failed / 11 passed`，失败点准确落在旧控件仍是 `query-item-row__control`。
+  - 红灯：`npm --prefix app_desktop_web test -- tests/renderer/query_system_page.test.jsx --run` -> `1 failed / 14 passed`，失败点准确落在只读态仍使用旧类名。
+  - 绿灯：`npm --prefix app_desktop_web test -- tests/renderer/query_system_editing.test.jsx --run` -> `13 passed`。
+  - 绿灯：`npm --prefix app_desktop_web test -- tests/renderer/query_system_page.test.jsx --run` -> `15 passed`。
+  - 绿灯：`npm --prefix app_desktop_web test -- tests/renderer/query_system_models.test.js --run` -> `6 passed`。
+  - 构建：`npm --prefix app_desktop_web run build` -> `vite build` 成功，当前产物为 `dist/assets/index-DPfO2VN4.js` 与 `dist/assets/index-BgpSKLkl.css`。
+- 当前进度：代码、文档与 fresh verification 已全部到位；当前已到可手测状态。
+- 下一步：让用户在正式桌面窗口里打开“配置管理”，人工确认三点：1. 状态图标已和商品条目同排；2. 绿色双竖线/红色三角形一眼可区分；3. 删除模式下该格位会原地切成 `-` 删除按钮。

@@ -24,6 +24,7 @@ export function QueryItemRow({
 }) {
   const displayName = item.item_name || item.market_hash_name || item.query_item_id;
   const queryItemId = item.query_item_id;
+  const isPaused = Boolean(item.manual_paused);
 
   return (
     <section className="query-item-row" role="region" aria-label={`商品 ${displayName}`}>
@@ -62,29 +63,32 @@ export function QueryItemRow({
             {item.statusByMode[modeType]?.status_message || "无可用账号"}
           </button>
         ))}
+        {isDeleteMode ? (
+          <button
+            className="query-item-row__delete is-visible"
+            type="button"
+            aria-label={`删除商品 ${displayName}`}
+            disabled={readOnly}
+            onClick={() => onDeleteItem(queryItemId)}
+          >
+            -
+          </button>
+        ) : (
+          <button
+            aria-label={`切换手动暂停 ${displayName}`}
+            aria-pressed={isPaused}
+            className={`query-item-row__status-toggle${isPaused ? " is-paused" : " is-running"}`}
+            type="button"
+            disabled={readOnly}
+            onClick={() => onToggleManualPause(queryItemId)}
+          >
+            <span className="query-item-row__status-icon" aria-hidden="true" />
+            <span className="query-item-row__status-label" aria-hidden="true">
+              {isPaused ? "已暂停" : "运行中"}
+            </span>
+          </button>
+        )}
       </div>
-      {isDeleteMode ? (
-        <button
-          className="query-item-row__delete is-visible"
-          type="button"
-          aria-label={`删除商品 ${displayName}`}
-          disabled={readOnly}
-          onClick={() => onDeleteItem(queryItemId)}
-        >
-          -
-        </button>
-      ) : (
-        <button
-          aria-label={`切换手动暂停 ${displayName}`}
-          aria-pressed={Boolean(item.manual_paused)}
-          className={`query-item-row__control${item.manual_paused ? " is-active" : ""}`}
-          type="button"
-          disabled={readOnly}
-          onClick={() => onToggleManualPause(queryItemId)}
-        >
-          手动暂停
-        </button>
-      )}
     </section>
   );
 }

@@ -35,6 +35,7 @@
 - C5 账号登录任务的用户可见状态文案已冻结为“集中映射、统一复用”模式：唯一维护点是 `app_desktop_web/src/features/account-center/login_task_state_labels.js`；账号中心登录抽屉、诊断页登录任务标签页、账号中心日志中的状态显示都必须走这份映射，后续若用户要求改某个状态文案，应优先改这里而不是在各组件内散改。
 - 用户可见的正式入口文案继续冻结一条风格约束：普通用户直接能看到的页眉/眉标默认优先中文，不再保留 `ACCOUNT CENTER`、`PROGRAM ACCESS`、`Diagnostics` 这类英文眉标；只有显式本地调试分支里的提示，例如 `本地调试模式`，才允许保留调试口径作为区分标记。
 - 主导航按钮也已冻结一条 UI 文案约束：不再展示英文状态签条 `Live`；导航只保留中文功能名本身，不再额外挂英文视觉标签。
+- 配置管理里的商品级手动暂停展示也已冻结一条 UI 约束：暂停状态必须作为商品行内最后一列 `状态` 展示，不能再挂在行外独立按钮位；界面只显示图形，`manual_paused=true` 用红色三角形，`manual_paused=false` 用绿色双竖线，删除模式则在同一格位原地替换成 `-` 删除按钮。
 - 程序账号注册链路已冻结为“三步前端 + 三接口后端”结构：第一步仅输邮箱并在远端发码阶段做风控，第二步独立验证验证码，第三步仅在验码成功后凭一次性 `verification_ticket` 设置账号名与密码完成注册；前端本地正则只做粗校验，真正的防刷判断必须留在远端统一鉴权。
 - 程序账号注册发码链路又新增一条稳定反绕过约束：本地 backend 必须把 program access 稳定 `device_id` 作为远端 `install_id` 透传到注册 `send-code / verify-code / complete` 三接口；60 秒发码冷却不能靠“修改邮箱”绕过，renderer 回到邮箱页时也必须保留冷却并优先采用远端 `retry_after_seconds`；`qq.co` 这类已确认的公共邮箱 typo 域名按 `REGISTER_INPUT_INVALID` 拦截。
 - 程序账号三步注册的发布约束也已冻结：只有当远端 `send-code / verify-code / complete` 三接口全部就绪时，本地后端才可把 `registration_flow_version` 切到 `3` 放行新 UI；否则桌面端必须继续停留在旧的两接口注册链路，不能让本地 UI 先于远端能力切换。

@@ -23,6 +23,7 @@ export function QueryItemTable({
           <div className="query-item-table__column">new_api</div>
           <div className="query-item-table__column">fast_api</div>
           <div className="query-item-table__column">token</div>
+          <div className="query-item-table__column">状态</div>
         </div>
 
         <div className="query-item-table__toolbar">

@@ -587,7 +587,16 @@ describe("query system editing", () => {
     const itemThree = getItemRow("M4A1-S | Blue Phosphor");
     expect(within(itemThree).getByRole("button", { name: "修改 new_api M4A1-S | Blue Phosphor" })).toHaveTextContent("手动暂停");
     expect(within(itemThree).getByRole("button", { name: "修改 token M4A1-S | Blue Phosphor" })).toHaveTextContent("手动暂停");
-    expect(within(itemOne).getByRole("button", { name: "切换手动暂停 AK-47 | Redline" })).toBeInTheDocument();
+    const runningPauseControl = within(itemOne).getByRole("button", { name: "切换手动暂停 AK-47 | Redline" });
+    expect(runningPauseControl).toHaveClass("query-item-row__status-toggle", "is-running");
+    expect(runningPauseControl.closest(".query-item-row__content")).not.toBeNull();
+    expect(within(runningPauseControl).getByText("运行中")).toHaveClass("query-item-row__status-label");
+    expect(runningPauseControl.querySelector(".query-item-row__status-icon")).not.toBeNull();
+    const pausedPauseControl = within(itemThree).getByRole("button", { name: "切换手动暂停 M4A1-S | Blue Phosphor" });
+    expect(pausedPauseControl).toHaveClass("query-item-row__status-toggle", "is-paused");
+    expect(pausedPauseControl.closest(".query-item-row__content")).not.toBeNull();
+    expect(within(pausedPauseControl).getByText("已暂停")).toHaveClass("query-item-row__status-label");
+    expect(pausedPauseControl.querySelector(".query-item-row__status-icon")).not.toBeNull();
 
     const priceDialog = await openPriceDialog(user, "AK-47 | Redline");
     expect(within(priceDialog).getByLabelText("市场价")).toHaveValue("188.88");
@@ -627,19 +636,28 @@ describe("query system editing", () => {
     await openQuerySystem(user);
 
     const itemOne = await screen.findByRole("region", { name: "商品 AK-47 | Redline" });
-    expect(within(itemOne).getByRole("button", { name: "切换手动暂停 AK-47 | Redline" })).toBeInTheDocument();
+    const initialPauseControl = within(itemOne).getByRole("button", { name: "切换手动暂停 AK-47 | Redline" });
+    expect(initialPauseControl).toHaveClass("query-item-row__status-toggle", "is-running");
+    expect(initialPauseControl.closest(".query-item-row__content")).not.toBeNull();
+    expect(within(initialPauseControl).getByText("运行中")).toHaveClass("query-item-row__status-label");
 
     await toggleManualPause(user, "AK-47 | Redline");
 
     expect(within(itemOne).getByRole("button", { name: "修改 new_api AK-47 | Redline" })).toHaveTextContent("手动暂停");
     expect(within(itemOne).getByRole("button", { name: "修改 fast_api AK-47 | Redline" })).toHaveTextContent("手动暂停");
     expect(within(itemOne).getByRole("button", { name: "修改 token AK-47 | Redline" })).toHaveTextContent("手动暂停");
+    const pausedControl = within(itemOne).getByRole("button", { name: "切换手动暂停 AK-47 | Redline" });
+    expect(pausedControl).toHaveClass("query-item-row__status-toggle", "is-paused");
+    expect(pausedControl.closest(".query-item-row__content")).not.toBeNull();
+    expect(within(pausedControl).getByText("已暂停")).toHaveClass("query-item-row__status-label");
     expect(screen.getByRole("button", { name: "保存到当前配置" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "切换商品删除模式" }));
 
     expect(within(itemOne).queryByRole("button", { name: "切换手动暂停 AK-47 | Redline" })).not.toBeInTheDocument();
-    expect(within(itemOne).getByRole("button", { name: "删除商品 AK-47 | Redline" })).toHaveTextContent("-");
+    const deleteButton = within(itemOne).getByRole("button", { name: "删除商品 AK-47 | Redline" });
+    expect(deleteButton).toHaveTextContent("-");
+    expect(deleteButton.closest(".query-item-row__content")).not.toBeNull();
   });
 
   it("adds a draft item from the centered create dialog and saves both existing and new items", { timeout: 15000 }, async () => {
