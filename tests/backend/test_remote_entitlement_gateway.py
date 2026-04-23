@@ -232,13 +232,14 @@ def test_remote_gateway_register_does_not_persist_auth_and_returns_local_members
 def test_remote_gateway_send_register_code_returns_remote_message_and_summary(tmp_path: Path) -> None:
     private_key = Ed25519PrivateKey.generate()
     verifier = EntitlementVerifier(key_cache_path=_write_public_key(tmp_path, private_key))
+    remote_client = _RemoteClientStub(
+        send_register_code_result=RemoteMessageResult(
+            message="注册验证码已发送",
+            expires_in_seconds=300,
+        )
+    )
     gateway = RemoteEntitlementGateway(
-        remote_client=_RemoteClientStub(
-            send_register_code_result=RemoteMessageResult(
-                message="注册验证码已发送",
-                expires_in_seconds=300,
-            )
-        ),
+        remote_client=remote_client,
         verifier=verifier,
         credential_store=_MemoryCredentialStore(ProgramCredentialBundle(device_id="device-alpha")),
         secret_store=_MemorySecretStore(),
@@ -252,6 +253,43 @@ def test_remote_gateway_send_register_code_returns_remote_message_and_summary(tm
     assert result.message == "注册验证码已发送"
     assert result.summary.registration_flow_version == 3
     assert result.summary.last_error_code == "program_auth_required"
+    assert remote_client.send_register_code_calls == [
+        {
+            "email": "alice@example.com",
+            "install_id": "device-alpha",
+        }
+    ]
+
+
+def test_remote_gateway_send_register_code_preserves_retry_after_seconds_from_control_plane(tmp_path: Path) -> None:
+    private_key = Ed25519PrivateKey.generate()
+    verifier = EntitlementVerifier(key_cache_path=_write_public_key(tmp_path, private_key))
+    gateway = RemoteEntitlementGateway(
+        remote_client=_RemoteClientStub(
+            send_register_code_error=RemoteControlPlaneError(
+                status_code=429,
+                reason="REGISTER_SEND_RETRY_LATER",
+                message="register send is cooling down",
+                payload={
+                    "error_code": "REGISTER_SEND_RETRY_LATER",
+                    "message": "register send is cooling down",
+                    "retry_after_seconds": 52,
+                },
+            )
+        ),
+        verifier=verifier,
+        credential_store=_MemoryCredentialStore(ProgramCredentialBundle(device_id="device-alpha")),
+        secret_store=_MemorySecretStore(),
+        device_id_store=_StaticDeviceIdStore("device-alpha"),
+        stage="packaged_release",
+    )
+
+    result = gateway.send_register_code("alice@example.com")
+
+    assert result.accepted is False
+    assert result.code == "REGISTER_SEND_RETRY_LATER"
+    assert result.message == "register send is cooling down"
+    assert result.payload == {"retry_after_seconds": 52}
 
 
 def test_remote_gateway_summary_uses_control_plane_registration_flow_version_when_ready(tmp_path: Path) -> None:
@@ -679,6 +717,7 @@ class _RemoteClientStub:
         register_result: RemoteRegisterResult | None = None,
         send_register_code_result: RemoteMessageResult | None = None,
         verify_register_code_result: object | None = None,
+        complete_register_result: RemoteAuthResult | None = None,
         registration_readiness_result: object | None = None,
         send_reset_code_result: RemoteMessageResult | None = None,
         reset_password_result: RemoteMessageResult | None = None,
@@ -688,6 +727,7 @@ class _RemoteClientStub:
         register_error: Exception | None = None,
         send_register_code_error: Exception | None = None,
         verify_register_code_error: Exception | None = None,
+        complete_register_error: Exception | None = None,
         send_reset_code_error: Exception | None = None,
         reset_password_error: Exception | None = None,
         refresh_error: Exception | None = None,
@@ -697,6 +737,7 @@ class _RemoteClientStub:
         self._register_result = register_result
         self._send_register_code_result = send_register_code_result
         self._verify_register_code_result = verify_register_code_result
+        self._complete_register_result = complete_register_result
         self._registration_readiness_result = registration_readiness_result
         self._send_reset_code_result = send_reset_code_result
         self._reset_password_result = reset_password_result
@@ -706,14 +747,16 @@ class _RemoteClientStub:
         self._register_error = register_error
         self._send_register_code_error = send_register_code_error
         self._verify_register_code_error = verify_register_code_error
+        self._complete_register_error = complete_register_error
         self._send_reset_code_error = send_reset_code_error
         self._reset_password_error = reset_password_error
         self._refresh_error = refresh_error
         self.logout_calls: list[str] = []
         self.permit_calls: list[dict[str, object]] = []
         self.register_calls: list[dict[str, object]] = []
-        self.send_register_code_calls: list[str] = []
-        self.verify_register_code_calls: list[dict[str, str]] = []
+        self.send_register_code_calls: list[dict[str, object]] = []
+        self.verify_register_code_calls: list[dict[str, object]] = []
+        self.complete_register_calls: list[dict[str, object]] = []
         self.registration_readiness_calls = 0
         self.send_reset_code_calls: list[str] = []
         self.reset_password_calls: list[dict[str, str]] = []
@@ -739,8 +782,13 @@ class _RemoteClientStub:
             raise self._logout_error
         return RemoteMessageResult(message="已退出登录")
 
-    def send_register_code(self, email: str) -> RemoteMessageResult:
-        self.send_register_code_calls.append(email)
+    def send_register_code(self, email: str, install_id: str = "") -> RemoteMessageResult:
+        self.send_register_code_calls.append(
+            {
+                "email": email,
+                "install_id": install_id,
+            }
+        )
         if self._send_register_code_error is not None:
             raise self._send_register_code_error
         if self._send_register_code_result is None:
@@ -753,12 +801,14 @@ class _RemoteClientStub:
         email: str,
         code: str,
         register_session_id: str,
+        install_id: str = "",
     ) -> object:
         self.verify_register_code_calls.append(
             {
                 "email": email,
                 "code": code,
                 "register_session_id": register_session_id,
+                "install_id": install_id,
             }
         )
         if self._verify_register_code_error is not None:
@@ -831,6 +881,30 @@ class _RemoteClientStub:
         if self._reset_password_result is None:
             raise AssertionError("reset password result not configured")
         return self._reset_password_result
+
+    def complete_register(
+        self,
+        *,
+        email: str,
+        verification_ticket: str,
+        username: str,
+        password: str,
+        install_id: str = "",
+    ) -> RemoteAuthResult:
+        self.complete_register_calls.append(
+            {
+                "email": email,
+                "verification_ticket": verification_ticket,
+                "username": username,
+                "password": password,
+                "install_id": install_id,
+            }
+        )
+        if self._complete_register_error is not None:
+            raise self._complete_register_error
+        if self._complete_register_result is None:
+            raise AssertionError("complete register result not configured")
+        return self._complete_register_result
 
     def request_runtime_permit(
         self,

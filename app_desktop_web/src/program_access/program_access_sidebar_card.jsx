@@ -25,7 +25,11 @@ const REGISTER_STEP_EMAIL = "register_email";
 const REGISTER_STEP_CODE = "register_code";
 const REGISTER_STEP_CREDENTIALS = "register_credentials";
 const REGISTER_STEP_SUCCESS = "register_success";
-const REGISTER_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const REGISTER_EMAIL_LOCAL_PATTERN = /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+$/;
+const REGISTER_EMAIL_DOMAIN_LABEL_PATTERN = /^[A-Za-z0-9-]+$/;
+const BLOCKED_REGISTER_EMAIL_DOMAIN_TYPOS = new Set([
+  "qq.co",
+]);
 
 
 function resolveAuthStateLabel(authState) {
@@ -125,6 +129,9 @@ function extractProgramAuthActionErrorDetail(error) {
     return {
       code: String(payload.detail.code),
       message: String(payload.detail.message || ""),
+      retryAfterSeconds: Number.isFinite(Number(payload.detail.retry_after_seconds))
+        ? Math.max(0, Number(payload.detail.retry_after_seconds))
+        : null,
     };
   }
 
@@ -132,6 +139,9 @@ function extractProgramAuthActionErrorDetail(error) {
     return {
       code: String(payload.error_code),
       message: String(payload.message || ""),
+      retryAfterSeconds: Number.isFinite(Number(payload.retry_after_seconds))
+        ? Math.max(0, Number(payload.retry_after_seconds))
+        : null,
     };
   }
 
@@ -140,7 +150,43 @@ function extractProgramAuthActionErrorDetail(error) {
 
 
 function hasValidRegisterEmail(email) {
-  return REGISTER_EMAIL_PATTERN.test(String(email || "").trim());
+  const normalized = String(email || "").trim().toLowerCase();
+  if (!normalized || normalized.length > 254) {
+    return false;
+  }
+  const parts = normalized.split("@");
+  if (parts.length !== 2) {
+    return false;
+  }
+  const [local = "", domain = ""] = parts;
+  if (!local || !domain || local.length > 64) {
+    return false;
+  }
+  if (
+    local.startsWith(".")
+    || local.endsWith(".")
+    || local.includes("..")
+    || !REGISTER_EMAIL_LOCAL_PATTERN.test(local)
+  ) {
+    return false;
+  }
+  if (BLOCKED_REGISTER_EMAIL_DOMAIN_TYPOS.has(domain)) {
+    return false;
+  }
+  const labels = domain.split(".");
+  if (labels.length < 2) {
+    return false;
+  }
+  const topLevelDomain = labels[labels.length - 1] || "";
+  if (!/^[a-z]{2,24}$/.test(topLevelDomain)) {
+    return false;
+  }
+  return labels.every((label) => (
+    label
+    && !label.startsWith("-")
+    && !label.endsWith("-")
+    && REGISTER_EMAIL_DOMAIN_LABEL_PATTERN.test(label)
+  ));
 }
 
 
@@ -236,7 +282,7 @@ export function ProgramAccessSidebarCard({
   const visibleProgramAuthError = shouldSuppressProgramAuthError(programAuthError) ? null : programAuthError;
 
   useEffect(() => {
-    if (authMode !== "register" || registerStep !== REGISTER_STEP_CODE || registerResendCooldownSeconds <= 0) {
+    if (authMode !== "register" || registerResendCooldownSeconds <= 0) {
       return undefined;
     }
 
@@ -254,12 +300,12 @@ export function ProgramAccessSidebarCard({
     setFormNotice("");
   }
 
-  function resetRegisterFlow({ preserveEmail = false } = {}) {
+  function resetRegisterFlow({ preserveEmail = false, preserveCooldown = false } = {}) {
     setRegisterStep(REGISTER_STEP_EMAIL);
     setRegisterSessionId("");
     setMaskedRegisterEmail("");
     setVerificationTicket("");
-    setRegisterResendCooldownSeconds(0);
+    setRegisterResendCooldownSeconds((current) => (preserveCooldown ? current : 0));
     setRegisterForm((current) => ({
       ...REGISTER_FORM_TEMPLATE,
       email: preserveEmail ? current.email : "",
@@ -384,6 +430,9 @@ export function ProgramAccessSidebarCard({
         setFormNotice(String(result?.message || ""));
       } catch (error) {
         const detail = extractProgramAuthActionErrorDetail(error);
+        if (detail?.retryAfterSeconds != null) {
+          setRegisterResendCooldownSeconds(detail.retryAfterSeconds);
+        }
         setFormError(resolveRegisterErrorMessage(detail?.code, "注册验证码发送失败，请稍后再试。"));
       } finally {
         setBusyAction("");
@@ -460,7 +509,7 @@ export function ProgramAccessSidebarCard({
 
   function handleReturnToRegisterEmailStep() {
     clearLocalFeedback();
-    resetRegisterFlow({ preserveEmail: true });
+    resetRegisterFlow({ preserveEmail: true, preserveCooldown: true });
   }
 
   async function handleRegisterSubmit() {
@@ -958,10 +1007,14 @@ export function ProgramAccessSidebarCard({
           <button
             className="accent-button program-access-sidebar-card__button"
             type="button"
-            disabled={Boolean(busyAction) || !hasValidRegisterEmail(registerEmail)}
+            disabled={Boolean(busyAction) || registerResendCooldownSeconds > 0 || !hasValidRegisterEmail(registerEmail)}
             onClick={() => void handleSendRegisterCode()}
           >
-            {resolveBusyLabel("send-register-code", "发送注册验证码", "发送中...", busyAction)}
+            {busyAction === "send-register-code"
+              ? "发送中..."
+              : registerResendCooldownSeconds > 0
+                ? `发送注册验证码 (${registerResendCooldownSeconds}s)`
+                : "发送注册验证码"}
           </button>
         </div>
       );

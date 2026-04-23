@@ -113,8 +113,11 @@ class RemoteControlPlaneClient:
     def __exit__(self, *_: object) -> None:
         self.close()
 
-    def send_register_code(self, email: str) -> RemoteMessageResult:
-        payload = self._post("/api/auth/register/send-code", {"email": email})
+    def send_register_code(self, email: str, *, install_id: str | None = None) -> RemoteMessageResult:
+        body: dict[str, object] = {"email": email}
+        if install_id:
+            body["install_id"] = install_id
+        payload = self._post("/api/auth/register/send-code", body)
         try:
             return RemoteMessageResult(
                 message="注册验证码已发送",
@@ -134,14 +137,18 @@ class RemoteControlPlaneClient:
         email: str,
         code: str,
         register_session_id: str,
+        install_id: str | None = None,
     ) -> RemoteMessageResult:
+        body: dict[str, object] = {
+            "email": email,
+            "code": code,
+            "register_session_id": register_session_id,
+        }
+        if install_id:
+            body["install_id"] = install_id
         payload = self._post(
             "/api/auth/register/verify-code",
-            {
-                "email": email,
-                "code": code,
-                "register_session_id": register_session_id,
-            },
+            body,
         )
         try:
             return RemoteMessageResult(
@@ -204,15 +211,19 @@ class RemoteControlPlaneClient:
         verification_ticket: str,
         username: str,
         password: str,
+        install_id: str | None = None,
     ) -> RemoteAuthResult:
+        body: dict[str, object] = {
+            "email": email,
+            "verification_ticket": verification_ticket,
+            "username": username,
+            "password": password,
+        }
+        if install_id:
+            body["install_id"] = install_id
         payload = self._post(
             "/api/auth/register/complete",
-            {
-                "email": email,
-                "verification_ticket": verification_ticket,
-                "username": username,
-                "password": password,
-            },
+            body,
         )
         try:
             auth_session = _require_dict(payload.data.get("auth_session"), field_name="auth_session")
@@ -365,7 +376,7 @@ def _decode_json_response(response: httpx.Response) -> _JsonPayload:
             try:
                 raise RemoteControlPlaneError(
                     status_code=response.status_code,
-                    reason=_require_str(data.get("reason"), field_name="reason"),
+                    reason=_require_str(data.get("reason") or data.get("error_code"), field_name="reason"),
                     message=_require_str(data.get("message"), field_name="message"),
                     payload=data,
                 )

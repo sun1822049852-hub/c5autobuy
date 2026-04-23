@@ -49,6 +49,19 @@ _PROGRAM_AUTH_HTTP_STATUS = {
     "membership_not_enabled": status.HTTP_403_FORBIDDEN,
     "feature_not_enabled": status.HTTP_403_FORBIDDEN,
     "rate_limited": status.HTTP_429_TOO_MANY_REQUESTS,
+    "REGISTER_INPUT_INVALID": status.HTTP_400_BAD_REQUEST,
+    "REGISTER_SEND_RETRY_LATER": status.HTTP_429_TOO_MANY_REQUESTS,
+    "REGISTER_SEND_DENIED": status.HTTP_403_FORBIDDEN,
+    "REGISTER_SERVICE_UNAVAILABLE": status.HTTP_503_SERVICE_UNAVAILABLE,
+    "REGISTER_SESSION_EMAIL_MISMATCH": status.HTTP_409_CONFLICT,
+    "REGISTER_SESSION_INVALID": status.HTTP_410_GONE,
+    "REGISTER_CODE_INVALID_OR_EXPIRED": status.HTTP_400_BAD_REQUEST,
+    "REGISTER_CODE_ATTEMPTS_EXCEEDED": status.HTTP_429_TOO_MANY_REQUESTS,
+    "REGISTER_TICKET_INVALID_OR_EXPIRED": status.HTTP_410_GONE,
+    "REGISTER_USERNAME_INVALID": status.HTTP_400_BAD_REQUEST,
+    "REGISTER_USERNAME_TAKEN": status.HTTP_409_CONFLICT,
+    "REGISTER_PASSWORD_WEAK": status.HTTP_400_BAD_REQUEST,
+    "REGISTER_EMAIL_UNAVAILABLE": status.HTTP_409_CONFLICT,
 }
 
 
@@ -60,14 +73,27 @@ def _serialize_summary(summary: ProgramAccessSummary) -> ProgramAuthStatusRespon
     return ProgramAuthStatusResponse.model_validate(asdict(summary))
 
 
-def _raise_structured_error(*, action: str, code: str, message: str) -> None:
+def _raise_structured_error(
+    *,
+    action: str,
+    code: str,
+    message: str,
+    payload: dict[str, object] | None = None,
+) -> None:
+    detail_payload = {
+        "code": code,
+        "message": message,
+        "action": action,
+    }
+    if isinstance(payload, dict):
+        detail_payload.update({
+            key: value
+            for key, value in payload.items()
+            if key not in {"code", "message", "action"} and value is not None
+        })
     raise HTTPException(
         status_code=_status_code_for_program_auth_error(code),
-        detail={
-            "code": code,
-            "message": message,
-            "action": action,
-        },
+        detail=detail_payload,
     )
 
 
@@ -88,6 +114,7 @@ def _handle_action_result(
         action=action,
         code=str(result.code or PROGRAM_REMOTE_UNAVAILABLE_CODE),
         message=str(result.message or PROGRAM_REMOTE_UNAVAILABLE_MESSAGE),
+        payload=result.payload if isinstance(result.payload, dict) else None,
     )
 
 

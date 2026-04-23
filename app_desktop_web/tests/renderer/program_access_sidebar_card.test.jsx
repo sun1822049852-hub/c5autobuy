@@ -228,6 +228,10 @@ describe("program access sidebar card", () => {
     expect(screen.getByRole("button", { name: "发送注册验证码" })).toBeDisabled();
 
     await user.clear(screen.getByLabelText("注册邮箱"));
+    await user.type(screen.getByLabelText("注册邮箱"), "1822049852@qq.CO");
+    expect(screen.getByRole("button", { name: "发送注册验证码" })).toBeDisabled();
+
+    await user.clear(screen.getByLabelText("注册邮箱"));
     await user.type(screen.getByLabelText("注册邮箱"), "alice@example.com");
     await user.click(screen.getByRole("button", { name: "发送注册验证码" }));
 
@@ -306,6 +310,96 @@ describe("program access sidebar card", () => {
     expect(screen.getByLabelText("注册验证码")).toBeInTheDocument();
     expect(screen.queryByLabelText("注册邮箱")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "重新发送验证码 (60s)" })).toBeInTheDocument();
+  });
+
+  it("keeps the resend cooldown when the user switches back to editing the email", async () => {
+    const user = userEvent.setup();
+    const sendRegisterCode = vi.fn().mockResolvedValue({
+      ok: true,
+      message: "注册验证码已发送",
+      register_session_id: "session_1",
+      masked_email: "a***e@example.com",
+      resend_after_seconds: 60,
+      summary: {
+        ...REMOTE_PROGRAM_ACCESS_LOGGED_OUT_FIXTURE,
+        registration_flow_version: 3,
+      },
+    });
+
+    render(
+      <ProgramAccessSidebarCard
+        access={{
+          ...REMOTE_PROGRAM_ACCESS_LOGGED_OUT_FIXTURE,
+          registration_flow_version: 3,
+        }}
+        sendRegisterCode={sendRegisterCode}
+        verifyRegisterCode={vi.fn()}
+        completeRegisterProgramAuth={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "打开程序账号窗口" }));
+    await user.click(screen.getByRole("button", { name: "注册" }));
+    await user.type(screen.getByLabelText("注册邮箱"), "alice@example.com");
+    await user.click(screen.getByRole("button", { name: "发送注册验证码" }));
+
+    expect(await screen.findByRole("button", { name: "重新发送验证码 (60s)" })).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "修改邮箱" }));
+
+    expect(screen.getByLabelText("注册邮箱")).toHaveValue("alice@example.com");
+    expect(screen.getByRole("button", { name: "发送注册验证码 (60s)" })).toBeDisabled();
+  });
+
+  it("uses retry_after_seconds from send-code failures to continue the cooldown", async () => {
+    const user = userEvent.setup();
+    const cooldownPayload = {
+      detail: {
+        code: "REGISTER_SEND_RETRY_LATER",
+        message: "register send is cooling down",
+        retry_after_seconds: 42,
+      },
+    };
+    const sendError = Object.assign(
+      new Error(JSON.stringify(cooldownPayload)),
+      { responseText: JSON.stringify(cooldownPayload) },
+    );
+    const sendRegisterCode = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        message: "注册验证码已发送",
+        register_session_id: "session_1",
+        masked_email: "a***e@example.com",
+        resend_after_seconds: 0,
+        summary: {
+          ...REMOTE_PROGRAM_ACCESS_LOGGED_OUT_FIXTURE,
+          registration_flow_version: 3,
+        },
+      })
+      .mockRejectedValueOnce(sendError);
+
+    render(
+      <ProgramAccessSidebarCard
+        access={{
+          ...REMOTE_PROGRAM_ACCESS_LOGGED_OUT_FIXTURE,
+          registration_flow_version: 3,
+        }}
+        sendRegisterCode={sendRegisterCode}
+        verifyRegisterCode={vi.fn()}
+        completeRegisterProgramAuth={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "打开程序账号窗口" }));
+    await user.click(screen.getByRole("button", { name: "注册" }));
+    await user.type(screen.getByLabelText("注册邮箱"), "alice@example.com");
+    await user.click(screen.getByRole("button", { name: "发送注册验证码" }));
+
+    expect(await screen.findByRole("button", { name: "重新发送验证码" })).toBeEnabled();
+
+    await user.click(screen.getByRole("button", { name: "重新发送验证码" }));
+
+    expect(await screen.findByRole("button", { name: "重新发送验证码 (42s)" })).toBeDisabled();
   });
 
   it("clears the preserved registration draft when the user explicitly switches back to login", async () => {

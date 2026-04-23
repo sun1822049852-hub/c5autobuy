@@ -182,6 +182,35 @@ async def test_program_auth_register_returns_structured_conflict_error(tmp_path:
     }
 
 
+async def test_program_auth_send_register_code_returns_retry_after_seconds_error_detail(tmp_path: Path) -> None:
+    gateway = _StubProgramAccessGateway(
+        send_register_code_result=ProgramAccessActionResult.reject(
+            summary=_base_packaged_summary(),
+            code="REGISTER_SEND_RETRY_LATER",
+            message="register send is cooling down",
+            payload={"retry_after_seconds": 52},
+        )
+    )
+    app = _create_packaged_release_app(tmp_path, gateway)
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            "/program-auth/register/send-code",
+            json={"email": "alice@example.com"},
+        )
+
+    assert response.status_code == 429
+    assert response.json() == {
+        "detail": {
+            "code": "REGISTER_SEND_RETRY_LATER",
+            "message": "register send is cooling down",
+            "action": "program-auth.register.send-code",
+            "retry_after_seconds": 52,
+        }
+    }
+
+
 async def test_program_auth_login_and_logout_accept_with_stubbed_packaged_gateway(tmp_path: Path) -> None:
     gateway = _StubProgramAccessGateway()
     app = _create_packaged_release_app(tmp_path, gateway)
@@ -282,6 +311,7 @@ def _summary_dict(summary: ProgramAccessSummary) -> dict[str, object]:
 class _StubProgramAccessGateway:
     login_result: ProgramAccessActionResult | None = None
     logout_result: ProgramAccessActionResult | None = None
+    send_register_code_result: ProgramAccessActionResult | None = None
     register_result: ProgramAccessActionResult | None = None
 
     def __post_init__(self) -> None:
@@ -319,6 +349,8 @@ class _StubProgramAccessGateway:
 
     def send_register_code(self, email: str) -> ProgramAccessActionResult:
         _ = email
+        if self.send_register_code_result is not None:
+            return self.send_register_code_result
         return ProgramAccessActionResult(
             accepted=True,
             summary=self.summary,

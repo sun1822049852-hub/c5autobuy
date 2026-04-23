@@ -41,10 +41,10 @@ def test_send_register_code_maps_success_message() -> None:
             client=http_client,
         )
 
-        result = client.send_register_code("alice@example.com")
+        result = client.send_register_code("alice@example.com", install_id="device-alpha")
 
     assert captured["path"] == "/api/auth/register/send-code"
-    assert captured["body"] == {"email": "alice@example.com"}
+    assert captured["body"] == {"email": "alice@example.com", "install_id": "device-alpha"}
     assert result.message == "注册验证码已发送"
     assert result.expires_in_seconds == 300
 
@@ -109,12 +109,14 @@ def test_verify_and_complete_register_map_v3_paths() -> None:
             email="alice@example.com",
             code="123456",
             register_session_id="register_session_1",
+            install_id="device-alpha",
         )
         complete_result = client.complete_register(
             email="alice@example.com",
             verification_ticket="ticket_1",
             username="alice",
             password="Secret123!",
+            install_id="device-alpha",
         )
 
     assert captured[0] == {
@@ -123,6 +125,7 @@ def test_verify_and_complete_register_map_v3_paths() -> None:
             "email": "alice@example.com",
             "code": "123456",
             "register_session_id": "register_session_1",
+            "install_id": "device-alpha",
         },
     }
     assert captured[1] == {
@@ -132,11 +135,42 @@ def test_verify_and_complete_register_map_v3_paths() -> None:
             "verification_ticket": "ticket_1",
             "username": "alice",
             "password": "Secret123!",
+            "install_id": "device-alpha",
         },
     }
     assert verify_result.verification_ticket == "ticket_1"
     assert complete_result.message == "注册成功"
     assert complete_result.user["username"] == "alice"
+
+
+def test_send_register_code_maps_v3_error_code_and_retry_after_seconds() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            429,
+            json={
+                "ok": False,
+                "error_code": "REGISTER_SEND_RETRY_LATER",
+                "message": "register send is cooling down",
+                "retry_after_seconds": 42,
+            },
+        )
+
+    with httpx.Client(
+        transport=httpx.MockTransport(handler),
+        base_url="https://control-plane.test",
+    ) as http_client:
+        client = RemoteControlPlaneClient(
+            base_url="https://control-plane.test",
+            client=http_client,
+        )
+
+        with pytest.raises(RemoteControlPlaneError) as exc_info:
+            client.send_register_code("alice@example.com", install_id="device-alpha")
+
+    assert exc_info.value.status_code == 429
+    assert exc_info.value.reason == "REGISTER_SEND_RETRY_LATER"
+    assert exc_info.value.message == "register send is cooling down"
+    assert exc_info.value.payload["retry_after_seconds"] == 42
 
 
 def test_get_registration_readiness_maps_flow_version() -> None:

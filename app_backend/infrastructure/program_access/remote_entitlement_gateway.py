@@ -140,7 +140,10 @@ class RemoteEntitlementGateway:
 
     def send_register_code(self, email: str) -> ProgramAccessActionResult:
         try:
-            result = self._remote_client.send_register_code(email)
+            result = self._remote_client.send_register_code(
+                email,
+                install_id=self._device_id_store.load_or_create(),
+            )
         except Exception as exc:
             return self._reject_route_action_error(exc)
         self._registration_flow_version_cache = 3
@@ -168,6 +171,7 @@ class RemoteEntitlementGateway:
                 email=email,
                 code=code,
                 register_session_id=register_session_id,
+                install_id=self._device_id_store.load_or_create(),
             )
         except Exception as exc:
             return self._reject_route_action_error(exc)
@@ -217,6 +221,7 @@ class RemoteEntitlementGateway:
                 verification_ticket=verification_ticket,
                 username=username,
                 password=password,
+                install_id=self._device_id_store.load_or_create(),
             )
         except Exception as exc:
             return self._reject_route_action_error(exc)
@@ -422,13 +427,18 @@ class RemoteEntitlementGateway:
         if isinstance(error, RemoteControlPlaneError):
             code = str(error.reason or PROGRAM_REMOTE_UNAVAILABLE_CODE).strip() or PROGRAM_REMOTE_UNAVAILABLE_CODE
             message = str(error.message or PROGRAM_REMOTE_UNAVAILABLE_MESSAGE).strip() or PROGRAM_REMOTE_UNAVAILABLE_MESSAGE
+            payload = _compact_payload({
+                "retry_after_seconds": _read_optional_int(error.payload, "retry_after_seconds"),
+            })
         else:
             code = PROGRAM_REMOTE_UNAVAILABLE_CODE
             message = PROGRAM_REMOTE_UNAVAILABLE_MESSAGE
+            payload = None
         return ProgramAccessActionResult.reject(
             summary=self.get_summary(),
             code=code,
             message=message,
+            payload=payload,
         )
 
     def _reject_with_code(
@@ -632,6 +642,15 @@ def _read_optional_string(snapshot: dict[str, object] | None, key: str) -> str |
         return None
     value = snapshot.get(key)
     return value if isinstance(value, str) and value else None
+
+
+def _read_optional_int(snapshot: dict[str, object] | None, key: str) -> int | None:
+    if not isinstance(snapshot, dict):
+        return None
+    value = snapshot.get(key)
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
 
 
 def _map_remote_error_code(error: Exception, *, permit_mode: bool) -> str:

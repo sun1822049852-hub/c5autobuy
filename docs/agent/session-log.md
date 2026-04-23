@@ -514,3 +514,23 @@
   - 现场核对：`git status --short --branch`、`git branch --show-current`、`git worktree list --porcelain`。
 - 当前进度：没有新增代码修改；唯一未完成项仍是正式窗口 fresh 真人点验。
 - 下一步：若用户重开后界面正常，则仅补齐本节后续点验结果；若仍异常，严格按 handoff 先抓新进程里的 renderer 运行态与 `programAccess.registrationFlowVersion`，先定位根因，再决定是否需要改代码。
+
+## 2026-04-23 17:54 (Asia/Shanghai)
+- 背景：用户在主链功能提交后，继续要求修两处程序账号注册发码缺口：1. 不能通过“修改邮箱”绕过 60 秒冷却；2. 明显不完整邮箱如 `1822049852@qq.CO` 不应继续发送验证码。本轮按“只修注册发码链路，不改登录/找回密码/查询-命中-购买主链”的边界收口。
+- 已完成：
+  - 远端 control-plane `program_admin_console/src/server.js` 已收紧邮箱校验并显式拦截 `qq.co`，同时在 `evaluateRegisterSendLimits()` 中加入同 `install_id` 的 60 秒硬冷却，保证同一安装实例换邮箱也会返回 `REGISTER_SEND_RETRY_LATER + retry_after_seconds`。
+  - 本地 backend 已把 program access 稳定 `device_id` 作为远端 `install_id` 透传到 `/api/auth/register/send-code`、`/api/auth/register/verify-code`、`/api/auth/register/complete`；`remote_control_plane_client.py` 现兼容 control-plane v3 的 `error_code` 包络，不再只认旧 `reason`。
+  - 本地 route/gateway 已透传注册错误 payload：`app_backend/api/routes/program_auth.py` 会把 `ProgramAccessActionResult.payload` 写入 `detail`，`remote_entitlement_gateway.py` 会保留 `retry_after_seconds`，并把注册 v3 大写错误码映射到正确 HTTP status。
+  - renderer `app_desktop_web/src/program_access/program_access_sidebar_card.jsx` 已改为：点击“修改邮箱”回到第一步时保留当前冷却；邮箱页在剩余冷却期间持续禁用“发送注册验证码”；若失败响应里带 `retry_after_seconds`，则用该值刷新倒计时；本地粗校验也已拦下 `qq.co` 这类明确 typo 域名。
+  - 新增 spec/plan `docs/superpowers/specs/2026-04-23-program-access-registration-cooldown-hard-lock-and-email-validation-design.md` 与 `docs/superpowers/plans/2026-04-23-program-access-registration-cooldown-hard-lock-and-email-validation.md`，并已按真实实现补齐“`device_id -> install_id` 透传、renderer + control-plane 校验、本地 backend 只透传”的最终设计口径。
+- 已做验证：
+  - backend：`C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_program_auth_routes.py tests/backend/test_remote_control_plane_client.py tests/backend/test_remote_entitlement_gateway.py -q` -> `50 passed`；仅保留既有 FastAPI `on_event("shutdown")` 弃用告警，无新增失败。
+  - control-plane：`npm --prefix program_admin_console run test:server` -> `control-plane-server tests passed`；仅保留既有 Node `SQLite is an experimental feature` 警告。
+  - renderer focused：`npm --prefix app_desktop_web test -- tests/renderer/program_access_sidebar_card.test.jsx --run` -> `13 passed`。
+  - renderer affected regression：`npm --prefix app_desktop_web test -- tests/renderer/program_access_sidebar_card.test.jsx tests/renderer/program_access_provider.test.jsx tests/renderer/program_auth_client.test.js --run` -> `22 passed`。
+  - renderer build：`npm --prefix app_desktop_web run build` -> 成功，当前产物为 `dist/assets/index-DwVvC3ec.js` 与 `dist/assets/index--VJ_zwjX.css`。
+- 当前进度：本轮 bugfix 的代码、设计文档与 fresh verification 已全部收口；当前剩余动作只有把 `cooldown hard lock + email validation` 这一组修改提交为独立 commit。
+- 余险：
+  - 本轮只覆盖注册发码链路，不改登录/找回密码链，也不改已完成的注册三步主状态机结构。
+  - 邮箱 typo 域名当前只显式拦截已确认的常见误写 `qq.co`；若后续再出现新的高频 typo，再按同一白名单策略补充，不在本轮顺手扩大规则面。
+- 下一步：`git add -A` 后提交本轮 bugfix，建议 message 为 `fix: harden program access registration send-code`；提交后再次核对 `git status --short --branch` 确认工作树收口。

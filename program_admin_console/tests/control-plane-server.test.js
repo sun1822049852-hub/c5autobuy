@@ -486,6 +486,29 @@ async function main() {
     const adminSessionAfterLogout = await requestJson(ctx, "GET", "/api/admin/session", null, adminHeaders);
     assert.equal(adminSessionAfterLogout.status, 401);
     assert.equal(adminSessionAfterLogout.body.reason, "admin_session_not_found");
+
+    const sendRegisterCooldownSeed = await requestJson(ctx, "POST", "/api/auth/register/send-code", {
+      email: "cooldown-a@example.com",
+      install_id: "install_alpha"
+    });
+    assert.equal(sendRegisterCooldownSeed.status, 200);
+    assert.equal(sendRegisterCooldownSeed.body.ok, true);
+    assert.equal(sendRegisterCooldownSeed.body.resend_after_seconds, 60);
+
+    const sendRegisterCooldownBypass = await requestJson(ctx, "POST", "/api/auth/register/send-code", {
+      email: "cooldown-b@example.com",
+      install_id: "install_alpha"
+    });
+    assert.equal(sendRegisterCooldownBypass.status, 429);
+    assert.equal(sendRegisterCooldownBypass.body.error_code, "REGISTER_SEND_RETRY_LATER");
+    assert.equal(sendRegisterCooldownBypass.body.retry_after_seconds, 60);
+
+    const sendRegisterWithTypoDomain = await requestJson(ctx, "POST", "/api/auth/register/send-code", {
+      email: "1822049852@qq.CO",
+      install_id: "install_typo"
+    });
+    assert.equal(sendRegisterWithTypoDomain.status, 400);
+    assert.equal(sendRegisterWithTypoDomain.body.error_code, "REGISTER_INPUT_INVALID");
   } finally {
     await stopServer(ctx);
   }

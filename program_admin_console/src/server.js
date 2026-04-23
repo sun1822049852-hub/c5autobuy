@@ -11,8 +11,50 @@ function toText(value = "") {
   return String(value == null ? "" : value).trim();
 }
 
+const EMAIL_LOCAL_PATTERN = /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+$/;
+const EMAIL_DOMAIN_LABEL_PATTERN = /^[A-Za-z0-9-]+$/;
+const BLOCKED_EMAIL_DOMAIN_TYPOS = new Set([
+  "qq.co"
+]);
+
 function isValidEmail(value = "") {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(toText(value));
+  const normalized = toText(value).toLowerCase();
+  if (!normalized || normalized.length > 254) {
+    return false;
+  }
+  const parts = normalized.split("@");
+  if (parts.length !== 2) {
+    return false;
+  }
+  const [local = "", domain = ""] = parts;
+  if (!local || !domain || local.length > 64) {
+    return false;
+  }
+  if (
+    local.startsWith(".")
+    || local.endsWith(".")
+    || local.includes("..")
+    || !EMAIL_LOCAL_PATTERN.test(local)
+  ) {
+    return false;
+  }
+  if (BLOCKED_EMAIL_DOMAIN_TYPOS.has(domain)) {
+    return false;
+  }
+  const labels = domain.split(".");
+  if (labels.length < 2) {
+    return false;
+  }
+  const tld = labels[labels.length - 1] || "";
+  if (!/^[a-z]{2,24}$/.test(tld)) {
+    return false;
+  }
+  return labels.every((label) => (
+    label
+    && !label.startsWith("-")
+    && !label.endsWith("-")
+    && EMAIL_DOMAIN_LABEL_PATTERN.test(label)
+  ));
 }
 
 function writeJson(res, status, payload) {
@@ -253,6 +295,7 @@ function createServer({
     const checks = [
       {field: "email", value: email, windowSeconds: 60, limit: 1},
       {field: "email", value: email, windowSeconds: 24 * 60 * 60, limit: 5},
+      {field: "install_id", value: installId, windowSeconds: 60, limit: 1},
       {field: "install_id", value: installId, windowSeconds: 10 * 60, limit: 3},
       {field: "install_id", value: installId, windowSeconds: 24 * 60 * 60, limit: 20},
       {field: "source_ip", value: sourceIp, windowSeconds: 10 * 60, limit: 10},

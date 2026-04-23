@@ -36,6 +36,7 @@
 - 用户可见的正式入口文案继续冻结一条风格约束：普通用户直接能看到的页眉/眉标默认优先中文，不再保留 `ACCOUNT CENTER`、`PROGRAM ACCESS`、`Diagnostics` 这类英文眉标；只有显式本地调试分支里的提示，例如 `本地调试模式`，才允许保留调试口径作为区分标记。
 - 主导航按钮也已冻结一条 UI 文案约束：不再展示英文状态签条 `Live`；导航只保留中文功能名本身，不再额外挂英文视觉标签。
 - 程序账号注册链路已冻结为“三步前端 + 三接口后端”结构：第一步仅输邮箱并在远端发码阶段做风控，第二步独立验证验证码，第三步仅在验码成功后凭一次性 `verification_ticket` 设置账号名与密码完成注册；前端本地正则只做粗校验，真正的防刷判断必须留在远端统一鉴权。
+- 程序账号注册发码链路又新增一条稳定反绕过约束：本地 backend 必须把 program access 稳定 `device_id` 作为远端 `install_id` 透传到注册 `send-code / verify-code / complete` 三接口；60 秒发码冷却不能靠“修改邮箱”绕过，renderer 回到邮箱页时也必须保留冷却并优先采用远端 `retry_after_seconds`；`qq.co` 这类已确认的公共邮箱 typo 域名按 `REGISTER_INPUT_INVALID` 拦截。
 - 程序账号三步注册的发布约束也已冻结：只有当远端 `send-code / verify-code / complete` 三接口全部就绪时，本地后端才可把 `registration_flow_version` 切到 `3` 放行新 UI；否则桌面端必须继续停留在旧的两接口注册链路，不能让本地 UI 先于远端能力切换。
 - 程序账号注册链路还有一条 renderer 启动约束：只要当前桌面 backend 已 `ready`，renderer 就必须从当前 `apiBaseUrl` 拉取 `/app/bootstrap` 来水合 `program_access`，不能把 bootstrap 仅限于 `remote` 模式。否则 `main_ui_node_desktop.js` 这类 `embedded` 桌面虽然本地 backend 已返回 `registration_flow_version=3`，窗口仍会卡在前端默认值 `registrationFlowVersion=2`，错误回退到旧一屏式注册 UI。
 - 截至 `2026-04-23`，远端会员控制面 `http://8.138.39.139:18787` 已完成注册 v3 rollout：`/api/auth/register/readiness`、`/api/auth/register/send-code`、`/api/auth/register/verify-code`、`/api/auth/register/complete` 均已上线；正式桌面入口 `main_ui_node_desktop.js` 对应的本地 backend bootstrap 应返回 `remote_entitlement / packaged_release / registration_flow_version=3`，而 `main_ui_node_desktop_local_debug.js` 继续保持 `local_pass_through / prepackaging / registration_flow_version=2`。
