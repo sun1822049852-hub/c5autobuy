@@ -549,3 +549,16 @@
   - 当前 spec 已锁定“runtime 走官方 embeddable package”，但 Python 业务依赖的最小投递方式仍待 implementation plan 细化，候选是随包携带最小 vendor/wheels，而不是继续整包 `.venv`。
   - 由于当前会话未获用户授权启用子 agent，spec review loop 只能先做主线程本地自审；后续若需要额外 spec reviewer，再由用户显式授权。
 - 下一步：请用户审阅 `docs/superpowers/specs/2026-04-23-packaged-python-runtime-bootstrap-design.md`；用户确认后，按 `writing-plans` 把实现拆成测试与代码步骤，再进入 TDD 实施。
+
+## 2026-04-23 20:24 (Asia/Shanghai)
+- 背景：用户已确认 packaged runtime bootstrap 设计，当前进入 implementation planning；本轮目标是把“首启官方 Python runtime + 最小 `python_deps` 资源 + fail-closed packaged 启动链”拆成可执行的 TDD 任务，不直接动实现。
+- 已完成：
+  - 已读取并复核当前关键实现落点：`app_desktop_web/electron-builder.config.cjs`、`app_desktop_web/electron-builder-preflight.cjs`、`app_desktop_web/electron-main.cjs`、`app_desktop_web/python_backend.js`、`app_desktop_web/tests/electron/program_access_packaging.test.js`、`app_desktop_web/tests/electron/python_backend.test.js`、`pyproject.toml`。
+  - 已把实现计划落盘到 `docs/superpowers/plans/2026-04-23-packaged-python-runtime-bootstrap.md`，计划明确了文件职责、四个 chunk、红灯测试、最小 `python_deps` 导出、packaged runtime bootstrap、packaged 启动接线、打包体积验证和文档回写步骤。
+- 已做验证：
+  - 本轮仍是文档阶段，仅做代码/测试入口阅读与计划自审，没有新的自动化测试执行结果。
+- 当前进度：spec 与 implementation plan 均已齐备；当前断点位于“准备进入执行阶段，先写 failing tests 锁定 builder config / packaged bootstrap / runtime bootstrap 契约”。
+- 余险：
+  - 计划已选用“打包最小 `python_deps` 资源并在首启安装到托管 runtime”的具体实现路线；真实裁剪排除名单是否足够，必须靠后续 import smoke + packaged smoke 验证，不可凭静态推断宣称可用。
+  - 当前会话未获用户授权启用子 agent；即便 harness 支持多 agent，实现阶段也必须默认在主线程本地执行。
+- 下一步：提交计划文档与 session-log 更新，然后进入 `executing-plans` / `test-driven-development` 阶段，先补 Electron 侧 failing tests。
