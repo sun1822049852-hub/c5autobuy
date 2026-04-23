@@ -6,6 +6,7 @@ export const EMPTY_PROGRAM_ACCESS = Object.freeze({
   stage: "",
   guardEnabled: false,
   message: "",
+  registrationFlowVersion: 2,
   username: "",
   authState: "",
   runtimeState: "",
@@ -42,6 +43,11 @@ export function normalizeProgramAccess(payload) {
     stage: String(payload.stage || ""),
     guardEnabled: Boolean(payload.guardEnabled ?? payload.guard_enabled),
     message: String(payload.message || ""),
+    registrationFlowVersion: Number(
+      payload.registrationFlowVersion
+      ?? payload.registration_flow_version
+      ?? 2,
+    ),
     username: String(payload.username || ""),
     authState: String(payload.authState || payload.auth_state || ""),
     runtimeState: String(payload.runtimeState || payload.runtime_state || ""),

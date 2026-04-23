@@ -162,6 +162,7 @@ describe("program access packaging config", () => {
       programAccessConfig: {
         appPrivateDir: "C:\\Users\\tester\\AppData\\Roaming\\C5AccountCenter\\app-private",
         controlPlaneBaseUrl: "http://8.138.39.139:18787",
+        probeRegistrationReadiness: true,
         stage: "packaged_release",
       },
     }));

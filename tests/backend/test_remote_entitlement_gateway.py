@@ -250,7 +250,54 @@ def test_remote_gateway_send_register_code_returns_remote_message_and_summary(tm
 
     assert result.accepted is True
     assert result.message == "注册验证码已发送"
+    assert result.summary.registration_flow_version == 3
     assert result.summary.last_error_code == "program_auth_required"
+
+
+def test_remote_gateway_summary_uses_control_plane_registration_flow_version_when_ready(tmp_path: Path) -> None:
+    private_key = Ed25519PrivateKey.generate()
+    verifier = EntitlementVerifier(key_cache_path=_write_public_key(tmp_path, private_key))
+    gateway = RemoteEntitlementGateway(
+        remote_client=_RemoteClientStub(registration_readiness_result=_ReadinessStub(ready=True, registration_flow_version=3)),
+        verifier=verifier,
+        credential_store=_MemoryCredentialStore(ProgramCredentialBundle(device_id="device-alpha")),
+        secret_store=_MemorySecretStore(),
+        device_id_store=_StaticDeviceIdStore("device-alpha"),
+        stage="packaged_release",
+        probe_registration_readiness=True,
+    )
+
+    summary = gateway.get_summary()
+
+    assert summary.registration_flow_version == 3
+
+
+def test_remote_gateway_verify_register_code_returns_remote_message_and_summary(tmp_path: Path) -> None:
+    private_key = Ed25519PrivateKey.generate()
+    verifier = EntitlementVerifier(key_cache_path=_write_public_key(tmp_path, private_key))
+    gateway = RemoteEntitlementGateway(
+        remote_client=_RemoteClientStub(
+            verify_register_code_result=_ResultStub(
+                message="验证码已验证",
+                verification_ticket="ticket_1",
+            )
+        ),
+        verifier=verifier,
+        credential_store=_MemoryCredentialStore(ProgramCredentialBundle(device_id="device-alpha")),
+        secret_store=_MemorySecretStore(),
+        device_id_store=_StaticDeviceIdStore("device-alpha"),
+        stage="packaged_release",
+    )
+
+    result = gateway.verify_register_code(
+        email="alice@example.com",
+        code="123456",
+        register_session_id="register_session_1",
+    )
+
+    assert result.accepted is True
+    assert result.message == "验证码已验证"
+    assert result.summary.registration_flow_version == 3
 
 
 def test_remote_gateway_send_reset_code_maps_remote_user_not_found_for_route_layer(tmp_path: Path) -> None:
@@ -631,6 +678,8 @@ class _RemoteClientStub:
         public_key_pem: str | None = None,
         register_result: RemoteRegisterResult | None = None,
         send_register_code_result: RemoteMessageResult | None = None,
+        verify_register_code_result: object | None = None,
+        registration_readiness_result: object | None = None,
         send_reset_code_result: RemoteMessageResult | None = None,
         reset_password_result: RemoteMessageResult | None = None,
         refresh_result: RemoteAuthResult | None = None,
@@ -638,6 +687,7 @@ class _RemoteClientStub:
         logout_error: Exception | None = None,
         register_error: Exception | None = None,
         send_register_code_error: Exception | None = None,
+        verify_register_code_error: Exception | None = None,
         send_reset_code_error: Exception | None = None,
         reset_password_error: Exception | None = None,
         refresh_error: Exception | None = None,
@@ -646,6 +696,8 @@ class _RemoteClientStub:
         self._public_key_pem = public_key_pem
         self._register_result = register_result
         self._send_register_code_result = send_register_code_result
+        self._verify_register_code_result = verify_register_code_result
+        self._registration_readiness_result = registration_readiness_result
         self._send_reset_code_result = send_reset_code_result
         self._reset_password_result = reset_password_result
         self._refresh_result = refresh_result
@@ -653,6 +705,7 @@ class _RemoteClientStub:
         self._logout_error = logout_error
         self._register_error = register_error
         self._send_register_code_error = send_register_code_error
+        self._verify_register_code_error = verify_register_code_error
         self._send_reset_code_error = send_reset_code_error
         self._reset_password_error = reset_password_error
         self._refresh_error = refresh_error
@@ -660,6 +713,8 @@ class _RemoteClientStub:
         self.permit_calls: list[dict[str, object]] = []
         self.register_calls: list[dict[str, object]] = []
         self.send_register_code_calls: list[str] = []
+        self.verify_register_code_calls: list[dict[str, str]] = []
+        self.registration_readiness_calls = 0
         self.send_reset_code_calls: list[str] = []
         self.reset_password_calls: list[dict[str, str]] = []
         self.public_key_fetch_calls = 0
@@ -691,6 +746,32 @@ class _RemoteClientStub:
         if self._send_register_code_result is None:
             raise AssertionError("send register code result not configured")
         return self._send_register_code_result
+
+    def verify_register_code(
+        self,
+        *,
+        email: str,
+        code: str,
+        register_session_id: str,
+    ) -> object:
+        self.verify_register_code_calls.append(
+            {
+                "email": email,
+                "code": code,
+                "register_session_id": register_session_id,
+            }
+        )
+        if self._verify_register_code_error is not None:
+            raise self._verify_register_code_error
+        if self._verify_register_code_result is None:
+            raise AssertionError("verify register code result not configured")
+        return self._verify_register_code_result
+
+    def get_registration_readiness(self) -> object:
+        self.registration_readiness_calls += 1
+        if self._registration_readiness_result is None:
+            raise AssertionError("registration readiness result not configured")
+        return self._registration_readiness_result
 
     def register(
         self,
@@ -893,3 +974,15 @@ def _build_public_key_pem(private_key: Ed25519PrivateKey) -> str:
 
 def _sign_snapshot(private_key: Ed25519PrivateKey, snapshot: dict[str, object]) -> str:
     return base64.b64encode(private_key.sign(stable_stringify(snapshot).encode("utf-8"))).decode("ascii")
+
+
+@dataclass(frozen=True)
+class _ResultStub:
+    message: str
+    verification_ticket: str
+
+
+@dataclass(frozen=True)
+class _ReadinessStub:
+    ready: bool
+    registration_flow_version: int

@@ -22,6 +22,7 @@ async def test_program_auth_status_returns_local_pass_through_summary(client) ->
         "stage": "prepackaging",
         "guard_enabled": False,
         "message": "当前为本地放行模式，远端程序会员控制面尚未接入正式链路",
+        "registration_flow_version": 2,
         "username": None,
         "auth_state": None,
         "runtime_state": None,
@@ -70,6 +71,23 @@ async def test_program_auth_register_and_password_routes_accept_with_stubbed_pac
                 "password": "Secret123!",
             },
         )
+        verify_register_code_response = await client.post(
+            "/program-auth/register/verify-code",
+            json={
+                "email": "alice@example.com",
+                "code": "123456",
+                "register_session_id": "register_session_1",
+            },
+        )
+        complete_register_response = await client.post(
+            "/program-auth/register/complete",
+            json={
+                "email": "alice@example.com",
+                "verification_ticket": "ticket_1",
+                "username": "alice",
+                "password": "Secret123!",
+            },
+        )
         send_reset_code_response = await client.post(
             "/program-auth/password/send-reset-code",
             json={"email": "alice@example.com"},
@@ -92,6 +110,18 @@ async def test_program_auth_register_and_password_routes_accept_with_stubbed_pac
     }
     assert register_response.status_code == 200
     assert register_response.json() == {
+        "ok": True,
+        "message": "账号已创建，但当前未开通会员",
+        "summary": expected_summary,
+    }
+    assert verify_register_code_response.status_code == 200
+    assert verify_register_code_response.json() == {
+        "ok": True,
+        "message": "验证码已验证",
+        "summary": expected_summary,
+    }
+    assert complete_register_response.status_code == 200
+    assert complete_register_response.json() == {
         "ok": True,
         "message": "账号已创建，但当前未开通会员",
         "summary": expected_summary,
@@ -233,17 +263,19 @@ def _create_packaged_release_app(
 
 
 def _summary_dict(summary: ProgramAccessSummary) -> dict[str, object]:
-    return {
+    payload = {
         "mode": summary.mode,
         "stage": summary.stage,
         "guard_enabled": summary.guard_enabled,
         "message": summary.message,
+        "registration_flow_version": summary.registration_flow_version,
         "username": summary.username,
         "auth_state": summary.auth_state,
         "runtime_state": summary.runtime_state,
         "grace_expires_at": summary.grace_expires_at,
         "last_error_code": summary.last_error_code,
     }
+    return {key: value for key, value in payload.items() if value is not None}
 
 
 @dataclass
@@ -293,6 +325,22 @@ class _StubProgramAccessGateway:
             message="注册验证码已发送",
         )
 
+    def verify_register_code(
+        self,
+        *,
+        email: str,
+        code: str,
+        register_session_id: str,
+    ) -> ProgramAccessActionResult:
+        _ = email
+        _ = code
+        _ = register_session_id
+        return ProgramAccessActionResult(
+            accepted=True,
+            summary=self.summary,
+            message="验证码已验证",
+        )
+
     def register(
         self,
         *,
@@ -307,6 +355,24 @@ class _StubProgramAccessGateway:
         _ = password
         if self.register_result is not None:
             return self.register_result
+        return ProgramAccessActionResult(
+            accepted=True,
+            summary=self.summary,
+            message="账号已创建，但当前未开通会员",
+        )
+
+    def complete_register(
+        self,
+        *,
+        email: str,
+        verification_ticket: str,
+        username: str,
+        password: str,
+    ) -> ProgramAccessActionResult:
+        _ = email
+        _ = verification_ticket
+        _ = username
+        _ = password
         return ProgramAccessActionResult(
             accepted=True,
             summary=self.summary,
@@ -344,6 +410,7 @@ def _base_packaged_summary() -> ProgramAccessSummary:
         stage="packaged_release",
         guard_enabled=True,
         message="请先登录程序会员",
+        registration_flow_version=3,
         username=None,
         auth_state=None,
         runtime_state="stopped",

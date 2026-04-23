@@ -10,6 +10,13 @@ import httpx
 class RemoteMessageResult:
     message: str
     expires_in_seconds: int | None = None
+    register_session_id: str | None = None
+    masked_email: str | None = None
+    code_length: int | None = None
+    code_expires_in_seconds: int | None = None
+    resend_after_seconds: int | None = None
+    verification_ticket: str | None = None
+    ticket_expires_in_seconds: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +51,12 @@ class RemotePermitResult:
 class RemoteRegisterResult:
     message: str
     user: dict[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class RemoteRegistrationReadinessResult:
+    ready: bool
+    registration_flow_version: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,11 +114,53 @@ class RemoteControlPlaneClient:
         self.close()
 
     def send_register_code(self, email: str) -> RemoteMessageResult:
-        payload = self._post("/api/auth/email/send-code", {"email": email})
+        payload = self._post("/api/auth/register/send-code", {"email": email})
         try:
             return RemoteMessageResult(
                 message="注册验证码已发送",
                 expires_in_seconds=_optional_int(payload.data.get("expires_in_seconds")),
+                register_session_id=_optional_str(payload.data.get("register_session_id")),
+                masked_email=_optional_str(payload.data.get("masked_email")),
+                code_length=_optional_int(payload.data.get("code_length")),
+                code_expires_in_seconds=_optional_int(payload.data.get("code_expires_in_seconds")),
+                resend_after_seconds=_optional_int(payload.data.get("resend_after_seconds")),
+            )
+        except _InvalidResponseShapeError as exc:
+            raise _invalid_response_error(payload.status_code, str(exc), payload.data) from exc
+
+    def verify_register_code(
+        self,
+        *,
+        email: str,
+        code: str,
+        register_session_id: str,
+    ) -> RemoteMessageResult:
+        payload = self._post(
+            "/api/auth/register/verify-code",
+            {
+                "email": email,
+                "code": code,
+                "register_session_id": register_session_id,
+            },
+        )
+        try:
+            return RemoteMessageResult(
+                message="验证码已验证",
+                verification_ticket=_require_str(payload.data.get("verification_ticket"), field_name="verification_ticket"),
+                ticket_expires_in_seconds=_optional_int(payload.data.get("ticket_expires_in_seconds")),
+            )
+        except _InvalidResponseShapeError as exc:
+            raise _invalid_response_error(payload.status_code, str(exc), payload.data) from exc
+
+    def get_registration_readiness(self) -> RemoteRegistrationReadinessResult:
+        payload = self._get("/api/auth/register/readiness")
+        try:
+            return RemoteRegistrationReadinessResult(
+                ready=_require_bool(payload.data.get("ready"), field_name="ready"),
+                registration_flow_version=_require_int(
+                    payload.data.get("registration_flow_version"),
+                    field_name="registration_flow_version",
+                ),
             )
         except _InvalidResponseShapeError as exc:
             raise _invalid_response_error(payload.status_code, str(exc), payload.data) from exc
@@ -138,6 +193,39 @@ class RemoteControlPlaneClient:
             return RemoteRegisterResult(
                 message="注册成功",
                 user=_require_dict(payload.data.get("user"), field_name="user"),
+            )
+        except _InvalidResponseShapeError as exc:
+            raise _invalid_response_error(payload.status_code, str(exc), payload.data) from exc
+
+    def complete_register(
+        self,
+        *,
+        email: str,
+        verification_ticket: str,
+        username: str,
+        password: str,
+    ) -> RemoteAuthResult:
+        payload = self._post(
+            "/api/auth/register/complete",
+            {
+                "email": email,
+                "verification_ticket": verification_ticket,
+                "username": username,
+                "password": password,
+            },
+        )
+        try:
+            auth_session = _require_dict(payload.data.get("auth_session"), field_name="auth_session")
+            access_bundle = _require_dict(auth_session.get("access_bundle"), field_name="auth_session.access_bundle")
+            return RemoteAuthResult(
+                message="注册成功",
+                auth_bundle=RemoteAuthBundle(
+                    refresh_token=_require_str(auth_session.get("refresh_token"), field_name="auth_session.refresh_token"),
+                    snapshot=_require_dict(access_bundle.get("snapshot"), field_name="auth_session.access_bundle.snapshot"),
+                    signature=_require_str(access_bundle.get("signature"), field_name="auth_session.access_bundle.signature"),
+                    kid=_require_str(access_bundle.get("kid"), field_name="auth_session.access_bundle.kid"),
+                ),
+                user=_require_dict(auth_session.get("user"), field_name="auth_session.user"),
             )
         except _InvalidResponseShapeError as exc:
             raise _invalid_response_error(payload.status_code, str(exc), payload.data) from exc
@@ -318,6 +406,27 @@ def _optional_int(value: object) -> int | None:
     if isinstance(value, int):
         return value
     raise _InvalidResponseShapeError("expires_in_seconds must be an integer")
+
+
+def _optional_str(value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise _InvalidResponseShapeError("optional field must be a string")
+    text = value.strip()
+    return text or None
+
+
+def _require_bool(value: object, *, field_name: str) -> bool:
+    if not isinstance(value, bool):
+        raise _InvalidResponseShapeError(f"{field_name} must be a boolean")
+    return value
+
+
+def _require_int(value: object, *, field_name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise _InvalidResponseShapeError(f"{field_name} must be an integer")
+    return value
 
 
 def _invalid_response_error(

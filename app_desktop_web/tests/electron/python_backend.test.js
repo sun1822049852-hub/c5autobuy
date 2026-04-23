@@ -140,6 +140,7 @@ describe("python backend manager", () => {
       },
       {
         controlPlaneBaseUrl: "http://8.138.39.139:18787",
+        probeRegistrationReadiness: true,
       },
     );
 
@@ -148,6 +149,7 @@ describe("python backend manager", () => {
       C5_APP_PRIVATE_DIR: buildExpectedAppPrivateDir("C:/demo/project"),
       C5_PROGRAM_CONTROL_PLANE_BASE_URL: "http://8.138.39.139:18787",
       C5_PROGRAM_ACCESS_STAGE: "packaged_release",
+      C5_PROGRAM_ACCESS_PROBE_REGISTRATION_READINESS: "1",
     }));
   });
 

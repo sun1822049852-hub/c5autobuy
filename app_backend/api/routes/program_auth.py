@@ -7,11 +7,13 @@ from fastapi import APIRouter, HTTPException, Request, status
 
 from app_backend.api.schemas.program_auth import (
     ProgramAuthActionResponse,
+    ProgramAuthRegisterCompleteRequest,
     ProgramAuthLoginRequest,
     ProgramAuthPasswordResetRequest,
     ProgramAuthPasswordSendResetCodeRequest,
     ProgramAuthRegisterRequest,
     ProgramAuthRegisterSendCodeRequest,
+    ProgramAuthRegisterVerifyCodeRequest,
     ProgramAuthStatusResponse,
 )
 from app_backend.application.program_access import (
@@ -75,11 +77,13 @@ def _handle_action_result(
     result: ProgramAccessActionResult,
 ) -> ProgramAuthActionResponse:
     if result.accepted:
-        return ProgramAuthActionResponse(
-            ok=True,
-            message=str(result.message or result.summary.message),
-            summary=_serialize_summary(result.summary),
-        )
+        payload = result.payload if isinstance(result.payload, dict) else {}
+        return ProgramAuthActionResponse.model_validate({
+            "ok": True,
+            "message": str(result.message or result.summary.message),
+            "summary": _serialize_summary(result.summary),
+            **payload,
+        })
     _raise_structured_error(
         action=action,
         code=str(result.code or PROGRAM_REMOTE_UNAVAILABLE_CODE),
@@ -132,7 +136,7 @@ def get_program_auth_status(request: Request) -> ProgramAuthStatusResponse:
         )
 
 
-@router.post("/login", response_model=ProgramAuthActionResponse)
+@router.post("/login", response_model=ProgramAuthActionResponse, response_model_exclude_none=True)
 def login_program_auth(payload: ProgramAuthLoginRequest, request: Request) -> ProgramAuthActionResponse:
     return _execute_action(
         action="program-auth.login",
@@ -143,7 +147,7 @@ def login_program_auth(payload: ProgramAuthLoginRequest, request: Request) -> Pr
     )
 
 
-@router.post("/logout", response_model=ProgramAuthActionResponse)
+@router.post("/logout", response_model=ProgramAuthActionResponse, response_model_exclude_none=True)
 def logout_program_auth(request: Request) -> ProgramAuthActionResponse:
     return _execute_action(
         action="program-auth.logout",
@@ -151,7 +155,7 @@ def logout_program_auth(request: Request) -> ProgramAuthActionResponse:
     )
 
 
-@router.post("/register/send-code", response_model=ProgramAuthActionResponse)
+@router.post("/register/send-code", response_model=ProgramAuthActionResponse, response_model_exclude_none=True)
 def send_register_code(
     payload: ProgramAuthRegisterSendCodeRequest,
     request: Request,
@@ -162,7 +166,22 @@ def send_register_code(
     )
 
 
-@router.post("/register", response_model=ProgramAuthActionResponse)
+@router.post("/register/verify-code", response_model=ProgramAuthActionResponse, response_model_exclude_none=True)
+def verify_register_code(
+    payload: ProgramAuthRegisterVerifyCodeRequest,
+    request: Request,
+) -> ProgramAuthActionResponse:
+    return _execute_action(
+        action="program-auth.register.verify-code",
+        invoke=lambda: _gateway(request).verify_register_code(
+            email=payload.email,
+            code=payload.code,
+            register_session_id=payload.register_session_id,
+        ),
+    )
+
+
+@router.post("/register", response_model=ProgramAuthActionResponse, response_model_exclude_none=True)
 def register_program_auth(
     payload: ProgramAuthRegisterRequest,
     request: Request,
@@ -178,7 +197,23 @@ def register_program_auth(
     )
 
 
-@router.post("/password/send-reset-code", response_model=ProgramAuthActionResponse)
+@router.post("/register/complete", response_model=ProgramAuthActionResponse, response_model_exclude_none=True)
+def complete_register_program_auth(
+    payload: ProgramAuthRegisterCompleteRequest,
+    request: Request,
+) -> ProgramAuthActionResponse:
+    return _execute_action(
+        action="program-auth.register.complete",
+        invoke=lambda: _gateway(request).complete_register(
+            email=payload.email,
+            verification_ticket=payload.verification_ticket,
+            username=payload.username,
+            password=payload.password,
+        ),
+    )
+
+
+@router.post("/password/send-reset-code", response_model=ProgramAuthActionResponse, response_model_exclude_none=True)
 def send_password_reset_code(
     payload: ProgramAuthPasswordSendResetCodeRequest,
     request: Request,
@@ -189,7 +224,7 @@ def send_password_reset_code(
     )
 
 
-@router.post("/password/reset", response_model=ProgramAuthActionResponse)
+@router.post("/password/reset", response_model=ProgramAuthActionResponse, response_model_exclude_none=True)
 def reset_program_auth_password(
     payload: ProgramAuthPasswordResetRequest,
     request: Request,

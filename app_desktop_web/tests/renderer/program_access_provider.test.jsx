@@ -145,6 +145,38 @@ function ProgramAuthBridgeProbe() {
 }
 
 
+function ProgramAuthRegistrationVersionProbe() {
+  const {
+    refreshProgramAuthStatus,
+    registerProgramAuth,
+    verifyRegisterCode,
+    completeRegisterProgramAuth,
+  } = useProgramAccessGuard();
+  const [status, setStatus] = useState("idle");
+
+  async function triggerStatus() {
+    try {
+      await refreshProgramAuthStatus();
+      setStatus("status-loaded");
+    } catch {
+      setStatus("status-failed");
+    }
+  }
+
+  return (
+    <>
+      <button type="button" onClick={() => void triggerStatus()}>
+        load status
+      </button>
+      <span data-testid="registration-version-status">{status}</span>
+      <span data-testid="has-register-v2">{String(Boolean(registerProgramAuth))}</span>
+      <span data-testid="has-register-v3-verify">{String(Boolean(verifyRegisterCode))}</span>
+      <span data-testid="has-register-v3-complete">{String(Boolean(completeRegisterProgramAuth))}</span>
+    </>
+  );
+}
+
+
 describe("program access provider", () => {
   it("routes recognized program access errors into the shared outlet", async () => {
     render(
@@ -350,5 +382,49 @@ describe("program access provider", () => {
     expect(await screen.findByTestId("program-auth-status")).toHaveTextContent("register-loaded");
     expect(screen.getByTestId("program-auth-auth-state")).toHaveTextContent("none");
     expect(screen.getByTestId("program-auth-runtime-state")).toHaveTextContent("stopped");
+  });
+
+  it("gates the registration flow v3 actions behind registration_flow_version=3", async () => {
+    const store = createAppRuntimeStore();
+    const programAuthClient = {
+      getProgramAuthStatus: async () => ({
+        mode: "remote_entitlement",
+        stage: "packaged_release",
+        guard_enabled: true,
+        message: "请先登录程序会员",
+        auth_state: null,
+        runtime_state: "stopped",
+        grace_expires_at: null,
+        last_error_code: "program_auth_required",
+        registration_flow_version: 3,
+      }),
+      loginProgramAuth: async () => {
+        throw new Error("not used");
+      },
+      registerProgramAuth: async () => {
+        throw new Error("not used");
+      },
+      logoutProgramAuth: async () => {
+        throw new Error("not used");
+      },
+    };
+
+    render(
+      <AppRuntimeProvider store={store}>
+        <ProgramAccessProvider programAuthClient={programAuthClient} runtimeStore={store}>
+          <ProgramAuthRegistrationVersionProbe />
+        </ProgramAccessProvider>
+      </AppRuntimeProvider>,
+    );
+
+    expect(screen.getByTestId("has-register-v3-verify")).toHaveTextContent("false");
+    expect(screen.getByTestId("has-register-v3-complete")).toHaveTextContent("false");
+
+    fireEvent.click(screen.getByRole("button", { name: "load status" }));
+
+    expect(await screen.findByTestId("registration-version-status")).toHaveTextContent("status-loaded");
+    expect(screen.getByTestId("has-register-v2")).toHaveTextContent("true");
+    expect(screen.getByTestId("has-register-v3-verify")).toHaveTextContent("true");
+    expect(screen.getByTestId("has-register-v3-complete")).toHaveTextContent("true");
   });
 });

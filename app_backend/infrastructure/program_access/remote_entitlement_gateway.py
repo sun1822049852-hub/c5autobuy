@@ -61,6 +61,7 @@ class RemoteEntitlementGateway:
         secret_store: SecretStore,
         device_id_store: DeviceIdStore,
         stage: str = "packaged_release",
+        probe_registration_readiness: bool = False,
     ) -> None:
         self._remote_client = remote_client
         self._verifier = verifier
@@ -68,6 +69,8 @@ class RemoteEntitlementGateway:
         self._secret_store = secret_store
         self._device_id_store = device_id_store
         self._stage = stage
+        self._probe_registration_readiness = probe_registration_readiness
+        self._registration_flow_version_cache = 2
 
     def close(self) -> None:
         close = getattr(self._remote_client, "close", None)
@@ -140,9 +143,42 @@ class RemoteEntitlementGateway:
             result = self._remote_client.send_register_code(email)
         except Exception as exc:
             return self._reject_route_action_error(exc)
+        self._registration_flow_version_cache = 3
         return ProgramAccessActionResult.accept(
             summary=self.get_summary(),
             message=result.message,
+            payload=_compact_payload({
+                "register_session_id": result.register_session_id,
+                "masked_email": result.masked_email,
+                "code_length": result.code_length,
+                "code_expires_in_seconds": result.code_expires_in_seconds or result.expires_in_seconds,
+                "resend_after_seconds": result.resend_after_seconds,
+            }),
+        )
+
+    def verify_register_code(
+        self,
+        *,
+        email: str,
+        code: str,
+        register_session_id: str,
+    ) -> ProgramAccessActionResult:
+        try:
+            result = self._remote_client.verify_register_code(
+                email=email,
+                code=code,
+                register_session_id=register_session_id,
+            )
+        except Exception as exc:
+            return self._reject_route_action_error(exc)
+        self._registration_flow_version_cache = 3
+        return ProgramAccessActionResult.accept(
+            summary=self.get_summary(),
+            message=result.message,
+            payload=_compact_payload({
+                "verification_ticket": result.verification_ticket,
+                "ticket_expires_in_seconds": getattr(result, "ticket_expires_in_seconds", None),
+            }),
         )
 
     def register(
@@ -164,6 +200,32 @@ class RemoteEntitlementGateway:
             return self._reject_route_action_error(exc)
         return ProgramAccessActionResult.accept(
             summary=self.get_summary(),
+            message=PROGRAM_REGISTERED_BUT_NOT_MEMBER_MESSAGE,
+        )
+
+    def complete_register(
+        self,
+        *,
+        email: str,
+        verification_ticket: str,
+        username: str,
+        password: str,
+    ) -> ProgramAccessActionResult:
+        try:
+            result = self._remote_client.complete_register(
+                email=email,
+                verification_ticket=verification_ticket,
+                username=username,
+                password=password,
+            )
+        except Exception as exc:
+            return self._reject_route_action_error(exc)
+        self._registration_flow_version_cache = 3
+        applied = self._apply_remote_auth_result(result)
+        if not applied.accepted:
+            return applied
+        return ProgramAccessActionResult.accept(
+            summary=applied.summary,
             message=PROGRAM_REGISTERED_BUT_NOT_MEMBER_MESSAGE,
         )
 
@@ -490,12 +552,31 @@ class RemoteEntitlementGateway:
             stage=self._stage,
             guard_enabled=True,
             message=_code_message(last_error_code),
+            registration_flow_version=self._resolve_registration_flow_version(),
             username=_read_optional_string(snapshot, "username"),
             auth_state=auth_state,
             runtime_state=_read_optional_string(snapshot, "runtime_state") or "stopped",
             grace_expires_at=_read_optional_string(snapshot, "grace_expires_at"),
             last_error_code=last_error_code,
         )
+
+    def _resolve_registration_flow_version(self) -> int:
+        if self._registration_flow_version_cache == 3:
+            return 3
+        if not self._probe_registration_readiness:
+            return self._registration_flow_version_cache
+        get_readiness = getattr(self._remote_client, "get_registration_readiness", None)
+        if not callable(get_readiness):
+            return self._registration_flow_version_cache
+        try:
+            readiness = get_readiness()
+        except Exception:
+            return self._registration_flow_version_cache
+        if bool(getattr(readiness, "ready", False)) and int(getattr(readiness, "registration_flow_version", 2)) == 3:
+            self._registration_flow_version_cache = 3
+        else:
+            self._registration_flow_version_cache = 2
+        return self._registration_flow_version_cache
 
     def _load_verified_envelope(self, bundle: ProgramCredentialBundle) -> _VerifiedEnvelope:
         snapshot = _as_snapshot(bundle.entitlement_snapshot)
@@ -603,3 +684,8 @@ def _code_message(code: str | None) -> str:
     if code == PROGRAM_REFRESH_FAILED_CODE:
         return PROGRAM_REFRESH_FAILED_MESSAGE
     return PROGRAM_ACCESS_UNLOCKED_MESSAGE
+
+
+def _compact_payload(payload: dict[str, object | None]) -> dict[str, object] | None:
+    normalized = {key: value for key, value in payload.items() if value is not None}
+    return normalized or None

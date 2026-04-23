@@ -43,10 +43,130 @@ def test_send_register_code_maps_success_message() -> None:
 
         result = client.send_register_code("alice@example.com")
 
-    assert captured["path"] == "/api/auth/email/send-code"
+    assert captured["path"] == "/api/auth/register/send-code"
     assert captured["body"] == {"email": "alice@example.com"}
     assert result.message == "注册验证码已发送"
     assert result.expires_in_seconds == 300
+
+
+def test_verify_and_complete_register_map_v3_paths() -> None:
+    captured: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(
+            {
+                "path": request.url.path,
+                "body": json.loads(request.content.decode("utf-8")),
+            }
+        )
+        if request.url.path == "/api/auth/register/verify-code":
+            return httpx.Response(
+                200,
+                json={
+                    "ok": True,
+                    "verification_ticket": "ticket_1",
+                    "ticket_expires_in_seconds": 900,
+                },
+            )
+        if request.url.path == "/api/auth/register/complete":
+            return httpx.Response(
+                200,
+                json={
+                    "ok": True,
+                    "account_summary": {
+                        "id": "user-1",
+                        "email": "alice@example.com",
+                        "username": "alice",
+                        "membership_plan": "inactive",
+                    },
+                    "auth_session": {
+                        "refresh_token": "refresh-token-1",
+                        "access_bundle": {
+                            "snapshot": _build_snapshot(),
+                            "signature": "c2lnbmF0dXJl",
+                            "kid": "ed25519-2026-04",
+                        },
+                        "user": {
+                            "id": "user-1",
+                            "username": "alice",
+                            "membership_plan": "inactive",
+                        },
+                    },
+                },
+            )
+        raise AssertionError(f"unexpected path: {request.url.path}")
+
+    with httpx.Client(
+        transport=httpx.MockTransport(handler),
+        base_url="https://control-plane.test",
+    ) as http_client:
+        client = RemoteControlPlaneClient(
+            base_url="https://control-plane.test",
+            client=http_client,
+        )
+
+        verify_result = client.verify_register_code(
+            email="alice@example.com",
+            code="123456",
+            register_session_id="register_session_1",
+        )
+        complete_result = client.complete_register(
+            email="alice@example.com",
+            verification_ticket="ticket_1",
+            username="alice",
+            password="Secret123!",
+        )
+
+    assert captured[0] == {
+        "path": "/api/auth/register/verify-code",
+        "body": {
+            "email": "alice@example.com",
+            "code": "123456",
+            "register_session_id": "register_session_1",
+        },
+    }
+    assert captured[1] == {
+        "path": "/api/auth/register/complete",
+        "body": {
+            "email": "alice@example.com",
+            "verification_ticket": "ticket_1",
+            "username": "alice",
+            "password": "Secret123!",
+        },
+    }
+    assert verify_result.verification_ticket == "ticket_1"
+    assert complete_result.message == "注册成功"
+    assert complete_result.user["username"] == "alice"
+
+
+def test_get_registration_readiness_maps_flow_version() -> None:
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = request.url.path
+        return httpx.Response(
+            200,
+            json={
+                "ok": True,
+                "ready": True,
+                "registration_flow_version": 3,
+            },
+        )
+
+    with httpx.Client(
+        transport=httpx.MockTransport(handler),
+        base_url="https://control-plane.test",
+    ) as http_client:
+        client = RemoteControlPlaneClient(
+            base_url="https://control-plane.test",
+            client=http_client,
+        )
+
+        result = client.get_registration_readiness()
+
+    assert captured["path"] == "/api/auth/register/readiness"
+    assert result.ready is True
+    assert result.registration_flow_version == 3
 
 
 def test_fetch_public_key_pem_maps_success_response() -> None:

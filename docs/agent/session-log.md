@@ -367,6 +367,32 @@
 - 余险：主导航按钮上的 `Live` 标签仍是英文视觉词，不影响功能，但若后续要继续做整体文案统一，应把它纳入同一轮 UI 文案清理，而不是再零碎散改。
 - 下一步：提交本轮源码与文档改动；若用户继续要求清理 `Live` 这类剩余英文视觉词，再单开一个小范围 UI 文案收口任务。
 
+## 2026-04-22 00:35 (Asia/Shanghai)
+- 背景：用户继续要求把主导航上的 `Live` 标签全部移除。
+- 已完成：按最小范围处理，仅修改壳层导航渲染，不碰导航按钮本身、路由切换、激活态与可点击区域。`app_desktop_web/src/features/shell/app_shell.jsx` 中的 `NAV_ITEMS` 已去掉 `tag` 字段，导航按钮也不再渲染 `app-shell__nav-button-tag`；同时清理 `app_desktop_web/src/styles/app.css` 中对应的无用标签样式。为锁定结果，`app_desktop_web/tests/renderer/account_center_page.test.jsx` 新增了“不再出现 `Live`”的断言。
+- 已做验证：
+  - 红灯：`npm --prefix app_desktop_web test -- tests/renderer/account_center_page.test.jsx --run`，结果失败点准确落在仍存在的多个 `Live` 标签。
+  - 绿灯 1：`npm --prefix app_desktop_web test -- tests/renderer/account_center_page.test.jsx --run`，结果 `7 passed`
+  - 绿灯 2：`npm --prefix app_desktop_web test -- tests/renderer/account_center_page.test.jsx tests/renderer/query_system_page.test.jsx tests/renderer/purchase_system_page.test.jsx tests/renderer/diagnostics_sidebar.test.jsx --run`，结果 `60 passed`
+  - 额外复扫：`rg -n "Live|app-shell__nav-button-tag" app_desktop_web/src app_desktop_web/tests -g '!**/node_modules/**'`，当前只剩测试里的“不得出现 Live”断言，源码层已无残留渲染。
+- 当前进度：主导航 `Live` 标签已全部移除；当前工作树仅剩这 3 个相关文件改动，尚未提交。
+- 余险：无功能性余险；本轮只删视觉标签，不影响壳层布局、交互和页面切换。
+- 下一步：等待用户决定是否把这刀也提交。
+
+## 2026-04-22 01:00 (Asia/Shanghai)
+- 背景：用户要求按三步逻辑落地程序账号注册，并把防批量刷注册的邮箱校验前移到发验证码阶段。
+- 已完成：完成现状审查，确认当前前端仍是一屏式注册表单、本地后端仅有“发码 + 注册”两接口；据此新增规格文档 `docs/superpowers/specs/2026-04-22-registration-anti-abuse-flow-design.md`，正式冻结为“三步交互 + 三接口 + 发码阶段远端风控 + 验证通过后一次性注册票据”的设计。
+- 已做验证：已回读新 spec 内容，并已发起独立 spec reviewer 审查，待 reviewer 返回最终意见；本阶段未修改业务代码、未执行自动化测试。
+- 当前进度：注册方案已进入“文档化并待审查”状态；业务实现与计划尚未开始。
+- 下一步：吸收 spec reviewer 反馈后修正文档；若无阻塞，则请用户确认该 spec 文件，再进入实现计划。
+
+## 2026-04-22 01:34 (Asia/Shanghai)
+- 背景：继续收口注册三步流 spec，目标是让该文档在进入实现计划前不再存在接口契约、状态跳转或灰度发布层面的歧义。
+- 已完成：围绕 reviewer 提出的五轮问题，补齐了注册接口硬契约、错误码总表、统一失败包络、冷却优先级、重发/验码幂等规则、能力开关 `registration_flow_version`、短邮箱脱敏规则、网络失败映射、敏感凭据日志禁令、远端路径映射与状态迁移表；随后将规格文档单独提交为 `eda54e3 docs: add anti-abuse registration flow spec`，未带入当前工作树中的其它 UI 脏改。
+- 已做验证：多次回读 `docs/superpowers/specs/2026-04-22-registration-anti-abuse-flow-design.md` 并完成 5 轮 spec reviewer 闭环；按技能上限已停止继续派发 reviewer。未执行自动化测试，因为本阶段仍是文档收口，不涉及业务代码。
+- 当前进度：注册三步流 spec 已写入仓库并单独提交；下一关是等待用户审阅该 spec 文件，确认后才能进入实现计划。
+- 下一步：请用户审阅 `docs/superpowers/specs/2026-04-22-registration-anti-abuse-flow-design.md`；若无异议，下一步进入 `writing-plans`，拆出前端三步状态机、本地后端转发层与远端控制面接口改造的实现计划。
+
 ## 2026-04-22 21:39 (Asia/Shanghai)
 - 背景：用户要求把项目对外入口收口为 JS-only，移除无效且易混淆的顶层 Python 启动入口，但不能破坏 JS 桌面壳内部拉起 Python backend 的既有链路。
 - 已完成：先补红灯测试锁定“根目录不再保留 `run_app.py` / `run_app_local_debug.py`、README 与 `docs/superpowers/README.md` 不再把 Python 当启动入口、`app_backend/main.py` 不再保留直接脚本启动口”，随后删除两个顶层 Python 包装入口，移除 `app_backend/main.py` 的 `__main__` 启动 guard，并将主 README 与 superpowers 说明统一收口为“用户态入口 = `main_ui_node_desktop.js`，本地调试入口 = `main_ui_node_desktop_local_debug.js`，Python backend 仅供 JS 桌面壳内部使用”。
@@ -374,7 +400,117 @@
   - 红灯：`python -m pytest tests/backend/test_remove_legacy_cli_entry.py -q`，结果 `4 failed`，失败点准确落在旧 Python 包装入口、README 旧文案、以及 `app_backend/main.py` 仍保留直接执行入口。
   - 绿灯：`python -m pytest tests/backend/test_remove_legacy_cli_entry.py tests/backend/test_backend_main_entry.py -q`，结果 `9 passed`。
   - JS 启动器回归：`npm --prefix app_desktop_web test -- tests/electron/desktop_launcher.test.js --run`，结果 `7 passed`。
-  - 复扫：`rg -n "python run_app|run_app\.py|run_app_local_debug\.py|python -m app_backend\.main" README.md docs/superpowers/README.md tests/backend/test_remove_legacy_cli_entry.py app_backend/main.py`，当前仅命中新的约束测试，不再命中 README、辅助说明或 backend 源码。
+  - 复扫：`rg -n "python run_app|run_app\\.py|run_app_local_debug\\.py|python -m app_backend\\.main" README.md docs/superpowers/README.md tests/backend/test_remove_legacy_cli_entry.py app_backend/main.py`，当前仅命中新的约束测试，不再命中 README、辅助说明或 backend 源码。
 - 当前进度：项目对外入口口径已正式收口为 JS-only；JS 桌面壳内部拉起 backend 的实现未动，登录/查询/购买主链路未受影响。
 - 余险：历史计划文档、历史 spec 与旧会话日志中仍会提到 `run_app.py`，它们属于历史材料而非当前入口契约；若后续还要继续清理历史文档，需要单开文档治理任务，不能把历史记录当成现行说明误删。
 - 下一步：等待用户确认新的入口口径是否满足预期；若还要进一步减少歧义，可继续把少数历史参考文档里的旧入口描述补上“历史口径”标记。
+
+## 2026-04-22 23:40 (Asia/Shanghai)
+- 背景：用户批准继续把程序账号注册三步流落到真实桌面链路，并要求用 `spec + plan + session-log` 维持可断点续战的执行节奏；当前重点是不改登录/找回密码/主业务主链，只补齐注册 v3 的真实缺口。
+- 已完成：复核已冻结 spec `docs/superpowers/specs/2026-04-22-registration-anti-abuse-flow-design.md` 与当前未提交残片，确认远端控制面已先接出 `/api/auth/register/send-code|verify-code|complete`，但真实桌面链路仍断在本地后端代理、renderer client/provider 与弹窗状态机三层；据此新增实现计划 `docs/superpowers/plans/2026-04-22-program-access-registration-v3-implementation.md`，按 chunk/task 拆成“本地后端契约锁定 -> 本地桥接实现 -> renderer 红灯 -> renderer 三步状态机 -> 验证与交接”五个 chunk。
+- 已做验证：先执行 `npm --prefix app_desktop_web test -- --run tests/renderer/program_auth_client.test.js tests/renderer/program_access_provider.test.jsx tests/renderer/program_access_sidebar_card.test.jsx tests/renderer/app_remote_bootstrap.test.jsx`，结果 `4 files failed / 16 tests passed`，失败点准确落在 `verifyRegisterCode` / `completeRegisterProgramAuth` 缺失、provider 未按 `registration_flow_version` 暴露 v3 action，以及 UI 仍渲染旧一屏式注册字段；再执行 `npm --prefix program_admin_console run test:server`，结果 `control-plane-server tests passed`，确认远端控制面侧的未提交改动基本成形。
+- 当前进度：实现计划已落盘，当前仍处于“正式写实现前的计划收口”阶段；下一刀将按 TDD 先补 backend 红灯，再做本地后端与远端 bridge 的最小实现。
+- 下一步：先补并跑 `tests/backend/test_app_bootstrap_route.py`、`tests/backend/test_program_auth_routes.py`、`tests/backend/test_remote_control_plane_client.py`、`tests/backend/test_remote_entitlement_gateway.py` 的红灯，再进入 `app_backend/` 的 summary/schema/route/client/gateway 实现；本会话收尾前需再次同步 session-log，写明实际完成到哪一 chunk/task。
+
+## 2026-04-23 00:17 (Asia/Shanghai)
+- 背景：继续执行 `docs/superpowers/plans/2026-04-22-program-access-registration-v3-implementation.md`，目标是把注册 v3 从“后端已接、前端未落地”推进到 `main_ui_node_desktop.js` 源码桌面入口真实可用。
+- 已完成：按 TDD 先补并跑 renderer 红灯，再完成四层接线。`app_desktop_web/src/api/program_auth_client.js` 新增 `verifyRegisterCode()` / `completeRegisterProgramAuth()`；`program_access_runtime.js` 与 `program_access_provider.jsx` 现已接收 `registration_flow_version` 并只在 `=3` 时暴露 v3 action；`App.jsx` 把新 action 传入程序账号弹窗；`program_access_sidebar_card.jsx` 已从旧一屏式注册表单收口为 `register_email -> register_code -> register_credentials -> register_success` 三步状态机，同时保留 `registration_flow_version != 3` 的旧注册 fallback，不改登录/找回密码入口。桌面启动侧补上 `probeRegistrationReadiness` 显式配置：`app_desktop_web/electron-main.cjs` 会在存在控制面地址时把 readiness probe flag 透传给 `app_desktop_web/python_backend.js`，后者再用环境变量 `C5_PROGRAM_ACCESS_PROBE_REGISTRATION_READINESS=1` 拉起 `app_backend/main.py`；`create_app(...)` 新增 `program_access_probe_registration_readiness` wiring，远端 entitlement gateway 因而会在 packaged/source release 链路主动探测注册 readiness，不再默认卡死在 v2。同步把实现计划中的全部 chunk/task 勾到真实完成状态。
+- 已做验证：
+  - renderer + electron：`npm --prefix app_desktop_web test -- --run tests/renderer/program_auth_client.test.js tests/renderer/program_access_provider.test.jsx tests/renderer/program_access_sidebar_card.test.jsx tests/renderer/app_remote_bootstrap.test.jsx tests/electron/python_backend.test.js tests/electron/program_access_packaging.test.js`，结果 `43 passed`。
+  - backend：`C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_app_bootstrap_route.py tests/backend/test_program_auth_routes.py tests/backend/test_remote_control_plane_client.py tests/backend/test_remote_entitlement_gateway.py tests/backend/test_desktop_web_backend_bootstrap.py tests/backend/test_backend_main_entry.py -q`，结果 `64 passed`。
+  - control plane：`npm --prefix program_admin_console run test:server`，结果 `control-plane-server tests passed`。
+  - renderer build：`npm --prefix app_desktop_web run build`，结果 `vite build` 成功，`dist/assets/index-Et0osOzK.js` 等新产物已生成。
+  - 当前自动化验证仅剩两类既有告警：FastAPI `on_event("shutdown")` 弃用告警，以及 Node `SQLite is an experimental feature` 警告；无新增失败。
+- 当前进度：计划 Chunk 1-5 已落地并完成 fresh verification；当前源码桌面入口应已具备“远端 readiness=3 时显示邮箱首屏三步注册、未就绪时继续 v2 fallback”的真实行为。本轮没有形成新的长期项目规则，因此未更新 `docs/agent/memory.md`。
+- 下一步：优先让用户直接从 `main_ui_node_desktop.js` 做一次真人链路点验，按 `发送验证码 -> 验证验证码 -> 完成注册` 走一遍真实控制面；若线上再暴露新的错误码或倒计时包络差异，再沿现有 state machine / readiness probe 落点继续补齐，而不是重开 spec。
+
+## 2026-04-23 12:31 (Asia/Shanghai)
+- 背景：用户从 `main_ui_node_desktop.js` 的正式桌面入口反馈“注册页仍是旧一屏式表单，并提示注册验证码发送失败”；本轮按用户要求只做部署，不再改前端功能实现，同时补齐 rollout spec/plan 与可续战记录。
+- 已完成：先新增 rollout 文档 `docs/superpowers/specs/2026-04-23-program-access-registration-v3-rollout-design.md` 与 `docs/superpowers/plans/2026-04-23-program-access-registration-v3-rollout.md`，把边界正式冻结为“只部署 `program_admin_console`，不改 renderer / 本地 backend / 登录与找回密码 / 主业务主链”。随后复证根因：公网 `GET http://8.138.39.139:18787/api/auth/register/readiness` 确认仍是 `404 route not found`，而本地 `program_admin_console/src/server.js` 已具备四条注册 v3 路由，问题坐实为远端旧镜像未升级。部署时使用本机现成 ECS 密钥 `C:/Users/18220/.ssh/c5_ecs_deploy_temp` 连入 `admin@8.138.39.139`；确认旧容器 `c5-program-admin` 挂在 `18787->8787`，保留 `c5_program_admin_data:/app/data` 与 `/home/admin/c5-program-admin-runtime/keys:/app/keys:ro`。本地先跑 `npm --prefix program_admin_console test`，结果全绿；再生成最小发布包 `.runtime/program_admin_console_rollout_20260423_122744.tar` 并上传远端。远端侧将旧镜像打 tag 为 `c5-program-admin:pre-rollout-20260423_122744`，保留旧源码目录为 `/home/admin/c5-program-admin-src_prev_20260423_122744`，新源码目录切到 `/home/admin/c5-program-admin-src`，并成功构建/切换新容器 `c5-program-admin:rollout-20260423_122744`。
+- 已做验证：
+  - 本地 control plane 全量：`npm --prefix program_admin_console test`，结果全部通过。
+  - 远端现网：
+    - `curl http://8.138.39.139:18787/api/health` -> `{"ok":true}`
+    - `curl http://8.138.39.139:18787/api/auth/register/readiness` -> `{"ok":true,"ready":true,"registration_flow_version":3,"mail_service_configured":true}`
+    - `curl -H "Content-Type: application/json" -d '{"email":"not-an-email","install_id":"probe-install"}' http://8.138.39.139:18787/api/auth/register/send-code` -> `{"ok":false,"error_code":"REGISTER_INPUT_INVALID",...}`，已证明路由存在且不再是 `route not found`
+  - 正式桌面 backend：
+    - `curl http://127.0.0.1:61100/app/bootstrap` -> `program_access.mode=remote_entitlement`、`stage=packaged_release`、`registration_flow_version=3`
+    - 对照 `curl http://127.0.0.1:60967/app/bootstrap` 仍是 `local_pass_through / prepackaging / registration_flow_version=2`，确认本地调试入口未被误伤
+- 当前进度：注册 v3 的真正阻塞“远端未部署”已解除；正式桌面 backend 已切到 `registration_flow_version=3`。当前唯一未拿到的新鲜证据是“部署后重开正式桌面窗口的真人 UI 目测结果”。若用户还盯着部署前打开的那扇正式窗口，它仍可能缓存旧 bootstrap，需要彻底关闭后重新从 `main_ui_node_desktop.js` 打开再看。
+- 下一步：请用户关闭当前正式桌面窗口并重新从 `main_ui_node_desktop.js` 打开程序，重新点开注册弹窗做人工点验。预期首屏只显示“注册邮箱”，验码前不出现“注册用户名 / 注册密码”。若重开后仍旧表单，再继续排查 renderer 是否缓存旧 bootstrap 或未重新拉取 `program_access` summary。
+
+## 2026-04-23 13:45 (Asia/Shanghai)
+- 背景：用户在 `2026-04-23 13:33` 左右重启 `main_ui_node_desktop.js` 后，仍看到“邮箱 + 验证码 + 用户名 + 密码”同屏旧注册 UI。继续排查后确认：远端控制面、正式本地 backend、以及当前 `dist` bundle 都已经是注册 v3，问题只剩 renderer 运行态未切到三段式。
+- 已完成：按系统化排障先补证据再修。代码对照确认 `main_ui_node_desktop.js` 拉起的是 `embedded` 桌面模式，而 `app_desktop_web/src/App.jsx` 旧逻辑只在 `bootstrapConfig.backendMode === "remote"` 时才会执行 `runtimeConnectionManager.bootstrap()`；这会让正式源码桌面虽然本地 backend 已返回 `registration_flow_version=3`，renderer 却一直停在 `EMPTY_PROGRAM_ACCESS.registrationFlowVersion = 2` 的默认值，最终落回旧一屏式注册表单。随后按 TDD 先在 `app_desktop_web/tests/renderer/app_remote_bootstrap.test.jsx` 增加“embedded + backend ready 也必须拉 `/app/bootstrap` 并显示三段式注册首屏”的红灯，再只在 `app_desktop_web/src/App.jsx` 做一刀最小修复：去掉对 `backendMode === "remote"` 的限制，只要当前 backend 已 `ready` 就统一 bootstrap。修复后重新 build renderer，新的源码桌面 bundle 已更新为 `dist/assets/index-NnDhODcd.js`。
+- 已做验证：
+  - 红灯：`npm --prefix app_desktop_web test -- tests/renderer/app_remote_bootstrap.test.jsx --run`，结果 `1 failed / 4 passed`，失败点准确显示 embedded 场景没有请求 `http://127.0.0.1:59192/app/bootstrap`，而是直接只打了 `/account-center/accounts`。
+  - 绿灯 1：再次执行 `npm --prefix app_desktop_web test -- tests/renderer/app_remote_bootstrap.test.jsx --run`，结果 `5 passed`。
+  - 绿灯 2：执行 `npm --prefix app_desktop_web test -- tests/renderer --run`，结果 `25 files / 181 tests passed`，确认 renderer 全量回归未被这次启动条件修复带坏。
+  - 构建：执行 `npm --prefix app_desktop_web run build`，结果 `vite build` 成功，当前构建产物为 `dist/assets/index-NnDhODcd.js` 与 `dist/assets/index-C9xRjEhC.css`。
+- 当前进度：根因已闭环并已修到源码入口链路；当前 `13:33` 那批旧进程仍在内存里跑旧 renderer 代码，所以用户眼前窗口不会自行变成三段式。fresh build 已落盘，下次从 `main_ui_node_desktop.js` 重启时应会先拉本地 `/app/bootstrap`，再按 `registration_flow_version=3` 显示邮箱首屏。
+- 余险：本轮只拿到了自动化验证和源码链路证据，尚未拿到“修复后新启动窗口”的真人目测截图或现场录屏；若用户重启后仍异常，则下一步优先抓新进程的 renderer 运行态日志，确认 `programAccess.registrationFlowVersion` 与 `verifyRegisterCode/completeRegisterProgramAuth` 在窗口内是否已同时生效。
+- 下一步：关闭当前 `2026-04-23 13:33` 左右启动的 `node/electron/python` 旧进程后，重新从 `main_ui_node_desktop.js` 打开程序做人工点验。预期注册首屏只显示“注册邮箱”，点击“发送注册验证码”后才进入第二段验证码 UI，验码成功后才进入第三段“用户名 + 密码”设置 UI。
+
+## 2026-04-23 14:05 (Asia/Shanghai)
+- 背景：用户继续要求优化程序账号注册弹窗 UI：第二段验证码页在关闭弹窗或切换页面后再次进入时必须保留邮箱与倒计时，不再要求重新填邮箱和重发验证码；同时移除默认 `program_auth_required / 请先登录程序会员` 提示，把输入提示放进输入框内，并把右上角关闭按钮改成红底正方形 `X`。
+- 已完成：先按 brainstorming 收敛边界，冻结为“只改程序账号弹窗前端状态与视觉层，不改远端注册接口、登录/找回密码链和主业务主链”。用户确认采用方案 A：只在当前 renderer 会话内保留第二段注册草稿，不做 `localStorage/sessionStorage` 跨刷新持久化。随后新增 spec `docs/superpowers/specs/2026-04-23-program-access-registration-dialog-persistence-and-ui-polish-design.md` 与 plan `docs/superpowers/plans/2026-04-23-program-access-registration-dialog-persistence-and-ui-polish.md`，已把“关闭后回到第二段、默认 `program_auth_required` 不显示、placeholder 化、红底 `X` 关闭按钮”写成明确实现边界。
+- 已做验证：本阶段仅完成设计与计划落盘，尚未开始写测试和业务代码，因此暂无新的自动化验证结果。
+- 当前进度：当前断点位于“计划已写完，准备补 `program_access_sidebar_card` 的前端红灯测试”。
+- 下一步：先改 `app_desktop_web/tests/renderer/program_access_sidebar_card.test.jsx`，锁定关闭弹窗后回到第二段、切回登录时仍清空注册草稿、隐藏默认 `program_auth_required`、输入框 placeholder 与关闭按钮文案契约，再按 TDD 进入最小实现。
+
+## 2026-04-23 14:32 (Asia/Shanghai)
+- 背景：继续执行 `docs/superpowers/plans/2026-04-23-program-access-registration-dialog-persistence-and-ui-polish.md`，把程序账号注册弹窗的“第二段可恢复 + 默认告警过滤 + placeholder 化 + 红底关闭按钮”从设计稿推进到真实 renderer 行为，并补齐可续战记录。
+- 已完成：`app_desktop_web/src/program_access/program_access_sidebar_card.jsx` 已完成最小实现，注册三段流进入第二段验证码页后，关闭弹窗或切换窗口再打开，会直接回到第二段并保留邮箱摘要、`register_session_id` 与倒计时；只有主动切到“登录/找回密码”、点击“修改邮箱”或注册成功时才显式清空注册草稿。默认 `program_auth_required / 请先登录程序会员` 顶部提示已过滤，不再作为异常渲染；登录/注册/找回密码输入区统一改为输入框内 `placeholder`；右上角关闭按钮已收口为红底正方形 `X`，同时保留 `aria-label=\"关闭\"`。同步更新了 `app_desktop_web/src/styles/app.css` 的浅色输入框与关闭按钮样式，并把这些契约补进 `app_desktop_web/tests/renderer/program_access_sidebar_card.test.jsx`。本轮 spec `docs/superpowers/specs/2026-04-23-program-access-registration-dialog-persistence-and-ui-polish-design.md` 与 plan `docs/superpowers/plans/2026-04-23-program-access-registration-dialog-persistence-and-ui-polish.md` 均已按真实完成态收口。
+- 已做验证：
+  - 红灯：`npm --prefix app_desktop_web test -- tests/renderer/program_access_sidebar_card.test.jsx --run`，结果 `3 failed / 8 passed`，失败点准确落在默认 `program_auth_required` 仍显示、关闭后注册流被重置、关闭按钮文本仍是“关闭”。
+  - 聚焦绿灯：`npm --prefix app_desktop_web test -- tests/renderer/program_access_sidebar_card.test.jsx --run`，结果 `11 passed`。
+  - renderer 全量：`npm --prefix app_desktop_web test -- tests/renderer --run`，结果 `25 files / 185 tests passed`。
+  - 构建：`npm --prefix app_desktop_web run build`，结果 `vite build` 成功，当前产物为 `dist/assets/index-CK1Q2iXY.js` 与 `dist/assets/index--VJ_zwjX.css`。
+- 当前进度：本轮前端行为、样式与自动化验证已全部落地；当前只剩真人界面点验，用新窗口确认“关闭后回到第二段、默认提示消失、红底 `X`”在 `main_ui_node_desktop.js` 启动的正式窗口里也按预期生效。
+- 下一步：彻底关闭当前程序窗口后，重新从 `main_ui_node_desktop.js` 打开并点开程序账号弹窗，人工检查三点：1. 首屏只显示邮箱输入；2. 发码进入第二段后关闭再打开仍停留在验证码页且保留倒计时；3. 顶部不再出现默认 `program_auth_required` 提示，右上角显示红底方形 `X`。
+
+## 2026-04-23 14:35 (Asia/Shanghai)
+- 背景：承接上一条断点后，本轮只做记录补齐与收尾复验，不再扩大修改范围。
+- 已完成：已把本轮真实完成态回写到 `docs/agent/session-log.md` 与 `docs/agent/memory.md`，并复核 `docs/superpowers/plans/2026-04-23-program-access-registration-dialog-persistence-and-ui-polish.md` 当前无未勾选项；同时再次核对工作区脏文件范围，确认仍是本轮注册 v3 / 程序账号弹窗相关改动与文档，不存在新的意外写入。
+- 已做验证：
+  - `npm --prefix app_desktop_web test -- tests/renderer/program_access_sidebar_card.test.jsx --run`，结果 `11 passed`。
+  - `npm --prefix app_desktop_web test -- tests/renderer --run`，结果 `25 files / 185 tests passed`。
+  - `npm --prefix app_desktop_web run build`，结果 `vite build` 成功，产物仍为 `dist/assets/index-CK1Q2iXY.js` 与 `dist/assets/index--VJ_zwjX.css`。
+  - `rg -n "^- \\[ \\]" docs/superpowers/plans/2026-04-23-program-access-registration-dialog-persistence-and-ui-polish.md`，结果无命中，确认本轮 plan 已按真实进度全部勾完。
+- 当前进度：代码、文档和 fresh verification 已全部收口；当前唯一未补齐的是正式窗口的人工目测点验。
+- 下一步：让用户彻底关闭旧程序窗口后，从 `main_ui_node_desktop.js` 重新打开，人工确认三段式首屏、第二段恢复、默认提示消失与红底 `X` 都在真实桌面窗口里生效。
+
+## 2026-04-23 14:47 (Asia/Shanghai)
+- 背景：会话准备结束，按 `save-status-handoff` 固化当前断点，避免下个会话重做已完成的注册 v3 / 程序账号弹窗工作。
+- 当前目标：收口程序账号注册相关两条已落地方案，分别是 `docs/superpowers/plans/2026-04-22-program-access-registration-v3-implementation.md` 与 `docs/superpowers/plans/2026-04-23-program-access-registration-dialog-persistence-and-ui-polish.md`；当前只剩正式窗口人工点验，不再扩改实现。
+- 进度断点：
+  - 当前 chunk/task：`2026-04-23-program-access-registration-dialog-persistence-and-ui-polish` 的 `Chunk 3 / Task 5` 已完成；当前没有正在编码的 task。
+  - 已完成：远端控制面 rollout、embedded renderer bootstrap 修复、注册三段式状态机、第二段验证码页关闭后恢复、默认 `program_auth_required` 过滤、输入框 placeholder 化、红底正方形 `X` 关闭按钮、spec/plan/session-log/memory 回写、fresh renderer 测试与 build。
+  - 正在进行：无代码实现进行中；唯一剩余动作是用户侧从 `main_ui_node_desktop.js` 重新启动后的真人界面点验。
+- 现场状态：
+  - 工作目录：`C:/Users/18220/Desktop/C5autobug更新接口 - 副本 (2)`
+  - 当前分支：`master`
+  - 当前 worktree：根工作树；另有 `.worktrees/local-program-access-extension`、`.worktrees/program-control-plane-chunk1`、`.worktrees/registration-anti-abuse-plan` 保留，但本轮未切过去继续做事。
+  - 未提交改动：存在，且范围较大；本轮相关核心文件包括 `app_desktop_web/src/App.jsx`、`app_desktop_web/src/program_access/program_access_sidebar_card.jsx`、`app_desktop_web/src/styles/app.css`、`app_desktop_web/tests/renderer/program_access_sidebar_card.test.jsx`、`docs/agent/session-log.md`、`docs/agent/memory.md`，以及注册 v3 的 backend / control-plane / spec / plan 文件。当前未提交、未清理、未回滚。
+- 错误与约束：
+  - 不要再重走“远端没部署 / renderer 没实现”的旧结论；这两条都已修过并拿到验证。
+  - 如果用户仍看到旧 UI，下一会话第一反应不是改代码，而是先确认是否还盯着旧窗口/旧进程，或是否没有重新从 `main_ui_node_desktop.js` 启动。
+  - 必须保持不变：不改登录链、不改找回密码链、不改 `查询 -> 命中 -> 购买` 主链；注册第二段草稿只在当前 renderer 会话保留，且只允许在“切到登录/找回密码、修改邮箱、注册成功”时清空。
+- 验证状态：
+  - 已执行：`npm --prefix app_desktop_web test -- tests/renderer/program_access_sidebar_card.test.jsx --run` -> `11 passed`；`npm --prefix app_desktop_web test -- tests/renderer --run` -> `25 files / 185 tests passed`；`npm --prefix app_desktop_web run build` -> 成功。
+  - 已有历史证据：远端 readiness / send-code 路由已上线，embedded bootstrap 修复也已单独做过红绿验证，详见本文件 `2026-04-23 12:31`、`13:45`、`14:32` 三节。
+  - 验证缺口：尚无“用户重开正式窗口后的真人目测”新鲜证据。
+- 下一步第一刀：下个会话先让用户彻底关闭旧窗口，再从 `main_ui_node_desktop.js` 重开做人工点验；若仍异常，第一步先抓新进程里的 renderer 运行态与 `programAccess.registrationFlowVersion`，不要先改实现。点验后再按结果继续更新 `docs/agent/session-log.md`。
+
+## 2026-04-23 14:54 (Asia/Shanghai)
+- 背景：新会话按 `resume-from-handoff` 承接断点，先读取 `docs/agent/session-log.md` 最新一节、两份注册相关 plan、`docs/agent/memory.md`，并核对当前 `git status / branch / worktree`，避免重复实现已完成内容。
+- 已完成：
+  - 已复述当前总目标仍是“只收口程序账号注册 v3 与弹窗持久化方案，剩余正式窗口人工点验”，不重做远端 rollout、embedded bootstrap 修复与三段式注册实现。
+  - 已确认现场仍在根工作树 `master`，`origin/master` 之上 `ahead 11`；保留 worktree 仍为 `.worktrees/local-program-access-extension`、`.worktrees/program-control-plane-chunk1`、`.worktrees/registration-anti-abuse-plan`，与 handoff 一致。
+  - 已识别文档与现场的唯一差异是：`14:47` 节中的未提交改动列表是摘要而非全量；当前 `git status` 还额外显示 `app_backend/main.py`、`app_desktop_web/electron-main.cjs`、`app_desktop_web/python_backend.js`、`app_desktop_web/src/features/shell/app_shell.jsx`、`tests/backend/test_desktop_web_backend_bootstrap.py` 及新增 rollout/spec/plan 文档等脏改与未跟踪文件，但未发现“实现被回退”或“分支切错”的冲突证据。
+  - 已按用户要求先让用户彻底关闭旧窗口，并从 `main_ui_node_desktop.js` 重新启动正式桌面做人工点验；当前等待用户返回新鲜目测结果。
+- 已做验证：
+  - 文档承接：重新读取 `docs/agent/session-log.md` 的 `2026-04-23 14:47` 节、`docs/superpowers/plans/2026-04-22-program-access-registration-v3-implementation.md`、`docs/superpowers/plans/2026-04-23-program-access-registration-dialog-persistence-and-ui-polish.md`、`docs/agent/memory.md`。
+  - 现场核对：`git status --short --branch`、`git branch --show-current`、`git worktree list --porcelain`。
+- 当前进度：没有新增代码修改；唯一未完成项仍是正式窗口 fresh 真人点验。
+- 下一步：若用户重开后界面正常，则仅补齐本节后续点验结果；若仍异常，严格按 handoff 先抓新进程里的 renderer 运行态与 `programAccess.registrationFlowVersion`，先定位根因，再决定是否需要改代码。

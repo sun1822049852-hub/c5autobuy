@@ -582,6 +582,7 @@ async function bootstrapApplication({
     const controlPlaneBaseUrl = typeof rawProgramAccessConfig?.controlPlaneBaseUrl === "string"
       ? rawProgramAccessConfig.controlPlaneBaseUrl.trim()
       : "";
+    const probeRegistrationReadiness = Boolean(controlPlaneBaseUrl);
     if (packagedRelease && !controlPlaneBaseUrl) {
       throw new Error("Packaged release requires a control plane base url.");
     }
@@ -590,9 +591,13 @@ async function bootstrapApplication({
           ...rawProgramAccessConfig,
           appPrivateDir: embeddedBackendPaths.appPrivateDir,
           controlPlaneBaseUrl,
+          probeRegistrationReadiness,
           stage: "packaged_release",
         }
-      : rawProgramAccessConfig;
+      : {
+          ...rawProgramAccessConfig,
+          probeRegistrationReadiness,
+        };
     const pythonExecutable = selectedResolvePythonExecutable(projectRoot);
     backend = await selectedStartPythonBackend({
       dbPath: embeddedBackendPaths.dbPath,

@@ -487,6 +487,7 @@ describe("account center page", () => {
     expect(heroCopy).not.toBeNull();
     expect(within(heroCopy).getByText("账号中心")).toBeInTheDocument();
     expect(screen.queryByText("ACCOUNT CENTER")).not.toBeInTheDocument();
+    expect(screen.queryByText("Live")).not.toBeInTheDocument();
     expect(screen.queryByText(/统一管理账号备注/)).not.toBeInTheDocument();
     expect(screen.queryByText("后端状态：ready")).not.toBeInTheDocument();
 

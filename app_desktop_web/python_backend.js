@@ -88,6 +88,7 @@ export function buildPythonBackendEnv(projectRoot, baseEnv = process.env, progra
   const controlPlaneBaseUrl = typeof programAccessConfig?.controlPlaneBaseUrl === "string"
     ? programAccessConfig.controlPlaneBaseUrl.trim()
     : "";
+  const probeRegistrationReadiness = programAccessConfig?.probeRegistrationReadiness === true;
   if (stage) {
     env.C5_PROGRAM_ACCESS_STAGE = stage;
   }
@@ -96,6 +97,9 @@ export function buildPythonBackendEnv(projectRoot, baseEnv = process.env, progra
     if (!stage) {
       env.C5_PROGRAM_ACCESS_STAGE = "packaged_release";
     }
+  }
+  if (probeRegistrationReadiness) {
+    env.C5_PROGRAM_ACCESS_PROBE_REGISTRATION_READINESS = "1";
   }
 
   return env;

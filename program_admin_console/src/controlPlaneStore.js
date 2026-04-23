@@ -45,6 +45,10 @@ function createOpaqueToken(bytes = 24) {
   return crypto.randomBytes(bytes).toString("base64url");
 }
 
+function createId(prefix = "id") {
+  return `${toText(prefix) || "id"}_${createOpaqueToken(12)}`;
+}
+
 function normalizePlan(code = "") {
   return toText(code).toLowerCase() === "member" ? "member" : "inactive";
 }
@@ -197,6 +201,71 @@ class ControlPlaneStore {
         revoked_at TEXT NOT NULL DEFAULT '',
         FOREIGN KEY (user_id) REFERENCES client_user(id) ON DELETE CASCADE
       );
+
+      CREATE TABLE IF NOT EXISTS register_session (
+        id TEXT PRIMARY KEY,
+        email TEXT NOT NULL,
+        install_id TEXT NOT NULL,
+        device_fingerprint TEXT NOT NULL DEFAULT '',
+        session_state TEXT NOT NULL DEFAULT 'pending',
+        code_hash TEXT NOT NULL DEFAULT '',
+        code_expires_at TEXT NOT NULL DEFAULT '',
+        session_expires_at TEXT NOT NULL,
+        resend_allowed_at TEXT NOT NULL DEFAULT '',
+        send_count INTEGER NOT NULL DEFAULT 0,
+        verify_attempt_count INTEGER NOT NULL DEFAULT 0,
+        last_sent_at TEXT NOT NULL DEFAULT '',
+        verified_at TEXT NOT NULL DEFAULT '',
+        completed_at TEXT NOT NULL DEFAULT '',
+        invalidated_at TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_register_session_email_install
+      ON register_session(email, install_id, session_state, session_expires_at);
+
+      CREATE TABLE IF NOT EXISTS register_send_ledger (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT NOT NULL,
+        install_id TEXT NOT NULL,
+        source_ip TEXT NOT NULL DEFAULT '',
+        device_fingerprint TEXT NOT NULL DEFAULT '',
+        register_session_id TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_register_send_ledger_email_created
+      ON register_send_ledger(email, created_at);
+      CREATE INDEX IF NOT EXISTS idx_register_send_ledger_install_created
+      ON register_send_ledger(install_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_register_send_ledger_source_ip_created
+      ON register_send_ledger(source_ip, created_at);
+      CREATE INDEX IF NOT EXISTS idx_register_send_ledger_device_created
+      ON register_send_ledger(device_fingerprint, created_at);
+
+      CREATE TABLE IF NOT EXISTS register_send_idempotency (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        idempotency_key TEXT NOT NULL UNIQUE,
+        register_session_id TEXT NOT NULL,
+        observed_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_register_send_idempotency_expires
+      ON register_send_idempotency(expires_at);
+
+      CREATE TABLE IF NOT EXISTS register_verification_ticket (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ticket_hash TEXT NOT NULL UNIQUE,
+        register_session_id TEXT NOT NULL,
+        email TEXT NOT NULL,
+        install_id TEXT NOT NULL,
+        device_fingerprint TEXT NOT NULL DEFAULT '',
+        expires_at TEXT NOT NULL,
+        consumed_at TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_register_ticket_lookup
+      ON register_verification_ticket(register_session_id, email, install_id, consumed_at, expires_at);
     `);
   }
 
@@ -775,6 +844,390 @@ class ControlPlaneStore {
       sessionId: Number(row.id) || 0,
       now
     });
+  }
+
+  purgeExpiredRegisterArtifacts({now = new Date()} = {}) {
+    const stamp = nowIso(now);
+    this.db.prepare(`
+      DELETE FROM register_send_idempotency
+      WHERE expires_at <= ?
+    `).run(stamp);
+    this.db.prepare(`
+      DELETE FROM register_verification_ticket
+      WHERE consumed_at != '' OR expires_at <= ?
+    `).run(stamp);
+    this.db.prepare(`
+      DELETE FROM register_session
+      WHERE session_expires_at <= ? OR session_state IN ('completed', 'invalidated')
+    `).run(stamp);
+  }
+
+  getRegisterSessionById(registerSessionId = "") {
+    const row = this.db.prepare(`
+      SELECT *
+      FROM register_session
+      WHERE id = ?
+      LIMIT 1
+    `).get(toText(registerSessionId));
+    if (!row) {
+      return null;
+    }
+    return {
+      id: toText(row.id),
+      email: toText(row.email),
+      install_id: toText(row.install_id),
+      device_fingerprint: toText(row.device_fingerprint),
+      session_state: toText(row.session_state) || "pending",
+      code_hash: toText(row.code_hash),
+      code_expires_at: toText(row.code_expires_at),
+      session_expires_at: toText(row.session_expires_at),
+      resend_allowed_at: toText(row.resend_allowed_at),
+      send_count: Number(row.send_count) || 0,
+      verify_attempt_count: Number(row.verify_attempt_count) || 0,
+      last_sent_at: toText(row.last_sent_at),
+      verified_at: toText(row.verified_at),
+      completed_at: toText(row.completed_at),
+      invalidated_at: toText(row.invalidated_at),
+      created_at: toText(row.created_at),
+      updated_at: toText(row.updated_at)
+    };
+  }
+
+  getLatestPendingRegisterSession({email = "", installId = "", now = new Date()} = {}) {
+    const row = this.db.prepare(`
+      SELECT *
+      FROM register_session
+      WHERE email = ? AND install_id = ? AND session_state = 'pending' AND session_expires_at > ?
+      ORDER BY created_at DESC
+      LIMIT 1
+    `).get(toText(email).toLowerCase(), toText(installId), nowIso(now));
+    return row ? this.getRegisterSessionById(row.id) : null;
+  }
+
+  getRegisterSendIdempotentHit({idempotencyKey = "", now = new Date()} = {}) {
+    const row = this.db.prepare(`
+      SELECT register_session_id
+      FROM register_send_idempotency
+      WHERE idempotency_key = ? AND expires_at > ?
+      LIMIT 1
+    `).get(toText(idempotencyKey), nowIso(now));
+    if (!row) {
+      return null;
+    }
+    return this.getRegisterSessionById(row.register_session_id);
+  }
+
+  rememberRegisterSendIdempotency({
+    idempotencyKey = "",
+    registerSessionId = "",
+    windowSeconds = 2,
+    now = new Date()
+  } = {}) {
+    const stamp = nowIso(now);
+    const expiresAt = new Date(parseMs(stamp) + Math.max(1, Number(windowSeconds) || 1) * 1000).toISOString();
+    this.db.prepare(`
+      INSERT INTO register_send_idempotency(idempotency_key, register_session_id, observed_at, expires_at)
+      VALUES(?, ?, ?, ?)
+      ON CONFLICT(idempotency_key) DO UPDATE SET
+        register_session_id = excluded.register_session_id,
+        observed_at = excluded.observed_at,
+        expires_at = excluded.expires_at
+    `).run(toText(idempotencyKey), toText(registerSessionId), stamp, expiresAt);
+  }
+
+  countRegisterSendsByWindow({
+    field = "",
+    value = "",
+    windowSeconds = 60,
+    now = new Date()
+  } = {}) {
+    const name = toText(field);
+    const allowedFields = new Set(["email", "install_id", "source_ip", "device_fingerprint"]);
+    if (!allowedFields.has(name)) {
+      return {count: 0, earliest_ms: 0};
+    }
+    const valueText = toText(value);
+    if (!valueText) {
+      return {count: 0, earliest_ms: 0};
+    }
+    const stamp = nowIso(now);
+    const since = new Date(parseMs(stamp) - Math.max(1, Number(windowSeconds) || 1) * 1000).toISOString();
+    const row = this.db.prepare(`
+      SELECT COUNT(1) AS total, MIN(created_at) AS earliest_at
+      FROM register_send_ledger
+      WHERE ${name} = ? AND created_at >= ?
+    `).get(valueText, since);
+    return {
+      count: Number(row && row.total) || 0,
+      earliest_ms: parseMs(row && row.earliest_at ? row.earliest_at : "")
+    };
+  }
+
+  beginRegisterSendSession({
+    email = "",
+    installId = "",
+    deviceFingerprint = "",
+    sessionTtlSeconds = 1800,
+    now = new Date()
+  } = {}) {
+    const stamp = nowIso(now);
+    const sessionId = createId("regsess");
+    const expiresAt = new Date(
+      parseMs(stamp) + Math.max(1, Number(sessionTtlSeconds) || 1) * 1000
+    ).toISOString();
+    this.db.prepare(`
+      INSERT INTO register_session(
+        id,
+        email,
+        install_id,
+        device_fingerprint,
+        session_state,
+        code_hash,
+        code_expires_at,
+        session_expires_at,
+        resend_allowed_at,
+        send_count,
+        verify_attempt_count,
+        last_sent_at,
+        verified_at,
+        completed_at,
+        invalidated_at,
+        created_at,
+        updated_at
+      ) VALUES(?, ?, ?, ?, 'pending', '', '', ?, '', 0, 0, '', '', '', '', ?, ?)
+    `).run(
+      sessionId,
+      toText(email).toLowerCase(),
+      toText(installId),
+      toText(deviceFingerprint),
+      expiresAt,
+      stamp,
+      stamp
+    );
+    return this.getRegisterSessionById(sessionId);
+  }
+
+  recordRegisterCodeDispatch({
+    registerSessionId = "",
+    code = "",
+    codeExpiresInSeconds = 600,
+    resendAfterSeconds = 60,
+    sourceIp = "",
+    now = new Date()
+  } = {}) {
+    const session = this.getRegisterSessionById(registerSessionId);
+    if (!session || session.session_state !== "pending") {
+      return {ok: false, reason: "register_session_invalid"};
+    }
+    const stamp = nowIso(now);
+    if (parseMs(session.session_expires_at) <= parseMs(stamp)) {
+      this.db.prepare(`
+        UPDATE register_session
+        SET session_state = 'invalidated', invalidated_at = ?, updated_at = ?
+        WHERE id = ?
+      `).run(stamp, stamp, session.id);
+      return {ok: false, reason: "register_session_invalid"};
+    }
+    const codeExpiresAt = new Date(
+      parseMs(stamp) + Math.max(1, Number(codeExpiresInSeconds) || 1) * 1000
+    ).toISOString();
+    const resendAllowedAt = new Date(
+      parseMs(stamp) + Math.max(1, Number(resendAfterSeconds) || 1) * 1000
+    ).toISOString();
+    this.runInTransaction(() => {
+      this.db.prepare(`
+        UPDATE register_session
+        SET code_hash = ?,
+            code_expires_at = ?,
+            resend_allowed_at = ?,
+            send_count = send_count + 1,
+            verify_attempt_count = 0,
+            last_sent_at = ?,
+            updated_at = ?
+        WHERE id = ?
+      `).run(hashToken(code), codeExpiresAt, resendAllowedAt, stamp, stamp, session.id);
+      this.db.prepare(`
+        INSERT INTO register_send_ledger(
+          email,
+          install_id,
+          source_ip,
+          device_fingerprint,
+          register_session_id,
+          created_at
+        ) VALUES(?, ?, ?, ?, ?, ?)
+      `).run(
+        session.email,
+        session.install_id,
+        toText(sourceIp),
+        session.device_fingerprint,
+        session.id,
+        stamp
+      );
+    });
+    return {
+      ok: true,
+      session: this.getRegisterSessionById(session.id)
+    };
+  }
+
+  invalidateRegisterSession({registerSessionId = "", now = new Date()} = {}) {
+    const stamp = nowIso(now);
+    this.db.prepare(`
+      UPDATE register_session
+      SET session_state = 'invalidated', invalidated_at = ?, updated_at = ?
+      WHERE id = ? AND session_state != 'completed'
+    `).run(stamp, stamp, toText(registerSessionId));
+  }
+
+  verifyRegisterCode({
+    email = "",
+    code = "",
+    registerSessionId = "",
+    installId = "",
+    ticketTtlSeconds = 900,
+    maxVerifyAttempts = 5,
+    now = new Date()
+  } = {}) {
+    const session = this.getRegisterSessionById(registerSessionId);
+    const stamp = nowIso(now);
+    if (!session || session.session_state !== "pending" || parseMs(session.session_expires_at) <= parseMs(stamp)) {
+      return {ok: false, reason: "register_session_invalid"};
+    }
+    if (toText(installId) && toText(installId) !== session.install_id) {
+      return {ok: false, reason: "register_session_invalid"};
+    }
+    if (toText(email).toLowerCase() !== session.email) {
+      return {ok: false, reason: "register_session_email_mismatch"};
+    }
+    if (session.verify_attempt_count >= Math.max(1, Number(maxVerifyAttempts) || 1)) {
+      this.invalidateRegisterSession({registerSessionId: session.id, now});
+      return {ok: false, reason: "register_code_attempts_exceeded"};
+    }
+    const incomingHash = hashToken(code);
+    const codeExpired = parseMs(session.code_expires_at) <= parseMs(stamp);
+    if (!session.code_hash || incomingHash !== session.code_hash || codeExpired) {
+      const nextAttempts = session.verify_attempt_count + 1;
+      this.db.prepare(`
+        UPDATE register_session
+        SET verify_attempt_count = ?, updated_at = ?
+        WHERE id = ?
+      `).run(nextAttempts, stamp, session.id);
+      if (nextAttempts >= Math.max(1, Number(maxVerifyAttempts) || 1)) {
+        this.invalidateRegisterSession({registerSessionId: session.id, now});
+        return {ok: false, reason: "register_code_attempts_exceeded"};
+      }
+      return {ok: false, reason: "register_code_invalid_or_expired"};
+    }
+    const verificationTicket = createId("regticket");
+    const ticketExpiresAt = new Date(
+      parseMs(stamp) + Math.max(1, Number(ticketTtlSeconds) || 1) * 1000
+    ).toISOString();
+    this.runInTransaction(() => {
+      this.db.prepare(`
+        UPDATE register_session
+        SET session_state = 'verified',
+            verify_attempt_count = ?,
+            code_hash = '',
+            code_expires_at = '',
+            verified_at = ?,
+            updated_at = ?
+        WHERE id = ?
+      `).run(session.verify_attempt_count + 1, stamp, stamp, session.id);
+      this.db.prepare(`
+        UPDATE register_verification_ticket
+        SET consumed_at = ?, updated_at = ?
+        WHERE register_session_id = ? AND consumed_at = ''
+      `).run(stamp, stamp, session.id);
+      this.db.prepare(`
+        INSERT INTO register_verification_ticket(
+          ticket_hash,
+          register_session_id,
+          email,
+          install_id,
+          device_fingerprint,
+          expires_at,
+          consumed_at,
+          created_at,
+          updated_at
+        ) VALUES(?, ?, ?, ?, ?, ?, '', ?, ?)
+      `).run(
+        hashToken(verificationTicket),
+        session.id,
+        session.email,
+        session.install_id,
+        session.device_fingerprint,
+        ticketExpiresAt,
+        stamp,
+        stamp
+      );
+    });
+    return {
+      ok: true,
+      verification_ticket: verificationTicket,
+      ticket_expires_in_seconds: Math.max(1, Number(ticketTtlSeconds) || 1),
+      register_session_id: session.id
+    };
+  }
+
+  consumeVerificationTicket({
+    verificationTicket = "",
+    email = "",
+    installId = "",
+    now = new Date()
+  } = {}) {
+    const ticketHash = hashToken(verificationTicket);
+    const row = this.db.prepare(`
+      SELECT *
+      FROM register_verification_ticket
+      WHERE ticket_hash = ? AND consumed_at = ''
+      LIMIT 1
+    `).get(ticketHash);
+    if (!row) {
+      return {ok: false, reason: "register_ticket_invalid_or_expired"};
+    }
+    const stamp = nowIso(now);
+    if (parseMs(row.expires_at) <= parseMs(stamp)) {
+      return {ok: false, reason: "register_ticket_invalid_or_expired"};
+    }
+    if (toText(email).toLowerCase() !== toText(row.email)) {
+      return {ok: false, reason: "register_ticket_invalid_or_expired"};
+    }
+    if (toText(installId) && toText(installId) !== toText(row.install_id)) {
+      return {ok: false, reason: "register_ticket_invalid_or_expired"};
+    }
+    const consumed = this.db.prepare(`
+      UPDATE register_verification_ticket
+      SET consumed_at = ?, updated_at = ?
+      WHERE id = ? AND consumed_at = ''
+    `).run(stamp, stamp, Number(row.id) || 0);
+    if ((Number(consumed.changes) || 0) <= 0) {
+      return {ok: false, reason: "register_ticket_invalid_or_expired"};
+    }
+    const session = this.getRegisterSessionById(toText(row.register_session_id));
+    if (!session || session.session_state !== "verified") {
+      return {ok: false, reason: "register_ticket_invalid_or_expired"};
+    }
+    return {
+      ok: true,
+      ticket: {
+        register_session_id: toText(row.register_session_id),
+        email: toText(row.email),
+        install_id: toText(row.install_id),
+        device_fingerprint: toText(row.device_fingerprint)
+      }
+    };
+  }
+
+  finalizeRegisterSession({
+    registerSessionId = "",
+    now = new Date()
+  } = {}) {
+    const stamp = nowIso(now);
+    this.db.prepare(`
+      UPDATE register_session
+      SET session_state = 'completed', completed_at = ?, updated_at = ?
+      WHERE id = ?
+    `).run(stamp, stamp, toText(registerSessionId));
   }
 }
 

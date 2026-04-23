@@ -32,6 +32,43 @@ function writeError(res, status, reason, message) {
   });
 }
 
+function createRequestId() {
+  return `req_${Math.random().toString(36).slice(2, 12)}${Date.now().toString(36).slice(-4)}`;
+}
+
+function writeRegisterV3Error(
+  res,
+  status,
+  {
+    errorCode = "REGISTER_SERVICE_UNAVAILABLE",
+    message = "register service unavailable",
+    requestId = "",
+    retryAfterSeconds = null,
+    retryAfterHeader = false
+  } = {}
+) {
+  const payload = {
+    ok: false,
+    error_code: toText(errorCode) || "REGISTER_SERVICE_UNAVAILABLE",
+    message: toText(message) || "register service unavailable",
+    request_id: toText(requestId) || createRequestId()
+  };
+  if (Number.isFinite(Number(retryAfterSeconds)) && Number(retryAfterSeconds) >= 0) {
+    payload.retry_after_seconds = Number(retryAfterSeconds);
+  }
+  const headers = {};
+  if (retryAfterHeader && Number.isFinite(Number(retryAfterSeconds)) && Number(retryAfterSeconds) >= 0) {
+    headers["Retry-After"] = String(Number(retryAfterSeconds));
+  }
+  const body = Buffer.from(JSON.stringify(payload), "utf8");
+  res.writeHead(status, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Content-Length": body.byteLength,
+    ...headers
+  });
+  res.end(body);
+}
+
 function writeFile(res, status, filePath, contentType) {
   const body = fs.readFileSync(filePath);
   res.writeHead(status, {
@@ -71,6 +108,39 @@ function isAllowedRuntimePermitAction(action = "") {
   return RUNTIME_PERMIT_ACTIONS.includes(toText(action));
 }
 
+function maskEmail(email = "") {
+  const [localRaw = "", domainRaw = ""] = toText(email).toLowerCase().split("@");
+  const local = toText(localRaw);
+  const domain = toText(domainRaw);
+  if (!local || !domain) {
+    return "*@*";
+  }
+  if (local.length <= 2) {
+    return `${local.slice(0, 1)}*@${domain}`;
+  }
+  return `${local.slice(0, 1)}***${local.slice(-1)}@${domain}`;
+}
+
+function isStrongPassword(value = "") {
+  const text = toText(value);
+  if (text.length < 8 || text.length > 64) {
+    return false;
+  }
+  return /[A-Za-z]/.test(text) && /\d/.test(text);
+}
+
+function isValidUsername(value = "") {
+  return /^[A-Za-z0-9_]{3,32}$/.test(toText(value));
+}
+
+function getSourceIp(req) {
+  const xff = toText(req && req.headers && req.headers["x-forwarded-for"]);
+  if (xff) {
+    return toText(xff.split(",")[0]);
+  }
+  return toText(req && req.socket && req.socket.remoteAddress);
+}
+
 function createServer({
   dbPath = "",
   storeFactory = null,
@@ -99,6 +169,16 @@ function createServer({
   const nextCode = typeof codeGenerator === "function"
     ? codeGenerator
     : () => String(Math.floor(100000 + Math.random() * 900000));
+  const registerConfig = Object.freeze({
+    codeLength: 6,
+    codeExpiresInSeconds: 600,
+    sessionTtlSeconds: 1800,
+    resendAfterSeconds: 60,
+    ticketExpiresInSeconds: 900,
+    maxSessionSends: 5,
+    maxVerifyAttempts: 5,
+    idempotencyWindowSeconds: 2
+  });
 
   async function sendEmailCode({email = "", scene = ""} = {}) {
     if (!config.configured) {
@@ -137,6 +217,73 @@ function createServer({
       ok: true,
       expires_in_seconds: (Number(config.authCodeTtlMinutes) || 5) * 60
     };
+  }
+
+  function evaluateRegisterSendLimits({
+    email = "",
+    installId = "",
+    sourceIp = "",
+    deviceFingerprint = "",
+    session = null
+  } = {}) {
+    const nowValue = now();
+    const nowMs = Date.parse(nowValue.toISOString());
+    if (session) {
+      if ((Number(session.send_count) || 0) >= registerConfig.maxSessionSends) {
+        store.invalidateRegisterSession({registerSessionId: session.id, now: nowValue});
+        return {
+          ok: false,
+          status: 410,
+          error_code: "REGISTER_SESSION_INVALID",
+          message: "register session invalid"
+        };
+      }
+      const resendAllowedMs = Date.parse(toText(session.resend_allowed_at));
+      if (Number.isFinite(resendAllowedMs) && resendAllowedMs > nowMs) {
+        const retryAfter = Math.max(1, Math.ceil((resendAllowedMs - nowMs) / 1000));
+        return {
+          ok: false,
+          status: 429,
+          error_code: "REGISTER_SEND_RETRY_LATER",
+          message: "register send is cooling down",
+          retry_after_seconds: retryAfter
+        };
+      }
+    }
+    const checks = [
+      {field: "email", value: email, windowSeconds: 60, limit: 1},
+      {field: "email", value: email, windowSeconds: 24 * 60 * 60, limit: 5},
+      {field: "install_id", value: installId, windowSeconds: 10 * 60, limit: 3},
+      {field: "install_id", value: installId, windowSeconds: 24 * 60 * 60, limit: 20},
+      {field: "source_ip", value: sourceIp, windowSeconds: 10 * 60, limit: 10},
+      {field: "source_ip", value: sourceIp, windowSeconds: 24 * 60 * 60, limit: 50},
+      {field: "device_fingerprint", value: deviceFingerprint, windowSeconds: 10 * 60, limit: 3},
+      {field: "device_fingerprint", value: deviceFingerprint, windowSeconds: 24 * 60 * 60, limit: 20}
+    ];
+    for (const check of checks) {
+      if (!toText(check.value)) {
+        continue;
+      }
+      const stat = store.countRegisterSendsByWindow({
+        field: check.field,
+        value: check.value,
+        windowSeconds: check.windowSeconds,
+        now: nowValue
+      });
+      if ((Number(stat.count) || 0) >= check.limit) {
+        const retryAfter = stat.earliest_ms > 0
+          ? Math.max(1, Math.ceil((stat.earliest_ms + check.windowSeconds * 1000 - nowMs) / 1000))
+          : check.windowSeconds;
+        return {
+          ok: false,
+          status: 429,
+          error_code: "REGISTER_SEND_RETRY_LATER",
+          message: "register send is rate limited",
+          retry_after_seconds: retryAfter
+        };
+      }
+    }
+    return {ok: true};
   }
 
   function buildUserBundle(user, deviceId) {
@@ -200,6 +347,38 @@ function createServer({
           ok: true,
           kid: signer.keyId,
           public_key_pem: signer.publicKeyPem
+        });
+        return;
+      }
+
+      if (req.method === "GET" && pathname === "/api/auth/register/capability") {
+        const ready = Boolean(config.configured);
+        writeJson(res, 200, {
+          ok: true,
+          registration_flow_version: ready ? 3 : 2,
+          registration_v3: {
+            ready,
+            endpoints: {
+              send_code: "/api/auth/register/send-code",
+              verify_code: "/api/auth/register/verify-code",
+              complete: "/api/auth/register/complete"
+            }
+          },
+          legacy: {
+            send_code: "/api/auth/email/send-code",
+            register: "/api/auth/register"
+          }
+        });
+        return;
+      }
+
+      if (req.method === "GET" && pathname === "/api/auth/register/readiness") {
+        const ready = Boolean(config.configured);
+        writeJson(res, 200, {
+          ok: true,
+          ready,
+          registration_flow_version: ready ? 3 : 2,
+          mail_service_configured: ready
         });
         return;
       }
@@ -403,6 +582,333 @@ function createServer({
           return;
         }
         writeJson(res, 200, {ok: true, expires_in_seconds: sent.expires_in_seconds});
+        return;
+      }
+
+      if (req.method === "POST" && pathname === "/api/auth/register/send-code") {
+        const requestId = createRequestId();
+        const body = await readJsonBody(req);
+        const email = toText(body && body.email).toLowerCase();
+        const installId = toText(body && body.install_id) || "unknown_install";
+        const registerSessionId = toText(body && body.register_session_id);
+        const deviceFingerprint = toText(body && body.device_fingerprint);
+        const sourceIp = getSourceIp(req);
+
+        if (!isValidEmail(email)) {
+          writeRegisterV3Error(res, 400, {
+            errorCode: "REGISTER_INPUT_INVALID",
+            message: "email is invalid",
+            requestId
+          });
+          return;
+        }
+        if (store.getClientUserByEmail(email)) {
+          writeRegisterV3Error(res, 403, {
+            errorCode: "REGISTER_SEND_DENIED",
+            message: "register send denied",
+            requestId
+          });
+          return;
+        }
+        if (!config.configured) {
+          writeRegisterV3Error(res, 503, {
+            errorCode: "REGISTER_SERVICE_UNAVAILABLE",
+            message: "mail service not configured",
+            requestId
+          });
+          return;
+        }
+
+        store.purgeExpiredRegisterArtifacts({now: now()});
+        let session = registerSessionId
+          ? store.getRegisterSessionById(registerSessionId)
+          : store.getLatestPendingRegisterSession({
+            email,
+            installId,
+            now: now()
+          });
+        if (session && session.email !== email) {
+          writeRegisterV3Error(res, 409, {
+            errorCode: "REGISTER_SESSION_EMAIL_MISMATCH",
+            message: "register session email mismatch",
+            requestId
+          });
+          return;
+        }
+        if (session && session.install_id !== installId) {
+          writeRegisterV3Error(res, 410, {
+            errorCode: "REGISTER_SESSION_INVALID",
+            message: "register session invalid",
+            requestId
+          });
+          return;
+        }
+        const idempotencyKey = `${email}|${installId}|${session ? session.id : ""}`;
+        const idempotentSession = store.getRegisterSendIdempotentHit({
+          idempotencyKey,
+          now: now()
+        });
+        if (idempotentSession) {
+          const nowMs = Date.parse(now().toISOString());
+          const resendMs = Date.parse(toText(idempotentSession.resend_allowed_at));
+          const resendAfter = Number.isFinite(resendMs)
+            ? Math.max(0, Math.ceil((resendMs - nowMs) / 1000))
+            : registerConfig.resendAfterSeconds;
+          writeJson(res, 200, {
+            ok: true,
+            register_session_id: idempotentSession.id,
+            masked_email: maskEmail(email),
+            code_length: registerConfig.codeLength,
+            code_expires_in_seconds: registerConfig.codeExpiresInSeconds,
+            resend_after_seconds: resendAfter
+          });
+          return;
+        }
+        if (!session) {
+          session = store.beginRegisterSendSession({
+            email,
+            installId,
+            deviceFingerprint,
+            sessionTtlSeconds: registerConfig.sessionTtlSeconds,
+            now: now()
+          });
+        }
+        const limitResult = evaluateRegisterSendLimits({
+          email,
+          installId,
+          sourceIp,
+          deviceFingerprint,
+          session
+        });
+        if (!limitResult.ok) {
+          writeRegisterV3Error(res, Number(limitResult.status) || 429, {
+            errorCode: limitResult.error_code || "REGISTER_SEND_RETRY_LATER",
+            message: limitResult.message || "register send denied",
+            requestId,
+            retryAfterSeconds: Number(limitResult.retry_after_seconds) || undefined,
+            retryAfterHeader: true
+          });
+          return;
+        }
+        const code = toText(nextCode());
+        try {
+          await mailService.sendVerificationCode({
+            to: email,
+            code,
+            scene: "register_v3",
+            ttlMinutes: Math.ceil(registerConfig.codeExpiresInSeconds / 60)
+          });
+        } catch (error) {
+          writeRegisterV3Error(res, 503, {
+            errorCode: "REGISTER_SERVICE_UNAVAILABLE",
+            message: toText(error && error.message) || "verification email send failed",
+            requestId
+          });
+          return;
+        }
+        const recorded = store.recordRegisterCodeDispatch({
+          registerSessionId: session.id,
+          code,
+          codeExpiresInSeconds: registerConfig.codeExpiresInSeconds,
+          resendAfterSeconds: registerConfig.resendAfterSeconds,
+          sourceIp,
+          now: now()
+        });
+        if (!recorded.ok || !recorded.session) {
+          writeRegisterV3Error(res, 503, {
+            errorCode: "REGISTER_SERVICE_UNAVAILABLE",
+            message: "register send persistence failed",
+            requestId
+          });
+          return;
+        }
+        store.rememberRegisterSendIdempotency({
+          idempotencyKey,
+          registerSessionId: recorded.session.id,
+          windowSeconds: registerConfig.idempotencyWindowSeconds,
+          now: now()
+        });
+        writeJson(res, 200, {
+          ok: true,
+          register_session_id: recorded.session.id,
+          masked_email: maskEmail(email),
+          code_length: registerConfig.codeLength,
+          code_expires_in_seconds: registerConfig.codeExpiresInSeconds,
+          resend_after_seconds: registerConfig.resendAfterSeconds
+        });
+        return;
+      }
+
+      if (req.method === "POST" && pathname === "/api/auth/register/verify-code") {
+        const requestId = createRequestId();
+        const body = await readJsonBody(req);
+        const email = toText(body && body.email).toLowerCase();
+        const code = toText(body && body.code);
+        const registerSessionId = toText(body && body.register_session_id);
+        const installId = toText(body && body.install_id) || "unknown_install";
+        if (!isValidEmail(email) || !code || !registerSessionId) {
+          writeRegisterV3Error(res, 400, {
+            errorCode: "REGISTER_INPUT_INVALID",
+            message: "verify payload invalid",
+            requestId
+          });
+          return;
+        }
+        const verified = store.verifyRegisterCode({
+          email,
+          code,
+          registerSessionId,
+          installId,
+          ticketTtlSeconds: registerConfig.ticketExpiresInSeconds,
+          maxVerifyAttempts: registerConfig.maxVerifyAttempts,
+          now: now()
+        });
+        if (!verified.ok) {
+          const reason = toText(verified.reason);
+          if (reason === "register_session_email_mismatch") {
+            writeRegisterV3Error(res, 409, {
+              errorCode: "REGISTER_SESSION_EMAIL_MISMATCH",
+              message: "register session email mismatch",
+              requestId
+            });
+            return;
+          }
+          if (reason === "register_code_attempts_exceeded") {
+            writeRegisterV3Error(res, 429, {
+              errorCode: "REGISTER_CODE_ATTEMPTS_EXCEEDED",
+              message: "register code attempts exceeded",
+              requestId
+            });
+            return;
+          }
+          if (reason === "register_session_invalid") {
+            writeRegisterV3Error(res, 410, {
+              errorCode: "REGISTER_SESSION_INVALID",
+              message: "register session invalid",
+              requestId
+            });
+            return;
+          }
+          writeRegisterV3Error(res, 400, {
+            errorCode: "REGISTER_CODE_INVALID_OR_EXPIRED",
+            message: "register code invalid or expired",
+            requestId
+          });
+          return;
+        }
+        writeJson(res, 200, {
+          ok: true,
+          verification_ticket: verified.verification_ticket,
+          ticket_expires_in_seconds: registerConfig.ticketExpiresInSeconds
+        });
+        return;
+      }
+
+      if (req.method === "POST" && pathname === "/api/auth/register/complete") {
+        const requestId = createRequestId();
+        const body = await readJsonBody(req);
+        const email = toText(body && body.email).toLowerCase();
+        const username = toText(body && body.username);
+        const password = toText(body && body.password);
+        const verificationTicket = toText(body && body.verification_ticket);
+        const installId = toText(body && body.install_id) || "unknown_install";
+        const deviceId = toText(body && body.device_id) || `install:${installId}`;
+
+        if (!isValidEmail(email) || !username || !password || !verificationTicket) {
+          writeRegisterV3Error(res, 400, {
+            errorCode: "REGISTER_INPUT_INVALID",
+            message: "register complete payload invalid",
+            requestId
+          });
+          return;
+        }
+        if (!isValidUsername(username)) {
+          writeRegisterV3Error(res, 400, {
+            errorCode: "REGISTER_USERNAME_INVALID",
+            message: "username is invalid",
+            requestId
+          });
+          return;
+        }
+        if (!isStrongPassword(password)) {
+          writeRegisterV3Error(res, 400, {
+            errorCode: "REGISTER_PASSWORD_WEAK",
+            message: "password is weak",
+            requestId
+          });
+          return;
+        }
+        const consumed = store.consumeVerificationTicket({
+          verificationTicket,
+          email,
+          installId,
+          now: now()
+        });
+        if (!consumed.ok) {
+          writeRegisterV3Error(res, 410, {
+            errorCode: "REGISTER_TICKET_INVALID_OR_EXPIRED",
+            message: "verification ticket invalid or expired",
+            requestId
+          });
+          return;
+        }
+        if (store.getClientUserByEmail(email)) {
+          writeRegisterV3Error(res, 409, {
+            errorCode: "REGISTER_EMAIL_UNAVAILABLE",
+            message: "email is unavailable",
+            requestId
+          });
+          return;
+        }
+        if (store.getClientUserByUsername(username)) {
+          writeRegisterV3Error(res, 409, {
+            errorCode: "REGISTER_USERNAME_TAKEN",
+            message: "username already exists",
+            requestId
+          });
+          return;
+        }
+        let user;
+        try {
+          user = store.createClientUser({
+            email,
+            username,
+            password,
+            membershipPlan: "inactive",
+            now: now()
+          });
+        } catch (error) {
+          writeRegisterV3Error(res, 503, {
+            errorCode: "REGISTER_SERVICE_UNAVAILABLE",
+            message: toText(error && error.message) || "register create user failed",
+            requestId
+          });
+          return;
+        }
+        store.finalizeRegisterSession({
+          registerSessionId: consumed.ticket.register_session_id,
+          now: now()
+        });
+        const session = store.createRefreshSession({
+          userId: user.id,
+          deviceId,
+          ttlDays: Number(config.refreshSessionDays) || 30,
+          now: now()
+        });
+        writeJson(res, 200, {
+          ok: true,
+          account_summary: {
+            id: user.id,
+            email: user.email,
+            username: user.username,
+            membership_plan: user.membership_plan
+          },
+          auth_session: {
+            refresh_token: session.refresh_token,
+            access_bundle: buildUserBundle(user, deviceId),
+            user
+          }
+        });
         return;
       }
 

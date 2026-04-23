@@ -249,6 +249,7 @@ textarea,
 
 .program-access-sidebar-card__field-label {
   font-size: 12px;
+  display: none;
 }
 
 .program-access-sidebar-card__input {
@@ -256,8 +257,18 @@ textarea,
   padding: 0 12px;
   border: 1px solid var(--line-soft);
   border-radius: 14px;
-  color: var(--text-main);
-  background: rgba(0, 0, 0, 0.2);
+  color: #1f2937;
+  background: rgba(255, 248, 240, 0.92);
+}
+
+.program-access-sidebar-card__input::placeholder {
+  color: rgba(55, 65, 81, 0.56);
+}
+
+.program-access-sidebar-card__input:focus {
+  outline: none;
+  border-color: rgba(220, 164, 76, 0.42);
+  box-shadow: 0 0 0 3px rgba(220, 164, 76, 0.16);
 }
 
 .program-access-sidebar-card__summary-row {
@@ -323,8 +334,22 @@ textarea,
 }
 
 .program-access-dialog__close {
-  min-width: 88px;
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
   min-height: 40px;
+  padding: 0;
+  border: 1px solid rgba(255, 124, 124, 0.46);
+  border-radius: 10px;
+  color: #fff5f5;
+  background: #c73a3a;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.program-access-dialog__close:hover {
+  background: #b92d2d;
 }
 
 .program-access-dialog__stack {
@@ -386,11 +411,6 @@ textarea,
 
 .app-shell__nav-button-label {
   text-align: left;
-}
-
-.app-shell__nav-button-tag {
-  font-size: 12px;
-  color: var(--text-dim);
 }
 
 .app-shell__content {

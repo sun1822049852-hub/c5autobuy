@@ -34,6 +34,11 @@
 - 程序账号入口 UI 也已冻结一条稳定约束：左侧侧栏只允许显示最小登录状态摘要，即 `未登录` 或当前 `username`，不得再把权限说明、注册/找回密码、到期时间等细节重新塞回侧栏；具体账号操作统一在屏幕中央弹窗中完成，且已登录时弹窗只显示当前账号状态与 `刷新状态` / `退出`，不再显示登录表单。
 - C5 账号登录任务的用户可见状态文案已冻结为“集中映射、统一复用”模式：唯一维护点是 `app_desktop_web/src/features/account-center/login_task_state_labels.js`；账号中心登录抽屉、诊断页登录任务标签页、账号中心日志中的状态显示都必须走这份映射，后续若用户要求改某个状态文案，应优先改这里而不是在各组件内散改。
 - 用户可见的正式入口文案继续冻结一条风格约束：普通用户直接能看到的页眉/眉标默认优先中文，不再保留 `ACCOUNT CENTER`、`PROGRAM ACCESS`、`Diagnostics` 这类英文眉标；只有显式本地调试分支里的提示，例如 `本地调试模式`，才允许保留调试口径作为区分标记。
+- 主导航按钮也已冻结一条 UI 文案约束：不再展示英文状态签条 `Live`；导航只保留中文功能名本身，不再额外挂英文视觉标签。
+- 程序账号注册链路已冻结为“三步前端 + 三接口后端”结构：第一步仅输邮箱并在远端发码阶段做风控，第二步独立验证验证码，第三步仅在验码成功后凭一次性 `verification_ticket` 设置账号名与密码完成注册；前端本地正则只做粗校验，真正的防刷判断必须留在远端统一鉴权。
+- 程序账号三步注册的发布约束也已冻结：只有当远端 `send-code / verify-code / complete` 三接口全部就绪时，本地后端才可把 `registration_flow_version` 切到 `3` 放行新 UI；否则桌面端必须继续停留在旧的两接口注册链路，不能让本地 UI 先于远端能力切换。
+- 程序账号注册链路还有一条 renderer 启动约束：只要当前桌面 backend 已 `ready`，renderer 就必须从当前 `apiBaseUrl` 拉取 `/app/bootstrap` 来水合 `program_access`，不能把 bootstrap 仅限于 `remote` 模式。否则 `main_ui_node_desktop.js` 这类 `embedded` 桌面虽然本地 backend 已返回 `registration_flow_version=3`，窗口仍会卡在前端默认值 `registrationFlowVersion=2`，错误回退到旧一屏式注册 UI。
+- 截至 `2026-04-23`，远端会员控制面 `http://8.138.39.139:18787` 已完成注册 v3 rollout：`/api/auth/register/readiness`、`/api/auth/register/send-code`、`/api/auth/register/verify-code`、`/api/auth/register/complete` 均已上线；正式桌面入口 `main_ui_node_desktop.js` 对应的本地 backend bootstrap 应返回 `remote_entitlement / packaged_release / registration_flow_version=3`，而 `main_ui_node_desktop_local_debug.js` 继续保持 `local_pass_through / prepackaging / registration_flow_version=2`。
 - 当前会员控制面已部署到远端 `8.138.39.139:18787`，后台入口为 `/admin`；该入口当前用于测试联调。稳定收口要求一并冻结：管理端口不得长期保持 `0.0.0.0/0` 全网开放，正式发行前至少要改成“仅用户固定公网 IP 可访问”，或进一步收口为 `80/443 + 域名/反向代理/额外鉴权`。
 - 当前桌面发行主线已确认只能以根工作树 `master` 为准；`main_ui_node_desktop.js` 是唯一真实桌面主入口。任何 side worktree 若删除或替换这条真实入口链路，都只能作为局部回收源，不能直接用于打包发行。
 - 当前桌面对外启动口径已收口为 JS-only：`main_ui_node_desktop.js` 用于模拟用户态与正式程序会员鉴权测试，`main_ui_node_desktop_local_debug.js` 用于本地放行调试；顶层 Python 包装入口已移除，`app_backend/main.py` 只保留给 JS 桌面壳内部拉起 backend 使用。后续不得再通过“删 release 配置文件”这种隐式方式切模式，也不得再把 Python 包装壳恢复成对外主入口。
@@ -42,3 +47,5 @@
 - 当前本地 Windows 打包环境不具备 `winCodeSign` 归档所需的 symlink 权限；为保证常规用户态可直接出包，`app_desktop_web/electron-builder.config.cjs` 已固定 `win.signAndEditExecutable=false`，绕过 `rcedit` / `winCodeSign` 下载解压链。后续若要恢复 EXE 元信息编辑或签名，再单独切到具备 Developer Mode / 提权 / 专用签名环境的发行机处理。
 - 当前桌面程序整体品牌已统一为 `C5 交易助手`：安装包名、Electron 窗口标题、HTML title、侧栏品牌标题与账号首页主标题均使用该名称；内部功能名如 `账号中心`、`配置管理`、`扫货系统` 可保留，不改本地数据目录名。
 - Windows 源码态桌面若再次出现“程序完全打不开”，当前已确认一条稳定排障顺序：先看 `main_ui_node_desktop.js` 启动器是否误把缺失的 `electron/cli.js` 当成阻塞，再检查 `app_desktop_web/node_modules/electron/checksums.json`、`dist/electron.exe`、`dist/chrome_100_percent.pak` 是否齐全。`electron/install.js` 的 `isInstalled()` 只看 `version/path.txt/electron.exe`，无法识别 `.pak` 缺失这类半损坏现场；若包本体连 `checksums.json` 都没了，优先最小重装 `electron@37.2.0`（如 `npm install electron@37.2.0 --no-save --package-lock=false`），不要误判成业务代码故障。
+- 程序账号注册弹窗新增一条稳定恢复约束：三段式注册在第二段验证码页时，只在当前 renderer 会话内保留草稿；关闭弹窗、切页后再次打开必须直接回到第二段，并保留脱敏邮箱、`register_session_id` 与当前倒计时。只有主动切到“登录/找回密码”、点击“修改邮箱”或注册成功时，才允许清空这份注册草稿。
+- 程序账号弹窗视觉也新增一条稳定 UI 约束：默认 `program_auth_required / 请先登录程序会员` 不再作为顶部异常提示展示；登录/注册/找回密码输入区默认使用输入框内 `placeholder`，右上角关闭控件保持红底正方形 `X`，但访问名仍必须是“关闭”。

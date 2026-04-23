@@ -96,6 +96,20 @@ def test_create_app_packaged_release_wires_remote_program_access_services(tmp_pa
     assert app.state.program_access_refresh_scheduler is not None
 
 
+def test_create_app_can_enable_registration_readiness_probe_for_packaged_release(tmp_path: Path):
+    app = create_app(
+        db_path=tmp_path / "desktop-web.db",
+        program_access_stage="packaged_release",
+        program_access_app_data_root=tmp_path / "program-access-data",
+        program_access_secret_stage="local_dev",
+        program_access_control_plane_base_url="http://8.138.39.139:18787",
+        program_access_probe_registration_readiness=True,
+        program_access_start_refresh_scheduler=False,
+    )
+
+    assert app.state.program_access_gateway._probe_registration_readiness is True
+
+
 def test_create_app_creates_stats_and_ui_preference_tables(tmp_path: Path):
     db_path = tmp_path / "desktop-web.db"
     create_app(db_path=db_path)

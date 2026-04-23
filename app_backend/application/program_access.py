@@ -28,6 +28,7 @@ class ProgramAccessSummary:
     stage: str
     guard_enabled: bool
     message: str
+    registration_flow_version: int = 2
     username: str | None = None
     auth_state: str | None = None
     runtime_state: str | None = None
@@ -56,6 +57,7 @@ class ProgramAccessActionResult:
     summary: ProgramAccessSummary
     code: str | None = None
     message: str | None = None
+    payload: dict[str, object] | None = None
 
     @classmethod
     def accept(
@@ -63,8 +65,9 @@ class ProgramAccessActionResult:
         *,
         summary: ProgramAccessSummary,
         message: str | None = None,
+        payload: dict[str, object] | None = None,
     ) -> ProgramAccessActionResult:
-        return cls(accepted=True, summary=summary, message=message)
+        return cls(accepted=True, summary=summary, message=message, payload=payload)
 
     @classmethod
     def reject(
@@ -73,8 +76,9 @@ class ProgramAccessActionResult:
         summary: ProgramAccessSummary,
         code: str,
         message: str,
+        payload: dict[str, object] | None = None,
     ) -> ProgramAccessActionResult:
-        return cls(accepted=False, summary=summary, code=code, message=message)
+        return cls(accepted=False, summary=summary, code=code, message=message, payload=payload)
 
 
 class ProgramAccessGateway(Protocol):
@@ -90,11 +94,28 @@ class ProgramAccessGateway(Protocol):
 
     def send_register_code(self, email: str) -> ProgramAccessActionResult: ...
 
+    def verify_register_code(
+        self,
+        *,
+        email: str,
+        code: str,
+        register_session_id: str,
+    ) -> ProgramAccessActionResult: ...
+
     def register(
         self,
         *,
         email: str,
         code: str,
+        username: str,
+        password: str,
+    ) -> ProgramAccessActionResult: ...
+
+    def complete_register(
+        self,
+        *,
+        email: str,
+        verification_ticket: str,
         username: str,
         password: str,
     ) -> ProgramAccessActionResult: ...

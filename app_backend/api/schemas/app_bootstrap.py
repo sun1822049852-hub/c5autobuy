@@ -36,6 +36,7 @@ class AppBootstrapProgramAccessResponse(BaseModel):
     stage: str
     guard_enabled: bool
     message: str
+    registration_flow_version: int = 2
     username: str | None = None
     auth_state: str | None = None
     runtime_state: str | None = None

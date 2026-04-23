@@ -149,3 +149,95 @@ class CachedProgramAccessGateway:
     def logout(self) -> ProgramAccessActionResult:
         self._credential_store.clear()
         return ProgramAccessActionResult.accept(summary=self.get_summary())
+
+    def send_register_code(self, email: str) -> ProgramAccessActionResult:
+        _ = email
+        return ProgramAccessActionResult.reject(
+            summary=self.get_summary(),
+            code=PROGRAM_AUTH_NOT_READY_CODE,
+            message=PROGRAM_AUTH_REMOTE_NOT_READY_MESSAGE,
+        )
+
+    def verify_register_code(
+        self,
+        *,
+        email: str,
+        code: str,
+        register_session_id: str,
+    ) -> ProgramAccessActionResult:
+        _ = email
+        _ = code
+        _ = register_session_id
+        return ProgramAccessActionResult.reject(
+            summary=self.get_summary(),
+            code=PROGRAM_AUTH_NOT_READY_CODE,
+            message=PROGRAM_AUTH_REMOTE_NOT_READY_MESSAGE,
+        )
+
+    def register(
+        self,
+        *,
+        email: str,
+        code: str,
+        username: str,
+        password: str,
+    ) -> ProgramAccessActionResult:
+        _ = email
+        _ = code
+        _ = username
+        _ = password
+        return ProgramAccessActionResult.reject(
+            summary=self.get_summary(),
+            code=PROGRAM_AUTH_NOT_READY_CODE,
+            message=PROGRAM_AUTH_REMOTE_NOT_READY_MESSAGE,
+        )
+
+    def complete_register(
+        self,
+        *,
+        email: str,
+        verification_ticket: str,
+        username: str,
+        password: str,
+    ) -> ProgramAccessActionResult:
+        _ = email
+        _ = verification_ticket
+        _ = username
+        _ = password
+        return ProgramAccessActionResult.reject(
+            summary=self.get_summary(),
+            code=PROGRAM_AUTH_NOT_READY_CODE,
+            message=PROGRAM_AUTH_REMOTE_NOT_READY_MESSAGE,
+        )
+
+    def send_reset_code(self, email: str) -> ProgramAccessActionResult:
+        _ = email
+        return ProgramAccessActionResult.reject(
+            summary=self.get_summary(),
+            code=PROGRAM_AUTH_NOT_READY_CODE,
+            message=PROGRAM_AUTH_REMOTE_NOT_READY_MESSAGE,
+        )
+
+    def reset_password(
+        self,
+        *,
+        email: str,
+        code: str,
+        new_password: str,
+    ) -> ProgramAccessActionResult:
+        _ = email
+        _ = code
+        _ = new_password
+        return ProgramAccessActionResult.reject(
+            summary=self.get_summary(),
+            code=PROGRAM_AUTH_NOT_READY_CODE,
+            message=PROGRAM_AUTH_REMOTE_NOT_READY_MESSAGE,
+        )
+
+    def refresh(self, *, reason: str) -> ProgramAccessActionResult:
+        _ = reason
+        return ProgramAccessActionResult.reject(
+            summary=self.get_summary(),
+            code=PROGRAM_AUTH_NOT_READY_CODE,
+            message=PROGRAM_AUTH_REMOTE_NOT_READY_MESSAGE,
+        )

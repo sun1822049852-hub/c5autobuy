@@ -149,6 +149,250 @@ describe("program access sidebar card", () => {
     expect(screen.getByText("当前为本地放行模式，远端程序会员控制面尚未接入正式链路")).toBeInTheDocument();
   });
 
+  it("hides the default program_auth_required prompt while still allowing other flows", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ProgramAccessSidebarCard
+        access={{
+          ...REMOTE_PROGRAM_ACCESS_LOGGED_OUT_FIXTURE,
+          lastErrorCode: "program_auth_required",
+          message: "请先登录程序会员",
+        }}
+        lastProgramAuthError={{
+          code: "program_auth_required",
+          message: "请先登录程序会员",
+        }}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "打开程序账号窗口" }));
+
+    expect(screen.queryByText("program_auth_required")).not.toBeInTheDocument();
+    expect(screen.queryByText("请先登录程序会员")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "注册" })).toBeInTheDocument();
+  });
+
+  it("routes registration through a three-step state machine when registration_flow_version=3 is enabled", async () => {
+    const user = userEvent.setup();
+    const sendRegisterCode = vi.fn().mockResolvedValue({
+      ok: true,
+      message: "注册验证码已发送",
+      register_session_id: "session_1",
+      masked_email: "a***e@example.com",
+      resend_after_seconds: 60,
+      summary: {
+        ...REMOTE_PROGRAM_ACCESS_LOGGED_OUT_FIXTURE,
+        registration_flow_version: 3,
+      },
+    });
+    const verifyRegisterCode = vi.fn().mockResolvedValue({
+      ok: true,
+      message: "验证码已验证",
+      verification_ticket: "ticket_1",
+      summary: {
+        ...REMOTE_PROGRAM_ACCESS_LOGGED_OUT_FIXTURE,
+        registration_flow_version: 3,
+      },
+    });
+    const completeRegisterProgramAuth = vi.fn().mockResolvedValue({
+      ok: true,
+      message: "账号已创建，但当前未开通会员",
+      summary: {
+        ...REMOTE_PROGRAM_ACCESS_LOGGED_OUT_FIXTURE,
+        registration_flow_version: 3,
+      },
+    });
+
+    render(
+      <ProgramAccessSidebarCard
+        access={{
+          ...REMOTE_PROGRAM_ACCESS_LOGGED_OUT_FIXTURE,
+          registration_flow_version: 3,
+        }}
+        sendRegisterCode={sendRegisterCode}
+        verifyRegisterCode={verifyRegisterCode}
+        completeRegisterProgramAuth={completeRegisterProgramAuth}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "打开程序账号窗口" }));
+    await user.click(screen.getByRole("button", { name: "注册" }));
+
+    expect(screen.getByLabelText("注册邮箱")).toBeInTheDocument();
+    expect(screen.queryByLabelText("注册验证码")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("注册用户名")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("注册密码")).not.toBeInTheDocument();
+
+    await user.type(screen.getByLabelText("注册邮箱"), "alice@");
+    expect(screen.getByRole("button", { name: "发送注册验证码" })).toBeDisabled();
+
+    await user.clear(screen.getByLabelText("注册邮箱"));
+    await user.type(screen.getByLabelText("注册邮箱"), "alice@example.com");
+    await user.click(screen.getByRole("button", { name: "发送注册验证码" }));
+
+    expect(sendRegisterCode).toHaveBeenCalledWith({ email: "alice@example.com" });
+    expect(await screen.findByText("a***e@example.com")).toBeInTheDocument();
+    expect(screen.getByLabelText("注册验证码")).toBeInTheDocument();
+    expect(screen.queryByLabelText("注册用户名")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("注册密码")).not.toBeInTheDocument();
+
+    await user.type(screen.getByLabelText("注册验证码"), "123456");
+    await user.click(screen.getByRole("button", { name: "验证注册验证码" }));
+
+    expect(verifyRegisterCode).toHaveBeenCalledWith({
+      email: "alice@example.com",
+      code: "123456",
+      registerSessionId: "session_1",
+    });
+    expect(await screen.findByLabelText("注册用户名")).toBeInTheDocument();
+    expect(screen.getByLabelText("注册密码")).toBeInTheDocument();
+    expect(screen.queryByLabelText("注册验证码")).not.toBeInTheDocument();
+
+    await user.type(screen.getByLabelText("注册用户名"), "alice");
+    await user.type(screen.getByLabelText("注册密码"), "Secret123!");
+    await user.click(screen.getByRole("button", { name: "完成注册" }));
+
+    expect(completeRegisterProgramAuth).toHaveBeenCalledWith({
+      email: "alice@example.com",
+      verificationTicket: "ticket_1",
+      username: "alice",
+      password: "Secret123!",
+    });
+    expect(await screen.findByText("账号已创建，但当前未开通会员")).toBeInTheDocument();
+  });
+
+  it("keeps the second-step verification UI after closing and reopening the dialog", async () => {
+    const user = userEvent.setup();
+    const sendRegisterCode = vi.fn().mockResolvedValue({
+      ok: true,
+      message: "注册验证码已发送",
+      register_session_id: "session_1",
+      masked_email: "a***e@example.com",
+      resend_after_seconds: 60,
+      summary: {
+        ...REMOTE_PROGRAM_ACCESS_LOGGED_OUT_FIXTURE,
+        registration_flow_version: 3,
+      },
+    });
+
+    render(
+      <ProgramAccessSidebarCard
+        access={{
+          ...REMOTE_PROGRAM_ACCESS_LOGGED_OUT_FIXTURE,
+          registration_flow_version: 3,
+        }}
+        sendRegisterCode={sendRegisterCode}
+        verifyRegisterCode={vi.fn()}
+        completeRegisterProgramAuth={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "打开程序账号窗口" }));
+    await user.click(screen.getByRole("button", { name: "注册" }));
+    await user.type(screen.getByLabelText("注册邮箱"), "alice@example.com");
+    await user.click(screen.getByRole("button", { name: "发送注册验证码" }));
+
+    expect(await screen.findByText("a***e@example.com")).toBeInTheDocument();
+    expect(screen.getByLabelText("注册验证码")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "重新发送验证码 (60s)" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "关闭" }));
+    expect(screen.queryByRole("dialog", { name: "程序账号" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "打开程序账号窗口" }));
+
+    expect(screen.getByText("a***e@example.com")).toBeInTheDocument();
+    expect(screen.getByLabelText("注册验证码")).toBeInTheDocument();
+    expect(screen.queryByLabelText("注册邮箱")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "重新发送验证码 (60s)" })).toBeInTheDocument();
+  });
+
+  it("clears the preserved registration draft when the user explicitly switches back to login", async () => {
+    const user = userEvent.setup();
+    const sendRegisterCode = vi.fn().mockResolvedValue({
+      ok: true,
+      message: "注册验证码已发送",
+      register_session_id: "session_1",
+      masked_email: "a***e@example.com",
+      resend_after_seconds: 60,
+      summary: {
+        ...REMOTE_PROGRAM_ACCESS_LOGGED_OUT_FIXTURE,
+        registration_flow_version: 3,
+      },
+    });
+
+    render(
+      <ProgramAccessSidebarCard
+        access={{
+          ...REMOTE_PROGRAM_ACCESS_LOGGED_OUT_FIXTURE,
+          registration_flow_version: 3,
+        }}
+        sendRegisterCode={sendRegisterCode}
+        verifyRegisterCode={vi.fn()}
+        completeRegisterProgramAuth={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "打开程序账号窗口" }));
+    await user.click(screen.getByRole("button", { name: "注册" }));
+    await user.type(screen.getByLabelText("注册邮箱"), "alice@example.com");
+    await user.click(screen.getByRole("button", { name: "发送注册验证码" }));
+
+    expect(await screen.findByLabelText("注册验证码")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "登录" }));
+    expect(screen.getByLabelText("程序会员登录账号")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "注册" }));
+    expect(screen.getByLabelText("注册邮箱")).toBeInTheDocument();
+    expect(screen.queryByLabelText("注册验证码")).not.toBeInTheDocument();
+    expect(screen.queryByText("a***e@example.com")).not.toBeInTheDocument();
+  });
+
+  it("moves the visible prompts into placeholders and renders the close button as X", async () => {
+    const user = userEvent.setup();
+    const sendRegisterCode = vi.fn().mockResolvedValue({
+      ok: true,
+      message: "注册验证码已发送",
+      register_session_id: "session_1",
+      masked_email: "a***e@example.com",
+      resend_after_seconds: 60,
+      summary: {
+        ...REMOTE_PROGRAM_ACCESS_LOGGED_OUT_FIXTURE,
+        registration_flow_version: 3,
+      },
+    });
+
+    render(
+      <ProgramAccessSidebarCard
+        access={{
+          ...REMOTE_PROGRAM_ACCESS_LOGGED_OUT_FIXTURE,
+          registration_flow_version: 3,
+        }}
+        sendRegisterCode={sendRegisterCode}
+        verifyRegisterCode={vi.fn()}
+        completeRegisterProgramAuth={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "打开程序账号窗口" }));
+
+    const closeButton = screen.getByRole("button", { name: "关闭" });
+    expect(closeButton).toHaveTextContent("X");
+
+    expect(screen.getByLabelText("程序会员登录账号")).toHaveAttribute("placeholder", "请输入程序会员账号");
+    expect(screen.getByLabelText("程序会员登录密码")).toHaveAttribute("placeholder", "请输入程序会员密码");
+
+    await user.click(screen.getByRole("button", { name: "注册" }));
+    expect(screen.getByLabelText("注册邮箱")).toHaveAttribute("placeholder", "请输入注册邮箱");
+
+    await user.type(screen.getByLabelText("注册邮箱"), "alice@example.com");
+    await user.click(screen.getByRole("button", { name: "发送注册验证码" }));
+
+    expect(await screen.findByLabelText("注册验证码")).toHaveAttribute("placeholder", "请输入验证码");
+  });
+
   it("supports register and reset-password actions while keeping the shared workspace locked", async () => {
     const user = userEvent.setup();
     const sendRegisterCode = vi.fn().mockResolvedValue({

@@ -142,6 +142,17 @@ def _resolve_program_access_refresh_interval_seconds(explicit_interval: float | 
         return 300.0
 
 
+def _resolve_program_access_probe_registration_readiness(explicit_flag: bool | None) -> bool:
+    if explicit_flag is not None:
+        return bool(explicit_flag)
+
+    raw = os.getenv("C5_PROGRAM_ACCESS_PROBE_REGISTRATION_READINESS")
+    if raw is None:
+        return False
+
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _build_program_access_bundle_path(app_data_root: Path) -> Path:
     return Path(app_data_root) / PROGRAM_ACCESS_APP_NAME / "program_access" / "bundle.json"
 
@@ -156,6 +167,7 @@ def _build_program_access_services(
     explicit_control_plane_base_url: str | None,
     explicit_key_cache_path: Path | None,
     explicit_refresh_interval_seconds: float | None,
+    explicit_probe_registration_readiness: bool | None,
 ):
     if stage != "packaged_release":
         return LocalPassThroughGateway(), None, None, None, None
@@ -195,6 +207,9 @@ def _build_program_access_services(
         secret_store=secret_store,
         device_id_store=device_id_store,
         stage=stage,
+        probe_registration_readiness=_resolve_program_access_probe_registration_readiness(
+            explicit_probe_registration_readiness
+        ),
     )
     scheduler = RefreshScheduler(
         gateway=gateway,
@@ -215,6 +230,7 @@ def create_app(
     program_access_control_plane_base_url: str | None = None,
     program_access_key_cache_path: Path | None = None,
     program_access_refresh_interval_seconds: float | None = None,
+    program_access_probe_registration_readiness: bool | None = None,
     program_access_start_refresh_scheduler: bool = True,
 ) -> FastAPI:
     database_path = db_path or Path("data/app.db")
@@ -255,6 +271,7 @@ def create_app(
         explicit_control_plane_base_url=program_access_control_plane_base_url,
         explicit_key_cache_path=program_access_key_cache_path,
         explicit_refresh_interval_seconds=program_access_refresh_interval_seconds,
+        explicit_probe_registration_readiness=program_access_probe_registration_readiness,
     )
     stats_pipeline = StatsPipeline(repository=stats_repository)
     stats_pipeline.start()

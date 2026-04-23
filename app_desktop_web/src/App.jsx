@@ -64,6 +64,8 @@ function ProgramAccessShellBanner() {
     logoutProgramAuth,
     sendRegisterCode,
     registerProgramAuth,
+    verifyRegisterCode,
+    completeRegisterProgramAuth,
     sendResetPasswordCode,
     resetProgramAuthPassword,
   } = useProgramAccessGuard();
@@ -78,6 +80,8 @@ function ProgramAccessShellBanner() {
       logoutProgramAuth={logoutProgramAuth}
       sendRegisterCode={sendRegisterCode}
       registerProgramAuth={registerProgramAuth}
+      verifyRegisterCode={verifyRegisterCode}
+      completeRegisterProgramAuth={completeRegisterProgramAuth}
       sendResetPasswordCode={sendResetPasswordCode}
       resetProgramAuthPassword={resetProgramAuthPassword}
     />
@@ -143,13 +147,12 @@ export function App({ runtimeStore }) {
   }, [reloadNotice]);
 
   useLayoutEffect(() => {
-    if (bootstrapConfig.backendMode !== "remote" || bootstrapConfig.backendStatus !== "ready") {
+    if (bootstrapConfig.backendStatus !== "ready") {
       return;
     }
 
     void runtimeConnectionManager.bootstrap().catch(() => {});
   }, [
-    bootstrapConfig.backendMode,
     bootstrapConfig.backendStatus,
     runtimeConnectionManager,
   ]);

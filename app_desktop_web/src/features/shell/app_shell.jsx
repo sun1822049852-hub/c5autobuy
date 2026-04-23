@@ -4,32 +4,26 @@ const NAV_ITEMS = [
   {
     id: "account-center",
     label: "账号中心",
-    tag: "Live",
   },
   {
     id: "query-system",
     label: "配置管理",
-    tag: "Live",
   },
   {
     id: "purchase-system",
     label: "扫货系统",
-    tag: "Live",
   },
   {
     id: "query-stats",
     label: "查询统计",
-    tag: "Live",
   },
   {
     id: "account-capability-stats",
     label: "账号能力统计",
-    tag: "Live",
   },
   {
     id: "diagnostics",
     label: "通用诊断",
-    tag: "Live",
   },
 ];
 
@@ -69,7 +63,6 @@ export function AppShell({
               }}
             >
               <span className="app-shell__nav-button-label">{item.label}</span>
-              <span aria-hidden="true" className="app-shell__nav-button-tag">{item.tag}</span>
             </button>
           ))}
         </nav>
