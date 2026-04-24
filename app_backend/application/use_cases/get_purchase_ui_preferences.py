@@ -8,7 +8,7 @@ class GetPurchaseUiPreferencesUseCase:
 
     def execute(self) -> dict[str, object]:
         preferences = self._repository.get()
-        selected_config_id = str(getattr(preferences, "selected_config_id", "") or "").strip() or None
+        selected_config_id = (preferences.selected_config_id or "").strip() or None
         if selected_config_id and self._query_config_repository.get_config(selected_config_id) is None:
             self._repository.clear_selected_config()
             return {
@@ -19,8 +19,8 @@ class GetPurchaseUiPreferencesUseCase:
 
     @staticmethod
     def _serialize(preferences) -> dict[str, object]:
-        selected_config_id = str(getattr(preferences, "selected_config_id", "") or "").strip() or None
+        selected_config_id = (preferences.selected_config_id or "").strip() or None
         return {
             "selected_config_id": selected_config_id,
-            "updated_at": getattr(preferences, "updated_at", None) if selected_config_id else None,
+            "updated_at": preferences.updated_at if selected_config_id else None,
         }

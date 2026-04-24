@@ -29,10 +29,10 @@ export function PurchaseItemPanel({
   const detailId = `purchase-item-panel-${row.query_item_id}`;
   const sourceStats = Array.isArray(row.source_mode_stats) ? row.source_mode_stats : [];
   const statItems = [
-    { label: "查询次数", value: row.query_execution_count ?? 0 },
-    { label: "命中", value: row.matched_product_count ?? 0 },
-    { label: "成功", value: row.purchase_success_count ?? 0 },
-    { label: "失败", value: row.purchase_failed_count ?? 0 },
+    { label: "查询次数", value: row.query_execution_count },
+    { label: "命中", value: row.matched_product_count },
+    { label: "成功", value: row.purchase_success_count },
+    { label: "失败", value: row.purchase_failed_count },
   ];
   const modeRows = Array.isArray(row.mode_rows) ? row.mode_rows : [];
 
