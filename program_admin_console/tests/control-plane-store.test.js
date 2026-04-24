@@ -166,6 +166,15 @@ function run() {
       deviceId: "device-a",
       ttlDays: 10
     });
+    const listedUsers = store.listUsersWithEntitlements();
+    const listedAlice = listedUsers.find((item) => item.username === "alice");
+    const listedMember = listedUsers.find((item) => item.username === "member");
+    assert.equal(listedAlice.entitlements.membership_plan, "inactive");
+    assert.equal(listedAlice.entitlements.feature_flags.program_access_enabled, false);
+    assert.equal(listedAlice.active_device_count, 1);
+    assert.equal(listedMember.entitlements.membership_plan, "member");
+    assert.equal(listedMember.entitlements.feature_flags.program_access_enabled, true);
+    assert.equal(listedMember.active_device_count, 0);
     const resolved = store.resolveRefreshSession({
       refreshToken: session.refresh_token,
       deviceId: "device-a"

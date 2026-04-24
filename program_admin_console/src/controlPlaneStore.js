@@ -505,6 +505,86 @@ class ControlPlaneStore {
     };
   }
 
+  listUsersWithEntitlements({now = new Date()} = {}) {
+    const users = this.listClientUsers();
+    if (!users.length) {
+      return [];
+    }
+    const userIds = users.map((u) => u.id);
+    const placeholders = userIds.map(() => "?").join(",");
+
+    // Batch: all feature overrides for all users
+    const allOverrides = this.db.prepare(`
+      SELECT user_id, feature_code, enabled
+      FROM client_user_feature_override
+      WHERE user_id IN (${placeholders})
+      ORDER BY user_id ASC, feature_code ASC
+    `).all(...userIds);
+    const overridesByUser = new Map();
+    for (const row of allOverrides) {
+      const uid = Number(row.user_id) || 0;
+      if (!overridesByUser.has(uid)) {
+        overridesByUser.set(uid, []);
+      }
+      overridesByUser.get(uid).push(row);
+    }
+
+    // Batch: active device session counts for all users
+    const deviceCounts = this.db.prepare(`
+      SELECT user_id, COUNT(*) AS cnt
+      FROM refresh_session
+      WHERE user_id IN (${placeholders}) AND status = 'active' AND revoked_at = ''
+      GROUP BY user_id
+    `).all(...userIds);
+    const deviceCountByUser = new Map();
+    for (const row of deviceCounts) {
+      deviceCountByUser.set(Number(row.user_id) || 0, Number(row.cnt) || 0);
+    }
+
+    // Cache membership plans to avoid repeated lookups
+    const planCache = new Map();
+    const getPlan = (code) => {
+      if (!planCache.has(code)) {
+        planCache.set(code, this.getMembershipPlanByCode(code));
+      }
+      return planCache.get(code);
+    };
+
+    return users.map((user) => {
+      const plan = getPlan(user.membership_plan) || getPlan("inactive");
+      const active = this.isMembershipActive(user, now);
+      const effectivePlan = active ? plan : getPlan("inactive");
+      const permissions = new Set(effectivePlan ? effectivePlan.permissions : []);
+      const overrides = overridesByUser.get(user.id) || [];
+      for (const item of overrides) {
+        const code = toText(item.feature_code);
+        if (!code) {
+          continue;
+        }
+        if (Number(item.enabled) === 1) {
+          permissions.add(code);
+        } else {
+          permissions.delete(code);
+        }
+      }
+      const resolvedPermissions = [...permissions].sort();
+      return {
+        ...user,
+        entitlements: {
+          membership_plan: effectivePlan ? effectivePlan.code : "inactive",
+          assigned_membership_plan: user.membership_plan,
+          membership_expires_at: user.membership_expires_at,
+          membership_active: active,
+          permissions: resolvedPermissions,
+          feature_flags: {
+            program_access_enabled: resolvedPermissions.includes("program_access_enabled")
+          }
+        },
+        active_device_count: deviceCountByUser.get(user.id) || 0
+      };
+    });
+  }
+
   isMembershipActive(user, now = new Date()) {
     if (!user || toText(user.status) !== "active") {
       return false;

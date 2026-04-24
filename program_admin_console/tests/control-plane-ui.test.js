@@ -4,6 +4,7 @@ const http = require("node:http");
 const os = require("node:os");
 const path = require("node:path");
 const vm = require("node:vm");
+const zlib = require("node:zlib");
 
 const {createServer} = require("../src/server");
 
@@ -54,6 +55,20 @@ function createTrackedStorage(initialValue = "") {
         calls.removeItem.push(key);
         storedValue = "";
       }
+    }
+  };
+}
+
+function createJsonResponse(payload) {
+  return {
+    ok: true,
+    headers: {
+      get(name) {
+        return String(name).toLowerCase() === "content-type" ? "application/json; charset=utf-8" : "";
+      }
+    },
+    async json() {
+      return payload;
     }
   };
 }
@@ -194,16 +209,21 @@ async function executeUiApp(options = {}) {
   return harness;
 }
 
-async function request(ctx, route) {
+async function request(ctx, route, headers = null) {
   const url = new URL(route, ctx.baseUrl);
   return new Promise((resolve, reject) => {
-    const req = http.request(url, {method: "GET"}, (res) => {
+    const req = http.request(url, {
+      method: "GET",
+      headers: headers && typeof headers === "object" ? headers : {}
+    }, (res) => {
       const chunks = [];
       res.on("data", (chunk) => chunks.push(chunk));
       res.on("end", () => {
+        const buffer = Buffer.concat(chunks);
         resolve({
           status: res.statusCode || 0,
-          text: Buffer.concat(chunks).toString("utf8"),
+          buffer,
+          text: buffer.toString("utf8"),
           headers: res.headers
         });
       });
@@ -282,6 +302,59 @@ async function main() {
   assert.equal(elements["#workspaceMessage"].textContent, "保存失败");
   assert.equal(elements["#authMessage"].hidden, true);
 
+  const staleSelectionHarness = await executeUiApp();
+  const staleRejections = [];
+  const onUnhandledRejection = (reason) => {
+    staleRejections.push(reason);
+  };
+  process.on("unhandledRejection", onUnhandledRejection);
+  try {
+    staleSelectionHarness.context.saveToken("session-token");
+    await staleSelectionHarness.context.loadSession();
+    await staleSelectionHarness.context.loadDashboard();
+    staleSelectionHarness.context.fetch = async (route) => {
+      if (route === "/api/admin/users") {
+        return createJsonResponse({
+          ok: true,
+          items: [
+            {
+              id: 8,
+              username: "bob",
+              email: "bob@example.com",
+              membership_plan: "inactive",
+              membership_expires_at: ""
+            }
+          ]
+        });
+      }
+      if (route === "/api/admin/users/7/devices") {
+        throw new Error("stale selected user");
+      }
+      if (route === "/api/admin/users/8/devices") {
+        return createJsonResponse({
+          ok: true,
+          items: [
+            {
+              id: 21,
+              device_id: "device-b",
+              created_at: "2026-04-20T09:00:00.000Z",
+              last_used_at: "2026-04-20T09:05:00.000Z",
+              expires_at: "2026-05-20T09:05:00.000Z"
+            }
+          ]
+        });
+      }
+      throw new Error(`Unexpected fetch route: ${route}`);
+    };
+    await staleSelectionHarness.context.loadDashboard();
+    await flushPromises(12);
+    assert.equal(staleSelectionHarness.elements["#detailUsername"].textContent, "bob");
+    assert.equal(staleSelectionHarness.elements["#deviceList"].innerHTML.includes("device-b"), true);
+    assert.deepEqual(staleRejections, []);
+  } finally {
+    process.removeListener("unhandledRejection", onUnhandledRejection);
+  }
+
   const persistedTokenHarness = await executeUiApp({persistedToken: "legacy-admin-token"});
   assert.equal(persistedTokenHarness.elements["#authPanel"].hidden, false);
   assert.equal(persistedTokenHarness.elements["#workspace"].hidden, true);
@@ -302,6 +375,14 @@ async function main() {
     const script = await request(ctx, "/admin/app.js");
     assert.equal(script.status, 200);
     assert.match(script.headers["content-type"] || "", /javascript/);
+
+    const gzippedScript = await request(ctx, "/admin/app.js", {
+      "Accept-Encoding": "gzip"
+    });
+    assert.equal(gzippedScript.status, 200);
+    assert.equal(gzippedScript.headers["content-encoding"], "gzip");
+    assert.equal(gzippedScript.headers.vary, "Accept-Encoding");
+    assert.match(zlib.gunzipSync(gzippedScript.buffer).toString("utf8"), /LEGACY_TOKEN_STORAGE_KEY/);
 
     const stylesheet = await request(ctx, "/admin/styles.css");
     assert.equal(stylesheet.status, 200);

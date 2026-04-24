@@ -1,6 +1,7 @@
 const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
+const zlib = require("node:zlib");
 const {DEFAULTS, RUNTIME_PERMIT_ACTIONS} = require("./constants");
 const {ControlPlaneStore} = require("./controlPlaneStore");
 const {createEntitlementSigner} = require("./entitlementSigner");
@@ -112,14 +113,39 @@ function writeRegisterV3Error(
   res.end(body);
 }
 
+const staticCache = new Map();
+
+function getStaticEntry(filePath) {
+  const mtimeMs = fs.statSync(filePath).mtimeMs;
+  const cached = staticCache.get(filePath);
+  if (cached && cached.mtimeMs === mtimeMs) {
+    return cached;
+  }
+  const raw = fs.readFileSync(filePath);
+  const gzipped = zlib.gzipSync(raw, {level: zlib.constants.Z_BEST_COMPRESSION});
+  const entry = {raw, gzipped, mtimeMs};
+  staticCache.set(filePath, entry);
+  return entry;
+}
+
 function writeFile(res, status, filePath, contentType) {
-  const body = fs.readFileSync(filePath);
-  res.writeHead(status, {
+  const entry = getStaticEntry(filePath);
+  const headers = {
     "Content-Type": `${contentType}; charset=utf-8`,
-    "Content-Length": body.byteLength,
-    "Cache-Control": "no-cache, no-store, must-revalidate"
-  });
-  res.end(body);
+    "Cache-Control": "no-cache, no-store, must-revalidate",
+    "Vary": "Accept-Encoding"
+  };
+  const acceptEncoding = res.req && res.req.headers && res.req.headers["accept-encoding"] || "";
+  if (acceptEncoding.includes("gzip")) {
+    headers["Content-Encoding"] = "gzip";
+    headers["Content-Length"] = entry.gzipped.byteLength;
+    res.writeHead(status, headers);
+    res.end(entry.gzipped);
+  } else {
+    headers["Content-Length"] = entry.raw.byteLength;
+    res.writeHead(status, headers);
+    res.end(entry.raw);
+  }
 }
 
 function readJsonBody(req, {maxBytes = 1024 * 1024} = {}) {
@@ -569,11 +595,7 @@ function createServer({
         if (req.method === "GET" && pathname === "/api/admin/users") {
           writeJson(res, 200, {
             ok: true,
-            items: store.listClientUsers().map((user) => ({
-              ...user,
-              entitlements: store.resolveUserEntitlements({userId: user.id, now: now()}),
-              active_device_count: store.listUserDeviceSessions({userId: user.id}).length
-            }))
+            items: store.listUsersWithEntitlements({now: now()})
           });
           return;
         }

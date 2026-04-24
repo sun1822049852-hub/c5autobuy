@@ -339,13 +339,33 @@ async function loadDashboard() {
   if (!state.session) {
     return;
   }
-  const users = await api("/api/admin/users", {method: "GET"});
+  const previousSelectedId = state.selectedUserId;
+  const usersPromise = api("/api/admin/users", {method: "GET"});
+  // Capture the result immediately so stale-user failures do not escape if selection changes mid-refresh.
+  const devicesPromise = previousSelectedId
+    ? api(`/api/admin/users/${previousSelectedId}/devices`, {method: "GET"})
+      .then((response) => ({ok: true, response}))
+      .catch((error) => ({ok: false, error}))
+    : null;
+
+  const users = await usersPromise;
   state.users = Array.isArray(users.items) ? users.items : [];
   if (!state.users.find((user) => user.id === state.selectedUserId)) {
     state.selectedUserId = state.users[0] ? state.users[0].id : 0;
   }
   renderUsers();
-  await loadDevices();
+
+  // If selected user changed (or had none), fetch devices for the new selection
+  if (devicesPromise && state.selectedUserId === previousSelectedId) {
+    const deviceResult = await devicesPromise;
+    if (!deviceResult.ok) {
+      throw deviceResult.error;
+    }
+    state.devices = Array.isArray(deviceResult.response.items) ? deviceResult.response.items : [];
+    renderUserDetail();
+  } else {
+    await loadDevices();
+  }
 }
 
 async function loadDevices() {

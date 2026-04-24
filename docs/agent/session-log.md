@@ -915,4 +915,58 @@
   - 真机上该行为依赖 Chromium 系浏览器（当前默认 Edge，回退 Chrome）；若未来要支持 Firefox 等非 Chromium 浏览器，需要另做参数与进程模型兼容。
   - 当前 `-NoBrowser` 模式仍保留，属于 tunnel-only 例外路径；用户若自己手动用它，只能靠关闭脚本窗口或 Ctrl+C 结束隧道。
 - 下一步：
+
+## 2026-04-24 (Asia/Shanghai) — Claude Code 会话
+- 背景：魔尊反馈打包体积过大，需要极限瘦身。
+- 已完成：
+  - 确认 580670a 已完成 .venv → python_deps 切换，release/ 中的 .venv 是旧构建残留
+  - 扩充 EXCLUDED_TOP_LEVEL_ENTRIES：新增 selenium+依赖链、pkg_resources、pytest_asyncio/pytestqt/py_spy（21 项）
+  - 增强 buildCopyFilter：排除 .dist-info、tests/、__editable__/.pth、修复 __pycache__ 匹配
+  - electron-builder 配置：compression maximum + electronLanguages 裁剪 + filter 增强
+  - vite 配置：emptyOutDir 防历史产物累积
+  - 创建优化路径文档：docs/superpowers/specs/2026-04-24-package-size-optimization.md
+  - 同步 Memory 和 Session Log
+- 当前进度：代码改动完成，待清理旧产物后重新打包验证实际体积
+- 下一步：清理 release/ 后执行 pack:win 验证
   - 若还要继续优化体验，可以再补一个“断开隧道脚本”或桌面快捷方式，但当前核心诉求已满足。
+
+## 2026-04-24 22:34 (Asia/Shanghai)
+- 背景：魔尊指出“控制台前端设计在其他 agent 那轮已经改好，但通过 `connectProgramAdminConsole` 进入时没生效”，并要求两件事同时收口：1. 继续把远端控制台未部署的本地前后端差异对齐；2. 把“本地控制台改动必须同步远端、不能长期落后版本”固化成长期规则。
+- 已完成：
+  - 已先按真实入口取证：确认 `program_admin_console/tools/connectProgramAdminConsole.{ps1,cmd}` 打开的不是本地工作树，而是经 SSH 隧道访问远端运行中的 `c5-program-admin`。随后对比本地与远端静态资源哈希，确认远端当时只有 `ui/index.html` 对齐，而 `ui/app.js`、`ui/styles.css` 仍落后于本地；其中 `styles.css` 旧版只包含 `button[hidden]`，正是这次“设计没生效”的直接触发点。
+  - 已先热补远端 `styles.css` 并重启容器，确认 `connect` 入口的隐藏规则恢复成全局 `[hidden] { display: none !important; }`。
+  - 已继续把本地未部署的控制台差异完整对齐到远端：本地 focused 验证先跑 `control-plane-ui / server / store` 三套测试；随后把本地 `program_admin_console/src/controlPlaneStore.js`、`program_admin_console/src/server.js`、`program_admin_console/ui/app.js`、`program_admin_console/ui/styles.css` 同步到远端源码目录 `/home/admin/c5-program-admin-src`，并基于远端源码重建镜像、替换现网容器。
+  - 对齐过程中暴露出第二个根因：远端源码树本身缺 `src/validation.js`，导致第一次重建后新容器直接因 `Cannot find module './validation'` 启动失败。已补同步该依赖文件后重新构建，现网最终切到新镜像 `c5-program-admin:sync-20260424_223549`；同时保留了源码备份目录 `/home/admin/c5-program-admin-src_sync_backup_20260424_223419`，便于回退或验尸。
+  - 已把“控制台本地改动必须同步远端源码 + 重建远端容器 + 验 connect 入口静态资源与健康接口”的纪律固化到 `program_admin_console/README.md` 与 `docs/agent/memory.md`，避免后续会话再次把“本地改过了”误当成“connect 入口已经生效”。
+- 已做验证：
+  - 本地 focused 验证：`node program_admin_console/tests/control-plane-ui.test.js` -> `control-plane-ui tests passed`；`node program_admin_console/tests/control-plane-server.test.js` -> `control-plane-server tests passed`；`node program_admin_console/tests/control-plane-store.test.js` -> 退出码 `0`。
+  - 远端容器：`sudo docker ps --filter name=c5-program-admin --format "{{.Names}} {{.Image}} {{.Status}} {{.Ports}}"` -> `c5-program-admin c5-program-admin:sync-20260424_223549 Up ... 127.0.0.1:18787->8787/tcp`。
+  - 远端健康：`curl http://127.0.0.1:18787/api/health` -> `{"ok":true}`；`curl http://127.0.0.1:18787/api/admin/session` -> `{"ok":true,"authenticated":false,"needs_bootstrap":false}`。
+  - 源码与运行时对齐：远端源码目录 `/home/admin/c5-program-admin-src` 与运行容器 `/app` 中的 `src/controlPlaneStore.js`、`src/server.js`、`src/validation.js`、`ui/app.js`、`ui/styles.css`、`ui/index.html` 哈希均已对齐到本地当前工作树。
+  - `connect` 同路径静态资源对齐：经 SSH 隧道抓取 `http://127.0.0.1:18787/admin`、`/admin/app.js`、`/admin/styles.css`，其内容哈希均与本地工作树一致；同时远端 `app.js` 已包含 `usersPromise / devicesPromise`，`styles.css` 已恢复全局 `[hidden]` 规则。
+- 当前进度：远端控制台运行态、远端源码态、`connectProgramAdminConsole` 实际入口，现已与本地 `program_admin_console` 当前代码重新对齐；这条控制台“本地改完但 connect 入口仍吃旧版”的漂移已被收口。
+- 余险：
+  - 本轮只对齐了 `program_admin_console` 当前工作树差异，并把发布纪律写入文档；并没有把这套“远端同步 + 构建 + 替换 + 静态哈希验尸”再封装成一键部署脚本，后续若要进一步降操作风险，可再单开一刀做脚本化。
+  - 远端替换过程中曾短暂出现新容器启动失败，根因是远端源码缺 `validation.js`；虽然本轮已修复并恢复服务，但这说明未来若继续做人工拷贝式同步，仍必须按“依赖闭包”而不是“肉眼改动文件”去发布。
+- 下一步：
+  - 若魔尊后续还要继续收控制台，只要涉及 `program_admin_console/src/` 或 `ui/`，默认直接沿 README 新增的“远端对齐纪律”执行，不再允许出现“本地已改、connect 入口未同步”的收口方式。
+
+## 2026-04-24 23:03 (Asia/Shanghai)
+- 背景：在完成远端控制台对齐后，继续按魔尊批准补控制台 focused regression，目标是把三处薄弱点锁进自动化：1. `/api/admin/users` 的批量 entitlements / `active_device_count` 回归；2. `/admin/app.js` gzip 响应头；3. `ui/app.js` 的并行加载失败分支不再漏出未捕获 rejection。
+- 已完成：
+  - `program_admin_console/tests/control-plane-store.test.js` 已补直接断言 `listUsersWithEntitlements()` 的聚合结果：锁定 `alice/member` 两个用户的 `entitlements` 与 `active_device_count`，避免后续批量 SQL 优化再把返回口径悄悄漂移。
+  - `program_admin_console/tests/control-plane-server.test.js` 已把 `/api/admin/users` 的接口断言补到用户可见口径：升级前后的 `entitlements.membership_plan`、`feature_flags.program_access_enabled`、`active_device_count` 都有覆盖，不再只看 `membership_plan`。
+  - `program_admin_console/tests/control-plane-ui.test.js` 已新增两条更贴近事故的回归：1. 静态 `app.js` 在 `Accept-Encoding: gzip` 下必须返回 `Content-Encoding: gzip` 且显式带 `Vary: Accept-Encoding`；2. 当 dashboard 刷新时旧选中用户的 `/devices` 并行请求失败、同时用户列表切到新用户时，前端不得再留下未捕获 rejection。
+  - 按红绿过程修了两处最小实现：`program_admin_console/ui/app.js` 现在会把并行设备请求包装成“结果对象”，只有在当前选中用户仍是旧用户时才消费/抛错，旧用户切走时不会把 rejected promise 漏成全局未处理；`program_admin_console/src/server.js` 的静态资源响应现固定补 `Vary: Accept-Encoding`，避免 gzip 资源在代理层被错误复用。
+  - 因为本轮又改了 `program_admin_console/src/server.js` 与 `program_admin_console/ui/app.js`，已继续按新纪律把这两处再次同步到远端源码 `/home/admin/c5-program-admin-src`，并重建现网容器；当前远端镜像已切到 `c5-program-admin:sync-20260424_225534`，源码备份锚点为 `/home/admin/c5-program-admin-src_sync_backup_20260424_225532`。
+- 已做验证：
+  - 红灯：首次回跑三条 focused tests 时，`control-plane-ui.test.js` 先因未捕获 `stale selected user` rejection 失败；修完 `ui/app.js` 后再次回跑，又因缺少 `Vary: Accept-Encoding` 失败；补完 `server.js` 头后再转绿。
+  - focused 绿灯：`node program_admin_console/tests/control-plane-store.test.js` -> 退出码 `0`；`node program_admin_console/tests/control-plane-server.test.js` -> `control-plane-server tests passed`；`node program_admin_console/tests/control-plane-ui.test.js` -> `control-plane-ui tests passed`。
+  - 全套回归：`npm --prefix program_admin_console test` -> `mail-config / mail-service / store / server / ui / connect-script` 全部通过。
+  - 远端回验：`curl http://127.0.0.1:18787/api/health` -> `{"ok":true}`；`curl http://127.0.0.1:18787/api/admin/session` -> `{"ok":true,"authenticated":false,"needs_bootstrap":false}`；`curl -D - -o /dev/null -H "Accept-Encoding: gzip" http://127.0.0.1:18787/admin/app.js` 现已返回 `Vary: Accept-Encoding` 与 `Content-Encoding: gzip`；经 `connect` 同路径抓取的 `/admin/app.js` 仍包含 `usersPromise / devicesPromise` 标记。
+- 当前进度：控制台现网同步纪律、远端对齐、以及这轮 focused regression 都已收口；后续若再改控制台，至少这三类回归不会再靠人工记忆兜底。
+- 余险：
+  - 本轮没有新增“自动部署/自动 smoke”脚本，仍以文档纪律 + 手工执行为主；若未来继续频繁发布控制台，建议单开一刀补 `smokeProgramAdminConsole` 之类的固定验尸脚本。
+  - `listUsersWithEntitlements()` 现在走单条 `IN (?, ?, ...)` 批量查询；当前测试锁住了返回口径，但没有专门压参数上限或大用户量场景，后续若控制台用户规模明显上升，应再补压力侧验证。
+- 下一步：
+  - 若魔尊继续追控制台稳态质量，优先考虑把“远端对齐 + connect 同路径静态哈希验尸 + health/session smoke”脚本化，减少人工发布时遗漏依赖文件或少验一步的风险。

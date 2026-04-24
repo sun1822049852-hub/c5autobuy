@@ -256,6 +256,9 @@ async function main() {
     assert.equal(userList.body.ok, true);
     assert.equal(userList.body.items.length, 1);
     assert.equal(userList.body.items[0].membership_plan, "inactive");
+    assert.equal(userList.body.items[0].active_device_count, 1);
+    assert.equal(userList.body.items[0].entitlements.membership_plan, "inactive");
+    assert.equal(userList.body.items[0].entitlements.feature_flags.program_access_enabled, false);
     const aliceId = userList.body.items[0].id;
 
     const upgraded = await requestJson(ctx, "PATCH", `/api/admin/users/${aliceId}`, {
@@ -342,7 +345,15 @@ async function main() {
     assert.equal(usersAfterBob.status, 200);
     assert.equal(usersAfterBob.body.ok, true);
     assert.equal(usersAfterBob.body.items.length, 2);
+    const aliceAfterBob = usersAfterBob.body.items.find((item) => item.username === "alice");
+    assert.equal(aliceAfterBob.active_device_count, 1);
+    assert.equal(aliceAfterBob.entitlements.membership_plan, "member");
+    assert.equal(aliceAfterBob.entitlements.feature_flags.program_access_enabled, true);
     const bobId = usersAfterBob.body.items.find((item) => item.username === "bob").id;
+    const bobAfterCreate = usersAfterBob.body.items.find((item) => item.username === "bob");
+    assert.equal(bobAfterCreate.active_device_count, 1);
+    assert.equal(bobAfterCreate.entitlements.membership_plan, "inactive");
+    assert.equal(bobAfterCreate.entitlements.feature_flags.program_access_enabled, false);
 
     const aliceDevices = await requestJson(ctx, "GET", `/api/admin/users/${aliceId}/devices`, null, adminHeaders);
     assert.equal(aliceDevices.status, 200);

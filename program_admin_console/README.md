@@ -16,6 +16,50 @@
 - 下文保留的公网 IP / `0.0.0.0` 示例主要用于历史 rollout 或一般性部署说明，不代表当前现网推荐姿势
 - 后续若有 AI/维护者要调整控制台部署，默认应保持“仅服务器本机可达 + SSH 隧道访问”，不要无说明地重新开放公网端口
 
+## 远端对齐纪律
+
+`program_admin_console/tools/connectProgramAdminConsole.{ps1,cmd}` 打开的始终是远端运行中的 `c5-program-admin` 容器，不是本地工作树页面。
+
+这意味着：
+
+- 只改本地 `program_admin_console/src/` 或 `program_admin_console/ui/`，不会自动反映到 `connectProgramAdminConsole` 入口
+- 只要控制台本地代码有用户可见或接口行为改动，就必须在同一轮把远端源码与远端运行容器一起对齐
+- 不能只热补容器不回写远端源码，也不能只改远端源码不刷新容器；两边任何一边落后，`connectProgramAdminConsole` 都可能继续看到旧版
+
+当前推荐的最小对齐闭环：
+
+1. 本地先跑 focused 验证：
+
+```powershell
+node program_admin_console/tests/control-plane-ui.test.js
+node program_admin_console/tests/control-plane-server.test.js
+node program_admin_console/tests/control-plane-store.test.js
+```
+
+2. 把本地控制台源码同步到远端源码目录：
+
+- `/home/admin/c5-program-admin-src/src/`
+- `/home/admin/c5-program-admin-src/ui/`
+
+注意：不是只同步“肉眼看到改过的文件”，而是要保证新代码依赖到的文件也在远端源码树里。例如 `server.js` 新增 `require("./validation")` 时，`src/validation.js` 也必须同步过去，否则远端重建会直接启动失败。
+
+3. 基于远端源码重建并替换现网容器 `c5-program-admin`。
+
+4. 发布后至少验四类结果：
+
+```powershell
+# 远端宿主机本机健康
+curl http://127.0.0.1:18787/api/health
+curl http://127.0.0.1:18787/api/admin/session
+
+# connect 入口对应的静态资源
+curl http://127.0.0.1:18787/admin
+curl http://127.0.0.1:18787/admin/app.js
+curl http://127.0.0.1:18787/admin/styles.css
+```
+
+若本轮改动涉及静态页面或前端交互，建议额外比较本地与远端的静态文件哈希，确认 `/admin`、`/admin/app.js`、`/admin/styles.css` 已与本地工作树对齐后，再宣称“connect 入口已生效”。
+
 ## Smoke Note（先验失败/连通性检查）
 
 ```powershell
