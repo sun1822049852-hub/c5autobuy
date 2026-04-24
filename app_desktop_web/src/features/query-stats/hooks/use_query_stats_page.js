@@ -9,6 +9,13 @@ import {
 } from "../../stats/stats_shared.js";
 
 
+/** 数据新鲜度窗口：5 秒内视为有效，不重复拉取 */
+const DATA_FRESHNESS_MS = 5_000;
+
+/** 刷新按钮硬节流：1 秒 */
+const REFRESH_THROTTLE_MS = 1_000;
+
+
 function normalizeQueryStatsResponse(response) {
   return {
     items: Array.isArray(response?.items)
@@ -37,6 +44,11 @@ export function useQueryStatsPage({ client }) {
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
 
+  /** 上次成功拉取数据的时间戳 */
+  const lastFetchTimestampRef = useRef(0);
+  /** 上次触发刷新的时间戳（节流用） */
+  const lastRefreshClickRef = useRef(0);
+
   function updateFilters(nextValue) {
     const nextFilters = typeof nextValue === "function"
       ? nextValue(filtersRef.current)
@@ -61,6 +73,7 @@ export function useQueryStatsPage({ client }) {
       const response = await client.getQueryItemStats(buildStatsRequestParams(nextFilters));
       setRows(normalizeQueryStatsResponse(response).items);
       setLoadError(null);
+      lastFetchTimestampRef.current = Date.now();
     } catch (error) {
       setLoadError(buildErrorDisplay(error));
     } finally {
@@ -95,6 +108,19 @@ export function useQueryStatsPage({ client }) {
       updateFilters((current) => applyRangeModeDefaults(current, nextRangeMode));
     },
     onRefresh() {
+      const now = Date.now();
+
+      // 5 秒新鲜度窗口：数据尚新，不打接口
+      if (now - lastFetchTimestampRef.current < DATA_FRESHNESS_MS) {
+        return Promise.resolve();
+      }
+
+      // 1 秒硬节流：防止连续点击
+      if (now - lastRefreshClickRef.current < REFRESH_THROTTLE_MS) {
+        return Promise.resolve();
+      }
+
+      lastRefreshClickRef.current = now;
       return loadStats(filtersRef.current);
     },
     onStartDateChange(nextValue) {
