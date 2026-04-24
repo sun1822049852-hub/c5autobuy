@@ -243,9 +243,48 @@ describe("query stats page", () => {
     expect(within(table).getByText("查询账号B / api高速查询器 3")).toBeInTheDocument();
   });
 
-  it("closes the stats picker when clicking outside the picker", async () => {
-    const harness = createFetchHarness();
-    installDesktopApp(harness.fetchImpl);
+  it("auto refreshes query stats after the picker closes with a changed date", async () => {
+    const calls = [];
+    installDesktopApp(vi.fn(async (input, options = {}) => {
+      const url = new URL(input);
+      const method = String(options.method ?? "GET").toUpperCase();
+      calls.push({
+        method,
+        pathname: url.pathname,
+        search: url.search,
+      });
+
+      if (url.pathname === "/account-center/accounts" && method === "GET") {
+        return jsonResponse([]);
+      }
+
+      if (url.pathname === "/stats/query-items" && method === "GET") {
+        const requestedDate = url.searchParams.get("date");
+        return jsonResponse({
+          range_mode: "day",
+          date: requestedDate,
+          items: [
+            {
+              external_item_id: "ext-1",
+              item_name: "AK-47 | Redline",
+              query_execution_count: requestedDate === "2026-03-21" ? 9 : 4,
+              matched_product_count: requestedDate === "2026-03-21" ? 6 : 2,
+              purchase_success_count: requestedDate === "2026-03-21" ? 4 : 1,
+              purchase_failed_count: requestedDate === "2026-03-21" ? 2 : 1,
+              source_mode_stats: [
+                {
+                  mode_type: "new_api",
+                  hit_count: requestedDate === "2026-03-21" ? 6 : 2,
+                  account_display_name: "查询账号A",
+                },
+              ],
+            },
+          ],
+        });
+      }
+
+      throw new Error(`Unhandled request: ${method} ${url.pathname}${url.search}`);
+    }));
     const user = userEvent.setup();
 
     render(<App />);
@@ -253,12 +292,31 @@ describe("query stats page", () => {
 
     await user.click(screen.getByRole("button", { name: "打开统计时间选择" }));
     expect(await screen.findByRole("dialog", { name: "选择统计日期" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "选择日期 2026-03-21" }));
 
     await user.click(screen.getByText("按商品聚合命中、成功、下单失败件数与来源统计。"));
 
     await waitFor(() => {
       expect(screen.queryByRole("dialog", { name: "选择统计日期" })).not.toBeInTheDocument();
     });
+
+    await waitFor(() => {
+      expect(calls).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            method: "GET",
+            pathname: "/stats/query-items",
+            search: "?range_mode=day&date=2026-03-21",
+          }),
+        ]),
+      );
+    });
+
+    const table = screen.getByRole("table", { name: "查询统计表" });
+    expect(within(table).getByText("9")).toBeInTheDocument();
+    expect(within(table).getByText("6")).toBeInTheDocument();
+    expect(within(table).getByText("4")).toBeInTheDocument();
+    expect(within(table).getByText("查询账号A / api查询器 6")).toBeInTheDocument();
   });
 
   it("shows raw http details when query stats loading fails with an unhandled backend string", async () => {

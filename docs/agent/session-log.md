@@ -579,3 +579,60 @@
   - 构建：`npm --prefix app_desktop_web run build` -> `vite build` 成功，当前产物为 `dist/assets/index-DPfO2VN4.js` 与 `dist/assets/index-BgpSKLkl.css`。
 - 当前进度：代码、文档与 fresh verification 已全部到位；当前已到可手测状态。
 - 下一步：让用户在正式桌面窗口里打开“配置管理”，人工确认三点：1. 状态图标已和商品条目同排；2. 绿色双竖线/红色三角形一眼可区分；3. 删除模式下该格位会原地切成 `-` 删除按钮。
+
+## 2026-04-24 07:52 (Asia/Shanghai)
+- 背景：用户反馈统计页在日期/时间段面板内选完范围并关闭后，界面仍停留旧数据，必须再手点一次“刷新统计”才会重新拉取。
+- 已完成：
+  - 在共享统计控件 `app_desktop_web/src/features/stats/stats_range_controls.jsx` 补了“筛选变更脏标记”，现在只要用户在面板内改过日期/时间段，关闭面板时就会自动触发一次刷新；若只是打开再关闭、不改筛选，则不会额外发请求。
+  - 保留原有“刷新统计”按钮，但手动刷新时会清掉待刷新的脏标记，避免关闭面板后重复再打一枪。
+  - 在 `app_desktop_web/tests/renderer/query_stats_page.test.jsx` 与 `app_desktop_web/tests/renderer/account_capability_stats_page.test.jsx` 新增回归，锁定“改过筛选并关闭面板后应立即请求新日期并更新表格”。
+- 已做验证：
+  - 红灯：`npm --prefix app_desktop_web test -- tests/renderer/query_stats_page.test.jsx --run` -> `1 failed / 3 passed`，失败点为关闭面板后仍只看到初始 `today` 请求。
+  - 红灯：`npm --prefix app_desktop_web test -- tests/renderer/account_capability_stats_page.test.jsx --run` -> `1 failed / 2 passed`，失败点同样是关闭面板后未发出新日期请求。
+  - 绿灯：`npm --prefix app_desktop_web test -- tests/renderer/query_stats_page.test.jsx --run` -> `4 passed`。
+  - 绿灯：`npm --prefix app_desktop_web test -- tests/renderer/account_capability_stats_page.test.jsx --run` -> `3 passed`。
+  - 合并验证：`npm --prefix app_desktop_web test -- tests/renderer/query_stats_page.test.jsx tests/renderer/account_capability_stats_page.test.jsx --run` -> `2 files / 7 tests passed`。
+- 当前进度：统计页日期面板关闭即自动刷新已到可手测状态；本轮未触碰后端统计口径、接口参数和主链路，仅改共享前端控件与 renderer 回归。
+- 余险：
+  - 当前验证覆盖了“按天筛选后关闭面板自动刷新”；共享控件对时间段和快捷范围也走同一脏标记/关闭刷新路径，但尚未额外补更宽的全量 renderer 场景。
+  - 工作树里另有与本轮无关的脏改：`docs/superpowers/specs/2026-04-23-packaged-python-runtime-bootstrap-design.md` 以及 `tmp_startup_*.db`，本轮未处理。
+- 下一步：让用户在真实桌面窗口里分别打开“查询统计”和“账号能力统计”，选一个非当天日期或时间段后直接关闭面板，确认表格会立刻切到对应数据，不再需要补点“刷新统计”。
+
+## 2026-04-24 08:03 (Asia/Shanghai)
+- 背景：用户要求修复“任务3 / 扫货系统”在停止扫货后把命中、成功、失败数据清空的问题；目标是改成按日期口径展示当天累计，不再因 stop 动作清空。
+- 已完成：
+  - backend `app_backend/application/use_cases/get_purchase_runtime_status.py` 新增停止态当天统计回填：当查询运行时已无 active config 时，会改为读取当前已选配置与 `stats_repository` 的当日统计，把商品行的查询次数、命中、成功、失败与来源统计补回 `/purchase-runtime/status`。
+  - backend 调整了所有对外状态出口的一致口径：`app_backend/api/routes/purchase_runtime.py`、`app_backend/api/routes/query_configs.py`、`app_backend/application/use_cases/get_app_bootstrap.py`，以及 `app_backend/infrastructure/purchase/runtime/purchase_runtime_service.py` 的 runtime update payload，现在 stop 后的接口响应与 websocket 推送不会再回空白商品行。
+  - frontend `app_desktop_web/src/features/purchase-system/hooks/use_purchase_system_page.js` 已放宽 stopped 态 `item_rows` 的消费条件：当运行时已停止但后端仍带回商品行统计时，页面继续用这些行覆盖所选配置卡片，不再因为 `active_query_config=null` 强行回落成全 0。
+  - 新增回归：`tests/backend/test_purchase_runtime_routes.py` 锁定“停止态仍返回当天已选配置统计”，`app_desktop_web/tests/renderer/purchase_system_page.test.jsx` 锁定“停止后仍展示所选配置当天统计”。
+- 已做验证：
+  - 红灯：`C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_purchase_runtime_routes.py -k "keeps_selected_config_daily_item_stats_when_stopped" -q` -> `1 failed`，失败点为 `item_rows == []`。
+  - 红灯：`npm --prefix app_desktop_web test -- tests/renderer/purchase_system_page.test.jsx --run --testNamePattern "keeps stopped-state daily stats visible for the selected config"` -> `1 failed`，失败点为商品卡片仍显示 `查询次数0/命中0/成功0/失败0`。
+  - backend 回归：`C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_purchase_runtime_routes.py tests/backend/test_app_bootstrap_route.py tests/backend/test_runtime_update_websocket.py -q` -> `35 passed`。
+  - renderer 回归：`npm --prefix app_desktop_web test -- tests/renderer/purchase_system_page.test.jsx --run` -> `32 passed`。
+- 当前进度：停止扫货不再清空当天商品级统计，代码与受影响自动化回归均已收口；当前已到可手测状态。
+- 余险：
+  - 本轮把“停止后显示当天累计”修到接口与页面层，未扩大去动查询命中主链、购买调度热路径或统计落库链路。
+  - README 未涉及该行为说明；已核对，本次无需改动。
+- 下一步：让用户在真实桌面窗口里启动一次扫货、产生命中后点击“停止扫货”，确认商品卡片仍保留当天的查询次数/命中/成功/失败；再跨到次日验证自然归零。
+
+## 2026-04-24 08:04 (Asia/Shanghai)
+- 背景：用户反馈点击程序进入主页面慢；本轮已确认优先采用“A 方案”，即 embedded 启动时主界面先亮，backend 后台接管，不再把 renderer 首次加载硬卡在 `/health` 后面。
+- 已完成：
+  - `app_desktop_web/electron-main.cjs` 已改成 eager shell 启动：embedded 模式先直接加载 renderer，再在 backend ready 后通过 `desktop:bootstrap-config-updated` 推送新 bootstrap；同时补齐 remote 模式失败文案，避免 electron 回归继续漂移。
+  - `app_desktop_web/electron-preload.cjs` 与 `app_desktop_web/src/desktop/bridge.js` 新增 bootstrap 配置订阅能力；renderer 订阅后会先补读一次当前快照，避免 backend 在订阅前 ready 时丢更新。
+  - `app_desktop_web/src/App.jsx` 改为跟随 bootstrapConfig 动态创建 client/runtime manager，并在 `backendStatus !== ready` 时只渲染主界面壳与“本地服务启动中”占位；backend ready 后才挂载首页页面与拉取 `/app/bootstrap`、账号列表等数据。`app_desktop_web/src/styles/app.css` 补了启动占位样式。
+  - 已新增/更新回归：`app_desktop_web/tests/electron/program_access_packaging.test.js` 锁定“packaged embedded 启动时先亮 app shell、ready 后推 bootstrap”；`app_desktop_web/tests/renderer/app_remote_bootstrap.test.jsx` 锁定“starting 阶段不抢跑首页请求，收到 ready 更新后再拉 bootstrap/home data”。
+- 已做验证：
+  - 红灯：`npm --prefix app_desktop_web test -- tests/electron/program_access_packaging.test.js --run` -> `1 failed / 11 passed`，失败点为旧逻辑仍先走 `{ mode: "loading" }`。
+  - 红灯：`npm --prefix app_desktop_web test -- tests/renderer/app_remote_bootstrap.test.jsx --run` -> `1 failed / 5 passed`，失败点为 renderer 尚未显示“本地服务启动中”，且 backend 未 ready 时已提前渲染账号页。
+  - 绿灯：`npm --prefix app_desktop_web test -- tests/electron/program_access_packaging.test.js --run` -> `12 passed`。
+  - 绿灯：`npm --prefix app_desktop_web test -- tests/renderer/app_remote_bootstrap.test.jsx --run` -> `6 passed`。
+  - 受影响 renderer 回归：`npm --prefix app_desktop_web test -- tests/renderer/account_center_page.test.jsx tests/renderer/app_state_persistence.test.jsx tests/renderer/app_remote_bootstrap.test.jsx --run` -> `3 files / 15 tests passed`。
+  - 受影响 electron 回归：`npm --prefix app_desktop_web test -- tests/electron/program_access_packaging.test.js tests/electron/electron_remote_mode.test.js --run` -> `2 files / 32 tests passed`。
+  - 构建：`npm --prefix app_desktop_web run build` -> 成功，当前产物为 `dist/assets/index-BFhvld35.js` 与 `dist/assets/index-PuT2cmDZ.css`。
+- 当前进度：embedded 桌面启动链已到可手测状态；用户现在应先看到主界面壳，再由 backend ready 后接管首页数据，不再卡在单独 loading 页。
+- 余险：
+  - 本轮优先做的是体感提速，不是继续硬砍 Python backend 冷启动本体；backend 导入时长本身仍在，只是不再挡住主界面首亮。
+  - README 已核对，本次无需改动。
+- 下一步：让用户从真实桌面入口 `node main_ui_node_desktop.js` 或正式程序包重新启动，确认程序会先进入主界面壳，再在稍后自动加载账号页数据；若仍感慢，再继续追后端导入冷启动本体。

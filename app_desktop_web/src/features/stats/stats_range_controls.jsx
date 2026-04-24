@@ -75,7 +75,35 @@ export function StatsRangeControls({
   const containerRef = useRef(null);
   const [isPickerOpen, setIsPickerOpen] = useState(false);
   const keepPickerOpenOnModeChangeRef = useRef(false);
+  const hasPendingRefreshRef = useRef(false);
   const pickerMode = filters.rangeMode === "range" ? "range" : "day";
+
+  function markPendingRefresh() {
+    hasPendingRefreshRef.current = true;
+  }
+
+  function clearPendingRefresh() {
+    hasPendingRefreshRef.current = false;
+  }
+
+  function flushPendingRefresh() {
+    if (!hasPendingRefreshRef.current) {
+      return;
+    }
+
+    hasPendingRefreshRef.current = false;
+    void onRefresh();
+  }
+
+  function closePicker({ refreshIfDirty = true } = {}) {
+    keepPickerOpenOnModeChangeRef.current = false;
+    setIsPickerOpen(false);
+    if (refreshIfDirty) {
+      flushPendingRefresh();
+      return;
+    }
+    clearPendingRefresh();
+  }
 
   useEffect(() => {
     if (keepPickerOpenOnModeChangeRef.current) {
@@ -84,6 +112,9 @@ export function StatsRangeControls({
       return;
     }
 
+    if (isPickerOpen) {
+      flushPendingRefresh();
+    }
     setIsPickerOpen(false);
   }, [filters.rangeMode]);
 
@@ -102,8 +133,7 @@ export function StatsRangeControls({
         return;
       }
 
-      keepPickerOpenOnModeChangeRef.current = false;
-      setIsPickerOpen(false);
+      closePicker();
     }
 
     document.addEventListener("mousedown", handleDocumentMouseDown);
@@ -113,13 +143,14 @@ export function StatsRangeControls({
   }, [isPickerOpen]);
 
   function handleQuickTotal() {
-    keepPickerOpenOnModeChangeRef.current = false;
-    setIsPickerOpen(false);
+    markPendingRefresh();
     onRangeModeChange("total");
+    closePicker();
   }
 
   function handleQuickToday() {
     const today = createTodayDateString();
+    markPendingRefresh();
     keepPickerOpenOnModeChangeRef.current = true;
     onDateChange(today);
     onRangeModeChange("day");
@@ -127,6 +158,7 @@ export function StatsRangeControls({
 
   function handleQuickRecentSevenDays() {
     const today = createTodayDateString();
+    markPendingRefresh();
     keepPickerOpenOnModeChangeRef.current = true;
     onStartDateChange(addDaysToDateString(today, -6));
     onEndDateChange(today);
@@ -135,6 +167,7 @@ export function StatsRangeControls({
 
   function handleQuickCurrentMonth() {
     const today = createTodayDateString();
+    markPendingRefresh();
     keepPickerOpenOnModeChangeRef.current = true;
     onStartDateChange(getMonthStartDateString(today));
     onEndDateChange(today);
@@ -149,7 +182,13 @@ export function StatsRangeControls({
           aria-label="打开统计时间选择"
           className={`stats-range-display__button${isPickerOpen ? " is-open" : ""}`}
           type="button"
-          onClick={() => setIsPickerOpen((current) => !current)}
+          onClick={() => {
+            if (isPickerOpen) {
+              closePicker();
+              return;
+            }
+            setIsPickerOpen(true);
+          }}
         >
           <span className="stats-range-display__label">{getDisplayLabel(filters.rangeMode)}</span>
           <span className="stats-range-display__value">{getDisplayValue(filters)}</span>
@@ -160,18 +199,25 @@ export function StatsRangeControls({
             {pickerMode === "range" ? (
               <StatsRangePickerPanel
                 endDate={filters.endDate}
-                onEndDateChange={onEndDateChange}
+                onEndDateChange={(nextValue) => {
+                  markPendingRefresh();
+                  onEndDateChange(nextValue);
+                }}
                 onQuickCurrentMonth={handleQuickCurrentMonth}
                 onQuickRecentSevenDays={handleQuickRecentSevenDays}
                 onQuickSelectToday={handleQuickToday}
                 onQuickSelectTotal={handleQuickTotal}
-                onStartDateChange={onStartDateChange}
+                onStartDateChange={(nextValue) => {
+                  markPendingRefresh();
+                  onStartDateChange(nextValue);
+                }}
                 startDate={filters.startDate}
               />
             ) : (
               <StatsDayPickerPanel
                 date={filters.date}
                 onDateChange={(nextValue) => {
+                  markPendingRefresh();
                   onDateChange(nextValue);
                   if (filters.rangeMode !== "day") {
                     onRangeModeChange("day");
@@ -187,7 +233,14 @@ export function StatsRangeControls({
         ) : null}
       </div>
 
-      <button className="ghost-button stats-toolbar__refresh" type="button" onClick={onRefresh}>
+      <button
+        className="ghost-button stats-toolbar__refresh"
+        type="button"
+        onClick={() => {
+          clearPendingRefresh();
+          void onRefresh();
+        }}
+      >
         刷新统计
       </button>
     </>
