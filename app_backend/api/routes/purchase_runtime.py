@@ -49,11 +49,18 @@ def _runtime_update_hub(request: Request):
     return request.app.state.runtime_update_hub
 
 
+def _stats_repository(request: Request):
+    return request.app.state.stats_repository
+
+
 @router.get("/status", response_model=PurchaseRuntimeStatusResponse)
 def get_purchase_runtime_status(request: Request) -> PurchaseRuntimeStatusResponse:
     use_case = GetPurchaseRuntimeStatusUseCase(
         _runtime_service(request),
         _query_runtime_service(request),
+        query_config_repository=_query_config_repository(request),
+        purchase_ui_preferences_repository=_purchase_ui_preferences_repository(request),
+        stats_repository=_stats_repository(request),
         include_recent_events=False,
     )
     return PurchaseRuntimeStatusResponse.model_validate(use_case.execute())
@@ -132,6 +139,9 @@ def start_purchase_runtime(
     snapshot = GetPurchaseRuntimeStatusUseCase(
         runtime_service,
         query_runtime_service,
+        query_config_repository=_query_config_repository(request),
+        purchase_ui_preferences_repository=_purchase_ui_preferences_repository(request),
+        stats_repository=_stats_repository(request),
         include_recent_events=False,
     ).execute()
     return PurchaseRuntimeStatusResponse.model_validate(snapshot)
@@ -147,6 +157,9 @@ def stop_purchase_runtime(request: Request) -> PurchaseRuntimeStatusResponse:
     snapshot = GetPurchaseRuntimeStatusUseCase(
         runtime_service,
         query_runtime_service,
+        query_config_repository=_query_config_repository(request),
+        purchase_ui_preferences_repository=_purchase_ui_preferences_repository(request),
+        stats_repository=_stats_repository(request),
         include_recent_events=False,
     ).execute()
     return PurchaseRuntimeStatusResponse.model_validate(snapshot)

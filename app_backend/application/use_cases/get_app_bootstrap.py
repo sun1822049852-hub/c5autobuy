@@ -25,6 +25,7 @@ class GetAppBootstrapUseCase:
         query_runtime_service,
         purchase_runtime_service,
         purchase_ui_preferences_repository,
+        stats_repository,
         runtime_settings_repository,
         task_manager,
         runtime_update_hub,
@@ -35,6 +36,7 @@ class GetAppBootstrapUseCase:
         self._query_runtime_service = query_runtime_service
         self._purchase_runtime_service = purchase_runtime_service
         self._purchase_ui_preferences_repository = purchase_ui_preferences_repository
+        self._stats_repository = stats_repository
         self._runtime_settings_repository = runtime_settings_repository
         self._task_manager = task_manager
         self._runtime_update_hub = runtime_update_hub
@@ -49,6 +51,9 @@ class GetAppBootstrapUseCase:
         purchase_runtime_status = GetPurchaseRuntimeStatusUseCase(
             self._purchase_runtime_service,
             self._query_runtime_service,
+            query_config_repository=self._query_config_repository,
+            purchase_ui_preferences_repository=self._purchase_ui_preferences_repository,
+            stats_repository=self._stats_repository,
             include_recent_events=False,
         ).execute()
         ui_preferences = GetPurchaseUiPreferencesUseCase(

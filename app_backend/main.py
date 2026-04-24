@@ -285,6 +285,9 @@ def create_app(
         account_repository=repository,
         settings_repository=runtime_settings_repository,
         inventory_snapshot_repository=inventory_snapshot_repository,
+        query_config_repository=query_config_repository,
+        purchase_ui_preferences_repository=purchase_ui_preferences_repository,
+        stats_repository=stats_repository,
         inventory_refresh_gateway_factory=InventoryRefreshGateway,
         stats_sink=stats_pipeline.enqueue,
         runtime_update_hub=runtime_update_hub,
@@ -415,7 +418,20 @@ def create_app(
     return app
 
 
-app = create_app()
+_default_app: FastAPI | None = None
+
+
+def get_default_app() -> FastAPI:
+    global _default_app
+    if _default_app is None:
+        _default_app = create_app()
+    return _default_app
+
+
+def __getattr__(name: str):
+    if name == "app":
+        return get_default_app()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def main(*, db_path: Path | None = None, host: str = "127.0.0.1", port: int = 8000) -> None:

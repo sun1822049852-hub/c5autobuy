@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 
 class GetPurchaseRuntimeStatusUseCase:
     def __init__(
@@ -7,26 +9,39 @@ class GetPurchaseRuntimeStatusUseCase:
         runtime_service,
         query_runtime_service=None,
         *,
+        query_config_repository=None,
+        purchase_ui_preferences_repository=None,
+        stats_repository=None,
+        now_provider=None,
         include_recent_events: bool = True,
     ) -> None:
         self._runtime_service = runtime_service
         self._query_runtime_service = query_runtime_service
+        self._query_config_repository = query_config_repository
+        self._purchase_ui_preferences_repository = purchase_ui_preferences_repository
+        self._stats_repository = stats_repository
+        self._now_provider = now_provider or datetime.now
         self._include_recent_events = bool(include_recent_events)
 
     def execute(self) -> dict[str, object]:
         purchase_snapshot = dict(self._read_runtime_status())
         if self._query_runtime_service is None:
             purchase_snapshot.setdefault("active_query_config", None)
-            purchase_snapshot.setdefault("item_rows", [])
+            purchase_snapshot["item_rows"] = self._build_inactive_item_rows() or []
             return purchase_snapshot
 
         query_snapshot = self._query_runtime_service.get_status()
         if not isinstance(query_snapshot, dict):
             purchase_snapshot.setdefault("active_query_config", None)
-            purchase_snapshot.setdefault("item_rows", [])
+            purchase_snapshot["item_rows"] = self._build_inactive_item_rows() or []
             return purchase_snapshot
 
-        purchase_snapshot["active_query_config"] = self._build_active_query_config(query_snapshot)
+        active_query_config = self._build_active_query_config(query_snapshot)
+        purchase_snapshot["active_query_config"] = active_query_config
+        if active_query_config is None:
+            purchase_snapshot["item_rows"] = self._build_inactive_item_rows() or []
+            return purchase_snapshot
+
         purchase_snapshot["item_rows"] = self._build_item_rows(
             purchase_snapshot.get("item_rows"),
             query_snapshot.get("item_rows"),
@@ -60,6 +75,83 @@ class GetPurchaseRuntimeStatusUseCase:
             "state": "running" if bool(query_snapshot.get("running")) else ("waiting" if message == "等待购买账号恢复" else "idle"),
             "message": message,
         }
+
+    def _build_inactive_item_rows(self) -> list[dict[str, object]]:
+        config = self._resolve_selected_config()
+        if config is None:
+            return []
+
+        daily_stats = self._load_daily_stats_by_external_item_id()
+        rows: list[dict[str, object]] = []
+        for item in getattr(config, "items", []) or []:
+            stats_row = daily_stats.get(str(getattr(item, "external_item_id", "") or ""), {})
+            source_mode_stats = self._normalize_hit_sources(stats_row.get("source_mode_stats"))
+            rows.append(
+                {
+                    "query_item_id": str(getattr(item, "query_item_id", "") or ""),
+                    "item_name": (
+                        getattr(item, "item_name", None)
+                        or getattr(item, "market_hash_name", None)
+                        or str(getattr(item, "query_item_id", "") or "")
+                    ),
+                    "max_price": getattr(item, "max_price", None),
+                    "min_wear": getattr(item, "min_wear", None),
+                    "max_wear": getattr(item, "max_wear", None),
+                    "detail_min_wear": getattr(item, "detail_min_wear", None),
+                    "detail_max_wear": getattr(item, "detail_max_wear", None),
+                    "manual_paused": bool(getattr(item, "manual_paused", False)),
+                    "query_execution_count": int(stats_row.get("query_execution_count", 0)),
+                    "matched_product_count": int(stats_row.get("matched_product_count", 0)),
+                    "purchase_success_count": int(stats_row.get("purchase_success_count", 0)),
+                    "purchase_failed_count": int(stats_row.get("purchase_failed_count", 0)),
+                    "modes": {},
+                    "source_mode_stats": source_mode_stats,
+                    "recent_hit_sources": list(source_mode_stats),
+                }
+            )
+        return rows
+
+    def _resolve_selected_config(self):
+        if self._query_config_repository is None or self._purchase_ui_preferences_repository is None:
+            return None
+        get_preferences = getattr(self._purchase_ui_preferences_repository, "get", None)
+        get_config = getattr(self._query_config_repository, "get_config", None)
+        if not callable(get_preferences) or not callable(get_config):
+            return None
+        preferences = get_preferences()
+        config_id = str(getattr(preferences, "selected_config_id", "") or "").strip()
+        if not config_id:
+            return None
+        return get_config(config_id)
+
+    def _load_daily_stats_by_external_item_id(self) -> dict[str, dict[str, object]]:
+        if self._stats_repository is None:
+            return {}
+        list_query_item_stats = getattr(self._stats_repository, "list_query_item_stats", None)
+        if not callable(list_query_item_stats):
+            return {}
+        stat_date = self._current_stat_date()
+        rows = list_query_item_stats(range_mode="day", date=stat_date)
+        if not isinstance(rows, list):
+            return {}
+        stats_by_external_item_id: dict[str, dict[str, object]] = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            external_item_id = str(row.get("external_item_id") or "").strip()
+            if not external_item_id:
+                continue
+            stats_by_external_item_id[external_item_id] = dict(row)
+        return stats_by_external_item_id
+
+    def _current_stat_date(self) -> str:
+        now_value = self._now_provider()
+        if isinstance(now_value, datetime):
+            return now_value.date().isoformat()
+        now_text = str(now_value or "").strip()
+        if len(now_text) >= 10:
+            return now_text[:10]
+        return datetime.now().date().isoformat()
 
     @staticmethod
     def _build_item_rows(

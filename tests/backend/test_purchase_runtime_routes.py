@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 
 import asyncio
+from types import SimpleNamespace
 from app_backend.domain.models.account import Account
 from app_backend.infrastructure.purchase.runtime.runtime_events import PurchaseExecutionResult
 
@@ -126,6 +127,133 @@ async def test_stop_purchase_runtime_returns_idle_snapshot(client):
         "accounts": [],
         "item_rows": [],
     }
+
+
+async def test_purchase_runtime_status_keeps_selected_config_daily_item_stats_when_stopped(client, app):
+    today = datetime.now().date().isoformat()
+    config_id = await _create_query_config(client)
+    query_item = app.state.query_config_repository.add_item(
+        config_id=config_id,
+        product_url="https://www.c5game.com/csgo/730/asset/1380979899390261111",
+        external_item_id="1380979899390261111",
+        item_name="AK-47 | Redline",
+        market_hash_name="AK-47 | Redline (Field-Tested)",
+        min_wear=0.1,
+        max_wear=0.7,
+        detail_min_wear=0.12,
+        detail_max_wear=0.3,
+        max_price=123.45,
+        last_market_price=118.88,
+        last_detail_sync_at=f"{today}T10:00:00",
+    )
+    await client.put(
+        "/purchase-runtime/ui-preferences",
+        json={"selected_config_id": config_id},
+    )
+
+    app.state.stats_repository.apply_query_execution_event(
+        SimpleNamespace(
+            timestamp=f"{today}T10:00:00",
+            query_item_id=query_item.query_item_id,
+            external_item_id=query_item.external_item_id,
+            item_name=query_item.item_name,
+            product_url=query_item.product_url,
+            rule_fingerprint="rule-1",
+            detail_min_wear=query_item.detail_min_wear,
+            detail_max_wear=query_item.detail_max_wear,
+            max_price=query_item.max_price,
+            mode_type="new_api",
+            account_id="query-a",
+            account_display_name="查询账号A",
+            latency_ms=120.0,
+            success=True,
+            error=None,
+        )
+    )
+    app.state.stats_repository.apply_query_hit_event(
+        SimpleNamespace(
+            timestamp=f"{today}T10:00:01",
+            runtime_session_id="run-day-1",
+            query_config_id=config_id,
+            query_item_id=query_item.query_item_id,
+            external_item_id=query_item.external_item_id,
+            item_name=query_item.item_name,
+            product_url=query_item.product_url,
+            rule_fingerprint="rule-1",
+            detail_min_wear=query_item.detail_min_wear,
+            detail_max_wear=query_item.detail_max_wear,
+            max_price=query_item.max_price,
+            mode_type="new_api",
+            account_id="query-a",
+            account_display_name="查询账号A",
+            matched_count=2,
+            product_ids=["p-1", "p-2"],
+        )
+    )
+    app.state.stats_repository.apply_purchase_submit_order_event(
+        SimpleNamespace(
+            timestamp=f"{today}T10:00:02",
+            runtime_session_id="run-day-1",
+            query_config_id=config_id,
+            query_item_id=query_item.query_item_id,
+            external_item_id=query_item.external_item_id,
+            item_name=query_item.item_name,
+            product_url=query_item.product_url,
+            rule_fingerprint="rule-1",
+            detail_min_wear=query_item.detail_min_wear,
+            detail_max_wear=query_item.detail_max_wear,
+            max_price=query_item.max_price,
+            account_id="purchase-a",
+            account_display_name="购买账号A",
+            submit_order_latency_ms=450.0,
+            submitted_count=2,
+            success_count=1,
+            failed_count=1,
+            status="success",
+            error=None,
+        )
+    )
+
+    response = await client.get("/purchase-runtime/status")
+
+    assert response.status_code == 200
+    assert response.json()["running"] is False
+    assert response.json()["active_query_config"] is None
+    assert response.json()["item_rows"] == [
+        {
+            "query_item_id": query_item.query_item_id,
+            "item_name": "AK-47 | Redline",
+            "max_price": 123.45,
+            "min_wear": 0.1,
+            "max_wear": 0.7,
+            "detail_min_wear": 0.12,
+            "detail_max_wear": 0.3,
+            "manual_paused": False,
+            "query_execution_count": 1,
+            "matched_product_count": 2,
+            "purchase_success_count": 1,
+            "purchase_failed_count": 1,
+            "modes": {},
+            "source_mode_stats": [
+                {
+                    "mode_type": "new_api",
+                    "hit_count": 2,
+                    "last_hit_at": None,
+                    "account_id": None,
+                    "account_display_name": None,
+                }
+            ],
+            "recent_hit_sources": [
+                {
+                    "mode_type": "new_api",
+                    "hit_count": 2,
+                    "last_hit_at": None,
+                    "account_id": None,
+                    "account_display_name": None,
+                }
+            ],
+        }
+    ]
 
 
 async def test_purchase_runtime_settings_routes_are_removed(client):

@@ -598,6 +598,26 @@
   - 工作树里另有与本轮无关的脏改：`docs/superpowers/specs/2026-04-23-packaged-python-runtime-bootstrap-design.md` 以及 `tmp_startup_*.db`，本轮未处理。
 - 下一步：让用户在真实桌面窗口里分别打开“查询统计”和“账号能力统计”，选一个非当天日期或时间段后直接关闭面板，确认表格会立刻切到对应数据，不再需要补点“刷新统计”。
 
+## 2026-04-24 08:13 (Asia/Shanghai)
+- 背景：用户要求检查当前会员放权，并把账号中心“浏览器查询”开关的“打开”纳入程序会员权限；若当前未放权，前端必须弹窗提示“当前此功能未开放”。
+- 已完成：
+  - 先补设计与实现文档 `docs/superpowers/specs/2026-04-24-browser-query-enable-entitlement-design.md`、`docs/superpowers/plans/2026-04-24-browser-query-enable-entitlement.md`，冻结边界为“只管浏览器查询开启动作，不改关闭、登录链、白名单链、首次绑定默认关闭与只读锁主语义”。
+  - 后端在 `app_backend/api/routes/accounts.py` 为 `PATCH /accounts/{id}/query-modes` 新增窄 guard：只有 `browser_query_enabled` 从关切到开时，才会校验 `account.browser_query.enable`；未放权时统一返回 `program_feature_not_enabled + 当前此功能未开放 + action=account.browser_query.enable`。
+  - `RemoteEntitlementGateway` 与 `CachedProgramAccessGateway` 已补细粒度能力判断：在总开关 `program_access_enabled` 之外，还要显式拥有 `account.browser_query.enable`（或兼容 `feature_flags.account_browser_query_enable=true`）才允许开通；默认 member 计划未携带该权限，因此当前行为自然落成“未开放”。
+  - 账号中心前端已补专用弹窗 `FeatureUnavailableDialog`；`use_account_center_page.js` 只对 `program_feature_not_enabled + account.browser_query.enable` 这一条错误弹“当前此功能未开放”，其它错误继续走原日志/共享错误出口，不扩大影响面。
+  - `README.md` 已核对，本次无需改动。
+- 已做验证：
+  - backend 红灯：`C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_account_routes.py tests/backend/test_remote_entitlement_gateway.py -q`，结果 `2 failed, 34 passed`；失败点准确落在“路由尚未拦浏览器查询开启”和“远端 entitlement 尚未区分细粒度权限”。
+  - renderer 红灯：`npm --prefix app_desktop_web test -- tests/renderer/account_center_editing.test.jsx --run`，结果 `1 failed / 19 passed`；失败点准确落在账号页当前还没有“功能未开放”弹窗。
+  - backend 绿灯：`C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_account_routes.py tests/backend/test_remote_entitlement_gateway.py -q`，结果 `36 passed`。
+  - renderer 绿灯：`npm --prefix app_desktop_web test -- tests/renderer/account_center_editing.test.jsx --run`，结果 `20 passed`。
+  - 旁路回归：`npm --prefix app_desktop_web test -- tests/renderer/account_center_page.test.jsx tests/renderer/program_access_provider.test.jsx --run`，结果 `14 passed`；`C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_program_access_guard_routes.py -q`，结果 `3 passed`。
+- 当前进度：浏览器查询开通放权与前端未开放弹窗已到可手测状态；当前 member 默认因未携带新权限码而会弹“当前此功能未开放”。
+- 余险：
+  - 默认 member 计划当前仍只有 `program_access_enabled` 与 `runtime.start`，因此除非后续远端控制面显式补授 `account.browser_query.enable`，否则正式桌面将持续拒绝开启浏览器查询；这是本轮刻意采用的 fail-closed 口径。
+  - 本轮只锁住“开启动作”；更深层的 token 查询运行时 eligibility 仍主要看 `token_enabled + 登录态`，若未来产品要求“无该权限时即使历史上已开启也不得参与 token 查询”，还需另开一刀下沉到 query runtime 侧。
+- 下一步：让用户在真实桌面窗口里进入账号中心，找一个当前显示“浏览器查询已禁用”的已登录账号，点击开启，确认会弹“当前此功能未开放”；同时再点一个已启用账号的关闭，确认关闭行为仍照常保存。
+
 ## 2026-04-24 08:03 (Asia/Shanghai)
 - 背景：用户要求修复“任务3 / 扫货系统”在停止扫货后把命中、成功、失败数据清空的问题；目标是改成按日期口径展示当天累计，不再因 stop 动作清空。
 - 已完成：
@@ -636,3 +656,37 @@
   - 本轮优先做的是体感提速，不是继续硬砍 Python backend 冷启动本体；backend 导入时长本身仍在，只是不再挡住主界面首亮。
   - README 已核对，本次无需改动。
 - 下一步：让用户从真实桌面入口 `node main_ui_node_desktop.js` 或正式程序包重新启动，确认程序会先进入主界面壳，再在稍后自动加载账号页数据；若仍感慢，再继续追后端导入冷启动本体。
+
+## 2026-04-24 08:16 (Asia/Shanghai)
+- 背景：在主界面先亮之后，继续追本地 backend 冷启动；本轮聚焦此前已确认的重复装配点：`app_backend.main` 在模块导入期先执行一次 `app = create_app()`，而桌面启动再调用 `main()` 时又会再建一次 app。
+- 已完成：
+  - `app_backend/main.py` 已移除顶层立即构建的默认 `app`，改为 `_default_app + get_default_app() + __getattr__` 懒加载口径；现在导入 `app_backend.main` 时不会立刻建 app，只有显式访问 `backend_main.app` 时才会第一次构建并缓存。
+  - `tests/backend/test_backend_main_entry.py` 新增红绿回归，锁定“导入模块后，`backend_main.app` 必须经由当前 `create_app()` 懒加载一次且仅一次”，避免后续再把重复装配回灌回来。
+  - 本轮未改 `create_app()` 与 `main()` 对外契约，也未动桌面 JS 启动链、业务路由或主链路逻辑。
+- 已做验证：
+  - 红灯：`C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_backend_main_entry.py -q` -> `1 failed / 5 passed`，失败点为旧顶层 `app` 已在导入时提前构建，访问 `backend_main.app` 未触发新的 `create_app()`。
+  - 绿灯：`C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_backend_main_entry.py -q` -> `6 passed`。
+  - backend 受影响回归：`C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_backend_main_entry.py tests/backend/test_desktop_web_backend_bootstrap.py -q` -> `13 passed`。
+  - electron 受影响回归：`npm --prefix app_desktop_web test -- tests/electron/python_backend.test.js --run` -> `11 passed`。
+  - 性能复测：导入与装配剖面从 `import_main_ms≈2074 / create_app_ms≈252 / total≈2326` 降到 `import_main_ms≈1524 / create_app_ms≈188 / total≈1712`，说明重复装配这一刀已被砍掉，单次剖面约少 `614ms`。
+- 当前进度：本地 backend 冷启动已进一步收口，最明确的一次重复建 app 已消失；下一阶段若还要继续压时长，就该进后端重模块延迟导入或更细的装配拆分。
+- 余险：
+  - 端到端 `backend_ready_ms` 单次采样仍可能受磁盘、解释器缓存和系统负载抖动影响，判断是否提速应优先看“导入期不再重复建 app”这一结构性证据，而不是只看单次 wall-clock。
+  - README 已核对，本次无需改动。
+- 下一步：若用户继续追冷启动，优先定位 `app_backend.main` 顶层剩余重模块导入链，尤其是浏览器运行时、program access、stats/route 装配，再决定第二刀拆哪一段。
+
+## 2026-04-24 08:10 (Asia/Shanghai)
+- 背景：用户要求顶层前端页面不要在每次侧栏点击回切时都重新向后端拉取，并明确希望沿用当前前端已存在的同步/保活机制，而不是额外引入新库。
+- 已完成：
+  - `app_desktop_web/src/App.jsx` 把 `账号中心 / 查询统计 / 账号能力统计 / 通用诊断` 接入和 `配置管理 / 扫货系统` 同类的 lazy keep-alive 挂载模式；这些页面首次进入后常驻前端内存，后续侧栏回切不再因为 remount 重打一遍初始请求。
+  - `app_desktop_web/src/features/diagnostics/use_sidebar_diagnostics.js` 改成“已有诊断快照时，重新打开页面只恢复后续轮询，不因点击页签立刻再打一枪 `/diagnostics/sidebar`”；首次进入仍保留即时加载。
+  - 新增 `app_desktop_web/tests/renderer/app_page_keepalive.test.jsx`，锁死“账号中心 / 两个统计页 / 通用诊断”首次进页可拉、回切不重拉的行为；同时补写实施计划 `docs/superpowers/plans/2026-04-24-page-keepalive-and-fetch-dedup.md`。
+- 已做验证：
+  - 红灯：`npm --prefix app_desktop_web test -- app_page_keepalive.test.jsx` -> `2 failed`，失败点分别为账号中心回切二次 GET 与诊断页回切二次 GET。
+  - 绿灯：`npm --prefix app_desktop_web test -- app_page_keepalive.test.jsx` -> `2 passed`。
+  - 邻近 renderer 回归：`npm --prefix app_desktop_web test -- app_page_keepalive.test.jsx query_stats_page.test.jsx account_capability_stats_page.test.jsx account_center_page.test.jsx app_state_persistence.test.jsx diagnostics_sidebar.test.jsx query_system_page.test.jsx purchase_system_page.test.jsx` -> `8 files / 72 tests passed`。
+- 当前进度：顶层页面现已统一到“首进加载一次，之后靠前端保活 + 现有自建同步链路复用状态”的口径；当前已到可手测状态。
+- 余险：
+  - 这刀只收口顶层页面生命周期，不等于已经把统计页、账号中心、诊断页完全并入统一 runtime store；现阶段仍是“页面保活优先，局部自管状态仍保留”。
+  - README 已核对，本次无需改动。
+- 下一步：让用户在真实桌面里依次来回切换 `账号中心 / 查询统计 / 账号能力统计 / 通用诊断`，确认表格与诊断快照直接复用前一轮页面状态，不再每次点回去都明显重新加载。

@@ -397,7 +397,7 @@ function toQuerySystemRuntimeStatus(status) {
       detail_min_wear: row?.detail_min_wear ?? null,
       detail_max_wear: row?.detail_max_wear ?? null,
       manual_paused: Boolean(row?.manual_paused),
-      query_count: Number(row?.query_execution_count ?? 0),
+      query_count: row.query_execution_count,
       modes: row?.modes && typeof row.modes === "object" ? row.modes : {},
     })).filter((row) => row.query_item_id)
     : [];
@@ -409,10 +409,10 @@ function toQuerySystemRuntimeStatus(status) {
     config_id: activeQueryConfig?.config_id ?? null,
     config_name: activeQueryConfig?.config_name ?? null,
     message: activeQueryConfig?.message || (isWaiting ? "等待购买账号恢复" : (isRunning ? "运行中" : "未运行")),
-    account_count: isRunning ? Number(status?.active_account_count ?? 0) : 0,
+    account_count: isRunning ? status.active_account_count : 0,
     started_at: isRunning ? (status?.started_at ?? null) : null,
     stopped_at: !isRunning ? (status?.stopped_at ?? null) : null,
-    total_query_count: itemRows.reduce((total, row) => total + Number(row.query_count ?? 0), 0),
+    total_query_count: itemRows.reduce((total, row) => total + row.query_count, 0),
     total_found_count: 0,
     modes: {},
     group_rows: [],
@@ -594,7 +594,14 @@ function isConfigActive(status, configId) {
 
 
 function buildRuntimeItemMap(status, configId) {
-  if (!isConfigActive(status, configId)) {
+  if (!configId) {
+    return {};
+  }
+
+  const shouldUseRuntimeRows = Boolean(status?.running)
+    ? isConfigActive(status, configId)
+    : Array.isArray(status?.item_rows) && status.item_rows.length > 0;
+  if (!shouldUseRuntimeRows) {
     return {};
   }
 

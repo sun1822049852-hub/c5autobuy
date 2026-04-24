@@ -293,6 +293,9 @@ class PurchaseRuntimeService:
         account_repository,
         settings_repository=None,
         inventory_snapshot_repository=None,
+        query_config_repository=None,
+        purchase_ui_preferences_repository=None,
+        stats_repository=None,
         inventory_refresh_gateway_factory: InventoryRefreshGatewayFactory | None = None,
         recovery_delay_seconds_provider: RecoveryDelaySecondsProvider | None = None,
         execution_gateway_factory: ExecutionGatewayFactory | None = None,
@@ -306,6 +309,9 @@ class PurchaseRuntimeService:
         self._account_repository = account_repository
         self._settings_repository = settings_repository
         self._inventory_snapshot_repository = inventory_snapshot_repository
+        self._query_config_repository = query_config_repository
+        self._purchase_ui_preferences_repository = purchase_ui_preferences_repository
+        self._stats_repository = stats_repository
         self._inventory_refresh_gateway_factory = inventory_refresh_gateway_factory
         self._recovery_delay_seconds_provider = recovery_delay_seconds_provider
         self._execution_gateway_factory = execution_gateway_factory or PurchaseExecutionGateway
@@ -646,6 +652,9 @@ class PurchaseRuntimeService:
         snapshot = GetPurchaseRuntimeStatusUseCase(
             self,
             self._query_runtime_service,
+            query_config_repository=self._query_config_repository,
+            purchase_ui_preferences_repository=self._purchase_ui_preferences_repository,
+            stats_repository=self._stats_repository,
             include_recent_events=False,
         ).execute()
         return PurchaseRuntimeStatusResponse.model_validate(snapshot).model_dump(mode="json")

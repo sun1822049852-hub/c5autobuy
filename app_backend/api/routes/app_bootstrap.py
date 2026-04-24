@@ -16,6 +16,7 @@ def get_app_bootstrap(request: Request) -> AppBootstrapResponse:
         query_runtime_service=request.app.state.query_runtime_service,
         purchase_runtime_service=request.app.state.purchase_runtime_service,
         purchase_ui_preferences_repository=request.app.state.purchase_ui_preferences_repository,
+        stats_repository=request.app.state.stats_repository,
         runtime_settings_repository=request.app.state.runtime_settings_repository,
         task_manager=request.app.state.task_manager,
         runtime_update_hub=request.app.state.runtime_update_hub,

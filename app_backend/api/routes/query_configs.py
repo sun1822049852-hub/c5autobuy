@@ -61,6 +61,10 @@ def _purchase_ui_preferences_repository(request: Request):
     return request.app.state.purchase_ui_preferences_repository
 
 
+def _stats_repository(request: Request):
+    return request.app.state.stats_repository
+
+
 def _runtime_update_hub(request: Request):
     return request.app.state.runtime_update_hub
 
@@ -90,6 +94,9 @@ def _publish_runtime_snapshot_updates_for_active_config(request: Request, *, con
     purchase_status = GetPurchaseRuntimeStatusUseCase(
         _purchase_runtime_service(request),
         _query_runtime_service(request),
+        query_config_repository=_repository(request),
+        purchase_ui_preferences_repository=_purchase_ui_preferences_repository(request),
+        stats_repository=_stats_repository(request),
         include_recent_events=False,
     ).execute()
     _runtime_update_hub(request).publish(

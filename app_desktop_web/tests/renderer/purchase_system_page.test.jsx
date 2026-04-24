@@ -1558,6 +1558,32 @@ describe("purchase system page", () => {
     ).toBe(false);
   });
 
+  it("keeps stopped-state daily stats visible for the selected config", async () => {
+    const harness = createFetchHarness({
+      initialStatus: buildPurchaseRuntimeStatus({
+        running: false,
+        message: "未运行",
+        started_at: null,
+        active_query_config: null,
+      }),
+      initialUiPreferences: {
+        selected_config_id: "cfg-1",
+        updated_at: "2026-03-22T10:00:00",
+      },
+    });
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "扫货系统" }));
+
+    const itemToggle = await screen.findByRole("button", { name: "AK-47 | Redline" });
+    expect(itemToggle).toHaveTextContent("查询次数7");
+    expect(itemToggle).toHaveTextContent("命中3");
+    expect(itemToggle).toHaveTextContent("成功1");
+    expect(itemToggle).toHaveTextContent("失败2");
+  });
+
   it("prompts before switching config and discards runtime drafts when the user chooses not to save", async () => {
     const harness = createFetchHarness({
       initialStatus: buildPurchaseRuntimeStatus({
