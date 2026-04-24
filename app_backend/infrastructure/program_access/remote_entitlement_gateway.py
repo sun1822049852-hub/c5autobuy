@@ -4,7 +4,9 @@ from dataclasses import dataclass
 from typing import Mapping, Protocol
 
 from app_backend.application.program_access import (
+    ACCOUNT_BROWSER_QUERY_ENABLE_ACTION,
     PROGRAM_ACCESS_UNLOCKED_MESSAGE,
+    PROGRAM_BROWSER_QUERY_ENABLE_NOT_OPEN_MESSAGE,
     PROGRAM_REGISTERED_BUT_NOT_MEMBER_MESSAGE,
     PROGRAM_AUTH_REQUIRED_CODE,
     PROGRAM_AUTH_REQUIRED_MESSAGE,
@@ -286,10 +288,16 @@ class RemoteEntitlementGateway:
             self._set_last_error(PROGRAM_FEATURE_NOT_ENABLED_CODE)
             return ProgramAccessDecision.deny(
                 code=PROGRAM_FEATURE_NOT_ENABLED_CODE,
-                message=PROGRAM_FEATURE_NOT_ENABLED_MESSAGE,
+                message=_feature_message_for_action(action),
             )
 
         if action != "runtime.start":
+            if not _action_enabled(snapshot, action):
+                self._set_last_error(PROGRAM_FEATURE_NOT_ENABLED_CODE)
+                return ProgramAccessDecision.deny(
+                    code=PROGRAM_FEATURE_NOT_ENABLED_CODE,
+                    message=_feature_message_for_action(action),
+                )
             self._clear_last_error()
             return ProgramAccessDecision.allow()
 
@@ -635,6 +643,28 @@ def _feature_enabled(snapshot: dict[str, object] | None) -> bool:
     if isinstance(permissions, list):
         return "program_access_enabled" in permissions
     return False
+
+
+def _action_enabled(snapshot: dict[str, object] | None, action: str) -> bool:
+    if action == ACCOUNT_BROWSER_QUERY_ENABLE_ACTION:
+        if not isinstance(snapshot, dict):
+            return False
+        permissions = snapshot.get("permissions")
+        if isinstance(permissions, list) and ACCOUNT_BROWSER_QUERY_ENABLE_ACTION in permissions:
+            return True
+        feature_flags = snapshot.get("feature_flags")
+        if isinstance(feature_flags, Mapping):
+            enabled_flag = feature_flags.get("account_browser_query_enable")
+            if isinstance(enabled_flag, bool):
+                return enabled_flag
+        return False
+    return True
+
+
+def _feature_message_for_action(action: str) -> str:
+    if action == ACCOUNT_BROWSER_QUERY_ENABLE_ACTION:
+        return PROGRAM_BROWSER_QUERY_ENABLE_NOT_OPEN_MESSAGE
+    return PROGRAM_FEATURE_NOT_ENABLED_MESSAGE
 
 
 def _read_optional_string(snapshot: dict[str, object] | None, key: str) -> str | None:

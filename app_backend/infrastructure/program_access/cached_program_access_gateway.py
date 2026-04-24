@@ -3,7 +3,9 @@ from __future__ import annotations
 from typing import Protocol
 
 from app_backend.application.program_access import (
+    ACCOUNT_BROWSER_QUERY_ENABLE_ACTION,
     PROGRAM_AUTH_NOT_READY_CODE,
+    PROGRAM_BROWSER_QUERY_ENABLE_NOT_OPEN_MESSAGE,
     ProgramAccessActionResult,
     ProgramAccessDecision,
     ProgramAccessSummary,
@@ -94,6 +96,28 @@ def _resolve_message(
     return PROGRAM_AUTH_REQUIRED_MESSAGE
 
 
+def _action_enabled(snapshot: dict[str, object] | None, action: str) -> bool:
+    if action == ACCOUNT_BROWSER_QUERY_ENABLE_ACTION:
+        if not isinstance(snapshot, dict):
+            return False
+        permissions = snapshot.get("permissions")
+        if isinstance(permissions, list) and ACCOUNT_BROWSER_QUERY_ENABLE_ACTION in permissions:
+            return True
+        feature_flags = snapshot.get("feature_flags")
+        if isinstance(feature_flags, dict):
+            enabled_flag = feature_flags.get("account_browser_query_enable")
+            if isinstance(enabled_flag, bool):
+                return enabled_flag
+        return False
+    return True
+
+
+def _feature_message_for_action(action: str) -> str:
+    if action == ACCOUNT_BROWSER_QUERY_ENABLE_ACTION:
+        return PROGRAM_BROWSER_QUERY_ENABLE_NOT_OPEN_MESSAGE
+    return PROGRAM_FEATURE_NOT_ENABLED_MESSAGE
+
+
 class CachedProgramAccessGateway:
     def __init__(
         self,
@@ -125,9 +149,15 @@ class CachedProgramAccessGateway:
         return self._build_summary(self._credential_store.load())
 
     def guard(self, action: str) -> ProgramAccessDecision:
-        _ = action
         summary = self.get_summary()
         if summary.auth_state in _UNLOCKED_AUTH_STATES:
+            bundle = self._credential_store.load()
+            snapshot = bundle.entitlement_snapshot if isinstance(bundle.entitlement_snapshot, dict) else None
+            if not _action_enabled(snapshot, action):
+                return ProgramAccessDecision.deny(
+                    code="program_feature_not_enabled",
+                    message=_feature_message_for_action(action),
+                )
             return ProgramAccessDecision.allow()
         return ProgramAccessDecision.deny(
             code=str(summary.last_error_code or "program_auth_required"),

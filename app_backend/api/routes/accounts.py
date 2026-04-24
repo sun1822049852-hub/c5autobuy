@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request, Response, status
 
+from app_backend.api.program_access_guard import guard_program_action
 from app_backend.api.schemas.account_center import (
     AccountCenterAccountResponse,
     AccountPurchaseConfigUpdateRequest,
@@ -14,6 +15,7 @@ from app_backend.api.schemas.accounts import (
     LoginConflictResolveRequest,
 )
 from app_backend.api.schemas.tasks import TaskResponse
+from app_backend.application.program_access import ACCOUNT_BROWSER_QUERY_ENABLE_ACTION
 from app_backend.application.use_cases.clear_purchase_capability import (
     ClearPurchaseCapabilityUseCase,
 )
@@ -107,7 +109,13 @@ async def update_account_query_modes(
     payload: AccountQueryModeUpdateRequest,
     request: Request,
 ) -> AccountResponse:
-    use_case = UpdateAccountQueryModesUseCase(_repository(request))
+    repository = _repository(request)
+    existing_account = repository.get_account(account_id)
+    if existing_account is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
+    if payload.browser_query_enabled is True and not bool(existing_account.token_enabled):
+        guard_program_action(request, ACCOUNT_BROWSER_QUERY_ENABLE_ACTION)
+    use_case = UpdateAccountQueryModesUseCase(repository)
     try:
         account = use_case.execute(
             account_id=account_id,

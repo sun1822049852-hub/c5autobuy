@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { useProgramAccessGuard } from "../../../program_access/program_access_provider.jsx";
+import {
+  extractProgramAccessError,
+  useProgramAccessGuard,
+} from "../../../program_access/program_access_provider.jsx";
 import { isProgramReadonlyLocked } from "../../../program_access/program_access_readonly.js";
 import { useProgramAccess } from "../../../runtime/use_app_runtime.js";
 import { useFloatingRuntimeModalState } from "../../purchase-system/hooks/use_floating_runtime_modal_state.js";
@@ -417,6 +420,10 @@ export function useAccountCenterPage({ client }) {
     ...PAGE_STORE.read(DEFAULT_UI_STATE),
   }));
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [featureUnavailableDialog, setFeatureUnavailableDialog] = useState({
+    isOpen: false,
+    message: "",
+  });
   const [remarkDialogAccount, setRemarkDialogAccount] = useState(null);
   const [apiKeyDialogAccount, setApiKeyDialogAccount] = useState(null);
   const [browserProxyDialogAccount, setBrowserProxyDialogAccount] = useState(null);
@@ -732,12 +739,43 @@ export function useAccountCenterPage({ client }) {
 
   async function toggleBrowserQueryMode(account) {
     setContextMenu(null);
+    setFeatureUnavailableDialog({
+      isOpen: false,
+      message: "",
+    });
 
     if (account.browser_query_disable_reason_code === "not_logged_in" && !account.browser_query_enabled) {
       return openPurchaseStatus(account);
     }
 
     const nextEnabled = !account.browser_query_enabled;
+    if (nextEnabled) {
+      try {
+        await runProgramAccessAction(async () => {
+          await client.updateAccountQueryModes(account.account_id, {
+            browser_query_enabled: true,
+          });
+          await refreshAccounts();
+        });
+        appendModificationLog(`已启用 浏览器查询：${getDisplayName(account)}`);
+        return true;
+      } catch (error) {
+        const programAccessError = extractProgramAccessError(error);
+        if (
+          programAccessError?.code === "program_feature_not_enabled"
+          && programAccessError.action === "account.browser_query.enable"
+        ) {
+          setFeatureUnavailableDialog({
+            isOpen: true,
+            message: programAccessError.message || "当前此功能未开放",
+          });
+          return null;
+        }
+        appendErrorLog(toErrorMessage(error), getErrorMeta(error));
+        return null;
+      }
+    }
+
     return handleAction(async () => {
       await client.updateAccountQueryModes(account.account_id, nextEnabled
         ? { browser_query_enabled: true }
@@ -764,6 +802,12 @@ export function useAccountCenterPage({ client }) {
     },
     closeCreateDialog() {
       setCreateDialogOpen(false);
+    },
+    closeFeatureUnavailableDialog() {
+      setFeatureUnavailableDialog({
+        isOpen: false,
+        message: "",
+      });
     },
     closeDeleteDialog() {
       if (isDeletingAccount) {
@@ -814,6 +858,7 @@ export function useAccountCenterPage({ client }) {
     },
     contextMenu,
     createDialogOpen,
+    featureUnavailableDialog,
     deleteDialogAccount,
     deleteAccount: async (account) => {
       setContextMenu(null);

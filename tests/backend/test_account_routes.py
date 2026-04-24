@@ -12,6 +12,24 @@ def _account_payload(*, remark_name, browser_proxy_mode="direct", browser_proxy_
     }
 
 
+class _DenyProgramAccessGateway:
+    def __init__(self, *, code: str, message: str) -> None:
+        self._code = code
+        self._message = message
+
+    def guard(self, action: str):
+        _ = action
+        return type(
+            "Decision",
+            (),
+            {
+                "allowed": False,
+                "code": self._code,
+                "message": self._message,
+            },
+        )()
+
+
 async def test_post_accounts_creates_account(client):
     response = await client.post(
         "/accounts",
@@ -169,6 +187,66 @@ async def test_patch_account_query_modes_supports_partial_browser_toggle(client)
     assert payload["fast_api_enabled"] is True
     assert payload["token_enabled"] is False
     assert payload["api_query_disabled_reason"] is None
+    assert payload["browser_query_disabled_reason"] == "manual_disabled"
+
+
+async def test_patch_account_query_modes_requires_entitlement_to_enable_browser_query(client, app):
+    created = await client.post(
+        "/accounts",
+        json=_account_payload(remark_name="账号A", api_key="key-123"),
+    )
+    account_id = created.json()["account_id"]
+    app.state.account_repository.update_account(
+        account_id,
+        token_enabled=False,
+        browser_query_disabled_reason="manual_disabled",
+    )
+    app.state.program_access_gateway = _DenyProgramAccessGateway(
+        code="program_feature_not_enabled",
+        message="当前此功能未开放",
+    )
+
+    response = await client.patch(
+        f"/accounts/{account_id}/query-modes",
+        json={
+            "browser_query_enabled": True,
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == {
+        "code": "program_feature_not_enabled",
+        "message": "当前此功能未开放",
+        "action": "account.browser_query.enable",
+    }
+    stored = app.state.account_repository.get_account(account_id)
+    assert stored is not None
+    assert stored.token_enabled is False
+    assert stored.browser_query_disabled_reason == "manual_disabled"
+
+
+async def test_patch_account_query_modes_still_allows_disabling_browser_query_without_entitlement(client, app):
+    created = await client.post(
+        "/accounts",
+        json=_account_payload(remark_name="账号A", api_key="key-123"),
+    )
+    account_id = created.json()["account_id"]
+    app.state.program_access_gateway = _DenyProgramAccessGateway(
+        code="program_feature_not_enabled",
+        message="当前此功能未开放",
+    )
+
+    response = await client.patch(
+        f"/accounts/{account_id}/query-modes",
+        json={
+            "browser_query_enabled": False,
+            "browser_query_disabled_reason": "manual_disabled",
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["token_enabled"] is False
     assert payload["browser_query_disabled_reason"] == "manual_disabled"
 
 

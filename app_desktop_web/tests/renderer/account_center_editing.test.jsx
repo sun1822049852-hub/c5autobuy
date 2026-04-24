@@ -732,6 +732,39 @@ describe("account center editing flows", () => {
     });
   });
 
+  it("shows an unavailable dialog when browser query enable is not entitled", async () => {
+    const harness = createFetchHarness();
+    const fetchImpl = vi.fn(async (input, options = {}) => {
+      const url = new URL(input);
+      const method = String(options.method ?? "GET").toUpperCase();
+      if (method === "PATCH" && url.pathname === "/accounts/a-3/query-modes") {
+        return jsonResponse({
+          detail: {
+            code: "program_feature_not_enabled",
+            message: "当前此功能未开放",
+            action: "account.browser_query.enable",
+          },
+        }, 403);
+      }
+      return harness.fetchImpl(input, options);
+    });
+    installDesktopApp(fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await screen.findByText("账号 C");
+
+    await user.click(screen.getByRole("button", { name: "切换浏览器查询 账号 C" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "功能未开放" });
+    expect(within(dialog).getByText("当前此功能未开放")).toBeInTheDocument();
+    expect(fetchImpl.mock.calls.filter(([input, options = {}]) => (
+      new URL(input).pathname === "/accounts/a-3/query-modes"
+      && String(options.method ?? "GET").toUpperCase() === "PATCH"
+    ))).toHaveLength(1);
+  });
+
   it("disables browser query with a manual-disabled reason through the dedicated query-modes payload", async () => {
     const harness = createFetchHarness();
     installDesktopApp(harness.fetchImpl);

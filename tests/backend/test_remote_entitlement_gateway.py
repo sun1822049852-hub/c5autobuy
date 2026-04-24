@@ -544,6 +544,71 @@ def test_remote_gateway_guard_denies_non_runtime_action_when_program_access_disa
     assert decision.code == "program_feature_not_enabled"
 
 
+def test_remote_gateway_guard_denies_browser_query_enable_without_specific_permission(tmp_path: Path) -> None:
+    private_key = Ed25519PrivateKey.generate()
+    verifier = EntitlementVerifier(key_cache_path=_write_public_key(tmp_path, private_key))
+    kid = derive_key_id(private_key.public_key())
+    secret_store = _MemorySecretStore()
+    cached_snapshot = _build_snapshot(feature_enabled=True)
+    credential_store = _MemoryCredentialStore(
+        ProgramCredentialBundle(
+            device_id="device-alpha",
+            refresh_credential_ref=secret_store.put("refresh-token-1"),
+            entitlement_snapshot=cached_snapshot,
+            entitlement_signature=_sign_snapshot(private_key, cached_snapshot),
+            entitlement_kid=kid,
+            last_error_code=None,
+        )
+    )
+    gateway = RemoteEntitlementGateway(
+        remote_client=_RemoteClientStub(),
+        verifier=verifier,
+        credential_store=credential_store,
+        secret_store=secret_store,
+        device_id_store=_StaticDeviceIdStore("device-alpha"),
+        stage="packaged_release",
+    )
+
+    decision = gateway.guard("account.browser_query.enable")
+
+    assert decision.allowed is False
+    assert decision.code == "program_feature_not_enabled"
+    assert decision.message == "当前此功能未开放"
+
+
+def test_remote_gateway_guard_allows_browser_query_enable_with_specific_permission(tmp_path: Path) -> None:
+    private_key = Ed25519PrivateKey.generate()
+    verifier = EntitlementVerifier(key_cache_path=_write_public_key(tmp_path, private_key))
+    kid = derive_key_id(private_key.public_key())
+    secret_store = _MemorySecretStore()
+    cached_snapshot = _build_snapshot(
+        feature_enabled=True,
+        extra_permissions=["account.browser_query.enable"],
+    )
+    credential_store = _MemoryCredentialStore(
+        ProgramCredentialBundle(
+            device_id="device-alpha",
+            refresh_credential_ref=secret_store.put("refresh-token-1"),
+            entitlement_snapshot=cached_snapshot,
+            entitlement_signature=_sign_snapshot(private_key, cached_snapshot),
+            entitlement_kid=kid,
+            last_error_code=None,
+        )
+    )
+    gateway = RemoteEntitlementGateway(
+        remote_client=_RemoteClientStub(),
+        verifier=verifier,
+        credential_store=credential_store,
+        secret_store=secret_store,
+        device_id_store=_StaticDeviceIdStore("device-alpha"),
+        stage="packaged_release",
+    )
+
+    decision = gateway.guard("account.browser_query.enable")
+
+    assert decision.allowed is True
+
+
 def test_remote_gateway_refresh_maps_remote_unauthorized_to_guarded_summary(tmp_path: Path) -> None:
     private_key = Ed25519PrivateKey.generate()
     verifier = EntitlementVerifier(key_cache_path=_write_public_key(tmp_path, private_key))
@@ -1009,17 +1074,20 @@ def _build_snapshot(
     *,
     feature_enabled: bool,
     runtime_state: str = "stopped",
+    extra_permissions: list[str] | None = None,
 ) -> dict[str, object]:
     now = datetime.now(timezone.utc)
     permissions = ["runtime.start"] if feature_enabled else []
     if feature_enabled:
         permissions.append("program_access_enabled")
+    if extra_permissions:
+        permissions.extend(extra_permissions)
     return {
         "username": "alice",
         "sub": "user-1",
         "membership_plan": "member" if feature_enabled else "inactive",
         "device_id": "device-alpha",
-        "permissions": permissions,
+        "permissions": sorted(set(permissions)),
         "feature_flags": {
             "program_access_enabled": feature_enabled,
         },

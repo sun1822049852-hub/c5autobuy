@@ -7,6 +7,7 @@ import { AccountApiKeyDialog } from "./dialogs/account_api_key_dialog.jsx";
 import { AccountBrowserProxyDialog } from "./dialogs/account_browser_proxy_dialog.jsx";
 import { AccountCreateDialog } from "./dialogs/account_create_dialog.jsx";
 import { AccountDeleteDialog } from "./dialogs/account_delete_dialog.jsx";
+import { FeatureUnavailableDialog } from "./dialogs/feature_unavailable_dialog.jsx";
 import { AccountProxyDialog } from "./dialogs/account_proxy_dialog.jsx";
 import { AccountRemarkDialog } from "./dialogs/account_remark_dialog.jsx";
 import { LoginDrawer } from "./drawers/login_drawer.jsx";
@@ -25,6 +26,7 @@ export function AccountCenterPage({ client }) {
     closeContextMenu,
     closeCreateDialog,
     closeDeleteDialog,
+    closeFeatureUnavailableDialog,
     closeLoginDrawer,
     confirmDeleteAccount,
     deleteDialogAccount,
@@ -34,6 +36,7 @@ export function AccountCenterPage({ client }) {
     closeRemarkDialog,
     contextMenu,
     createDialogOpen,
+    featureUnavailableDialog,
     deleteAccount,
     filteredRows,
     isDeletingAccount,
@@ -162,6 +165,11 @@ export function AccountCenterPage({ client }) {
       </section>
 
       <AccountCreateDialog open={createDialogOpen} onClose={closeCreateDialog} onSubmit={submitCreate} />
+      <FeatureUnavailableDialog
+        isOpen={featureUnavailableDialog.isOpen}
+        message={featureUnavailableDialog.message}
+        onClose={closeFeatureUnavailableDialog}
+      />
       <AccountDeleteDialog
         account={deleteDialogAccount}
         isDeleting={isDeletingAccount}
