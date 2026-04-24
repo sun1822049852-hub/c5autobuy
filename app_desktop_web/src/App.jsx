@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
+import React, { Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
 
 import { createAccountCenterClient } from "./api/account_center_client.js";
 import { createProgramAuthClient } from "./api/program_auth_client.js";
@@ -8,13 +8,25 @@ import {
   buildWindowErrorDetails,
   logRendererDiagnostic,
 } from "./desktop/renderer_diagnostics.js";
-import { AccountCapabilityStatsPage } from "./features/account-capability-stats/account_capability_stats_page.jsx";
 import { AccountCenterPage } from "./features/account-center/account_center_page.jsx";
-import { DiagnosticsPanel } from "./features/diagnostics/diagnostics_panel.jsx";
 import { useSidebarDiagnostics } from "./features/diagnostics/use_sidebar_diagnostics.js";
-import { PurchaseSystemPage } from "./features/purchase-system/purchase_system_page.jsx";
-import { QueryStatsPage } from "./features/query-stats/query_stats_page.jsx";
-import { QuerySystemPage } from "./features/query-system/query_system_page.jsx";
+
+// Lazy-loaded non-first-screen pages (code-split for faster initial load)
+const QuerySystemPage = React.lazy(() =>
+  import("./features/query-system/query_system_page.jsx").then(m => ({ default: m.QuerySystemPage }))
+);
+const PurchaseSystemPage = React.lazy(() =>
+  import("./features/purchase-system/purchase_system_page.jsx").then(m => ({ default: m.PurchaseSystemPage }))
+);
+const QueryStatsPage = React.lazy(() =>
+  import("./features/query-stats/query_stats_page.jsx").then(m => ({ default: m.QueryStatsPage }))
+);
+const AccountCapabilityStatsPage = React.lazy(() =>
+  import("./features/account-capability-stats/account_capability_stats_page.jsx").then(m => ({ default: m.AccountCapabilityStatsPage }))
+);
+const DiagnosticsPanel = React.lazy(() =>
+  import("./features/diagnostics/diagnostics_panel.jsx").then(m => ({ default: m.DiagnosticsPanel }))
+);
 import { AppShell } from "./features/shell/app_shell.jsx";
 import { ProgramAccessSidebarCard } from "./program_access/program_access_sidebar_card.jsx";
 import {
@@ -371,48 +383,58 @@ export function App({ runtimeStore }) {
                 ) : null}
                 {mountedKeepAliveItems["query-system"] ? (
                   <div hidden={activeItem !== "query-system"}>
-                    <QuerySystemPage
-                      bootstrapConfig={bootstrapConfig}
-                      client={client}
-                      isActive={activeItem === "query-system"}
-                      onLeaveStateChange={handleQuerySystemLeaveStateChange}
-                    />
+                    <Suspense fallback={null}>
+                      <QuerySystemPage
+                        bootstrapConfig={bootstrapConfig}
+                        client={client}
+                        isActive={activeItem === "query-system"}
+                        onLeaveStateChange={handleQuerySystemLeaveStateChange}
+                      />
+                    </Suspense>
                   </div>
                 ) : null}
                 {mountedKeepAliveItems["query-stats"] ? (
                   <div hidden={activeItem !== "query-stats"}>
-                    <QueryStatsPage
-                      bootstrapConfig={bootstrapConfig}
-                      client={client}
-                    />
+                    <Suspense fallback={null}>
+                      <QueryStatsPage
+                        bootstrapConfig={bootstrapConfig}
+                        client={client}
+                      />
+                    </Suspense>
                   </div>
                 ) : null}
                 {mountedKeepAliveItems["account-capability-stats"] ? (
                   <div hidden={activeItem !== "account-capability-stats"}>
-                    <AccountCapabilityStatsPage
-                      bootstrapConfig={bootstrapConfig}
-                      client={client}
-                    />
+                    <Suspense fallback={null}>
+                      <AccountCapabilityStatsPage
+                        bootstrapConfig={bootstrapConfig}
+                        client={client}
+                      />
+                    </Suspense>
                   </div>
                 ) : null}
                 {mountedKeepAliveItems["purchase-system"] ? (
                   <div hidden={activeItem !== "purchase-system"}>
-                    <PurchaseSystemPage
-                      bootstrapConfig={bootstrapConfig}
-                      client={client}
-                      isActive={activeItem === "purchase-system"}
-                      onLeaveStateChange={handlePurchaseSystemLeaveStateChange}
-                    />
+                    <Suspense fallback={null}>
+                      <PurchaseSystemPage
+                        bootstrapConfig={bootstrapConfig}
+                        client={client}
+                        isActive={activeItem === "purchase-system"}
+                        onLeaveStateChange={handlePurchaseSystemLeaveStateChange}
+                      />
+                    </Suspense>
                   </div>
                 ) : null}
                 {mountedKeepAliveItems["diagnostics"] ? (
                   <div hidden={activeItem !== "diagnostics"}>
-                    <DiagnosticsPanel
-                      error={diagnostics.error}
-                      isLoading={diagnostics.isLoading}
-                      isRefreshing={diagnostics.isRefreshing}
-                      snapshot={diagnostics.snapshot}
-                    />
+                    <Suspense fallback={null}>
+                      <DiagnosticsPanel
+                        error={diagnostics.error}
+                        isLoading={diagnostics.isLoading}
+                        isRefreshing={diagnostics.isRefreshing}
+                        snapshot={diagnostics.snapshot}
+                      />
+                    </Suspense>
                   </div>
                 ) : null}
               </>

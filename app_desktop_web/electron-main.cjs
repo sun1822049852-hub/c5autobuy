@@ -465,6 +465,7 @@ function createWindow({ mode = "app" } = {}) {
         contextIsolation: true,
         nodeIntegration: false,
         preload: path.join(__dirname, "electron-preload.cjs"),
+        v8CacheOptions: "bypassHeatCheck",
       },
     });
 
@@ -579,6 +580,12 @@ async function bootstrapApplication({
       throw new Error(runtimeMode.configurationError);
     }
 
+    // Kick off backend dependency loading early (before window state) so the
+    // ESM dynamic imports run in parallel with window-state resolution.
+    const earlyBackendDepsPromise = runtimeMode.shouldStartEmbeddedBackend
+      ? ensureBackendDependenciesImpl()
+      : null;
+
     await ensureWindowStateDependenciesImpl();
 
     if (!runtimeMode.shouldStartEmbeddedBackend) {
@@ -592,8 +599,10 @@ async function bootstrapApplication({
     }
 
     createWindowImpl({ mode: "app" });
-    await ensureBackendDependenciesImpl();
-    const port = await findAvailablePortImpl();
+    const [, port] = await Promise.all([
+      earlyBackendDepsPromise,
+      findAvailablePortImpl(),
+    ]);
     const selectedEnsureManagedPythonRuntime = ensureManagedPythonRuntimeImpl ?? ensureManagedPythonRuntime;
     const selectedResolvePythonExecutable = resolvePythonExecutableImpl ?? resolvePythonExecutable;
     const selectedStartPythonBackend = startPythonBackendImpl ?? startPythonBackend;
@@ -633,7 +642,7 @@ async function bootstrapApplication({
       : selectedResolvePythonExecutable(projectRoot);
     backend = await selectedStartPythonBackend({
       dbPath: embeddedBackendPaths.dbPath,
-      pollIntervalMs: 250,
+      pollIntervalMs: 100,
       portProvider: () => port,
       programAccessConfig,
       projectRoot,
@@ -669,6 +678,9 @@ ipcMain.on("desktop:log-renderer-diagnostic", (_event, payload) => {
 });
 
 configureDesktopStoragePaths();
+// Pre-warm ESM imports while Chromium initializes (promise-cached, safe to call early)
+ensureWindowStateDependencies();
+ensureBackendDependencies();
 app.whenReady().then(bootstrapApplication);
 
 app.on("window-all-closed", () => {

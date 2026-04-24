@@ -49,13 +49,25 @@ function shouldExcludePythonDependencyEntry(entryName, excludedTopLevelEntries) 
 
 function buildCopyFilter(sourcePath) {
   const normalizedPath = String(sourcePath || "").replace(/\\/g, "/").toLowerCase();
-  if (normalizedPath.includes("/__pycache__/")) {
+  if (normalizedPath.includes("/__pycache__/") || normalizedPath.endsWith("/__pycache__")) {
     return false;
   }
-  if (normalizedPath.includes("/.pytest_cache/")) {
+  if (normalizedPath.includes("/.pytest_cache/") || normalizedPath.endsWith("/.pytest_cache")) {
     return false;
   }
   if (normalizedPath.endsWith(".pyc")) {
+    return false;
+  }
+  // Exclude package metadata directories (save ~3-5 MB)
+  if (normalizedPath.includes(".dist-info/") || normalizedPath.endsWith(".dist-info")) {
+    return false;
+  }
+  // Exclude test directories inside dependencies
+  if (/\/tests?\//.test(normalizedPath) && !normalizedPath.includes("/app_backend/")) {
+    return false;
+  }
+  // Exclude editable-install artifacts (not valid in packaged release)
+  if (normalizedPath.includes("__editable__") || normalizedPath.endsWith(".pth")) {
     return false;
   }
   return true;

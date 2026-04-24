@@ -2,16 +2,36 @@ const path = require("node:path");
 
 
 const EXCLUDED_TOP_LEVEL_ENTRIES = Object.freeze([
+  // -- GUI frameworks (not needed: UI is Electron + React) --
   "PySide6",
   "shiboken6",
-  "pytest",
-  "_pytest",
+
+  // -- Browser automation (not imported by app_backend) --
+  "selenium",
+  "trio",
+  "trio_websocket",
+  "wsproto",
+  "outcome",
+  "sortedcontainers",
+  "PySocks",
+
+  // -- Package management / build tools --
   "pip",
   "setuptools",
   "wheel",
-  "pygments",
+  "pkg_resources",
+
+  // -- Test frameworks --
+  "pytest",
+  "_pytest",
+  "pytest_asyncio",
+  "pytestqt",
+  "py_spy",
   "pluggy",
   "iniconfig",
+
+  // -- Dev-only utilities --
+  "pygments",
 ]);
 
 const EMBEDDABLE_TARGETS = Object.freeze({

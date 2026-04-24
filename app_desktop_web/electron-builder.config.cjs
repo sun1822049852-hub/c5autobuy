@@ -12,6 +12,9 @@ function buildElectronBuilderConfig({
   return {
     appId: "com.c5.trading-assistant",
     productName: "C5 交易助手",
+    compression: "maximum",
+    electronLanguages: ["zh-CN", "en-US"],
+    electronDist: path.join(normalizedAppDir, "node_modules", "electron", "dist"),
     directories: {
       output: "release",
       buildResources: "build",
@@ -44,6 +47,8 @@ function buildElectronBuilderConfig({
           "!**/__pycache__/**",
           "!**/.pytest_cache/**",
           "!**/*.pyc",
+          "!**/tests/**",
+          "!**/test_*",
         ],
       },
       {
@@ -62,6 +67,9 @@ function buildElectronBuilderConfig({
           "!**/__pycache__/**",
           "!**/.pytest_cache/**",
           "!**/*.pyc",
+          "!**/*.dist-info/**",
+          "!**/tests/**",
+          "!**/test_*",
         ],
       },
     ],
