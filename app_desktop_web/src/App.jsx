@@ -71,7 +71,10 @@ function resolveKnownActiveItem(activeItem) {
 function createInitialMountedKeepAliveItems(activeItem) {
   const resolvedActiveItem = resolveKnownActiveItem(activeItem);
   return Object.fromEntries(
-    KEEPALIVE_PAGE_IDS.map((itemId) => [itemId, itemId === resolvedActiveItem]),
+    KEEPALIVE_PAGE_IDS.map((itemId) => [
+      itemId,
+      itemId === "account-center" || itemId === resolvedActiveItem,
+    ]),
   );
 }
 

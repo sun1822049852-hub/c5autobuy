@@ -706,3 +706,16 @@
   - 本轮只做 side branch 到根工作树的落地与 focused verification，没有重新执行 `pack:win` 或 `build:win`；这符合当前新增的项目级约束“非经用户主动指定，不默认重生 installer”。
   - 根工作树仍保留多条未提交别线；本次 commit 必须继续使用 pathspec 精确提交，避免把其它任务顺手夹带进 packaged runtime 收口 commit。
 - 下一步：按 packaged runtime 相关 pathspec 单独提交根工作树整合结果；提交后再复核 `git status`，确认本次只清走这条主线，旁边别线保持不动。
+## 2026-04-24 09:30 (Asia/Shanghai)
+- 背景：用户手测后反馈，若启动时当前页不是账号中心，第一次从左侧栏切到账号中心仍会短暂看到“加载中”。
+- 已完成：
+  - 在 `app_desktop_web/tests/renderer/app_page_keepalive.test.jsx` 新增红绿回归，锁定“即使启动页是查询统计，账号中心也必须在后台先预热 `/account-center/accounts`，而不是等点击账号中心时才首拉”。
+  - 在 `app_desktop_web/src/App.jsx` 调整顶层 keep-alive 初始挂载策略：`account-center` 改为无论当前启动页是什么都默认先挂载，其他页面仍保持按首次激活懒挂载。
+- 已做验证：
+  - 红灯：`npm --prefix app_desktop_web test -- app_page_keepalive.test.jsx` -> `1 failed / 2 passed`，失败点为启动页在 `query-stats` 时，`/account-center/accounts` 调用次数仍是 `0`。
+  - 绿灯：`npm --prefix app_desktop_web test -- app_page_keepalive.test.jsx` -> `3 passed`。
+  - 邻近回归：`npm --prefix app_desktop_web test -- app_page_keepalive.test.jsx account_center_page.test.jsx app_state_persistence.test.jsx query_stats_page.test.jsx` -> `4 files / 16 tests passed`。
+- 当前进度：账号中心现在会在后台先预热，切回账号中心时不再等点击后才开始首拉；当前已到可手测状态。
+- 余险：
+  - 这刀只把账号中心改成 eager hidden mount，其余统计页/诊断页仍保持“首次点开才挂载”的策略。
+- 下一步：让用户在真实桌面里把启动页停在“查询统计”或别的非账号页，再点回“账号中心”，确认不再看到那一闪的“加载中”。

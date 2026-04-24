@@ -152,6 +152,22 @@ describe("app page keepalive", () => {
     delete window.desktopApp;
   });
 
+  it("warms account center in the background even when another page is the startup tab", async () => {
+    const harness = createFetchHarness();
+    installDesktopApp(harness.fetchImpl);
+    window.localStorage.setItem("app-shell-state", JSON.stringify({
+      activeItem: "query-stats",
+    }));
+
+    render(<App />);
+
+    await screen.findByRole("table", { name: "查询统计表" });
+
+    await waitFor(() => {
+      expect(countCalls(harness.calls, "/account-center/accounts")).toBe(1);
+    });
+  });
+
   it("does not refetch account center and stats pages when revisiting from the sidebar", async () => {
     const harness = createFetchHarness();
     const user = userEvent.setup();
