@@ -79,7 +79,7 @@ class ProductDetailFetcher:
         product_url: str,
     ) -> dict[str, Any]:
         api_path = f"support/trade/product/batch/v1/preview/{external_item_id}"
-        headers = self._build_post_headers(
+        headers = await self._build_post_headers(
             runtime_account=runtime_account,
             product_url=product_url,
             api_path=api_path,
@@ -111,7 +111,7 @@ class ProductDetailFetcher:
         product_url: str,
     ) -> dict[str, Any]:
         api_path = f"search/v2/sell/{external_item_id}/list"
-        headers = self._build_get_headers(
+        headers = await self._build_get_headers(
             runtime_account=runtime_account,
             product_url=product_url,
             api_path=api_path,
@@ -135,7 +135,7 @@ class ProductDetailFetcher:
 
         return self._parse_success_payload(text)
 
-    def _build_post_headers(
+    async def _build_post_headers(
         self,
         *,
         runtime_account,
@@ -148,7 +148,7 @@ class ProductDetailFetcher:
         if not all([access_token, device_id, product_url]):
             raise ValueError("构建请求头失败")
 
-        x_sign = self._generate_x_sign(
+        x_sign = await self._generate_x_sign(
             api_path=api_path,
             method="POST",
             access_token=str(access_token),
@@ -164,7 +164,7 @@ class ProductDetailFetcher:
         headers["Content-Type"] = "application/json"
         return headers
 
-    def _build_get_headers(
+    async def _build_get_headers(
         self,
         *,
         runtime_account,
@@ -177,7 +177,7 @@ class ProductDetailFetcher:
         if not all([access_token, device_id, product_url]):
             raise ValueError("构建请求头失败")
 
-        x_sign = self._generate_x_sign(
+        x_sign = await self._generate_x_sign(
             api_path=api_path,
             method="GET",
             access_token=str(access_token),
@@ -226,7 +226,7 @@ class ProductDetailFetcher:
         headers["Cache-Control"] = "no-cache"
         return headers
 
-    def _generate_x_sign(
+    async def _generate_x_sign(
         self,
         *,
         api_path: str,
@@ -235,7 +235,9 @@ class ProductDetailFetcher:
         timestamp: str,
     ) -> str:
         try:
-            return self._get_xsign_wrapper().generate(
+            xsign_wrapper = self._get_xsign_wrapper()
+            return await asyncio.to_thread(
+                xsign_wrapper.generate,
                 path=api_path,
                 method=method,
                 timestamp=timestamp,

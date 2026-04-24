@@ -148,7 +148,7 @@ class PurchaseExecutionGateway:
         )
         current_timestamp = self._build_timestamp()
         try:
-            headers = self._build_headers(
+            headers = await self._build_headers(
                 runtime_account=runtime_account,
                 api_path=self.ORDER_API_PATH,
                 timestamp=current_timestamp,
@@ -215,7 +215,7 @@ class PurchaseExecutionGateway:
         )
         current_timestamp = self._build_timestamp()
         try:
-            headers = self._build_headers(
+            headers = await self._build_headers(
                 runtime_account=runtime_account,
                 api_path=self.PAY_API_PATH,
                 timestamp=current_timestamp,
@@ -378,7 +378,7 @@ class PurchaseExecutionGateway:
         data = response_data.get("data") or {}
         return True, int(data.get("successCount", 0) or 0), None, {}
 
-    def _build_headers(
+    async def _build_headers(
         self,
         *,
         runtime_account: RuntimeAccountAdapter,
@@ -390,7 +390,9 @@ class PurchaseExecutionGateway:
         device_id = runtime_account.get_x_device_id()
 
         try:
-            x_sign = self._get_xsign_wrapper().generate(
+            xsign_wrapper = self._get_xsign_wrapper()
+            x_sign = await asyncio.to_thread(
+                xsign_wrapper.generate,
                 path=api_path,
                 method="POST",
                 timestamp=timestamp,

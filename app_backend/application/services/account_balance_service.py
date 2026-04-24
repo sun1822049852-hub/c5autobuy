@@ -258,7 +258,9 @@ class AccountBalanceService:
         if not access_token or not device_id:
             raise RuntimeError("Not login")
         timestamp = str(int(time.time() * 1000))
-        x_sign = self._get_xsign_wrapper().generate(
+        xsign_wrapper = self._get_xsign_wrapper()
+        x_sign = await asyncio.to_thread(
+            xsign_wrapper.generate,
             path=self.BROWSER_BALANCE_PATH,
             method="GET",
             timestamp=timestamp,

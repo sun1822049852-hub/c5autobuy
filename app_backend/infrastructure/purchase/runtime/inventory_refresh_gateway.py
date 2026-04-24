@@ -39,7 +39,9 @@ class InventoryRefreshGateway:
 
         current_timestamp = self._build_timestamp()
         try:
-            x_sign = self._get_xsign_wrapper().generate(
+            xsign_wrapper = self._get_xsign_wrapper()
+            x_sign = await asyncio.to_thread(
+                xsign_wrapper.generate,
                 path=self.API_PATH,
                 method="POST",
                 timestamp=current_timestamp,

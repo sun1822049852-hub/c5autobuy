@@ -836,6 +836,12 @@ class QueryRuntimeService:
             return self._runtime_factory(config, accounts, **fallback_kwargs)
 
     def _resolve_hit_sink(self):
+        """选择命中递送方式。优先级不可更改，详见 docs/guides/purchase-pipeline-architecture.md。
+
+        优先级：fast_async > async > sync > enqueue
+        快速路径 (fast_async) 是当前最优方案：零队列延迟、不阻塞查询循环。
+        不要把 enqueue 提到前面——纯队列模型延迟更高。
+        """
         if self._purchase_runtime_service is None:
             return None
         fast_async_hit_sink = getattr(self._purchase_runtime_service, "accept_query_hit_fast_async", None)

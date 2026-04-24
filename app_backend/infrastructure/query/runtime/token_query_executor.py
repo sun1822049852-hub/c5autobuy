@@ -112,7 +112,9 @@ class TokenQueryExecutor:
         access_token = runtime_account.get_x_access_token()
         timestamp = str(int(time.time() * 1000))
         try:
-            x_sign = self._get_xsign_wrapper().generate(
+            xsign_wrapper = self._get_xsign_wrapper()
+            x_sign = await asyncio.to_thread(
+                xsign_wrapper.generate,
                 path=self.API_PATH,
                 method="POST",
                 timestamp=timestamp,

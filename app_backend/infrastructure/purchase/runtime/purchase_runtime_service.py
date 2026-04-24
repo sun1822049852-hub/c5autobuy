@@ -1,3 +1,48 @@
+"""购买运行时服务 — 查询命中到下单支付的完整管线。
+
+架构概述（⚠️ 不要随意修改调度模型，当前设计是经过多轮优化后的最优方案）
+========================================================================
+
+命中分发采用 **快速路径优先 + 队列兜底** 的两级模型：
+
+1. 快速路径 (accept_query_hit_fast_async)
+   - 查询端命中后直接调用，在调用者的 async 上下文中执行
+   - 立刻尝试认领空闲账号并派发；若无空闲账号，最多等 50ms
+     (_QUERY_HIT_BUSY_GRACE_SECONDS = 0.05)
+   - 50ms 内仍无空闲账号 → 丢弃该 hit（宁丢不堵）
+   - 查询端通过 _dispatch_hit (mode_runner.py) 调用 hit_sink，
+     返回的 coroutine 被 asyncio.create_task 放入后台，不阻塞查询循环
+
+2. 队列路径 (enqueue_query_hit → _hit_intake_queue → drain 线程)
+   - 仅在快速路径不可用时作为兜底
+   - hit 进入 Queue，由 hit-intake 线程取出处理
+   - 无空闲账号时进入调度器队列，drain 线程等待账号释放后继续派发
+   - 队列中的 hit 有 2 秒超时，过期丢弃
+
+3. 账号派发 (_start_account_dispatch → _AccountDispatchRunner)
+   - 每个被分配的账号启动独立线程，线程内跑自己的 asyncio 事件循环
+   - 下单 (create_order) + 支付 (process_payment) 均为 async HTTP
+   - 账号之间完全并行，互不阻塞
+
+4. 完成后回收
+   - 账号释放 → 通知快速路径等待者 (_fast_path_idle_signal)
+   - 若调度器队列仍有 hit → 唤醒 drain 线程继续派发
+   - 结果交给 post-process 线程做库存更新和统计
+
+优先级选择逻辑 (query_runtime_service.py :: _resolve_hit_sink):
+  accept_query_hit_fast_async > accept_query_hit_async > accept_query_hit > enqueue_query_hit
+
+为什么快速路径是最优的：
+  - 零队列延迟：命中直接到账号，省去入队/出队开销
+  - 不阻塞查询：coroutine 在后台 task 中执行
+  - 50ms grace 窗口：给刚完成上一单的账号一个极短的等待机会
+  - 超时即丢：避免过期 hit 浪费购买机会
+
+历史：
+  - 初始版本优先使用 enqueue_query_hit（纯队列模型）
+  - bed62c0 (2026-04-14) 引入快速路径，将优先级提升到最高
+  - 当前版本即为最终形态，不要回退到纯队列模型
+"""
 from __future__ import annotations
 
 import asyncio
@@ -1641,12 +1686,15 @@ class _DefaultPurchaseRuntime:
         self._fast_path_idle_signal_version = 0
         self._hit_intake_queue: Queue[object] = Queue()
         self._hit_intake_stop_signal = threading.Event()
+        self._hit_intake_ready_signal = threading.Event()
         self._hit_intake_thread: threading.Thread | None = None
         self._post_process_queue: Queue[object] = Queue()
         self._post_process_stop_signal = threading.Event()
+        self._post_process_ready_signal = threading.Event()
         self._post_process_thread: threading.Thread | None = None
         self._diagnostics_event_queue: Queue[object] = Queue()
         self._diagnostics_event_stop_signal = threading.Event()
+        self._diagnostics_event_ready_signal = threading.Event()
         self._diagnostics_event_thread: threading.Thread | None = None
         self._recent_event_epoch = 0
 
@@ -1695,10 +1743,13 @@ class _DefaultPurchaseRuntime:
         self._drain_signal = threading.Event()
         self._hit_intake_queue = Queue()
         self._hit_intake_stop_signal = threading.Event()
+        self._hit_intake_ready_signal = threading.Event()
         self._post_process_queue = Queue()
         self._post_process_stop_signal = threading.Event()
+        self._post_process_ready_signal = threading.Event()
         self._diagnostics_event_queue = Queue()
         self._diagnostics_event_stop_signal = threading.Event()
+        self._diagnostics_event_ready_signal = threading.Event()
         self._recent_event_epoch += 1
         self._start_drain_worker()
         self._start_hit_intake_worker()
@@ -1780,6 +1831,7 @@ class _DefaultPurchaseRuntime:
                 )
                 return {"accepted": False, "status": "ignored_not_running"}
             self._hit_intake_queue.put(payload)
+            self._hit_intake_ready_signal.set()
         return {"accepted": True, "status": "queued"}
 
     async def accept_query_hit_async(self, hit: dict[str, object]) -> dict[str, object]:
@@ -3371,6 +3423,7 @@ class _DefaultPurchaseRuntime:
                 notify=bool(notify),
             )
         )
+        self._diagnostics_event_ready_signal.set()
 
     def _drain_pending_diagnostics_events(self) -> None:
         stop_markers = 0
@@ -3452,6 +3505,7 @@ class _DefaultPurchaseRuntime:
 
     def _enqueue_post_process_job(self, job: _PostProcessOutcomeJob) -> None:
         self._post_process_queue.put(job)
+        self._post_process_ready_signal.set()
 
     def _post_process_job_is_current_locked(
         self,
@@ -3548,6 +3602,7 @@ class _DefaultPurchaseRuntime:
     def _stop_hit_intake_worker(self) -> None:
         self._hit_intake_stop_signal.set()
         self._hit_intake_queue.put(_HIT_INTAKE_STOP)
+        self._hit_intake_ready_signal.set()
         thread = self._hit_intake_thread
         if thread is not None and thread.is_alive():
             thread.join(timeout=0.2)
@@ -3572,6 +3627,7 @@ class _DefaultPurchaseRuntime:
     def _stop_post_process_worker(self) -> None:
         self._post_process_stop_signal.set()
         self._post_process_queue.put(_POST_PROCESS_STOP)
+        self._post_process_ready_signal.set()
         thread = self._post_process_thread
         if thread is not None and thread.is_alive():
             thread.join(timeout=0.2)
@@ -3596,6 +3652,7 @@ class _DefaultPurchaseRuntime:
     def _stop_diagnostics_event_worker(self) -> None:
         self._diagnostics_event_stop_signal.set()
         self._diagnostics_event_queue.put(_DIAGNOSTICS_EVENT_STOP)
+        self._diagnostics_event_ready_signal.set()
         thread = self._diagnostics_event_thread
         if thread is not None and thread.is_alive():
             thread.join(timeout=0.2)
@@ -3643,55 +3700,73 @@ class _DefaultPurchaseRuntime:
                     break
 
     def _hit_intake_worker_loop(self, queue: Queue[object], stop_signal: threading.Event) -> None:
+        ready_signal = self._hit_intake_ready_signal
         while not stop_signal.is_set():
-            try:
-                queued_item = queue.get(timeout=0.1)
-            except Empty:
-                continue
-            if queued_item is _HIT_INTAKE_STOP:
+            ready_signal.wait()
+            ready_signal.clear()
+            if stop_signal.is_set():
                 return
-            if not isinstance(queued_item, dict):
-                continue
-            try:
-                self._accept_query_hit_now(queued_item)
-            except Exception as exc:  # pragma: no cover - defensive background worker guard
-                self._push_scheduler_event(
-                    status="hit_intake_worker_error",
-                    message=f"后台命中投递线程异常: {exc}",
-                )
+            while True:
+                try:
+                    queued_item = queue.get_nowait()
+                except Empty:
+                    break
+                if queued_item is _HIT_INTAKE_STOP:
+                    return
+                if not isinstance(queued_item, dict):
+                    continue
+                try:
+                    self._accept_query_hit_now(queued_item)
+                except Exception as exc:  # pragma: no cover - defensive background worker guard
+                    self._push_scheduler_event(
+                        status="hit_intake_worker_error",
+                        message=f"后台命中投递线程异常: {exc}",
+                    )
 
     def _post_process_worker_loop(self, queue: Queue[object], stop_signal: threading.Event) -> None:
+        ready_signal = self._post_process_ready_signal
         while not stop_signal.is_set():
-            try:
-                queued_item = queue.get(timeout=0.1)
-            except Empty:
-                continue
-            if queued_item is _POST_PROCESS_STOP:
+            ready_signal.wait()
+            ready_signal.clear()
+            if stop_signal.is_set():
                 return
-            if not isinstance(queued_item, _PostProcessOutcomeJob):
-                continue
-            try:
-                self._process_post_process_job(queued_item)
-            except Exception as exc:  # pragma: no cover - defensive background worker guard
-                self._push_scheduler_event(
-                    status="post_process_worker_error",
-                    message=f"后台购买后处理线程异常: {exc}",
-                )
+            while True:
+                try:
+                    queued_item = queue.get_nowait()
+                except Empty:
+                    break
+                if queued_item is _POST_PROCESS_STOP:
+                    return
+                if not isinstance(queued_item, _PostProcessOutcomeJob):
+                    continue
+                try:
+                    self._process_post_process_job(queued_item)
+                except Exception as exc:  # pragma: no cover - defensive background worker guard
+                    self._push_scheduler_event(
+                        status="post_process_worker_error",
+                        message=f"后台购买后处理线程异常: {exc}",
+                    )
 
     def _diagnostics_event_worker_loop(self, queue: Queue[object], stop_signal: threading.Event) -> None:
+        ready_signal = self._diagnostics_event_ready_signal
         while not stop_signal.is_set():
-            try:
-                queued_item = queue.get(timeout=0.1)
-            except Empty:
-                continue
-            if queued_item is _DIAGNOSTICS_EVENT_STOP:
+            ready_signal.wait()
+            ready_signal.clear()
+            if stop_signal.is_set():
                 return
-            if not isinstance(queued_item, _DiagnosticsEventJob):
-                continue
-            try:
-                self._apply_diagnostics_event_job(queued_item, allow_notify=True)
-            except Exception:
-                continue
+            while True:
+                try:
+                    queued_item = queue.get_nowait()
+                except Empty:
+                    break
+                if queued_item is _DIAGNOSTICS_EVENT_STOP:
+                    return
+                if not isinstance(queued_item, _DiagnosticsEventJob):
+                    continue
+                try:
+                    self._apply_diagnostics_event_job(queued_item, allow_notify=True)
+                except Exception:
+                    continue
 
     def _drain_scheduler_once(self) -> str:
         self._drop_expired_backlog()
