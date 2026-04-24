@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useLayoutEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
 
 import { createAccountCenterClient } from "./api/account_center_client.js";
 import { createProgramAuthClient } from "./api/program_auth_client.js";
-import { getDesktopBootstrapConfig } from "./desktop/bridge.js";
+import { getDesktopBootstrapConfig, subscribeDesktopBootstrapConfig } from "./desktop/bridge.js";
 import {
   buildUnhandledRejectionDetails,
   buildWindowErrorDetails,
@@ -110,11 +110,26 @@ function ProgramAccessShellBanner() {
   );
 }
 
+function BackendStartupPanel({ backendStatus }) {
+  const title = backendStatus === "failed" ? "本地服务启动失败" : "本地服务启动中";
+  const message = backendStatus === "failed"
+    ? "主界面已打开，但本地服务未成功接管。请关闭程序后重试。"
+    : "主界面已进入，正在启动本地服务并接管首页数据。";
+
+  return (
+    <section className="app-shell__startup-panel" role="status">
+      <span className="app-shell__startup-panel-eyebrow">Desktop Bootstrap</span>
+      <h1 className="app-shell__startup-panel-title">{title}</h1>
+      <p className="app-shell__startup-panel-text">{message}</p>
+    </section>
+  );
+}
+
 
 export function App({ runtimeStore }) {
   const [initialAppShellState] = useState(() => readAppShellState());
   const initialActiveItem = resolveKnownActiveItem(initialAppShellState.activeItem);
-  const [bootstrapConfig] = useState(() => getDesktopBootstrapConfig());
+  const [bootstrapConfig, setBootstrapConfig] = useState(() => getDesktopBootstrapConfig());
   const [fallbackRuntimeStore] = useState(() => createAppRuntimeStore());
   const [activeItem, setActiveItem] = useState(initialActiveItem);
   const [mountedKeepAliveItems, setMountedKeepAliveItems] = useState(() => (
@@ -127,20 +142,21 @@ export function App({ runtimeStore }) {
   const [querySystemLeaveState, setQuerySystemLeaveState] = useState(EMPTY_QUERY_SYSTEM_LEAVE_STATE);
   const [purchaseSystemLeaveState, setPurchaseSystemLeaveState] = useState(EMPTY_PURCHASE_SYSTEM_LEAVE_STATE);
   const appRuntimeStore = runtimeStore ?? fallbackRuntimeStore;
-  const [client] = useState(() => createAccountCenterClient({
+  const client = useMemo(() => createAccountCenterClient({
     apiBaseUrl: bootstrapConfig.apiBaseUrl,
     pollIntervalMs: 25,
-  }));
-  const [programAuthClient] = useState(() => createProgramAuthClient({
+  }), [bootstrapConfig.apiBaseUrl]);
+  const programAuthClient = useMemo(() => createProgramAuthClient({
     apiBaseUrl: bootstrapConfig.apiBaseUrl,
-  }));
-  const [runtimeConnectionManager] = useState(() => createRuntimeConnectionManager({
+  }), [bootstrapConfig.apiBaseUrl]);
+  const runtimeConnectionManager = useMemo(() => createRuntimeConnectionManager({
     client,
     store: appRuntimeStore,
-  }));
+  }), [appRuntimeStore, client]);
   const diagnostics = useSidebarDiagnostics(client, {
     enabled: activeItem === "diagnostics",
   });
+  const isBackendReady = bootstrapConfig.backendStatus === "ready";
 
   const handleQuerySystemLeaveStateChange = useCallback((nextState) => {
     setQuerySystemLeaveState(nextState || EMPTY_QUERY_SYSTEM_LEAVE_STATE);
@@ -168,21 +184,36 @@ export function App({ runtimeStore }) {
     logRendererDiagnostic("renderer_reload_detected", reloadNotice);
   }, [reloadNotice]);
 
+  useEffect(() => subscribeDesktopBootstrapConfig((nextBootstrapConfig) => {
+    setBootstrapConfig((current) => {
+      const nextApiBaseUrl = String(nextBootstrapConfig.apiBaseUrl || "");
+      if (
+        current.backendMode === nextBootstrapConfig.backendMode
+        && current.backendStatus === nextBootstrapConfig.backendStatus
+        && String(current.apiBaseUrl || "") === nextApiBaseUrl
+        && String(current.runtimeWebSocketUrl || "") === String(nextBootstrapConfig.runtimeWebSocketUrl || "")
+      ) {
+        return current;
+      }
+      return nextBootstrapConfig;
+    });
+  }), []);
+
   useLayoutEffect(() => {
-    if (bootstrapConfig.backendStatus !== "ready") {
+    if (!isBackendReady) {
       return;
     }
 
     void runtimeConnectionManager.bootstrap().catch(() => {});
   }, [
-    bootstrapConfig.backendStatus,
+    isBackendReady,
     runtimeConnectionManager,
   ]);
 
   useEffect(() => {
     if (
       bootstrapConfig.backendMode !== "remote"
-      || bootstrapConfig.backendStatus !== "ready"
+      || !isBackendReady
       || !bootstrapConfig.runtimeWebSocketUrl
       || !globalThis.WebSocket
     ) {
@@ -210,7 +241,7 @@ export function App({ runtimeStore }) {
     };
   }, [
     bootstrapConfig.backendMode,
-    bootstrapConfig.backendStatus,
+    isBackendReady,
     bootstrapConfig.runtimeWebSocketUrl,
     runtimeConnectionManager,
   ]);

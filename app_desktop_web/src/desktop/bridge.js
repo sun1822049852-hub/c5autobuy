@@ -25,6 +25,22 @@ export function getDesktopBootstrapConfig() {
 }
 
 
+export function subscribeDesktopBootstrapConfig(listener) {
+  const desktopApp = getDesktopApp();
+  if (!desktopApp || typeof desktopApp.subscribeBootstrapConfig !== "function") {
+    return () => {};
+  }
+  const unsubscribe = desktopApp.subscribeBootstrapConfig((payload) => {
+    listener({
+      ...DEFAULT_BOOTSTRAP_CONFIG,
+      ...payload,
+    });
+  });
+  listener(getDesktopBootstrapConfig());
+  return unsubscribe;
+}
+
+
 export function sendDesktopRendererDiagnostic(payload) {
   const desktopApp = getDesktopApp();
   if (!desktopApp || typeof desktopApp.logRendererDiagnostic !== "function") {

@@ -441,6 +441,40 @@ textarea,
   color: var(--text-main);
 }
 
+.app-shell__startup-panel {
+  display: grid;
+  gap: 8px;
+  align-content: center;
+  min-height: min(420px, calc(100vh - 160px));
+  padding: 28px 30px;
+  border: 1px solid rgba(128, 214, 164, 0.22);
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at top left, rgba(128, 214, 164, 0.14), transparent 42%),
+    linear-gradient(180deg, rgba(20, 24, 31, 0.96), rgba(15, 18, 22, 0.94));
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.28);
+}
+
+.app-shell__startup-panel-eyebrow {
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--success);
+}
+
+.app-shell__startup-panel-title {
+  margin: 0;
+  font-size: clamp(26px, 3vw, 36px);
+  color: var(--text-main);
+}
+
+.app-shell__startup-panel-text {
+  max-width: 36rem;
+  margin: 0;
+  color: var(--text-muted);
+  line-height: 1.7;
+}
+
 .program-access-banner {
   display: grid;
   gap: 8px;

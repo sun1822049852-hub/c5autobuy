@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 
 
 def test_backend_main_runs_uvicorn(monkeypatch, tmp_path: Path):
@@ -21,6 +22,28 @@ def test_backend_main_runs_uvicorn(monkeypatch, tmp_path: Path):
     assert called["host"] == "127.0.0.1"
     assert called["port"] == 8133
     assert called["log_level"] == "info"
+
+
+def test_backend_main_default_app_is_built_lazily(monkeypatch, tmp_path: Path):
+    monkeypatch.chdir(tmp_path)
+    sys.modules.pop("app_backend.main", None)
+
+    import app_backend.main as backend_main
+
+    fake_app = object()
+    called: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def fake_create_app(*args, **kwargs):
+        called.append((args, kwargs))
+        return fake_app
+
+    monkeypatch.setattr(backend_main, "create_app", fake_create_app)
+
+    assert called == []
+    assert backend_main.app is fake_app
+    assert called == [((), {})]
+    assert backend_main.app is fake_app
+    assert called == [((), {})]
 
 
 def test_create_app_wires_browser_login_adapter(tmp_path: Path):

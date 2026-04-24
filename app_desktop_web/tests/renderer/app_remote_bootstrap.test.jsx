@@ -2,7 +2,7 @@
 
 import "@testing-library/jest-dom/vitest";
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -44,6 +44,39 @@ function installEmbeddedDesktopApp(fetchImpl) {
         runtimeWebSocketUrl: "",
         backendStatus: "ready",
       };
+    },
+  };
+}
+
+function installDeferredEmbeddedDesktopApp(fetchImpl) {
+  let bootstrapListener = () => {};
+  window.fetch = fetchImpl;
+  window.desktopApp = {
+    getBootstrapConfig() {
+      return {
+        backendMode: "embedded",
+        apiBaseUrl: "http://127.0.0.1:8000",
+        runtimeWebSocketUrl: "",
+        backendStatus: "starting",
+      };
+    },
+    subscribeBootstrapConfig(listener) {
+      bootstrapListener = listener;
+      return () => {
+        bootstrapListener = () => {};
+      };
+    },
+  };
+
+  return {
+    emitReadyBootstrap(payload = {}) {
+      bootstrapListener({
+        backendMode: "embedded",
+        apiBaseUrl: "http://127.0.0.1:59192",
+        runtimeWebSocketUrl: "",
+        backendStatus: "ready",
+        ...payload,
+      });
     },
   };
 }
@@ -290,5 +323,62 @@ describe("app remote bootstrap", () => {
     expect(screen.queryByLabelText("注册验证码")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("注册用户名")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("注册密码")).not.toBeInTheDocument();
+  });
+
+  it("shows the shell immediately for embedded startup and waits for backend ready before fetching bootstrap and home data", async () => {
+    const fetchImpl = vi.fn(async (input) => {
+      const url = new URL(input);
+
+      if (url.pathname === "/app/bootstrap") {
+        return jsonResponse({
+          version: 1,
+          generated_at: "2026-04-24T09:00:00.000Z",
+          program_access: {
+            mode: "remote_entitlement",
+            stage: "packaged_release",
+            guard_enabled: true,
+            message: "请先登录程序会员",
+            username: null,
+            auth_state: null,
+            runtime_state: "stopped",
+            grace_expires_at: null,
+            last_error_code: "program_auth_required",
+            registration_flow_version: 3,
+          },
+          query_system: {
+            configs: [],
+            capacitySummary: { modes: {} },
+            runtimeStatus: { running: false, item_rows: [] },
+          },
+          purchase_system: {
+            runtimeStatus: { running: false, accounts: [], item_rows: [] },
+            uiPreferences: { selected_config_id: null, updated_at: null },
+            runtimeSettings: { per_batch_ip_fanout_limit: 1, updated_at: null },
+          },
+        });
+      }
+      if (url.pathname === "/account-center/accounts") {
+        return jsonResponse([]);
+      }
+
+      throw new Error(`Unhandled request: ${url.pathname}`);
+    });
+    const desktopHarness = installDeferredEmbeddedDesktopApp(fetchImpl);
+
+    render(<App />);
+
+    expect(await screen.findByText("本地服务启动中")).toBeInTheDocument();
+    expect(fetchImpl).not.toHaveBeenCalled();
+
+    await act(async () => {
+      desktopHarness.emitReadyBootstrap();
+    });
+
+    await waitFor(() => {
+      expect(fetchImpl.mock.calls.some(([input]) => String(input) === "http://127.0.0.1:59192/app/bootstrap")).toBe(true);
+    });
+    await waitFor(() => {
+      expect(fetchImpl.mock.calls.some(([input]) => String(input) === "http://127.0.0.1:59192/account-center/accounts")).toBe(true);
+    });
   });
 });

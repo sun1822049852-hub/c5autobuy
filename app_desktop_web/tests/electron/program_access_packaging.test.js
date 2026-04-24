@@ -132,10 +132,14 @@ describe("program access packaging config", () => {
     const { bootstrapApplication } = loadElectronMainWithMocks({
       electron: electronHarness.electron,
     });
+    const ensureManagedPythonRuntimeImpl = vi.fn().mockResolvedValue({
+      pythonExecutable: "C:/Users/tester/AppData/Roaming/C5AccountCenter/python-runtime/3.11.9/python.exe",
+    });
     const startPythonBackendImpl = vi.fn().mockResolvedValue({
       baseUrl: "http://127.0.0.1:8233",
       stop: vi.fn(),
     });
+    const resolvePythonExecutableImpl = vi.fn(() => "C:/demo/project/.venv/Scripts/python.exe");
 
     await bootstrapApplication({
       runtimeMode: {
@@ -148,7 +152,8 @@ describe("program access packaging config", () => {
       ensureWindowStateDependenciesImpl: vi.fn().mockResolvedValue(),
       ensureBackendDependenciesImpl: vi.fn().mockResolvedValue(),
       findAvailablePortImpl: vi.fn().mockResolvedValue(8233),
-      resolvePythonExecutableImpl: vi.fn(() => "C:/demo/project/.venv/Scripts/python.exe"),
+      ensureManagedPythonRuntimeImpl,
+      resolvePythonExecutableImpl,
       readProgramAccessConfigImpl: vi.fn(() => ({
         controlPlaneBaseUrl: "http://8.138.39.139:18787",
       })),
@@ -157,8 +162,15 @@ describe("program access packaging config", () => {
       createFailureWindowImpl: vi.fn(),
     });
 
+    expect(ensureManagedPythonRuntimeImpl).toHaveBeenCalledWith(expect.objectContaining({
+      appPrivateDir: "C:\\Users\\tester\\AppData\\Roaming\\C5AccountCenter\\app-private",
+      packagedPythonDepsPath: expect.stringContaining("python_deps"),
+      projectRoot: expect.any(String),
+    }));
+    expect(resolvePythonExecutableImpl).not.toHaveBeenCalled();
     expect(startPythonBackendImpl).toHaveBeenCalledWith(expect.objectContaining({
       dbPath: "C:\\Users\\tester\\AppData\\Roaming\\C5AccountCenter\\data\\app.db",
+      pythonExecutable: "C:/Users/tester/AppData/Roaming/C5AccountCenter/python-runtime/3.11.9/python.exe",
       programAccessConfig: {
         appPrivateDir: "C:\\Users\\tester\\AppData\\Roaming\\C5AccountCenter\\app-private",
         controlPlaneBaseUrl: "http://8.138.39.139:18787",
@@ -168,13 +180,17 @@ describe("program access packaging config", () => {
     }));
   });
 
-  it("shows a loading window before the packaged embedded backend becomes ready", async () => {
+  it("loads the renderer shell immediately and pushes a ready bootstrap update after the packaged backend becomes ready", async () => {
     const electronHarness = createElectronHarness();
     const { bootstrapApplication } = loadElectronMainWithMocks({
       electron: electronHarness.electron,
     });
     const createWindowImpl = vi.fn();
+    const publishBootstrapConfigImpl = vi.fn();
     let resolveBackendStartup;
+    const ensureManagedPythonRuntimeImpl = vi.fn().mockResolvedValue({
+      pythonExecutable: "C:/Users/tester/AppData/Roaming/C5AccountCenter/python-runtime/3.11.9/python.exe",
+    });
     const startPythonBackendImpl = vi.fn(() => new Promise((resolve) => {
       resolveBackendStartup = resolve;
     }));
@@ -190,11 +206,13 @@ describe("program access packaging config", () => {
       ensureWindowStateDependenciesImpl: vi.fn().mockResolvedValue(),
       ensureBackendDependenciesImpl: vi.fn().mockResolvedValue(),
       findAvailablePortImpl: vi.fn().mockResolvedValue(8233),
+      ensureManagedPythonRuntimeImpl,
       resolvePythonExecutableImpl: vi.fn(() => "C:/demo/project/.venv/Scripts/python.exe"),
       readProgramAccessConfigImpl: vi.fn(() => ({
         controlPlaneBaseUrl: "http://8.138.39.139:18787",
       })),
       startPythonBackendImpl,
+      publishBootstrapConfigImpl,
       createWindowImpl,
       createFailureWindowImpl: vi.fn(),
     });
@@ -202,7 +220,10 @@ describe("program access packaging config", () => {
     await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();
-    expect(createWindowImpl).toHaveBeenNthCalledWith(1, { mode: "loading" });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(createWindowImpl).toHaveBeenNthCalledWith(1, { mode: "app" });
+    expect(ensureManagedPythonRuntimeImpl).toHaveBeenCalledOnce();
     expect(startPythonBackendImpl).toHaveBeenCalledOnce();
 
     resolveBackendStartup({
@@ -211,7 +232,12 @@ describe("program access packaging config", () => {
     });
     await bootstrapPromise;
 
-    expect(createWindowImpl).toHaveBeenNthCalledWith(2, { mode: "app" });
+    expect(createWindowImpl).toHaveBeenCalledTimes(1);
+    expect(publishBootstrapConfigImpl).toHaveBeenCalledWith(expect.objectContaining({
+      apiBaseUrl: "http://127.0.0.1:8233",
+      backendMode: "embedded",
+      backendStatus: "ready",
+    }));
   });
 
   it("fails closed for packaged embedded startup when the control-plane base url is missing", async () => {
@@ -250,6 +276,44 @@ describe("program access packaging config", () => {
     expect(createFailureWindowImpl).toHaveBeenCalledOnce();
   });
 
+  it("fails closed before backend startup when packaged python runtime bootstrap fails", async () => {
+    const electronHarness = createElectronHarness();
+    const { bootstrapApplication } = loadElectronMainWithMocks({
+      electron: electronHarness.electron,
+    });
+    const startPythonBackendImpl = vi.fn().mockResolvedValue({
+      baseUrl: "http://127.0.0.1:8233",
+      stop: vi.fn(),
+    });
+    const createFailureWindowImpl = vi.fn((error) => {
+      expect(String(error)).toContain("download failed");
+    });
+
+    await bootstrapApplication({
+      runtimeMode: {
+        backendMode: "embedded",
+        apiBaseUrl: "http://127.0.0.1:8000",
+        configurationError: "",
+        runtimeWebSocketUrl: "",
+        shouldStartEmbeddedBackend: true,
+      },
+      ensureWindowStateDependenciesImpl: vi.fn().mockResolvedValue(),
+      ensureBackendDependenciesImpl: vi.fn().mockResolvedValue(),
+      findAvailablePortImpl: vi.fn().mockResolvedValue(8233),
+      ensureManagedPythonRuntimeImpl: vi.fn().mockRejectedValue(new Error("download failed")),
+      resolvePythonExecutableImpl: vi.fn(() => "C:/demo/project/.venv/Scripts/python.exe"),
+      readProgramAccessConfigImpl: vi.fn(() => ({
+        controlPlaneBaseUrl: "http://8.138.39.139:18787",
+      })),
+      startPythonBackendImpl,
+      createWindowImpl: vi.fn(),
+      createFailureWindowImpl,
+    });
+
+    expect(startPythonBackendImpl).not.toHaveBeenCalled();
+    expect(createFailureWindowImpl).toHaveBeenCalledOnce();
+  });
+
   it("ships electron-builder config and the release client config file", () => {
     const appRoot = path.resolve(process.cwd());
     const builderConfigPath = path.join(appRoot, "electron-builder.config.cjs");
@@ -266,7 +330,10 @@ describe("program access packaging config", () => {
     expect(builderConfig.extraResources).toEqual(expect.arrayContaining([
       expect.objectContaining({ to: "client_config.release.json" }),
       expect.objectContaining({ to: "app_backend" }),
+      expect.objectContaining({ to: "python_deps" }),
       expect.objectContaining({ to: "xsign.py" }),
+    ]));
+    expect(builderConfig.extraResources).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ to: ".venv" }),
     ]));
     expect(builderConfig.win).toEqual(expect.objectContaining({
@@ -310,49 +377,25 @@ describe("program access packaging config", () => {
     })).toBe(repoVenv);
   });
 
-  it("verifies the embedded python runtime can import app_backend.main before packaging", () => {
+  it("does not expose legacy bundled-runtime preflight helpers after switching to python_deps packaging", () => {
     const preflightModulePath = path.join(process.cwd(), "electron-builder-preflight.cjs");
-    const repoRoot = path.join("C:", "demo", "repo");
-    const workspaceRoot = path.join(repoRoot, ".worktrees", "program-control-plane-chunk1");
-    const worktreeAppDir = path.join(workspaceRoot, "app_desktop_web");
-    const repoVenvPython = path.join(repoRoot, ".venv", "Scripts", "python.exe");
-    const worktreeBackend = path.join(workspaceRoot, "app_backend");
-    const spawnSync = vi.fn(() => ({
-      status: 0,
-      stdout: "",
-      stderr: "",
-    }));
 
     expect(fs.existsSync(preflightModulePath)).toBe(true);
-    const { verifyEmbeddedPythonRuntime } = require(preflightModulePath);
+    const preflight = require(preflightModulePath);
 
-    expect(() => verifyEmbeddedPythonRuntime({
-      appDir: worktreeAppDir,
-      existsSync(targetPath) {
-        return targetPath === repoVenvPython || targetPath === worktreeBackend;
-      },
-      spawnSync,
-    })).not.toThrow();
-
-    expect(spawnSync).toHaveBeenCalledWith(
-      repoVenvPython,
-      [
-        "-c",
-        expect.stringContaining("from app_backend.main import main"),
-      ],
-      expect.objectContaining({
-        cwd: workspaceRoot,
-        encoding: "utf8",
-        stdio: "pipe",
-      }),
-    );
+    expect(preflight).not.toHaveProperty("resolveBundledPythonExecutable");
+    expect(preflight).not.toHaveProperty("verifyEmbeddedPythonRuntime");
   });
 
   it("runs renderer build checks before verifying embedded python during packaging preflight", () => {
     const preflightModulePath = path.join(process.cwd(), "electron-builder-preflight.cjs");
     const ensureRendererBuildImpl = vi.fn();
-    const verifyEmbeddedPythonRuntimeImpl = vi.fn(() => ({
-      pythonExecutable: "C:/demo/repo/.venv/Scripts/python.exe",
+    const preparePackagedPythonResourcesImpl = vi.fn(() => ({
+      pythonDepsPath: "C:/demo/repo/app_desktop_web/build/python_deps",
+      workspaceRoot: "C:/demo/repo",
+    }));
+    const verifyPackagedPythonResourcesImpl = vi.fn(() => ({
+      dependencyRoot: "C:/demo/repo/app_desktop_web/build/python_deps",
       workspaceRoot: "C:/demo/repo",
     }));
 
@@ -362,32 +405,52 @@ describe("program access packaging config", () => {
     const result = ensurePackagingPrerequisites({
       appDir: process.cwd(),
       ensureRendererBuildImpl,
-      verifyEmbeddedPythonRuntimeImpl,
+      preparePackagedPythonResourcesImpl,
+      verifyPackagedPythonResourcesImpl,
     });
 
     expect(ensureRendererBuildImpl).toHaveBeenCalledWith(process.cwd());
-    expect(verifyEmbeddedPythonRuntimeImpl).toHaveBeenCalledWith({
+    expect(preparePackagedPythonResourcesImpl).toHaveBeenCalledWith({
       appDir: process.cwd(),
     });
+    expect(verifyPackagedPythonResourcesImpl).toHaveBeenCalledWith({
+      appDir: process.cwd(),
+      preparedResources: {
+        pythonDepsPath: "C:/demo/repo/app_desktop_web/build/python_deps",
+        workspaceRoot: "C:/demo/repo",
+      },
+    });
     expect(result).toEqual({
-      pythonExecutable: "C:/demo/repo/.venv/Scripts/python.exe",
+      dependencyRoot: "C:/demo/repo/app_desktop_web/build/python_deps",
       workspaceRoot: "C:/demo/repo",
     });
   });
 
-  it("surfaces python stderr when the embedded runtime preflight fails", () => {
+  it("surfaces python stderr when the packaged python resource preflight fails", () => {
     const preflightModulePath = path.join(process.cwd(), "electron-builder-preflight.cjs");
     const workspaceRoot = path.join("C:", "demo", "repo");
     const appDir = path.join(workspaceRoot, "app_desktop_web");
+    const pythonDepsPath = path.join(appDir, "build", "python_deps");
+    const outputSitePackagesPath = path.join(
+      pythonDepsPath,
+      "Lib",
+      "site-packages",
+    );
     const workspacePython = path.join(workspaceRoot, ".venv", "Scripts", "python.exe");
 
     expect(fs.existsSync(preflightModulePath)).toBe(true);
-    const { verifyEmbeddedPythonRuntime } = require(preflightModulePath);
+    const { verifyPackagedPythonResources } = require(preflightModulePath);
 
-    expect(() => verifyEmbeddedPythonRuntime({
+    expect(() => verifyPackagedPythonResources({
       appDir,
       existsSync(targetPath) {
-        return targetPath === workspacePython || targetPath === path.join(workspaceRoot, "app_backend");
+        return targetPath === outputSitePackagesPath;
+      },
+      preparedResources: {
+        outputSitePackagesPath,
+        pythonDepsPath,
+        pythonExecutable: workspacePython,
+        workspaceRoot,
       },
       spawnSync: () => ({
         status: 1,

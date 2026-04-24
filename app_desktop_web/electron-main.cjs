@@ -57,8 +57,10 @@ let backendDependenciesPromise = null;
 let windowStateDependenciesPromise = null;
 let loadWindowState = null;
 let saveWindowState = null;
+let ensureManagedPythonRuntime = null;
 let resolvePythonExecutable = null;
 let startPythonBackend = null;
+const DESKTOP_BOOTSTRAP_CONFIG_UPDATED_CHANNEL = "desktop:bootstrap-config-updated";
 
 
 function readAppPath(appApi, targetPathName) {
@@ -412,9 +414,13 @@ async function ensureWindowStateDependencies() {
 
 async function ensureBackendDependencies() {
   if (!backendDependenciesPromise) {
-    backendDependenciesPromise = import("./python_backend.js").then((pythonBackendModule) => {
+    backendDependenciesPromise = Promise.all([
+      import("./python_backend.js"),
+      import("./python_runtime_bootstrap.js"),
+    ]).then(([pythonBackendModule, pythonRuntimeBootstrapModule]) => {
       startPythonBackend = pythonBackendModule.startPythonBackend;
       resolvePythonExecutable = pythonBackendModule.resolvePythonExecutable;
+      ensureManagedPythonRuntime = pythonRuntimeBootstrapModule.ensureManagedPythonRuntime;
     });
   }
 
@@ -488,9 +494,25 @@ function createWindow({ mode = "app" } = {}) {
   return mainWindow;
 }
 
+function publishBootstrapConfig(nextBootstrapConfig = bootstrapConfig) {
+  const windowInstance = mainWindow;
+  const webContents = windowInstance?.webContents;
+  if (!webContents || typeof webContents.send !== "function") {
+    return;
+  }
+  if (typeof webContents.isDestroyed === "function" && webContents.isDestroyed()) {
+    return;
+  }
+  webContents.send(DESKTOP_BOOTSTRAP_CONFIG_UPDATED_CHANNEL, nextBootstrapConfig);
+}
+
 
 function buildStartupFailureCopy(runtimeMode, { isPackaged = app?.isPackaged === true } = {}) {
-  if (isPackaged || runtimeMode?.backendMode === "remote") {
+  if (runtimeMode?.backendMode === "remote") {
+    return "远程模式服务状态异常，请稍后重试。";
+  }
+
+  if (isPackaged) {
     return "服务器连接失败，请稍后重试。";
   }
 
@@ -536,8 +558,10 @@ async function bootstrapApplication({
   createFailureWindowImpl = createFailureWindow,
   createWindowImpl = createWindow,
   ensureBackendDependenciesImpl = ensureBackendDependencies,
+  ensureManagedPythonRuntimeImpl = null,
   ensureWindowStateDependenciesImpl = ensureWindowStateDependencies,
   findAvailablePortImpl = findAvailablePort,
+  publishBootstrapConfigImpl = publishBootstrapConfig,
   readProgramAccessConfigImpl = readProgramAccessConfig,
   resolvePythonExecutableImpl = null,
   startPythonBackendImpl = null,
@@ -563,12 +587,14 @@ async function bootstrapApplication({
         backendStatus: "ready",
       };
       createWindowImpl({ mode: "app" });
+      publishBootstrapConfigImpl(bootstrapConfig);
       return;
     }
 
-    createWindowImpl({ mode: "loading" });
+    createWindowImpl({ mode: "app" });
     await ensureBackendDependenciesImpl();
     const port = await findAvailablePortImpl();
+    const selectedEnsureManagedPythonRuntime = ensureManagedPythonRuntimeImpl ?? ensureManagedPythonRuntime;
     const selectedResolvePythonExecutable = resolvePythonExecutableImpl ?? resolvePythonExecutable;
     const selectedStartPythonBackend = startPythonBackendImpl ?? startPythonBackend;
     const rawProgramAccessConfig = readProgramAccessConfigImpl({
@@ -598,7 +624,13 @@ async function bootstrapApplication({
           ...rawProgramAccessConfig,
           probeRegistrationReadiness,
         };
-    const pythonExecutable = selectedResolvePythonExecutable(projectRoot);
+    const pythonExecutable = packagedRelease
+      ? (await selectedEnsureManagedPythonRuntime({
+          appPrivateDir: embeddedBackendPaths.appPrivateDir,
+          packagedPythonDepsPath: path.join(projectRoot, "python_deps"),
+          projectRoot,
+        })).pythonExecutable
+      : selectedResolvePythonExecutable(projectRoot);
     backend = await selectedStartPythonBackend({
       dbPath: embeddedBackendPaths.dbPath,
       pollIntervalMs: 250,
@@ -613,7 +645,7 @@ async function bootstrapApplication({
       apiBaseUrl: backend.baseUrl,
       backendStatus: "ready",
     };
-    createWindowImpl({ mode: "app" });
+    publishBootstrapConfigImpl(bootstrapConfig);
   } catch (error) {
     bootstrapConfig = {
       ...bootstrapConfig,
