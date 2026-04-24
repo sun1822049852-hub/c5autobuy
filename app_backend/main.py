@@ -1,94 +1,87 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 import uvicorn
 
-from app_backend.api.routes import account_center as account_center_routes
-from app_backend.api.routes import accounts as account_routes
-from app_backend.api.routes import app_bootstrap as app_bootstrap_routes
-from app_backend.api.routes import diagnostics as diagnostics_routes
-from app_backend.api.routes import purchase_runtime as purchase_runtime_routes
-from app_backend.api.routes import program_auth as program_auth_routes
-from app_backend.api.routes import proxy_pool as proxy_pool_routes
-from app_backend.api.routes import query_configs as query_config_routes
-from app_backend.api.routes import query_settings as query_settings_routes
-from app_backend.api.routes import runtime_settings as runtime_settings_routes
-from app_backend.api.routes import query_items as query_item_routes
-from app_backend.api.routes import query_runtime as query_runtime_routes
-from app_backend.api.routes import stats as stats_routes
-from app_backend.api.routes import tasks as task_routes
-from app_backend.api.websocket import tasks as task_websocket_routes
-from app_backend.api.websocket import accounts as account_websocket_routes
-from app_backend.api.websocket import runtime as runtime_websocket_routes
-from app_backend.infrastructure.db.base import build_engine, build_session_factory, create_schema
-from app_backend.infrastructure.events import AccountUpdateHub
-from app_backend.infrastructure.events.runtime_update_hub import RuntimeUpdateHub
-from app_backend.infrastructure.program_access import (
-    EntitlementVerifier,
-    FileProgramCredentialStore,
-    LocalPassThroughGateway,
-    RefreshScheduler,
-    RemoteControlPlaneClient,
-    RemoteEntitlementGateway,
-    build_device_id_store,
-    build_secret_store,
-)
-from app_backend.infrastructure.purchase.runtime.inventory_refresh_gateway import (
-    InventoryRefreshGateway,
-)
-from app_backend.infrastructure.purchase.runtime.purchase_runtime_service import PurchaseRuntimeService
-from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
-from app_backend.infrastructure.repositories.account_inventory_snapshot_repository import (
-    SqliteAccountInventorySnapshotRepository,
-)
-from app_backend.infrastructure.repositories.account_session_bundle_repository import (
-    SqliteAccountSessionBundleRepository,
-)
-from app_backend.infrastructure.repositories.account_repository import SqliteAccountRepository
-from app_backend.infrastructure.repositories.proxy_pool_repository import SqliteProxyPoolRepository
-from app_backend.infrastructure.repositories.purchase_ui_preferences_repository import (
-    SqlitePurchaseUiPreferencesRepository,
-)
-from app_backend.infrastructure.repositories.runtime_settings_repository import (
-    SqliteRuntimeSettingsRepository,
-)
-from app_backend.infrastructure.repositories.stats_repository import SqliteStatsRepository
-from app_backend.infrastructure.repositories.query_config_repository import SqliteQueryConfigRepository
-from app_backend.infrastructure.repositories.query_settings_repository import SqliteQuerySettingsRepository
-from app_backend.infrastructure.stats.runtime.stats_pipeline import StatsPipeline
-from app_backend.infrastructure.query.collectors.detail_account_selector import DetailAccountSelector
-from app_backend.infrastructure.query.collectors.product_detail_collector import ProductDetailCollector
-from app_backend.infrastructure.query.collectors.product_detail_fetcher import ProductDetailFetcher
-from app_backend.infrastructure.query.refresh.query_item_detail_refresh_service import QueryItemDetailRefreshService
-from app_backend.infrastructure.query.collectors.product_url_parser import ProductUrlParser
-from app_backend.infrastructure.browser_runtime.login_adapter import (
-    ManagedEdgeCdpLoginRunner,
-    BrowserLoginAdapter,
-)
-from app_backend.infrastructure.browser_runtime.account_browser_profile_store import (
-    AccountBrowserProfileStore,
-)
-from app_backend.infrastructure.browser_runtime.managed_browser_runtime import ManagedBrowserRuntime
-from app_backend.infrastructure.browser_runtime.open_api_binding_sync_service import (
-    OpenApiBindingSyncService,
-)
-from app_backend.infrastructure.browser_runtime.open_api_binding_page_launcher import (
-    OpenApiBindingPageLauncher,
-)
-from app_backend.application.use_cases.delete_account import DeleteAccountUseCase
-from app_backend.application.use_cases.proxy_pool_use_cases import ProxyPoolUseCases
-from app_backend.infrastructure.proxy.proxy_test_service import ProxyTestService
-from app_backend.application.services.account_balance_service import AccountBalanceService
-from app_backend.workers.manager.task_manager import TaskManager
-from app_backend.infrastructure.request_diagnostics import RequestDiagnosticsMiddleware
+# ---------------------------------------------------------------------------
+# Phase 1 only needs FastAPI + CORSMiddleware + BaseHTTPMiddleware (already
+# imported above).  All other imports are deferred to _sync_heavy_init() so
+# that `from app_backend.main import main` stays fast (~200ms).
+# ---------------------------------------------------------------------------
 
 
 PROGRAM_ACCESS_APP_NAME = "C5AutoBug"
 DEFAULT_PROGRAM_CONTROL_PLANE_BASE_URL = "http://8.138.39.139:18787"
+
+_logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Readiness gate middleware — returns 503 for business routes while Phase 2
+# initialisation is still in progress.
+# ---------------------------------------------------------------------------
+
+class _ReadinessGateMiddleware(BaseHTTPMiddleware):
+    """Return 503 for every non-health request until ``app.state._ready`` is True."""
+
+    async def dispatch(self, request: Request, call_next):
+        if not getattr(request.app.state, "_ready", False):
+            if request.url.path != "/health":
+                return Response(
+                    content='{"detail":"service is starting"}',
+                    status_code=503,
+                    media_type="application/json",
+                )
+        return await call_next(request)
+
+
+# ---------------------------------------------------------------------------
+# Lifespan — used only when *deferred_init=True* (production / main()).
+# ---------------------------------------------------------------------------
+
+@asynccontextmanager
+async def _deferred_lifespan(app: FastAPI):
+    """Run heavy init in a background task so uvicorn can accept /health immediately."""
+    init_task = asyncio.create_task(_deferred_init(app))
+    try:
+        yield
+    finally:
+        # Shutdown: cancel init if still running, then run cleanup.
+        init_task.cancel()
+        try:
+            await init_task
+        except asyncio.CancelledError:
+            pass
+        _shutdown_program_access(app)
+
+
+async def _deferred_init(app: FastAPI) -> None:
+    """Phase 2: execute all heavy initialisation off the critical startup path."""
+    params = app.state._init_params
+    try:
+        await asyncio.to_thread(_sync_heavy_init, app, params)
+    except Exception:
+        _logger.exception("Deferred init failed")
+        app.state._init_error = "deferred init failed — check logs"
+        raise
+
+
+def _shutdown_program_access(app: FastAPI) -> None:
+    scheduler = getattr(app.state, "program_access_refresh_scheduler", None)
+    if scheduler is not None:
+        scheduler.stop()
+    gateway = getattr(app.state, "program_access_gateway", None)
+    close = getattr(gateway, "close", None)
+    if callable(close):
+        close()
 
 
 def _resolve_program_access_stage(explicit_stage: str | None) -> str:
@@ -173,6 +166,16 @@ def _build_program_access_services(
     explicit_refresh_interval_seconds: float | None,
     explicit_probe_registration_readiness: bool | None,
 ):
+    from app_backend.infrastructure.program_access import (
+        EntitlementVerifier,
+        FileProgramCredentialStore,
+        LocalPassThroughGateway,
+        RefreshScheduler,
+        RemoteControlPlaneClient,
+        RemoteEntitlementGateway,
+        build_device_id_store,
+        build_secret_store,
+    )
     if stage != "packaged_release":
         return LocalPassThroughGateway(), None, None, None, None
 
@@ -236,12 +239,183 @@ def create_app(
     program_access_refresh_interval_seconds: float | None = None,
     program_access_probe_registration_readiness: bool | None = None,
     program_access_start_refresh_scheduler: bool = True,
+    deferred_init: bool = False,
 ) -> FastAPI:
+    # ------------------------------------------------------------------
+    # Resolve lightweight params that don't touch DB / filesystem heavily
+    # ------------------------------------------------------------------
     database_path = db_path or Path("data/app.db")
     database_path.parent.mkdir(parents=True, exist_ok=True)
     request_diagnostics_log_path = request_diagnostics_log_path or (
         database_path.parent / "runtime" / "request_diagnostics.runtime.jsonl"
     )
+
+    # ------------------------------------------------------------------
+    # Phase 1 — minimal app: /health reachable immediately
+    # ------------------------------------------------------------------
+    app = FastAPI(
+        title="C5 Account Center Backend",
+        lifespan=_deferred_lifespan if deferred_init else None,
+    )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["null"],
+        allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    app.state._ready = False
+    app.state._init_error = None
+
+    @app.get("/health")
+    async def health() -> dict:
+        error = getattr(app.state, "_init_error", None)
+        if error:
+            return {"status": "error", "ready": False, "error": str(error)}
+        return {"status": "ok", "ready": getattr(app.state, "_ready", False)}
+
+    if deferred_init:
+        # Store params for _deferred_init to pick up later.
+        app.add_middleware(_ReadinessGateMiddleware)
+        app.state._init_params = {
+            "database_path": database_path,
+            "request_diagnostics_log_path": request_diagnostics_log_path,
+            "request_diagnostics_slow_ms": request_diagnostics_slow_ms,
+            "program_access_stage": program_access_stage,
+            "program_access_app_data_root": program_access_app_data_root,
+            "program_access_secret_stage": program_access_secret_stage,
+            "program_access_secret_platform": program_access_secret_platform,
+            "program_access_control_plane_base_url": program_access_control_plane_base_url,
+            "program_access_key_cache_path": program_access_key_cache_path,
+            "program_access_refresh_interval_seconds": program_access_refresh_interval_seconds,
+            "program_access_probe_registration_readiness": program_access_probe_registration_readiness,
+            "program_access_start_refresh_scheduler": program_access_start_refresh_scheduler,
+        }
+        return app
+
+    # ------------------------------------------------------------------
+    # Phase 2 (synchronous) — full init, used by tests & non-deferred mode
+    # ------------------------------------------------------------------
+    _sync_heavy_init(app, {
+        "database_path": database_path,
+        "request_diagnostics_log_path": request_diagnostics_log_path,
+        "request_diagnostics_slow_ms": request_diagnostics_slow_ms,
+        "program_access_stage": program_access_stage,
+        "program_access_app_data_root": program_access_app_data_root,
+        "program_access_secret_stage": program_access_secret_stage,
+        "program_access_secret_platform": program_access_secret_platform,
+        "program_access_control_plane_base_url": program_access_control_plane_base_url,
+        "program_access_key_cache_path": program_access_key_cache_path,
+        "program_access_refresh_interval_seconds": program_access_refresh_interval_seconds,
+        "program_access_probe_registration_readiness": program_access_probe_registration_readiness,
+        "program_access_start_refresh_scheduler": program_access_start_refresh_scheduler,
+    })
+
+    # Legacy shutdown hook for non-deferred mode (lifespan handles deferred).
+    @app.on_event("shutdown")
+    async def _shutdown_program_access_services() -> None:
+        _shutdown_program_access(app)
+
+    return app
+
+
+# ---------------------------------------------------------------------------
+# _sync_heavy_init — all the expensive work, extracted from old create_app()
+# ---------------------------------------------------------------------------
+
+def _sync_heavy_init(app: FastAPI, params: dict) -> None:
+    """Build every service / repository and wire routers onto *app*.
+
+    Called synchronously in test mode, or via ``asyncio.to_thread`` in deferred
+    mode.  Must be safe to run from any thread (no event-loop interaction).
+    """
+    # ------------------------------------------------------------------
+    # Deferred imports — kept out of module-level so that
+    # `from app_backend.main import main` only loads ~200ms of deps.
+    # ------------------------------------------------------------------
+    from app_backend.api.routes import account_center as account_center_routes
+    from app_backend.api.routes import accounts as account_routes
+    from app_backend.api.routes import app_bootstrap as app_bootstrap_routes
+    from app_backend.api.routes import diagnostics as diagnostics_routes
+    from app_backend.api.routes import purchase_runtime as purchase_runtime_routes
+    from app_backend.api.routes import program_auth as program_auth_routes
+    from app_backend.api.routes import proxy_pool as proxy_pool_routes
+    from app_backend.api.routes import query_configs as query_config_routes
+    from app_backend.api.routes import query_settings as query_settings_routes
+    from app_backend.api.routes import runtime_settings as runtime_settings_routes
+    from app_backend.api.routes import query_items as query_item_routes
+    from app_backend.api.routes import query_runtime as query_runtime_routes
+    from app_backend.api.routes import stats as stats_routes
+    from app_backend.api.routes import tasks as task_routes
+    from app_backend.api.websocket import tasks as task_websocket_routes
+    from app_backend.api.websocket import accounts as account_websocket_routes
+    from app_backend.api.websocket import runtime as runtime_websocket_routes
+    from app_backend.infrastructure.db.base import build_engine, build_session_factory, create_schema
+    from app_backend.infrastructure.events import AccountUpdateHub
+    from app_backend.infrastructure.events.runtime_update_hub import RuntimeUpdateHub
+    from app_backend.infrastructure.purchase.runtime.inventory_refresh_gateway import (
+        InventoryRefreshGateway,
+    )
+    from app_backend.infrastructure.purchase.runtime.purchase_runtime_service import PurchaseRuntimeService
+    from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
+    from app_backend.infrastructure.repositories.account_inventory_snapshot_repository import (
+        SqliteAccountInventorySnapshotRepository,
+    )
+    from app_backend.infrastructure.repositories.account_session_bundle_repository import (
+        SqliteAccountSessionBundleRepository,
+    )
+    from app_backend.infrastructure.repositories.account_repository import SqliteAccountRepository
+    from app_backend.infrastructure.repositories.proxy_pool_repository import SqliteProxyPoolRepository
+    from app_backend.infrastructure.repositories.purchase_ui_preferences_repository import (
+        SqlitePurchaseUiPreferencesRepository,
+    )
+    from app_backend.infrastructure.repositories.runtime_settings_repository import (
+        SqliteRuntimeSettingsRepository,
+    )
+    from app_backend.infrastructure.repositories.stats_repository import SqliteStatsRepository
+    from app_backend.infrastructure.repositories.query_config_repository import SqliteQueryConfigRepository
+    from app_backend.infrastructure.repositories.query_settings_repository import SqliteQuerySettingsRepository
+    from app_backend.infrastructure.stats.runtime.stats_pipeline import StatsPipeline
+    from app_backend.infrastructure.query.collectors.detail_account_selector import DetailAccountSelector
+    from app_backend.infrastructure.query.collectors.product_detail_collector import ProductDetailCollector
+    from app_backend.infrastructure.query.collectors.product_detail_fetcher import ProductDetailFetcher
+    from app_backend.infrastructure.query.refresh.query_item_detail_refresh_service import QueryItemDetailRefreshService
+    from app_backend.infrastructure.query.collectors.product_url_parser import ProductUrlParser
+    from app_backend.infrastructure.browser_runtime.login_adapter import (
+        ManagedEdgeCdpLoginRunner,
+        BrowserLoginAdapter,
+    )
+    from app_backend.infrastructure.browser_runtime.account_browser_profile_store import (
+        AccountBrowserProfileStore,
+    )
+    from app_backend.infrastructure.browser_runtime.managed_browser_runtime import ManagedBrowserRuntime
+    from app_backend.infrastructure.browser_runtime.open_api_binding_sync_service import (
+        OpenApiBindingSyncService,
+    )
+    from app_backend.infrastructure.browser_runtime.open_api_binding_page_launcher import (
+        OpenApiBindingPageLauncher,
+    )
+    from app_backend.application.use_cases.delete_account import DeleteAccountUseCase
+    from app_backend.application.use_cases.proxy_pool_use_cases import ProxyPoolUseCases
+    from app_backend.infrastructure.proxy.proxy_test_service import ProxyTestService
+    from app_backend.application.services.account_balance_service import AccountBalanceService
+    from app_backend.workers.manager.task_manager import TaskManager
+    from app_backend.infrastructure.request_diagnostics import RequestDiagnosticsMiddleware
+    database_path: Path = params["database_path"]
+    program_access_stage = params["program_access_stage"]
+    program_access_app_data_root = params["program_access_app_data_root"]
+    program_access_secret_stage = params["program_access_secret_stage"]
+    program_access_secret_platform = params["program_access_secret_platform"]
+    program_access_control_plane_base_url = params["program_access_control_plane_base_url"]
+    program_access_key_cache_path = params["program_access_key_cache_path"]
+    program_access_refresh_interval_seconds = params["program_access_refresh_interval_seconds"]
+    program_access_probe_registration_readiness = params["program_access_probe_registration_readiness"]
+    program_access_start_refresh_scheduler = params["program_access_start_refresh_scheduler"]
+    request_diagnostics_log_path = params["request_diagnostics_log_path"]
+    request_diagnostics_slow_ms = params["request_diagnostics_slow_ms"]
+
     engine = build_engine(database_path)
     create_schema(engine)
     session_factory = build_session_factory(engine)
@@ -343,20 +517,7 @@ def create_app(
         debug_log_path=database_path.parent / "runtime" / "open_api_binding_page_launcher.runtime.jsonl",
     )
 
-    app = FastAPI(title="C5 Account Center Backend")
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["null"],
-        allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
-        allow_credentials=False,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-    app.add_middleware(
-        RequestDiagnosticsMiddleware,
-        log_path=request_diagnostics_log_path,
-        slow_ms=request_diagnostics_slow_ms,
-    )
+    # -- Bind state --------------------------------------------------------
     app.state.account_repository = repository
     app.state.proxy_pool_repository = proxy_pool_repository
     app.state.proxy_pool_use_cases = proxy_pool_use_cases
@@ -394,6 +555,16 @@ def create_app(
     if program_access_refresh_scheduler is not None and program_access_start_refresh_scheduler:
         program_access_refresh_scheduler.start()
 
+    # -- Request diagnostics middleware (deferred from Phase 1) ----------------
+    request_diagnostics_log_path = params["request_diagnostics_log_path"]
+    request_diagnostics_slow_ms = params["request_diagnostics_slow_ms"]
+    app.add_middleware(
+        RequestDiagnosticsMiddleware,
+        log_path=request_diagnostics_log_path,
+        slow_ms=request_diagnostics_slow_ms,
+    )
+
+    # -- Register routers --------------------------------------------------
     app.include_router(account_center_routes.router)
     app.include_router(account_routes.router)
     app.include_router(app_bootstrap_routes.router)
@@ -412,21 +583,7 @@ def create_app(
     app.include_router(account_websocket_routes.router)
     app.include_router(runtime_websocket_routes.router)
 
-    @app.get("/health")
-    async def health() -> dict[str, str]:
-        return {"status": "ok"}
-
-    @app.on_event("shutdown")
-    async def _shutdown_program_access_services() -> None:
-        scheduler = getattr(app.state, "program_access_refresh_scheduler", None)
-        if scheduler is not None:
-            scheduler.stop()
-        gateway = getattr(app.state, "program_access_gateway", None)
-        close = getattr(gateway, "close", None)
-        if callable(close):
-            close()
-
-    return app
+    app.state._ready = True
 
 
 _default_app: FastAPI | None = None
@@ -447,7 +604,7 @@ def __getattr__(name: str):
 
 def main(*, db_path: Path | None = None, host: str = "127.0.0.1", port: int = 8000) -> None:
     uvicorn.run(
-        create_app(db_path=db_path),
+        create_app(db_path=db_path, deferred_init=True),
         host=host,
         port=port,
         log_level="info",

@@ -1,11 +1,20 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from sqlalchemy import Engine, create_engine, inspect, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from app_backend.infrastructure.query.product_url_utils import normalize_c5_product_url
+
+logger = logging.getLogger(__name__)
+
+# Bump this integer every time a new migration step is added.
+# Current steps: ensure_query_config_item_columns, ensure_query_mode_setting_columns,
+# ensure_query_settings_mode_columns, ensure_account_columns, backfill_query_products,
+# normalize_legacy_c5_product_urls.
+CURRENT_SCHEMA_VERSION = 6
 
 
 class Base(DeclarativeBase):
@@ -19,6 +28,40 @@ def build_engine(db_path: Path) -> Engine:
 
 def build_session_factory(engine: Engine) -> sessionmaker:
     return sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+
+
+def _get_schema_version(engine: Engine) -> int | None:
+    """Return the stored schema version, or *None* if the tracking table
+    does not exist yet (first run / legacy database)."""
+    with engine.connect() as connection:
+        table_exists = connection.execute(
+            text("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='schema_version'")
+        ).scalar()
+        if not table_exists:
+            return None
+        row = connection.execute(text("SELECT version FROM schema_version LIMIT 1")).fetchone()
+        return row[0] if row else None
+
+
+def _set_schema_version(engine: Engine, version: int) -> None:
+    """Persist *version* into the schema_version table (upsert)."""
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS schema_version ("
+                "  id INTEGER PRIMARY KEY CHECK (id = 1),"
+                "  version INTEGER NOT NULL,"
+                "  updated_at TEXT NOT NULL DEFAULT (datetime('now'))"
+                ")"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO schema_version (id, version) VALUES (1, :v) "
+                "ON CONFLICT(id) DO UPDATE SET version = :v, updated_at = datetime('now')"
+            ),
+            {"v": version},
+        )
 
 
 def create_schema(engine: Engine) -> None:
@@ -68,6 +111,19 @@ def create_schema(engine: Engine) -> None:
             ProxyPoolRecord.__table__,
         ],
     )
+
+    # --- Fast path: skip migrations if schema is already up-to-date ----------
+    stored_version = _get_schema_version(engine)
+    if stored_version is not None and stored_version >= CURRENT_SCHEMA_VERSION:
+        logger.debug("Schema version %d is current, skipping migrations", stored_version)
+        return
+
+    # --- Slow path: run full migration chain ---------------------------------
+    logger.info(
+        "Schema version %s < %d, running migrations",
+        stored_version,
+        CURRENT_SCHEMA_VERSION,
+    )
     inspector = inspect(engine)
     had_detail_min_wear_before_migration = False
     if "query_config_items" in inspector.get_table_names():
@@ -81,6 +137,10 @@ def create_schema(engine: Engine) -> None:
     _ensure_account_columns(engine)
     _backfill_query_products(engine, had_detail_min_wear=had_detail_min_wear_before_migration)
     _normalize_legacy_c5_product_urls(engine)
+
+    # All migrations succeeded — stamp the version so next startup is instant.
+    _set_schema_version(engine, CURRENT_SCHEMA_VERSION)
+    logger.info("Schema migrated to version %d", CURRENT_SCHEMA_VERSION)
 
 
 def _ensure_query_config_item_columns(engine: Engine) -> None:
