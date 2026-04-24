@@ -1,5 +1,7 @@
+const LEGACY_TOKEN_STORAGE_KEY = "program_admin_console_token";
+
 const state = {
-  token: window.localStorage.getItem("program_admin_console_token") || "",
+  token: "",
   session: null,
   bootstrapNeeded: false,
   users: [],
@@ -31,7 +33,9 @@ const refs = {
   userExpiryDate: document.querySelector("#userExpiryDate"),
   userExpiryTime: document.querySelector("#userExpiryTime"),
   membershipMeta: document.querySelector("#membershipMeta"),
-  deviceList: document.querySelector("#deviceList")
+  deviceList: document.querySelector("#deviceList"),
+  sidebarCopy: document.querySelector("#sidebarCopy"),
+  pageHeader: document.querySelector("#pageHeader")
 };
 
 const DEFAULT_EXPIRY_TIME = "23:59";
@@ -99,13 +103,18 @@ function setMessage(message = "", isError = false) {
   target.className = `notice ${isError ? "is-error" : ""}`.trim();
 }
 
+function clearLegacyPersistedToken() {
+  try {
+    window.localStorage.removeItem(LEGACY_TOKEN_STORAGE_KEY);
+  } catch (_) {
+  }
+}
+
 function saveToken(token = "") {
   state.token = token;
-  if (token) {
-    window.localStorage.setItem("program_admin_console_token", token);
-    return;
+  if (!token) {
+    clearLegacyPersistedToken();
   }
-  window.localStorage.removeItem("program_admin_console_token");
 }
 
 function selectedUser() {
@@ -179,18 +188,48 @@ function formatDateTime(value = "") {
 }
 
 function renderAuth() {
+  const loggedIn = Boolean(state.session);
   refs.bootstrapForm.hidden = !state.bootstrapNeeded;
   refs.loginForm.hidden = state.bootstrapNeeded;
   refs.authTitle.textContent = state.bootstrapNeeded ? "初始化超级管理员" : "管理员登录";
   refs.authHint.textContent = state.bootstrapNeeded
     ? "当前控制台尚未初始化，请先创建第一个管理员账号。"
     : "使用管理员账号进入控制台。";
-  refs.authPanel.hidden = Boolean(state.session);
-  refs.workspace.hidden = !state.session;
-  refs.logoutButton.hidden = !state.session;
-  refs.sessionSummary.textContent = state.session
+  refs.authPanel.hidden = loggedIn;
+  refs.workspace.hidden = !loggedIn;
+  refs.logoutButton.hidden = !loggedIn;
+  refs.sessionSummary.textContent = loggedIn
     ? `当前管理员：${state.session.user.username}`
     : "尚未登录";
+
+  if (refs.sidebarCopy) {
+    if (loggedIn) {
+      refs.sidebarCopy.innerHTML =
+        "<h1>管理控制台</h1><p>用户列表、成员资格与设备会话控制。</p>";
+    } else if (state.bootstrapNeeded) {
+      refs.sidebarCopy.innerHTML =
+        "<h1>初始化管理员</h1><p>请创建第一个管理员账号以启用控制台。</p>";
+    } else {
+      refs.sidebarCopy.innerHTML =
+        "<h1>管理控制台</h1><p>请登录以继续。</p>";
+    }
+  }
+
+  if (refs.pageHeader) {
+    if (loggedIn) {
+      refs.pageHeader.innerHTML = [
+        '<p class="eyebrow">Control Plane</p>',
+        "<h2>用户列表与成员资格控制</h2>",
+        '<p>计划只允许 <span class="token">inactive</span> 与 <span class="token">member</span>。</p>'
+      ].join("");
+    } else {
+      refs.pageHeader.innerHTML = [
+        '<p class="eyebrow">管理控制台</p>',
+        "<h2>请登录</h2>",
+        "<p></p>"
+      ].join("");
+    }
+  }
 }
 
 function renderUsers() {
@@ -273,19 +312,25 @@ function renderUserDetail() {
 }
 
 async function loadSession() {
-  const bootstrapState = await api("/api/admin/bootstrap/state", {method: "GET"});
-  state.bootstrapNeeded = Boolean(bootstrapState.needs_bootstrap);
   if (!state.token) {
     state.session = null;
+    try {
+      const sessionInfo = await api("/api/admin/session", {method: "GET"});
+      state.bootstrapNeeded = Boolean(sessionInfo.needs_bootstrap);
+    } catch (_) {
+      state.bootstrapNeeded = false;
+    }
     renderAuth();
     return;
   }
   try {
     const session = await api("/api/admin/session", {method: "GET"});
     state.session = session.authenticated ? session : null;
+    state.bootstrapNeeded = false;
   } catch (_) {
     saveToken("");
     state.session = null;
+    state.bootstrapNeeded = false;
   }
   renderAuth();
 }
@@ -451,6 +496,7 @@ function bindEvents() {
 }
 
 async function init() {
+  clearLegacyPersistedToken();
   bindEvents();
   renderUsers();
   renderUserDetail();

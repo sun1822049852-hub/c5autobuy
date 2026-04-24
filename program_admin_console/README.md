@@ -2,11 +2,25 @@
 
 `program_admin_console` 提供控制面 API 与后台页面（`/admin`），用于管理员初始化、用户权限管理和会话管控。
 
+## 当前现网口径（2026-04-24）
+
+当前远端开发机 `8.138.39.139` 上的控制台已经不再对公网直接开放。现网访问方式已固定为：
+
+- 宿主机端口绑定：`127.0.0.1:18787 -> 容器 8787`
+- 外部访问路径：`本机 SSH 隧道 -> 服务器 127.0.0.1:18787 -> /admin`
+- 当前推荐后台入口：`http://127.0.0.1:18787/admin`（在 SSH 隧道建立后访问）
+
+这意味着：
+
+- `http://8.138.39.139:18787/admin` 不再应作为日常访问入口
+- 下文保留的公网 IP / `0.0.0.0` 示例主要用于历史 rollout 或一般性部署说明，不代表当前现网推荐姿势
+- 后续若有 AI/维护者要调整控制台部署，默认应保持“仅服务器本机可达 + SSH 隧道访问”，不要无说明地重新开放公网端口
+
 ## Smoke Note（先验失败/连通性检查）
 
 ```powershell
 curl http://127.0.0.1:8787/api/health
-curl http://127.0.0.1:8787/api/admin/bootstrap/state
+curl http://127.0.0.1:8787/api/admin/session
 ```
 
 ## 本地启动
@@ -102,7 +116,7 @@ docker run --rm `
 
 ```powershell
 curl http://<ECS_PUBLIC_IP>:<CONTROL_PLANE_PORT>/api/health
-curl http://<ECS_PUBLIC_IP>:<CONTROL_PLANE_PORT>/api/admin/bootstrap/state
+curl http://<ECS_PUBLIC_IP>:<CONTROL_PLANE_PORT>/api/admin/session
 ```
 
 4. 浏览器访问 `http://<ECS_PUBLIC_IP>:<CONTROL_PLANE_PORT>/admin`。
@@ -116,6 +130,8 @@ curl http://<ECS_PUBLIC_IP>:<CONTROL_PLANE_PORT>/api/admin/bootstrap/state
 示例控制面地址：
 
 - `http://8.138.39.139:18787`
+
+注意：上面的公网地址是桌面端 release 配置所指向的控制面地址，不等于后台 `/admin` 页面必须重新暴露给公网。当前自用后台访问仍应优先遵循本 README 顶部的“当前现网口径”。
 
 若 ECS 上使用该端口部署容器，可按下列命令联调：
 
@@ -134,9 +150,82 @@ docker run -d --name c5-program-admin `
   c5-program-admin
 
 curl http://8.138.39.139:18787/api/health
-curl http://8.138.39.139:18787/api/admin/bootstrap/state
+curl http://8.138.39.139:18787/api/admin/session
 ```
 
 浏览器后台入口：
 
 - `http://8.138.39.139:18787/admin`
+
+## 自用后台的更安全访问方式
+
+如果这个后台只给你自己使用，不推荐长期把 `18787` 直接暴露到公网。更稳的做法是：
+
+1. 宿主机只绑定本机端口：
+
+```powershell
+docker run -d --name c5-program-admin `
+  -p 127.0.0.1:18787:8787 `
+  -e PROGRAM_ADMIN_HOST=0.0.0.0 `
+  -e PROGRAM_ADMIN_PORT=8787 `
+  -e MAIL_FROM=bot@example.com `
+  -e MAIL_FROM_NAME="C5 交易助手" `
+  -e QQ_SMTP_USER=bot@example.com `
+  -e QQ_SMTP_PASS=<SMTP_AUTH_CODE> `
+  -v /home/admin/c5-program-admin-runtime/keys:/app/keys:ro `
+  -v c5_program_admin_data:/app/data `
+  c5-program-admin
+```
+
+2. 本机先建立 SSH 隧道，再访问后台：
+
+```powershell
+ssh -i C:/Users/18220/.ssh/c5_ecs_deploy_temp `
+  -L 18787:127.0.0.1:18787 `
+  admin@8.138.39.139
+```
+
+3. 浏览器打开：
+
+- `http://127.0.0.1:18787/admin`
+
+这样不需要固定家庭公网 IP，也不需要先买域名；后台不会直接暴露给公网，传输链路走 SSH 加密。
+
+### 本机连接脚本
+
+如果你不想每次手敲 SSH 命令，可以直接使用仓库内脚本：
+
+- PowerShell 脚本：`program_admin_console/tools/connectProgramAdminConsole.ps1`
+- 双击包装：`program_admin_console/tools/connectProgramAdminConsole.cmd`
+
+默认行为：
+
+- 拉起 `127.0.0.1:18787 -> 8.138.39.139:18787` 的 SSH 隧道
+- 启动一个专用浏览器窗口打开 `http://127.0.0.1:18787/admin`
+- 关闭这个专用浏览器窗口后，自动断开本次 SSH 隧道
+
+直接运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File program_admin_console/tools/connectProgramAdminConsole.ps1
+```
+
+或直接双击：
+
+- `program_admin_console/tools/connectProgramAdminConsole.cmd`
+
+常用参数：
+
+```powershell
+# 只打印将要执行的 SSH 命令，不真正连接
+powershell -ExecutionPolicy Bypass -File program_admin_console/tools/connectProgramAdminConsole.ps1 -DryRun
+
+# 如果本机 18787 已被占用，可换本地端口
+powershell -ExecutionPolicy Bypass -File program_admin_console/tools/connectProgramAdminConsole.ps1 -LocalPort 28787
+
+# 只拉隧道，不自动打开浏览器
+powershell -ExecutionPolicy Bypass -File program_admin_console/tools/connectProgramAdminConsole.ps1 -NoBrowser
+
+# 如果要显式指定浏览器可执行文件
+powershell -ExecutionPolicy Bypass -File program_admin_console/tools/connectProgramAdminConsole.ps1 -BrowserPath "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe"
+```

@@ -58,3 +58,7 @@
 - 扫货系统商品卡片的统计口径新增一条稳定产品约束：停止扫货后，所选配置的商品级 `查询次数 / 命中 / 成功 / 失败` 必须继续显示当天累计值，不得因 stop 动作清空；清空边界按自然日切换，而不是按开始/停止按钮切换。
 - 当前 embedded 桌面启动口径新增一条稳定交互约束：主界面壳必须先亮，不再把 renderer 首次加载硬卡在本地 backend `/health` 之后；backend `ready` 后再通过主进程 bootstrap 更新把真实 `apiBaseUrl/backendStatus` 推给 renderer，并在此之前禁止首页页面抢跑数据请求。
 - `app_backend.main` 的默认 `app` 现已冻结为懒加载口径：导入模块本身不得立刻执行 `create_app()`；只有显式访问 `app_backend.main.app` 时才允许首次构建并缓存默认实例，避免桌面 embedded 启动重复建 app。
+- `main_ui_node_desktop_local_debug.js` 的本地调试启动口径也已冻结：只要 `app_desktop_web/dist/index.html` 已存在，就优先复用现有 dist，不再因为源码时间戳更新而在窗口前同步重跑一遍前端 build；若需要最新前端代码，先手动执行 `npm --prefix app_desktop_web run build`。
+- 程序会员控制台管理员登录失败文案已冻结为“用户名或者密码错误”；同时管理员密码在远端 `control-plane.sqlite` 中只以 `scrypt` 哈希保存，后续若再遇到控制台登录失败，不要尝试“查看原密码”，应优先确认当前管理员用户名或直接执行密码重置。
+- 程序会员控制台的远端开发机访问口径已发生一次关键收口：`8.138.39.139` 上的后台 `/admin` 不再长期对公网开放，当前稳定姿势是“宿主机只绑定 `127.0.0.1:18787`，本机先建 SSH 隧道，再访问 `http://127.0.0.1:18787/admin`”。后续若有 AI/维护者继续改控制台部署，默认应保持这条本机绑定 + SSH 隧道口径，不要因为 README 中仍保留历史公网示例就无说明地重新打开公网端口。
+- 程序会员控制台的本机连接脚本也新增一条稳定操作约束：`program_admin_console/tools/connectProgramAdminConsole.{ps1,cmd}` 默认不再把 URL 交给已运行的默认浏览器，而是启动一个专用 Chromium 窗口（独立临时 profile）来访问 `/admin`；关闭这个专用窗口后，脚本会自动断开它自己创建的 SSH 隧道。后续若继续调整该脚本，默认不要回退到“复用已有浏览器窗口/标签页”的不可靠模式。

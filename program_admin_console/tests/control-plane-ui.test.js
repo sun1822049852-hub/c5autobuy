@@ -32,7 +32,33 @@ function createFakeElement() {
   };
 }
 
-function createUiHarness() {
+function createTrackedStorage(initialValue = "") {
+  let storedValue = initialValue;
+  const calls = {
+    getItem: [],
+    setItem: [],
+    removeItem: []
+  };
+  return {
+    calls,
+    storage: {
+      getItem(key) {
+        calls.getItem.push(key);
+        return storedValue || "";
+      },
+      setItem(key, value) {
+        calls.setItem.push([key, value]);
+        storedValue = String(value);
+      },
+      removeItem(key) {
+        calls.removeItem.push(key);
+        storedValue = "";
+      }
+    }
+  };
+}
+
+function createUiHarness(options = {}) {
   const selectors = [
     "#authPanel",
     "#authTitle",
@@ -57,21 +83,19 @@ function createUiHarness() {
     "#userExpiryDate",
     "#userExpiryTime",
     "#membershipMeta",
-    "#deviceList"
+    "#deviceList",
+    "#sidebarCopy",
+    "#pageHeader"
   ];
   const elements = Object.fromEntries(selectors.map((selector) => [selector, createFakeElement()]));
+  const persistedToken = typeof options.persistedToken === "string" ? options.persistedToken : "session-token";
+  const trackedStorage = createTrackedStorage(persistedToken);
   elements["#bootstrapUsername"].value = "admin";
   elements["#loginUsername"].value = "admin";
   elements["#userPlan"].value = "inactive";
   elements["#userExpiryTime"].value = "23:59";
 
   const responses = {
-    "/api/admin/bootstrap/state": {ok: true, needs_bootstrap: false},
-    "/api/admin/session": {
-      ok: true,
-      authenticated: true,
-      user: {username: "root"}
-    },
     "/api/admin/users": {
       ok: true,
       items: [
@@ -102,8 +126,23 @@ function createUiHarness() {
     console,
     setTimeout,
     clearTimeout,
-    fetch: async (route) => {
-      const payload = responses[route];
+    fetch: async (route, requestOptions = {}) => {
+      const authHeader = requestOptions && requestOptions.headers
+        ? requestOptions.headers.Authorization || requestOptions.headers.authorization || ""
+        : "";
+      const payload = route === "/api/admin/session"
+        ? (authHeader === `Bearer ${persistedToken}` && persistedToken
+          ? {
+            ok: true,
+            authenticated: true,
+            user: {username: "root"}
+          }
+          : {
+            ok: true,
+            authenticated: false,
+            needs_bootstrap: false
+          })
+        : responses[route];
       if (!payload) {
         throw new Error(`Unexpected fetch route: ${route}`);
       }
@@ -120,13 +159,7 @@ function createUiHarness() {
       };
     },
     window: {
-      localStorage: {
-        getItem() {
-          return "session-token";
-        },
-        setItem() {},
-        removeItem() {}
-      },
+      localStorage: trackedStorage.storage,
       confirm() {
         return true;
       }
@@ -138,7 +171,11 @@ function createUiHarness() {
     }
   };
 
-  return {context, elements};
+  return {
+    context,
+    elements,
+    localStorageCalls: trackedStorage.calls
+  };
 }
 
 async function flushPromises(count = 6) {
@@ -147,9 +184,9 @@ async function flushPromises(count = 6) {
   }
 }
 
-async function executeUiApp() {
+async function executeUiApp(options = {}) {
   const code = readUiFile("app.js");
-  const harness = createUiHarness();
+  const harness = createUiHarness(options);
   vm.runInNewContext(code, harness.context, {
     filename: "program_admin_console/ui/app.js"
   });
@@ -220,7 +257,7 @@ async function main() {
   readUiFile("app.js");
   readUiFile("styles.css");
 
-  assert.match(html, /初始化超级管理员/);
+  assert.match(html, /管理控制台/);
   assert.match(html, /用户列表/);
   assert.match(html, /inactive/);
   assert.match(html, /workspaceMessage/);
@@ -231,6 +268,9 @@ async function main() {
 
   const uiHarness = await executeUiApp();
   const {context, elements} = uiHarness;
+  context.saveToken("session-token");
+  await context.loadSession();
+  await context.loadDashboard();
   assert.match(elements["#usersList"].innerHTML, /member/);
   assert.doesNotMatch(elements["#usersList"].innerHTML, /<img/i);
   assert.doesNotMatch(elements["#usersList"].innerHTML, /<svg/i);
@@ -242,12 +282,22 @@ async function main() {
   assert.equal(elements["#workspaceMessage"].textContent, "保存失败");
   assert.equal(elements["#authMessage"].hidden, true);
 
+  const persistedTokenHarness = await executeUiApp({persistedToken: "legacy-admin-token"});
+  assert.equal(persistedTokenHarness.elements["#authPanel"].hidden, false);
+  assert.equal(persistedTokenHarness.elements["#workspace"].hidden, true);
+  assert.equal(persistedTokenHarness.elements["#sessionSummary"].textContent, "尚未登录");
+  assert.deepEqual(persistedTokenHarness.localStorageCalls.getItem, []);
+  assert.deepEqual(persistedTokenHarness.localStorageCalls.setItem, []);
+  assert.deepEqual(persistedTokenHarness.localStorageCalls.removeItem, ["program_admin_console_token"]);
+  persistedTokenHarness.context.saveToken("fresh-admin-token");
+  assert.deepEqual(persistedTokenHarness.localStorageCalls.setItem, []);
+
   const ctx = await startServer();
   try {
     const adminPage = await request(ctx, "/admin");
     assert.equal(adminPage.status, 200);
     assert.match(adminPage.headers["content-type"] || "", /text\/html/);
-    assert.match(adminPage.text, /初始化超级管理员/);
+    assert.match(adminPage.text, /管理控制台/);
 
     const script = await request(ctx, "/admin/app.js");
     assert.equal(script.status, 200);

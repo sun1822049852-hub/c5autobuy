@@ -31,9 +31,10 @@ function run() {
   assert.equal(packageJson.scripts["test:store"], "node tests/control-plane-store.test.js");
   assert.equal(packageJson.scripts["test:server"], "node tests/control-plane-server.test.js");
   assert.equal(packageJson.scripts["test:ui"], "node tests/control-plane-ui.test.js");
+  assert.equal(packageJson.scripts["test:connect-script"], "node tests/connect-program-admin-console.test.js");
   assert.equal(
     packageJson.scripts.test,
-    "npm run test:mail-config && npm run test:mail-service && npm run test:store && npm run test:server && npm run test:ui"
+    "npm run test:mail-config && npm run test:mail-service && npm run test:store && npm run test:server && npm run test:ui && npm run test:connect-script"
   );
   assert.equal(packageJson.scripts.start, "node src/server.js");
   assert.equal(packageJson.scripts["admin:init"], "node tools/initProgramControlPlaneAdmin.js");
@@ -56,7 +57,7 @@ function run() {
   assert.equal(fs.existsSync(readmePath), true);
   const readme = fs.readFileSync(readmePath, "utf8");
   assert.match(readme, /curl\s+http:\/\/127\.0\.0\.1:8787\/api\/health/);
-  assert.match(readme, /curl\s+http:\/\/127\.0\.0\.1:8787\/api\/admin\/bootstrap\/state/);
+  assert.match(readme, /curl\s+http:\/\/127\.0\.0\.1:8787\/api\/admin\/session/);
   assert.match(readme, /\/admin/);
   assert.match(readme, /docker build/i);
   assert.match(readme, /docker run/i);
