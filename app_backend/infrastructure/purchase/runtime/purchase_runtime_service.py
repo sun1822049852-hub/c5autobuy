@@ -332,6 +332,8 @@ class PurchaseRuntimeService:
         self._runtime_update_thread: threading.Thread | None = None
         self._runtime_update_thread_lock = threading.Lock()
         self._runtime_lifecycle_lock = threading.RLock()
+        self._last_stats_snapshot: dict[str, object] | None = None
+        self._last_stats_date: str | None = None
 
     def start(self) -> tuple[bool, str]:
         with self._runtime_lifecycle_lock:
@@ -356,6 +358,25 @@ class PurchaseRuntimeService:
             if runtime is None:
                 self._runtime = None
                 return False, "当前没有运行中的购买运行时"
+            try:
+                snapshot = self._snapshot_runtime_state(runtime, include_recent_events=False)
+                current = {
+                    "matched_product_count": int(snapshot.get("matched_product_count", 0)),
+                    "purchase_success_count": int(snapshot.get("purchase_success_count", 0)),
+                    "purchase_failed_count": int(snapshot.get("purchase_failed_count", 0)),
+                    "total_purchased_count": int(snapshot.get("total_purchased_count", 0)),
+                }
+                today = datetime.now().strftime("%Y-%m-%d")
+                prev = self._last_stats_snapshot if (self._last_stats_date == today and self._last_stats_snapshot) else None
+                self._last_stats_snapshot = {
+                    "matched_product_count": current["matched_product_count"] + int((prev or {}).get("matched_product_count", 0)),
+                    "purchase_success_count": current["purchase_success_count"] + int((prev or {}).get("purchase_success_count", 0)),
+                    "purchase_failed_count": current["purchase_failed_count"] + int((prev or {}).get("purchase_failed_count", 0)),
+                    "total_purchased_count": current["total_purchased_count"] + int((prev or {}).get("total_purchased_count", 0)),
+                }
+                self._last_stats_date = today
+            except Exception:
+                pass
             runtime.stop()
             self._runtime = None
             self._publish_runtime_update()
@@ -365,15 +386,17 @@ class PurchaseRuntimeService:
         runtime = self._runtime
         if runtime is None:
             self._runtime = None
-            return self._build_idle_snapshot()
+            return self._build_idle_or_retained_snapshot()
         snapshot = self._snapshot_runtime_state(runtime, include_recent_events=include_recent_events)
         if not include_recent_events:
             snapshot["recent_events"] = []
         if not bool(snapshot.get("running")):
             if self._runtime is runtime:
                 self._runtime = None
-            return self._build_idle_snapshot()
-        return self._normalize_snapshot(snapshot)
+            return self._build_idle_or_retained_snapshot()
+        snapshot = self._normalize_snapshot(snapshot)
+        self._apply_retained_stats(snapshot)
+        return snapshot
 
     def has_available_accounts(self) -> bool:
         runtime = self._runtime
@@ -886,6 +909,23 @@ class PurchaseRuntimeService:
             "item_rows": [],
             "active_query_config": None,
         }
+
+    def _build_idle_or_retained_snapshot(self) -> dict[str, object]:
+        base = self._build_idle_snapshot()
+        self._apply_retained_stats(base)
+        return base
+
+    def _apply_retained_stats(self, snapshot: dict[str, object]) -> None:
+        today = datetime.now().strftime("%Y-%m-%d")
+        if self._last_stats_snapshot is None or self._last_stats_date != today:
+            self._last_stats_snapshot = None
+            self._last_stats_date = None
+            return
+        prev = self._last_stats_snapshot
+        snapshot["matched_product_count"] = int(snapshot.get("matched_product_count", 0)) + int(prev.get("matched_product_count", 0))
+        snapshot["purchase_success_count"] = int(snapshot.get("purchase_success_count", 0)) + int(prev.get("purchase_success_count", 0))
+        snapshot["purchase_failed_count"] = int(snapshot.get("purchase_failed_count", 0)) + int(prev.get("purchase_failed_count", 0))
+        snapshot["total_purchased_count"] = int(snapshot.get("total_purchased_count", 0)) + int(prev.get("total_purchased_count", 0))
 
     @staticmethod
     def _normalize_snapshot(snapshot: dict[str, object]) -> dict[str, object]:
