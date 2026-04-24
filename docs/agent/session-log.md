@@ -690,18 +690,19 @@
   - 这刀只收口顶层页面生命周期，不等于已经把统计页、账号中心、诊断页完全并入统一 runtime store；现阶段仍是“页面保活优先，局部自管状态仍保留”。
   - README 已核对，本次无需改动。
 - 下一步：让用户在真实桌面里依次来回切换 `账号中心 / 查询统计 / 账号能力统计 / 通用诊断`，确认表格与诊断快照直接复用前一轮页面状态，不再每次点回去都明显重新加载。
-## 2026-04-24 08:10 (Asia/Shanghai)
-- 背景：用户要求顶层前端页面不要在每次侧栏点击回切时都重新向后端拉取，并明确希望沿用当前前端已存在的同步/保活机制，而不是额外引入新库。
+
+## 2026-04-24 08:36 (Asia/Shanghai)
+- 背景：用户要求把 `feature/packaged-python-runtime-bootstrap` 的整条改动正式落回根工作树并提交；当前根工作树还同时挂着“浏览器查询开通放权”“embedded 主界面先亮”“页面保活”等别线脏改，因此本轮只整合 packaged runtime 相关写域，不顺手打包进其它主线。
 - 已完成：
-  - `app_desktop_web/src/App.jsx` 把 `账号中心 / 查询统计 / 账号能力统计 / 通用诊断` 接入和 `配置管理 / 扫货系统` 同类的 lazy keep-alive 挂载模式；这些页面首次进入后常驻前端内存，后续侧栏回切不再因为 remount 重打一遍初始请求。
-  - `app_desktop_web/src/features/diagnostics/use_sidebar_diagnostics.js` 改成“已有诊断快照时，重新打开页面只恢复后续轮询，不因点击页签立刻再打一枪 `/diagnostics/sidebar`”；首次进入仍保留即时加载。
-  - 新增 `app_desktop_web/tests/renderer/app_page_keepalive.test.jsx`，锁死“账号中心 / 两个统计页 / 通用诊断”首次进页可拉、回切不重拉的行为；同时补写实施计划 `docs/superpowers/plans/2026-04-24-page-keepalive-and-fetch-dedup.md`。
+  - 已把 packaged runtime 相关干净文件从 side worktree 合回根工作树：`.gitignore`、`AGENTS.md`、`app_desktop_web/electron-builder.config.cjs`、`app_desktop_web/electron-builder-preflight.cjs`、`app_desktop_web/python_backend.js`、`app_desktop_web/python_runtime_{config,resources,bootstrap}.js/cjs`、相关 Electron tests，以及 `docs/superpowers/plans/2026-04-23-packaged-python-runtime-bootstrap.md`。
+  - `app_desktop_web/electron-main.cjs` 已按根工作树现状手工并刀为“eager shell 先亮 + packaged release 仍先走 `ensureManagedPythonRuntime()`”的组合状态：保留主界面先亮与 bootstrap 更新通道，同时恢复 packaged runtime 下载/校验/安装后再启动 backend 的链路。
+  - `app_desktop_web/tests/electron/program_access_packaging.test.js` 已同步收口为组合契约：embedded eager shell 仍先亮，但 packaged release 现在必须使用托管 runtime、builder 资源必须是 `python_deps`、preflight 只暴露 `preparePackagedPythonResources -> verifyPackagedPythonResources` 新链。
+  - `docs/agent/memory.md` 已补回 packaged runtime 的隔离约束与“不默认执行 `build:win`”的稳定规则，避免根工作树后续续战时再次回退到旧打包口径。
 - 已做验证：
-  - 红灯：`npm --prefix app_desktop_web test -- app_page_keepalive.test.jsx` -> `2 failed`，失败点分别为账号中心回切二次 GET 与诊断页回切二次 GET。
-  - 绿灯：`npm --prefix app_desktop_web test -- app_page_keepalive.test.jsx` -> `2 passed`。
-  - 邻近 renderer 回归：`npm --prefix app_desktop_web test -- app_page_keepalive.test.jsx query_stats_page.test.jsx account_capability_stats_page.test.jsx account_center_page.test.jsx app_state_persistence.test.jsx diagnostics_sidebar.test.jsx query_system_page.test.jsx purchase_system_page.test.jsx` -> `8 files / 72 tests passed`。
-- 当前进度：顶层页面现已统一到“首进加载一次，之后靠前端保活 + 现有自建同步链路复用状态”的口径；当前已到可手测状态。
+  - `npm --prefix app_desktop_web test -- tests/electron/program_access_packaging.test.js tests/electron/python_backend.test.js tests/electron/python_runtime_bootstrap.test.js tests/electron/electron_remote_mode.test.js --run` -> 初次 `49 passed`；吸收 code review 后补了“损坏 runtime 必须重下”“下载悬挂必须超时失败”两条回归，再次执行同命令结果 `51 passed`。
+  - `node app_desktop_web/electron-builder-preflight.cjs` -> 成功；过程中触发一次 `vite build`，随后输出 `Packaged Python resources preflight passed ... app_desktop_web/build/python_deps`。
+- 当前进度：packaged runtime 主线已在根工作树达成“代码 + 规则 + focused verification”收口，下一步只剩把这组文件单独提交；其它并行主线改动保持原样，不并入本次 commit。
 - 余险：
-  - 这刀只收口顶层页面生命周期，不等于已经把统计页、账号中心、诊断页完全并入统一 runtime store；现阶段仍是“页面保活优先，局部自管状态仍保留”。
-  - README 已核对，本次无需改动。
-- 下一步：让用户在真实桌面里依次来回切换 `账号中心 / 查询统计 / 账号能力统计 / 通用诊断`，确认表格与诊断快照直接复用前一轮页面状态，不再每次点回去都明显重新加载。
+  - 本轮只做 side branch 到根工作树的落地与 focused verification，没有重新执行 `pack:win` 或 `build:win`；这符合当前新增的项目级约束“非经用户主动指定，不默认重生 installer”。
+  - 根工作树仍保留多条未提交别线；本次 commit 必须继续使用 pathspec 精确提交，避免把其它任务顺手夹带进 packaged runtime 收口 commit。
+- 下一步：按 packaged runtime 相关 pathspec 单独提交根工作树整合结果；提交后再复核 `git status`，确认本次只清走这条主线，旁边别线保持不动。

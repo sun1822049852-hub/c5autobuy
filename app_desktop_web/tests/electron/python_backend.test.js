@@ -190,6 +190,7 @@ describe("python backend manager", () => {
       C5_APP_PRIVATE_DIR: "C:/Users/tester/AppData/Roaming/C5AccountCenter/app-private",
       C5_PROGRAM_CONTROL_PLANE_BASE_URL: "http://8.138.39.139:18787",
       C5_PROGRAM_ACCESS_STAGE: "packaged_release",
+      PYTHONNOUSERSITE: "1",
     }));
   });
 

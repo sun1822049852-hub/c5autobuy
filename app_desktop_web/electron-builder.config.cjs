@@ -55,12 +55,8 @@ function buildElectronBuilderConfig({
         to: "xsign.py",
       },
       {
-        from: resolveBundledResourcePath({
-          appDir: normalizedAppDir,
-          existsSync,
-          resourcePath: ".venv",
-        }),
-        to: ".venv",
+        from: path.join(normalizedAppDir, "build", "python_deps"),
+        to: "python_deps",
         filter: [
           "**/*",
           "!**/__pycache__/**",

@@ -9,3 +9,4 @@ proxy_auth_plugin_*.zip
 .runtime/
 data/
 app_desktop_web/release/
+app_desktop_web/build/python_deps/

@@ -101,6 +101,9 @@ export function buildPythonBackendEnv(projectRoot, baseEnv = process.env, progra
   if (probeRegistrationReadiness) {
     env.C5_PROGRAM_ACCESS_PROBE_REGISTRATION_READINESS = "1";
   }
+  if (env.C5_PROGRAM_ACCESS_STAGE === "packaged_release") {
+    env.PYTHONNOUSERSITE = "1";
+  }
 
   return env;
 }

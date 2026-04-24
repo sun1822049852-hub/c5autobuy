@@ -53,6 +53,8 @@
 - 程序账号注册弹窗新增一条稳定恢复约束：三段式注册在第二段验证码页时，只在当前 renderer 会话内保留草稿；关闭弹窗、切页后再次打开必须直接回到第二段，并保留脱敏邮箱、`register_session_id` 与当前倒计时。只有主动切到“登录/找回密码”、点击“修改邮箱”或注册成功时，才允许清空这份注册草稿。
 - 程序账号弹窗视觉也新增一条稳定 UI 约束：默认 `program_auth_required / 请先登录程序会员` 不再作为顶部异常提示展示；登录/注册/找回密码输入区默认使用输入框内 `placeholder`，右上角关闭控件保持红底正方形 `X`，但访问名仍必须是“关闭”。
 - 当前桌面发行瘦身主线已冻结：packaged release 不再允许整包内置开发 `.venv`；首刀方案固定为“首次启动从 Python 官方下载固定版本 Windows embeddable runtime，失败则阻断进入程序并允许重试”。开发态仍保留 `.venv/Scripts/python.exe` 解析；实现时不得回到“复制整套开发环境发行”的旧路径。
+- packaged embeddable Python runtime 还有一条稳定隔离约束：`python311._pth` 必须显式包含应用资源根目录，且不得重新启用 `import site`；packaged backend 子进程环境必须同时设置 `PYTHONNOUSERSITE=1`。否则用户全局 `site-packages` / editable hook 会污染 `sys.path`，导致打包内的 `xsign.py`、`app_backend` 等模块被错误遮蔽或导入失败。
+- 打包验证新增一条稳定执行约束：除非用户在当前会话主动明确指定，否则不得把“重新生成安装包 / 执行 `build:win`”当成默认验证步骤；常规发行验尸优先停留在 `pack:win`、现有 installer 体积核对或 `win-unpacked` 结构检查。
 - 扫货系统商品卡片的统计口径新增一条稳定产品约束：停止扫货后，所选配置的商品级 `查询次数 / 命中 / 成功 / 失败` 必须继续显示当天累计值，不得因 stop 动作清空；清空边界按自然日切换，而不是按开始/停止按钮切换。
 - 当前 embedded 桌面启动口径新增一条稳定交互约束：主界面壳必须先亮，不再把 renderer 首次加载硬卡在本地 backend `/health` 之后；backend `ready` 后再通过主进程 bootstrap 更新把真实 `apiBaseUrl/backendStatus` 推给 renderer，并在此之前禁止首页页面抢跑数据请求。
 - `app_backend.main` 的默认 `app` 现已冻结为懒加载口径：导入模块本身不得立刻执行 `create_app()`；只有显式访问 `app_backend.main.app` 时才允许首次构建并缓存默认实例，避免桌面 embedded 启动重复建 app。
