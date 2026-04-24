@@ -1,4 +1,8 @@
+import { useState } from "react";
+
 import { NO_SELECT_STYLE } from "../../shared/no_select_style.js";
+import { ProxyPoolDialog } from "../proxy-pool/proxy_pool_dialog.jsx";
+import { useProxyPool } from "../proxy-pool/use_proxy_pool.js";
 import { AccountContextMenu } from "./components/account_context_menu.jsx";
 import { AccountLogsModal } from "./components/account_logs_modal.jsx";
 import { AccountTable } from "./components/account_table.jsx";
@@ -76,6 +80,8 @@ export function AccountCenterPage({ client }) {
     loginTaskSnapshot,
     isLoginTaskStarting,
   } = useAccountCenterPage({ client });
+  const proxyPool = useProxyPool({ client });
+  const [proxyPoolDialogOpen, setProxyPoolDialogOpen] = useState(false);
   const activeCardLabel = overviewCards.find((card) => card.id === activeFilter)?.label ?? "全部账号";
   const heroCards = [
     ...overviewCards,
@@ -122,6 +128,13 @@ export function AccountCenterPage({ client }) {
         </div>
         <div className="account-page__toolbar-actions">
           <button
+            className="ghost-button account-page__toolbar-button"
+            type="button"
+            onClick={() => setProxyPoolDialogOpen(true)}
+          >
+            代理管理
+          </button>
+          <button
             className="ghost-button account-page__toolbar-button account-page__toolbar-button--secondary"
             type="button"
             onClick={refreshAccounts}
@@ -164,7 +177,7 @@ export function AccountCenterPage({ client }) {
         />
       </section>
 
-      <AccountCreateDialog open={createDialogOpen} onClose={closeCreateDialog} onSubmit={submitCreate} />
+      <AccountCreateDialog open={createDialogOpen} onClose={closeCreateDialog} onSubmit={submitCreate} proxies={proxyPool.proxies} />
       <FeatureUnavailableDialog
         isOpen={featureUnavailableDialog.isOpen}
         message={featureUnavailableDialog.message}
@@ -184,6 +197,7 @@ export function AccountCenterPage({ client }) {
         open={Boolean(browserProxyDialogAccount)}
         onClose={closeBrowserProxyDialog}
         onSubmit={submitBrowserProxy}
+        proxies={proxyPool.proxies}
       />
       <AccountProxyDialog
         account={proxyDialogAccount}
@@ -192,6 +206,7 @@ export function AccountCenterPage({ client }) {
         onClose={closeProxyDialog}
         onOpenBindingPage={openAccountOpenApiBindingPage}
         onSubmit={submitProxy}
+        proxies={proxyPool.proxies}
       />
       <PurchaseConfigDrawer
         account={purchaseDrawerState.account}
@@ -227,6 +242,16 @@ export function AccountCenterPage({ client }) {
         onDelete={deleteAccount}
         onOpenOpenApiBindingPage={openAccountOpenApiBindingPage}
         onSyncOpenApi={syncAccountOpenApi}
+      />
+      <ProxyPoolDialog
+        open={proxyPoolDialogOpen}
+        proxies={proxyPool.proxies}
+        onClose={() => setProxyPoolDialogOpen(false)}
+        onCreateProxy={proxyPool.createProxy}
+        onUpdateProxy={proxyPool.updateProxy}
+        onDeleteProxy={proxyPool.deleteProxy}
+        onTestProxy={proxyPool.testProxy}
+        onBatchImport={proxyPool.batchImport}
       />
     </section>
   );

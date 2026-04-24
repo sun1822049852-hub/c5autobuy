@@ -508,6 +508,10 @@ function createFetchHarness() {
       });
     }
 
+    if (url.pathname === "/proxy-pool" && method === "GET") {
+      return jsonResponse([]);
+    }
+
     throw new Error(`Unhandled request: ${method} ${url.pathname}`);
   });
 
@@ -550,8 +554,10 @@ describe("account center editing flows", () => {
             api_key: null,
             browser_proxy_mode: "direct",
             browser_proxy_url: null,
+            browser_proxy_id: null,
             api_proxy_mode: "direct",
             api_proxy_url: null,
+            api_proxy_id: null,
             remark_name: "账号 D",
           },
           method: "POST",
@@ -576,7 +582,9 @@ describe("account center editing flows", () => {
 
     await screen.findByRole("heading", { name: "添加账号" });
     await user.type(screen.getByLabelText("备注"), "账号 D");
-    await user.type(screen.getByLabelText("浏览器代理"), "user:pass@127.0.0.1:9200");
+    await user.selectOptions(screen.getByLabelText("浏览器代理"), "__custom__");
+    const browserCustomInputs = screen.getAllByPlaceholderText(/127\.0\.0\.1:9000/);
+    await user.type(browserCustomInputs[0], "user:pass@127.0.0.1:9200");
     await user.click(screen.getByRole("button", { name: "保存并登录" }));
 
     await waitFor(() => {
@@ -587,8 +595,10 @@ describe("account center editing flows", () => {
               api_key: null,
               browser_proxy_mode: "custom",
               browser_proxy_url: "user:pass@127.0.0.1:9200",
+              browser_proxy_id: null,
               api_proxy_mode: "custom",
               api_proxy_url: "user:pass@127.0.0.1:9200",
+              api_proxy_id: null,
               remark_name: "账号 D",
             },
             method: "POST",
@@ -907,7 +917,8 @@ describe("account center editing flows", () => {
 
     await user.click(screen.getByRole("button", { name: "编辑API IP 账号 A" }));
     await screen.findByRole("heading", { name: "API IP 设置" });
-    await user.type(screen.getByLabelText("API代理"), "127.0.0.1:9100");
+    await user.selectOptions(screen.getByLabelText("API代理"), "__custom__");
+    await user.type(screen.getByPlaceholderText(/127\.0\.0\.1:9000/), "127.0.0.1:9100");
     await user.click(screen.getByRole("button", { name: "保存" }));
 
     await waitFor(() => {
@@ -952,8 +963,9 @@ describe("account center editing flows", () => {
 
     await user.click(screen.getByRole("button", { name: "编辑API IP 账号 B" }));
     await screen.findByRole("heading", { name: "API IP 设置" });
-    await user.clear(screen.getByLabelText("API代理"));
-    await user.type(screen.getByLabelText("API代理"), "10.20.30.40:9101");
+    // Account B has custom proxy — select is already on __custom__, clear and retype
+    await user.clear(screen.getByPlaceholderText(/127\.0\.0\.1:9000/));
+    await user.type(screen.getByPlaceholderText(/127\.0\.0\.1:9000/), "10.20.30.40:9101");
     await user.click(screen.getByRole("button", { name: "保存" }));
 
     await waitFor(() => {
@@ -976,7 +988,7 @@ describe("account center editing flows", () => {
 
     await user.click(screen.getByRole("button", { name: "编辑API IP 账号 B" }));
     const dialog = await screen.findByRole("dialog", { name: "API IP 设置" });
-    expect(within(dialog).getByLabelText("API代理")).toHaveValue("10.20.30.40:9101");
+    expect(within(dialog).getByPlaceholderText(/127\.0\.0\.1:9000/)).toHaveValue("10.20.30.40:9101");
   });
 
   it("opens the binding page from api ip dialog", async () => {
@@ -1083,8 +1095,8 @@ describe("account center editing flows", () => {
 
     await user.click(screen.getByRole("button", { name: "编辑浏览器 IP 账号 A" }));
     await screen.findByRole("heading", { name: "浏览器代理设置" });
-    await user.clear(screen.getByLabelText("浏览器代理"));
-    await user.type(screen.getByLabelText("浏览器代理"), "127.0.0.1:9200");
+    await user.selectOptions(screen.getByLabelText("浏览器代理"), "__custom__");
+    await user.type(screen.getByPlaceholderText(/127\.0\.0\.1:9000/), "127.0.0.1:9200");
     await user.click(screen.getByRole("button", { name: "保存" }));
 
     await waitFor(() => {
@@ -1096,6 +1108,7 @@ describe("account center editing flows", () => {
             body: expect.objectContaining({
               browser_proxy_mode: "custom",
               browser_proxy_url: "127.0.0.1:9200",
+              browser_proxy_id: null,
             }),
           }),
         ]),
@@ -1122,8 +1135,7 @@ describe("account center editing flows", () => {
 
     await user.click(screen.getByRole("button", { name: "编辑浏览器 IP 账号 B" }));
     await screen.findByRole("heading", { name: "浏览器代理设置" });
-    await user.clear(screen.getByLabelText("浏览器代理"));
-    await user.type(screen.getByLabelText("浏览器代理"), "direct");
+    await user.selectOptions(screen.getByLabelText("浏览器代理"), "");
     await user.click(screen.getByRole("button", { name: "保存" }));
 
     await waitFor(() => {
@@ -1153,8 +1165,8 @@ describe("account center editing flows", () => {
 
     await user.click(screen.getByRole("button", { name: "编辑浏览器 IP 账号 A" }));
     await screen.findByRole("heading", { name: "浏览器代理设置" });
-    await user.clear(screen.getByLabelText("浏览器代理"));
-    await user.type(screen.getByLabelText("浏览器代理"), "http://127.0.0.1:9300");
+    await user.selectOptions(screen.getByLabelText("浏览器代理"), "__custom__");
+    await user.type(screen.getByPlaceholderText(/127\.0\.0\.1:9000/), "http://127.0.0.1:9300");
     await user.click(screen.getByRole("button", { name: "保存" }));
 
     await waitFor(() => {
@@ -1194,8 +1206,7 @@ describe("account center editing flows", () => {
 
     await user.click(screen.getByRole("button", { name: "编辑浏览器 IP 账号 B" }));
     await screen.findByRole("heading", { name: "浏览器代理设置" });
-    await user.clear(screen.getByLabelText("浏览器代理"));
-    await user.type(screen.getByLabelText("浏览器代理"), "http://127.0.0.1:9000");
+    // Account B already has custom proxy http://127.0.0.1:9000 — just save without changes
     await user.click(screen.getByRole("button", { name: "保存" }));
 
     await waitFor(() => {

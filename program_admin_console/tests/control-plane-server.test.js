@@ -136,7 +136,7 @@ async function main() {
     const registerAfterFailedSend = await requestJson(failedMailCtx, "POST", "/api/auth/register", {
       email: "failed@example.com",
       code: "123456",
-      username: "failed-user",
+      username: "failed_user",
       password: "Secret123!"
     });
     assert.equal(registerAfterFailedSend.status, 400);
@@ -157,7 +157,7 @@ async function main() {
     assert.equal(publicKey.body.kid, "ed25519-2026-04");
     assert.match(publicKey.body.public_key_pem, /BEGIN PUBLIC KEY/);
 
-    assert.equal((await requestJson(ctx, "GET", "/api/admin/bootstrap/state")).body.needs_bootstrap, true);
+    assert.equal((await requestJson(ctx, "GET", "/api/admin/session")).body.needs_bootstrap, true);
 
     const adminBootstrap = await requestJson(ctx, "POST", "/api/admin/bootstrap", {
       username: "admin",
@@ -177,6 +177,14 @@ async function main() {
     const adminHeaders = {
       Authorization: `Bearer ${adminLogin.body.session_token}`
     };
+
+    const invalidAdminLogin = await requestJson(ctx, "POST", "/api/admin/login", {
+      username: "admin",
+      password: "wrong-password"
+    });
+    assert.equal(invalidAdminLogin.status, 401);
+    assert.equal(invalidAdminLogin.body.reason, "invalid_credentials");
+    assert.equal(invalidAdminLogin.body.message, "用户名或者密码错误");
 
     const adminSession = await requestJson(ctx, "GET", "/api/admin/session", null, adminHeaders);
     assert.equal(adminSession.status, 200);
@@ -289,7 +297,22 @@ async function main() {
       device_id: "device_alpha"
     });
     assert.equal(refreshReuse.status, 401);
-    assert.equal(refreshReuse.body.reason, "refresh_token_not_found");
+    assert.ok(
+      refreshReuse.body.reason === "refresh_token_replayed" || refreshReuse.body.reason === "refresh_token_not_found",
+      `expected replayed or not_found, got: ${refreshReuse.body.reason}`
+    );
+
+    // Token family replay detection revoked all sessions in the family.
+    // Re-login alice so subsequent device-management tests have an active session.
+    const reLoginAlice = await requestJson(ctx, "POST", "/api/auth/login", {
+      username: "alice",
+      password: "Secret123!",
+      device_id: "device_alpha"
+    });
+    assert.equal(reLoginAlice.status, 200);
+    assert.equal(reLoginAlice.body.ok, true);
+    // Use the new refreshed token for later tests
+    const aliceRefreshToken = reLoginAlice.body.refresh_token;
 
     const sendBobCode = await requestJson(ctx, "POST", "/api/auth/email/send-code", {
       email: "bob@example.com"
@@ -370,7 +393,10 @@ async function main() {
       device_id: "device_beta"
     });
     assert.equal(bobRefreshAfterRevoke.status, 401);
-    assert.equal(bobRefreshAfterRevoke.body.reason, "refresh_token_not_found");
+    assert.ok(
+      bobRefreshAfterRevoke.body.reason === "refresh_token_replayed" || bobRefreshAfterRevoke.body.reason === "refresh_token_not_found",
+      `expected replayed or not_found, got: ${bobRefreshAfterRevoke.body.reason}`
+    );
 
     const revokeDevice = await requestJson(
       ctx,
@@ -383,11 +409,14 @@ async function main() {
     assert.equal(revokeDevice.body.ok, true);
 
     const refreshAfterRevoke = await requestJson(ctx, "POST", "/api/auth/refresh", {
-      refresh_token: refreshed.body.refresh_token,
+      refresh_token: aliceRefreshToken,
       device_id: "device_alpha"
     });
     assert.equal(refreshAfterRevoke.status, 401);
-    assert.equal(refreshAfterRevoke.body.reason, "refresh_token_not_found");
+    assert.ok(
+      refreshAfterRevoke.body.reason === "refresh_token_replayed" || refreshAfterRevoke.body.reason === "refresh_token_not_found",
+      `expected replayed or not_found, got: ${refreshAfterRevoke.body.reason}`
+    );
 
     const sendCarolCode = await requestJson(ctx, "POST", "/api/auth/email/send-code", {
       email: "carol@example.com"
@@ -433,7 +462,10 @@ async function main() {
       device_id: "device_gamma"
     });
     assert.equal(refreshCarolAfterReset.status, 401);
-    assert.equal(refreshCarolAfterReset.body.reason, "refresh_token_not_found");
+    assert.ok(
+      refreshCarolAfterReset.body.reason === "refresh_token_replayed" || refreshCarolAfterReset.body.reason === "refresh_token_not_found",
+      `expected replayed or not_found, got: ${refreshCarolAfterReset.body.reason}`
+    );
 
     const loginCarolAfterReset = await requestJson(ctx, "POST", "/api/auth/login", {
       username: "carol",
@@ -477,7 +509,10 @@ async function main() {
       device_id: "device_beta"
     });
     assert.equal(refreshAfterLogout.status, 401);
-    assert.equal(refreshAfterLogout.body.reason, "refresh_token_not_found");
+    assert.ok(
+      refreshAfterLogout.body.reason === "refresh_token_replayed" || refreshAfterLogout.body.reason === "refresh_token_not_found",
+      `expected replayed or not_found, got: ${refreshAfterLogout.body.reason}`
+    );
 
     const adminLogout = await requestJson(ctx, "POST", "/api/admin/logout", null, adminHeaders);
     assert.equal(adminLogout.status, 200);

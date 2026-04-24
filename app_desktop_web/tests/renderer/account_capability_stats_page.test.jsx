@@ -88,6 +88,10 @@ function createFetchHarness() {
       });
     }
 
+    if (url.pathname === "/proxy-pool" && method === "GET") {
+      return jsonResponse([]);
+    }
+
     throw new Error(`Unhandled request: ${method} ${url.pathname}${url.search}`);
   });
 
@@ -217,7 +221,11 @@ describe("account capability stats page", () => {
         });
       }
 
-      throw new Error(`Unhandled request: ${method} ${url.pathname}${url.search}`);
+      if (url.pathname === "/proxy-pool" && method === "GET") {
+      return jsonResponse([]);
+    }
+
+    throw new Error(`Unhandled request: ${method} ${url.pathname}${url.search}`);
     }));
     const user = userEvent.setup();
 

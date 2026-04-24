@@ -13,6 +13,7 @@ from app_backend.api.routes import app_bootstrap as app_bootstrap_routes
 from app_backend.api.routes import diagnostics as diagnostics_routes
 from app_backend.api.routes import purchase_runtime as purchase_runtime_routes
 from app_backend.api.routes import program_auth as program_auth_routes
+from app_backend.api.routes import proxy_pool as proxy_pool_routes
 from app_backend.api.routes import query_configs as query_config_routes
 from app_backend.api.routes import query_settings as query_settings_routes
 from app_backend.api.routes import runtime_settings as runtime_settings_routes
@@ -48,6 +49,7 @@ from app_backend.infrastructure.repositories.account_session_bundle_repository i
     SqliteAccountSessionBundleRepository,
 )
 from app_backend.infrastructure.repositories.account_repository import SqliteAccountRepository
+from app_backend.infrastructure.repositories.proxy_pool_repository import SqliteProxyPoolRepository
 from app_backend.infrastructure.repositories.purchase_ui_preferences_repository import (
     SqlitePurchaseUiPreferencesRepository,
 )
@@ -78,6 +80,8 @@ from app_backend.infrastructure.browser_runtime.open_api_binding_page_launcher i
     OpenApiBindingPageLauncher,
 )
 from app_backend.application.use_cases.delete_account import DeleteAccountUseCase
+from app_backend.application.use_cases.proxy_pool_use_cases import ProxyPoolUseCases
+from app_backend.infrastructure.proxy.proxy_test_service import ProxyTestService
 from app_backend.application.services.account_balance_service import AccountBalanceService
 from app_backend.workers.manager.task_manager import TaskManager
 from app_backend.infrastructure.request_diagnostics import RequestDiagnosticsMiddleware
@@ -242,6 +246,9 @@ def create_app(
     create_schema(engine)
     session_factory = build_session_factory(engine)
     repository = SqliteAccountRepository(session_factory)
+    proxy_pool_repository = SqliteProxyPoolRepository(session_factory)
+    proxy_pool_use_cases = ProxyPoolUseCases(proxy_pool_repository, repository)
+    proxy_test_service = ProxyTestService()
     managed_browser_runtime = ManagedBrowserRuntime.from_environment(
         default_root=database_path.parent / "app-private",
     )
@@ -351,6 +358,9 @@ def create_app(
         slow_ms=request_diagnostics_slow_ms,
     )
     app.state.account_repository = repository
+    app.state.proxy_pool_repository = proxy_pool_repository
+    app.state.proxy_pool_use_cases = proxy_pool_use_cases
+    app.state.proxy_test_service = proxy_test_service
     app.state.program_access_gateway = program_access_gateway
     app.state.program_access_stage = resolved_program_access_stage
     app.state.program_access_credential_store = program_access_credential_store
@@ -389,6 +399,7 @@ def create_app(
     app.include_router(app_bootstrap_routes.router)
     app.include_router(diagnostics_routes.router)
     app.include_router(program_auth_routes.router)
+    app.include_router(proxy_pool_routes.router)
     app.include_router(purchase_runtime_routes.router)
     app.include_router(query_config_routes.router)
     app.include_router(query_settings_routes.router)

@@ -1,14 +1,57 @@
 import { useEffect, useState } from "react";
 
 
+const CUSTOM_VALUE = "__custom__";
+
 const DEFAULT_FORM = {
   remark_name: "",
+  browser_proxy_select: "",
   browser_proxy_input: "",
+  api_proxy_select: "",
   api_proxy_input: "",
 };
 
 
-export function AccountCreateDialog({ open, onClose, onSubmit }) {
+function formatProxyLabel(proxy) {
+  const auth = proxy.username ? `${proxy.username}:***@` : "";
+  return `${proxy.name} — ${proxy.scheme}://${auth}${proxy.host}:${proxy.port}`;
+}
+
+
+function ProxySelectField({ id, label, hint, proxies, selectValue, inputValue, onSelectChange, onInputChange }) {
+  const showCustomInput = selectValue === CUSTOM_VALUE;
+
+  return (
+    <div className="form-field">
+      <label className="form-label" htmlFor={id}>{label}</label>
+      <select
+        className="form-input"
+        id={id}
+        value={selectValue}
+        onChange={(e) => onSelectChange(e.target.value)}
+      >
+        <option value="">直连（不使用代理）</option>
+        {proxies.map((p) => (
+          <option key={p.proxy_id} value={p.proxy_id}>{formatProxyLabel(p)}</option>
+        ))}
+        <option value={CUSTOM_VALUE}>── 自定义输入 ──</option>
+      </select>
+      {showCustomInput && (
+        <input
+          className="form-input"
+          placeholder="127.0.0.1:9000 / user:pass@127.0.0.1:9000 / socks5://..."
+          style={{ marginTop: 6 }}
+          value={inputValue}
+          onChange={(e) => onInputChange(e.target.value)}
+        />
+      )}
+      {hint && <span className="form-hint">{hint}</span>}
+    </div>
+  );
+}
+
+
+export function AccountCreateDialog({ open, onClose, onSubmit, proxies = [] }) {
   const [form, setForm] = useState(DEFAULT_FORM);
   const [apiProxyTouched, setApiProxyTouched] = useState(false);
 
@@ -21,6 +64,18 @@ export function AccountCreateDialog({ open, onClose, onSubmit }) {
 
   if (!open) {
     return null;
+  }
+
+  function buildProxyPayload(selectValue, inputValue) {
+    if (!selectValue) {
+      return { mode: "direct", url: null, proxy_id: null };
+    }
+    if (selectValue === CUSTOM_VALUE) {
+      const trimmed = inputValue.trim();
+      return { mode: trimmed ? "custom" : "direct", url: trimmed || null, proxy_id: null };
+    }
+    // Pool selection — backend resolves URL from proxy_id
+    return { mode: "pool", url: null, proxy_id: selectValue };
   }
 
   return (
@@ -39,14 +94,16 @@ export function AccountCreateDialog({ open, onClose, onSubmit }) {
         role="dialog"
         onSubmit={async (event) => {
           event.preventDefault();
-          const browserProxyInput = form.browser_proxy_input.trim();
-          const apiProxyInput = form.api_proxy_input.trim();
+          const browser = buildProxyPayload(form.browser_proxy_select, form.browser_proxy_input);
+          const api = buildProxyPayload(form.api_proxy_select, form.api_proxy_input);
           await onSubmit?.({
             api_key: null,
-            browser_proxy_mode: browserProxyInput ? "custom" : "direct",
-            browser_proxy_url: browserProxyInput || null,
-            api_proxy_mode: apiProxyInput ? "custom" : "direct",
-            api_proxy_url: apiProxyInput || null,
+            browser_proxy_mode: browser.mode,
+            browser_proxy_url: browser.url,
+            browser_proxy_id: browser.proxy_id,
+            api_proxy_mode: api.mode,
+            api_proxy_url: api.url,
+            api_proxy_id: api.proxy_id,
             remark_name: form.remark_name.trim() || null,
           }, {
             startLoginAfterCreate: event.nativeEvent.submitter?.dataset.action === "save-and-login",
@@ -75,47 +132,51 @@ export function AccountCreateDialog({ open, onClose, onSubmit }) {
             />
           </label>
 
-          <div className="form-field">
-            <label className="form-label" htmlFor="create-account-browser-proxy-input">浏览器代理</label>
-            <input
-              aria-describedby="create-account-browser-proxy-hint"
-              className="form-input"
-              id="create-account-browser-proxy-input"
-              name="browser_proxy_input"
-              placeholder="留空直连，或输入 127.0.0.1:9000 / user:pass@127.0.0.1:9000 / socks5://..."
-              value={form.browser_proxy_input}
-              onChange={(event) => setForm((current) => {
-                const nextBrowserProxyInput = event.target.value;
+          <ProxySelectField
+            id="create-account-browser-proxy"
+            label="浏览器代理"
+            hint="登录浏览器使用；改动后通常需要重新登录。"
+            proxies={proxies}
+            selectValue={form.browser_proxy_select}
+            inputValue={form.browser_proxy_input}
+            onSelectChange={(value) => {
+              setForm((current) => {
+                const shouldPrefillApi = !apiProxyTouched || current.api_proxy_select === current.browser_proxy_select;
+                return {
+                  ...current,
+                  browser_proxy_select: value,
+                  api_proxy_select: shouldPrefillApi ? value : current.api_proxy_select,
+                };
+              });
+            }}
+            onInputChange={(value) => {
+              setForm((current) => {
                 const shouldPrefillApi = !apiProxyTouched || current.api_proxy_input === current.browser_proxy_input;
                 return {
                   ...current,
-                  browser_proxy_input: nextBrowserProxyInput,
-                  api_proxy_input: shouldPrefillApi ? nextBrowserProxyInput : current.api_proxy_input,
+                  browser_proxy_input: value,
+                  api_proxy_input: shouldPrefillApi ? value : current.api_proxy_input,
                 };
-              })}
-            />
-            <span className="form-hint" id="create-account-browser-proxy-hint">登录浏览器使用；改动后通常需要重新登录。</span>
-          </div>
+              });
+            }}
+          />
 
-          <div className="form-field">
-            <label className="form-label" htmlFor="create-account-api-proxy-input">API代理</label>
-            <input
-              aria-describedby="create-account-api-proxy-hint"
-              className="form-input"
-              id="create-account-api-proxy-input"
-              name="api_proxy_input"
-              placeholder="留空直连，或输入 127.0.0.1:9000 / user:pass@127.0.0.1:9000 / socks5://..."
-              value={form.api_proxy_input}
-              onChange={(event) => {
-                setApiProxyTouched(true);
-                setForm((current) => ({
-                  ...current,
-                  api_proxy_input: event.target.value,
-                }));
-              }}
-            />
-            <span className="form-hint" id="create-account-api-proxy-hint">API 查询使用；支持动态切换，系统会自动检查当前出口 IP 是否在白名单内。</span>
-          </div>
+          <ProxySelectField
+            id="create-account-api-proxy"
+            label="API代理"
+            hint="API 查询使用；支持动态切换，系统会自动检查当前出口 IP 是否在白名单内。"
+            proxies={proxies}
+            selectValue={form.api_proxy_select}
+            inputValue={form.api_proxy_input}
+            onSelectChange={(value) => {
+              setApiProxyTouched(true);
+              setForm((current) => ({ ...current, api_proxy_select: value }));
+            }}
+            onInputChange={(value) => {
+              setApiProxyTouched(true);
+              setForm((current) => ({ ...current, api_proxy_input: value }));
+            }}
+          />
         </div>
 
         <div className="surface-actions">

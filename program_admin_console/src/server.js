@@ -6,6 +6,7 @@ const {ControlPlaneStore} = require("./controlPlaneStore");
 const {createEntitlementSigner} = require("./entitlementSigner");
 const {getMailConfig} = require("./mailConfig");
 const {createMailService} = require("./mailService");
+const {isStrongPassword: isStrongPasswordV, isValidUsername: isValidUsernameV, generateSecureCode} = require("./validation");
 
 function toText(value = "") {
   return String(value == null ? "" : value).trim();
@@ -115,15 +116,25 @@ function writeFile(res, status, filePath, contentType) {
   const body = fs.readFileSync(filePath);
   res.writeHead(status, {
     "Content-Type": `${contentType}; charset=utf-8`,
-    "Content-Length": body.byteLength
+    "Content-Length": body.byteLength,
+    "Cache-Control": "no-cache, no-store, must-revalidate"
   });
   res.end(body);
 }
 
-function readJsonBody(req) {
+function readJsonBody(req, {maxBytes = 1024 * 1024} = {}) {
   return new Promise((resolve, reject) => {
     const chunks = [];
-    req.on("data", (chunk) => chunks.push(chunk));
+    let totalBytes = 0;
+    req.on("data", (chunk) => {
+      totalBytes += chunk.length;
+      if (totalBytes > maxBytes) {
+        req.destroy();
+        reject(Object.assign(new Error("request body too large"), {code: "BODY_TOO_LARGE"}));
+        return;
+      }
+      chunks.push(chunk);
+    });
     req.on("end", () => {
       const raw = Buffer.concat(chunks).toString("utf8").trim();
       if (!raw) {
@@ -175,10 +186,12 @@ function isValidUsername(value = "") {
   return /^[A-Za-z0-9_]{3,32}$/.test(toText(value));
 }
 
-function getSourceIp(req) {
-  const xff = toText(req && req.headers && req.headers["x-forwarded-for"]);
-  if (xff) {
-    return toText(xff.split(",")[0]);
+function getSourceIp(req, {trustProxy = false} = {}) {
+  if (trustProxy) {
+    const xff = toText(req && req.headers && req.headers["x-forwarded-for"]);
+    if (xff) {
+      return toText(xff.split(",")[0]);
+    }
   }
   return toText(req && req.socket && req.socket.remoteAddress);
 }
@@ -189,6 +202,7 @@ function createServer({
   mailConfigFactory = null,
   mailServiceFactory = null,
   codeGenerator = null,
+  trustProxy = false,
   now = () => new Date()
 } = {}) {
   const uiDir = path.resolve(__dirname, "../ui");
@@ -210,7 +224,7 @@ function createServer({
   });
   const nextCode = typeof codeGenerator === "function"
     ? codeGenerator
-    : () => String(Math.floor(100000 + Math.random() * 900000));
+    : () => generateSecureCode(6);
   const registerConfig = Object.freeze({
     codeLength: 6,
     codeExpiresInSeconds: 600,
@@ -426,15 +440,14 @@ function createServer({
         return;
       }
 
-      if (req.method === "GET" && pathname === "/api/admin/bootstrap/state") {
-        writeJson(res, 200, {
-          ok: true,
-          needs_bootstrap: store.needsAdminBootstrap()
-        });
-        return;
-      }
+      // bootstrap state is now served via /api/admin/session only
 
       if (req.method === "POST" && pathname === "/api/admin/bootstrap") {
+        const bootstrapIp = getSourceIp(req, {trustProxy});
+        if (bootstrapIp !== "127.0.0.1" && bootstrapIp !== "::1" && bootstrapIp !== "::ffff:127.0.0.1") {
+          writeError(res, 403, "bootstrap_forbidden", "bootstrap only allowed from localhost");
+          return;
+        }
         if (!store.needsAdminBootstrap()) {
           writeError(res, 409, "admin_already_exists", "admin bootstrap already completed");
           return;
@@ -443,6 +456,10 @@ function createServer({
         const password = toText(body && body.password);
         if (!password) {
           writeError(res, 400, "password_required", "password is required");
+          return;
+        }
+        if (!isStrongPasswordV(password)) {
+          writeError(res, 400, "password_weak", "密码强度不足，需至少8位且包含字母和数字");
           return;
         }
         const user = store.createOrUpdateAdminUser({
@@ -460,17 +477,32 @@ function createServer({
 
       if (req.method === "POST" && pathname === "/api/admin/login") {
         const body = await readJsonBody(req);
+        const adminUsername = toText(body && body.username) || "admin";
+        const sourceIp = getSourceIp(req, {trustProxy});
+        if (store.isLoginLocked({realm: "admin", username: adminUsername, now: now()})) {
+          writeError(res, 429, "login_locked", "登录失败次数过多，请15分钟后再试");
+          return;
+        }
         const auth = store.authenticateAdminUser({
-          username: toText(body && body.username) || "admin",
+          username: adminUsername,
           password: toText(body && body.password)
         });
+        store.recordLoginAttempt({
+          realm: "admin",
+          username: adminUsername,
+          success: auth.ok,
+          sourceIp,
+          now: now()
+        });
         if (!auth.ok) {
-          writeError(res, 401, auth.reason, "invalid admin credentials");
+          writeError(res, 401, auth.reason, "用户名或者密码错误");
           return;
         }
         const session = store.createAdminSession({
           adminUserId: auth.user.id,
           ttlHours: Number(config.adminSessionHours) || 12,
+          sourceIp,
+          userAgent: toText(req.headers && req.headers["user-agent"]),
           now: now()
         });
         writeJson(res, 200, {
@@ -635,7 +667,7 @@ function createServer({
         const installId = toText(body && body.install_id) || "unknown_install";
         const registerSessionId = toText(body && body.register_session_id);
         const deviceFingerprint = toText(body && body.device_fingerprint);
-        const sourceIp = getSourceIp(req);
+        const sourceIp = getSourceIp(req, {trustProxy});
 
         if (!isValidEmail(email)) {
           writeRegisterV3Error(res, 400, {
@@ -965,6 +997,14 @@ function createServer({
           writeError(res, 400, "register_payload_invalid", "register payload invalid");
           return;
         }
+        if (!isValidUsernameV(username)) {
+          writeError(res, 400, "username_invalid", "用户名格式无效");
+          return;
+        }
+        if (!isStrongPasswordV(password)) {
+          writeError(res, 400, "password_weak", "密码强度不足，需至少8位且包含字母和数字");
+          return;
+        }
         const verified = store.verifyEmailCode({
           email,
           scene: "register",
@@ -1002,7 +1042,19 @@ function createServer({
           writeError(res, 400, "login_payload_invalid", "username, password and device_id are required");
           return;
         }
+        const sourceIp = getSourceIp(req, {trustProxy});
+        if (store.isLoginLocked({realm: "client", username, now: now()})) {
+          writeError(res, 429, "login_locked", "登录失败次数过多，请15分钟后再试");
+          return;
+        }
         const auth = store.authenticateClientUser({username, password});
+        store.recordLoginAttempt({
+          realm: "client",
+          username,
+          success: auth.ok,
+          sourceIp,
+          now: now()
+        });
         if (!auth.ok) {
           writeError(res, 401, auth.reason, "invalid credentials");
           return;
@@ -1104,12 +1156,21 @@ function createServer({
           writeError(res, 400, "reset_payload_invalid", "reset payload invalid");
           return;
         }
+        if (!isStrongPasswordV(newPassword)) {
+          writeError(res, 400, "password_weak", "密码强度不足，需至少8位且包含字母和数字");
+          return;
+        }
+        if (store.isCodeVerifyLocked({email, scene: "reset_password", now: now()})) {
+          writeError(res, 429, "code_verify_locked", "验证码尝试次数过多，请稍后再试");
+          return;
+        }
         const verified = store.verifyEmailCode({
           email,
           scene: "reset_password",
           code,
           now: now()
         });
+        store.recordCodeVerifyAttempt({email, scene: "reset_password", success: verified.ok, now: now()});
         if (!verified.ok) {
           writeError(res, 400, verified.reason, "email code invalid");
           return;
@@ -1173,6 +1234,10 @@ function createServer({
 
       writeError(res, 404, "not_found", "route not found");
     } catch (error) {
+      if (error && error.code === "BODY_TOO_LARGE") {
+        writeError(res, 413, "body_too_large", "request body too large");
+        return;
+      }
       writeError(res, 500, "internal_error", error && error.message ? error.message : "internal error");
     }
   });

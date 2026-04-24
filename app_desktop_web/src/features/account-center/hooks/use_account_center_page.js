@@ -69,6 +69,10 @@ function buildProxyDisplay(proxyMode, proxyUrl, publicIp = null) {
     return publicIp || "未获取IP";
   }
 
+  if (proxyMode === "pool") {
+    return proxyUrl ? `[池] ${proxyUrl}` : "代理池条目已删除";
+  }
+
   return proxyUrl || publicIp || "未配置代理";
 }
 
@@ -172,6 +176,8 @@ function buildAccountUpdatePayload(account, partialPayload) {
   const hasApiKey = Object.prototype.hasOwnProperty.call(partialPayload, "api_key");
   const hasBrowserProxyUrl = Object.prototype.hasOwnProperty.call(partialPayload, "browser_proxy_url");
   const hasApiProxyUrl = Object.prototype.hasOwnProperty.call(partialPayload, "api_proxy_url");
+  const hasBrowserProxyId = Object.prototype.hasOwnProperty.call(partialPayload, "browser_proxy_id");
+  const hasApiProxyId = Object.prototype.hasOwnProperty.call(partialPayload, "api_proxy_id");
 
   return {
     remark_name: Object.prototype.hasOwnProperty.call(partialPayload, "remark_name")
@@ -182,6 +188,8 @@ function buildAccountUpdatePayload(account, partialPayload) {
     api_proxy_mode: partialPayload.api_proxy_mode ?? account.api_proxy_mode ?? "direct",
     api_proxy_url: hasApiProxyUrl ? partialPayload.api_proxy_url : account.api_proxy_url ?? null,
     api_key: hasApiKey ? partialPayload.api_key : account.api_key ?? null,
+    browser_proxy_id: hasBrowserProxyId ? partialPayload.browser_proxy_id : account.browser_proxy_id ?? null,
+    api_proxy_id: hasApiProxyId ? partialPayload.api_proxy_id : account.api_proxy_id ?? null,
   };
 }
 
@@ -978,7 +986,8 @@ export function useAccountCenterPage({ client }) {
       }
 
       const browserProxyChanged = account.browser_proxy_mode !== payload.browser_proxy_mode
-        || (account.browser_proxy_url ?? "") !== (payload.browser_proxy_url ?? "");
+        || (account.browser_proxy_url ?? "") !== (payload.browser_proxy_url ?? "")
+        || (account.browser_proxy_id ?? null) !== (payload.browser_proxy_id ?? null);
 
       if (!browserProxyChanged) {
         setBrowserProxyDialogAccount(null);
@@ -1032,7 +1041,8 @@ export function useAccountCenterPage({ client }) {
       }
 
       const apiProxyChanged = account.api_proxy_mode !== payload.api_proxy_mode
-        || (account.api_proxy_url ?? "") !== (payload.api_proxy_url ?? "");
+        || (account.api_proxy_url ?? "") !== (payload.api_proxy_url ?? "")
+        || (account.api_proxy_id ?? null) !== (payload.api_proxy_id ?? null);
 
       return handleAction(async () => {
         let skippedWhitelistSync = false;

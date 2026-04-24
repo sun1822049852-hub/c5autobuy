@@ -134,6 +134,9 @@ describe("app remote bootstrap", () => {
         return jsonResponse([]);
       }
 
+      if (url.pathname === "/proxy-pool") {
+        return jsonResponse([]);
+      }
       throw new Error(`Unhandled request: ${url.pathname}`);
     });
     installRemoteDesktopApp(fetchImpl);
@@ -188,6 +191,9 @@ describe("app remote bootstrap", () => {
         return jsonResponse([]);
       }
 
+      if (url.pathname === "/proxy-pool") {
+        return jsonResponse([]);
+      }
       throw new Error(`Unhandled request: ${url.pathname}`);
     });
     installRemoteDesktopApp(fetchImpl);
@@ -248,6 +254,9 @@ describe("app remote bootstrap", () => {
         return jsonResponse([]);
       }
 
+      if (url.pathname === "/proxy-pool") {
+        return jsonResponse([]);
+      }
       throw new Error(`Unhandled request: ${url.pathname}`);
     });
     installRemoteDesktopApp(fetchImpl);
@@ -302,6 +311,9 @@ describe("app remote bootstrap", () => {
         return jsonResponse([]);
       }
 
+      if (url.pathname === "/proxy-pool") {
+        return jsonResponse([]);
+      }
       throw new Error(`Unhandled request: ${url.pathname}`);
     });
     installEmbeddedDesktopApp(fetchImpl);
@@ -361,6 +373,9 @@ describe("app remote bootstrap", () => {
         return jsonResponse([]);
       }
 
+      if (url.pathname === "/proxy-pool") {
+        return jsonResponse([]);
+      }
       throw new Error(`Unhandled request: ${url.pathname}`);
     });
     const desktopHarness = installDeferredEmbeddedDesktopApp(fetchImpl);

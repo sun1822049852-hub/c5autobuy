@@ -48,6 +48,8 @@ function deriveKeyId(privateKey) {
 function createEntitlementSigner({
   privateKeyFile = "",
   keyId = "",
+  iss = "c5-control-plane",
+  aud = "c5-client",
   now = () => new Date(),
   snapshotTtlMinutes = DEFAULTS.SNAPSHOT_TTL_MINUTES,
   runtimePermitTtlSeconds = DEFAULTS.RUNTIME_PERMIT_TTL_SECONDS
@@ -82,6 +84,8 @@ function createEntitlementSigner({
         iatDate.getTime() + Math.max(1, Number(snapshotTtlMinutes) || DEFAULTS.SNAPSHOT_TTL_MINUTES) * 60 * 1000
       );
       const snapshot = {
+        iss,
+        aud,
         sub: toText(user.id),
         username: toText(user.username),
         membership_plan: toText(user.membership_plan) || "inactive",
@@ -119,6 +123,8 @@ function createEntitlementSigner({
         iatDate.getTime() + Math.max(1, Number(ttlSeconds) || DEFAULTS.RUNTIME_PERMIT_TTL_SECONDS) * 1000
       );
       const snapshot = {
+        iss,
+        aud,
         sub: toText(user.id),
         username: toText(user.username),
         membership_plan: toText(user.membership_plan) || "inactive",

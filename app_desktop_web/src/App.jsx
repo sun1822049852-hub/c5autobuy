@@ -357,60 +357,66 @@ export function App({ runtimeStore }) {
             reloadNotice={reloadNotice}
             sidebarTopContent={<ProgramAccessShellBanner />}
           >
-            {mountedKeepAliveItems["account-center"] ? (
-              <div hidden={activeItem !== "account-center"}>
-                <AccountCenterPage
-                  bootstrapConfig={bootstrapConfig}
-                  client={client}
-                />
-              </div>
-            ) : null}
-            {mountedKeepAliveItems["query-system"] ? (
-              <div hidden={activeItem !== "query-system"}>
-                <QuerySystemPage
-                  bootstrapConfig={bootstrapConfig}
-                  client={client}
-                  isActive={activeItem === "query-system"}
-                  onLeaveStateChange={handleQuerySystemLeaveStateChange}
-                />
-              </div>
-            ) : null}
-            {mountedKeepAliveItems["query-stats"] ? (
-              <div hidden={activeItem !== "query-stats"}>
-                <QueryStatsPage
-                  bootstrapConfig={bootstrapConfig}
-                  client={client}
-                />
-              </div>
-            ) : null}
-            {mountedKeepAliveItems["account-capability-stats"] ? (
-              <div hidden={activeItem !== "account-capability-stats"}>
-                <AccountCapabilityStatsPage
-                  bootstrapConfig={bootstrapConfig}
-                  client={client}
-                />
-              </div>
-            ) : null}
-            {mountedKeepAliveItems["purchase-system"] ? (
-              <div hidden={activeItem !== "purchase-system"}>
-                <PurchaseSystemPage
-                  bootstrapConfig={bootstrapConfig}
-                  client={client}
-                  isActive={activeItem === "purchase-system"}
-                  onLeaveStateChange={handlePurchaseSystemLeaveStateChange}
-                />
-              </div>
-            ) : null}
-            {mountedKeepAliveItems["diagnostics"] ? (
-              <div hidden={activeItem !== "diagnostics"}>
-                <DiagnosticsPanel
-                  error={diagnostics.error}
-                  isLoading={diagnostics.isLoading}
-                  isRefreshing={diagnostics.isRefreshing}
-                  snapshot={diagnostics.snapshot}
-                />
-              </div>
-            ) : null}
+            {!isBackendReady ? (
+              <BackendStartupPanel backendStatus={bootstrapConfig.backendStatus} />
+            ) : (
+              <>
+                {mountedKeepAliveItems["account-center"] ? (
+                  <div hidden={activeItem !== "account-center"}>
+                    <AccountCenterPage
+                      bootstrapConfig={bootstrapConfig}
+                      client={client}
+                    />
+                  </div>
+                ) : null}
+                {mountedKeepAliveItems["query-system"] ? (
+                  <div hidden={activeItem !== "query-system"}>
+                    <QuerySystemPage
+                      bootstrapConfig={bootstrapConfig}
+                      client={client}
+                      isActive={activeItem === "query-system"}
+                      onLeaveStateChange={handleQuerySystemLeaveStateChange}
+                    />
+                  </div>
+                ) : null}
+                {mountedKeepAliveItems["query-stats"] ? (
+                  <div hidden={activeItem !== "query-stats"}>
+                    <QueryStatsPage
+                      bootstrapConfig={bootstrapConfig}
+                      client={client}
+                    />
+                  </div>
+                ) : null}
+                {mountedKeepAliveItems["account-capability-stats"] ? (
+                  <div hidden={activeItem !== "account-capability-stats"}>
+                    <AccountCapabilityStatsPage
+                      bootstrapConfig={bootstrapConfig}
+                      client={client}
+                    />
+                  </div>
+                ) : null}
+                {mountedKeepAliveItems["purchase-system"] ? (
+                  <div hidden={activeItem !== "purchase-system"}>
+                    <PurchaseSystemPage
+                      bootstrapConfig={bootstrapConfig}
+                      client={client}
+                      isActive={activeItem === "purchase-system"}
+                      onLeaveStateChange={handlePurchaseSystemLeaveStateChange}
+                    />
+                  </div>
+                ) : null}
+                {mountedKeepAliveItems["diagnostics"] ? (
+                  <div hidden={activeItem !== "diagnostics"}>
+                    <DiagnosticsPanel
+                      error={diagnostics.error}
+                      isLoading={diagnostics.isLoading}
+                      isRefreshing={diagnostics.isRefreshing}
+                      snapshot={diagnostics.snapshot}
+                    />
+                  </div>
+                ) : null}
+              </>
+            )}
           </AppShell>
 
           <UnsavedChangesDialog

@@ -3,10 +3,12 @@ import { useEffect, useState } from "react";
 
 export function AccountApiKeyDialog({ account, open, onClose, onSubmit }) {
   const [apiKey, setApiKey] = useState("");
+  const [showApiKey, setShowApiKey] = useState(false);
 
   useEffect(() => {
     if (open) {
       setApiKey(account?.api_key ?? "");
+      setShowApiKey(false);
     }
   }, [account, open]);
 
@@ -46,11 +48,25 @@ export function AccountApiKeyDialog({ account, open, onClose, onSubmit }) {
         <div className="form-grid">
           <label className="form-field">
             <span className="form-label">API Key</span>
-            <input
-              className="form-input"
-              value={apiKey}
-              onChange={(event) => setApiKey(event.target.value)}
-            />
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <input
+                className="form-input"
+                type={showApiKey ? "text" : "password"}
+                autoComplete="off"
+                value={apiKey}
+                onChange={(event) => setApiKey(event.target.value)}
+                style={{ flex: 1 }}
+              />
+              <button
+                className="ghost-button"
+                type="button"
+                onClick={() => setShowApiKey((v) => !v)}
+                aria-label={showApiKey ? "隐藏 API Key" : "显示 API Key"}
+                style={{ whiteSpace: "nowrap", flexShrink: 0 }}
+              >
+                {showApiKey ? "隐藏" : "显示"}
+              </button>
+            </div>
           </label>
         </div>
 

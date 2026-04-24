@@ -335,6 +335,26 @@ export function createAccountCenterClient({
     async fetchQueryItemDetail(payload) {
       return http.postJson("/query-items/fetch-detail", payload);
     },
+    // --- Proxy Pool ---
+    async listProxies() {
+      return http.getJson("/proxy-pool");
+    },
+    async createProxy(payload) {
+      return http.postJson("/proxy-pool", payload);
+    },
+    async updateProxy(proxyId, payload) {
+      return http.patchJson(`/proxy-pool/${proxyId}`, payload);
+    },
+    async deleteProxy(proxyId) {
+      await http.delete(`/proxy-pool/${proxyId}`);
+    },
+    async testProxy(proxyId) {
+      return http.postJson(`/proxy-pool/${proxyId}/test`, {});
+    },
+    async batchImportProxies(payload) {
+      return http.postJson("/proxy-pool/batch-import", payload);
+    },
+    // --- Accounts ---
     async createAccount(payload) {
       return http.postJson("/accounts", payload);
     },

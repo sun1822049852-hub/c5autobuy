@@ -28,6 +28,7 @@ def create_schema(engine: Engine) -> None:
         AccountCapabilityStatsDailyRecord,
         AccountCapabilityStatsTotalRecord,
         AccountInventorySnapshotRecord,
+        ProxyPoolRecord,
         PurchaseUiPreferenceRecord,
         QueryConfigItemRecord,
         QueryItemModeAllocationRecord,
@@ -64,6 +65,7 @@ def create_schema(engine: Engine) -> None:
             QueryItemRuleStatsDailyRecord.__table__,
             AccountCapabilityStatsTotalRecord.__table__,
             AccountCapabilityStatsDailyRecord.__table__,
+            ProxyPoolRecord.__table__,
         ],
     )
     inspector = inspect(engine)
@@ -175,6 +177,10 @@ def _ensure_account_columns(engine: Engine) -> None:
             connection.execute(text("ALTER TABLE accounts ADD COLUMN balance_refresh_after_at TEXT"))
         if "balance_last_error" not in existing_columns:
             connection.execute(text("ALTER TABLE accounts ADD COLUMN balance_last_error TEXT"))
+        if "browser_proxy_id" not in existing_columns:
+            connection.execute(text("ALTER TABLE accounts ADD COLUMN browser_proxy_id TEXT"))
+        if "api_proxy_id" not in existing_columns:
+            connection.execute(text("ALTER TABLE accounts ADD COLUMN api_proxy_id TEXT"))
 
 
 def _rebuild_accounts_table_for_dual_proxy(engine: Engine, *, existing_columns: set[str]) -> None:

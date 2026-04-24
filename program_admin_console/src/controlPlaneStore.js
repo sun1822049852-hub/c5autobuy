@@ -111,6 +111,42 @@ class ControlPlaneStore {
     }
   }
 
+  recordLoginAttempt({realm = "client", username = "", success = false, sourceIp = "", now = new Date()} = {}) {
+    this.db.prepare(`
+      INSERT INTO login_attempt(realm, username, success, source_ip, created_at)
+      VALUES(?, ?, ?, ?, ?)
+    `).run(toText(realm), toText(username), success ? 1 : 0, toText(sourceIp), nowIso(now));
+  }
+
+  getRecentFailedAttempts({realm = "client", username = "", windowMs = 15 * 60 * 1000, now = new Date()} = {}) {
+    const cutoff = new Date(parseMs(nowIso(now)) - windowMs).toISOString();
+    const row = this.db.prepare(`
+      SELECT COUNT(*) AS cnt FROM login_attempt
+      WHERE realm = ? AND username = ? AND success = 0 AND created_at >= ?
+    `).get(toText(realm), toText(username), cutoff);
+    return Number(row && row.cnt) || 0;
+  }
+
+  isLoginLocked({realm = "client", username = "", maxAttempts = 5, windowMs = 15 * 60 * 1000, now = new Date()} = {}) {
+    return this.getRecentFailedAttempts({realm, username, windowMs, now}) >= maxAttempts;
+  }
+
+  recordCodeVerifyAttempt({email = "", scene = "", success = false, now = new Date()} = {}) {
+    this.db.prepare(`
+      INSERT INTO code_verify_attempt(email, scene, success, created_at)
+      VALUES(?, ?, ?, ?)
+    `).run(toText(email).toLowerCase(), toText(scene), success ? 1 : 0, nowIso(now));
+  }
+
+  isCodeVerifyLocked({email = "", scene = "", maxAttempts = 5, windowMs = 5 * 60 * 1000, now = new Date()} = {}) {
+    const cutoff = new Date(parseMs(nowIso(now)) - windowMs).toISOString();
+    const row = this.db.prepare(`
+      SELECT COUNT(*) AS cnt FROM code_verify_attempt
+      WHERE email = ? AND scene = ? AND success = 0 AND created_at >= ?
+    `).get(toText(email).toLowerCase(), toText(scene), cutoff);
+    return (Number(row && row.cnt) || 0) >= maxAttempts;
+  }
+
   runInTransaction(fn) {
     this.db.exec("BEGIN IMMEDIATE");
     try {
@@ -266,7 +302,33 @@ class ControlPlaneStore {
       );
       CREATE INDEX IF NOT EXISTS idx_register_ticket_lookup
       ON register_verification_ticket(register_session_id, email, install_id, consumed_at, expires_at);
+
+      CREATE TABLE IF NOT EXISTS login_attempt (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        realm TEXT NOT NULL,
+        username TEXT NOT NULL,
+        success INTEGER NOT NULL DEFAULT 0,
+        source_ip TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_login_attempt_realm_username_created
+        ON login_attempt(realm, username, created_at);
+      CREATE INDEX IF NOT EXISTS idx_login_attempt_realm_ip_created
+        ON login_attempt(realm, source_ip, created_at);
+
+      CREATE TABLE IF NOT EXISTS code_verify_attempt (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT NOT NULL,
+        scene TEXT NOT NULL,
+        success INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_code_verify_attempt_email_scene_created
+        ON code_verify_attempt(email, scene, created_at);
     `);
+    try { this.db.exec("ALTER TABLE admin_session ADD COLUMN source_ip TEXT NOT NULL DEFAULT ''"); } catch {}
+    try { this.db.exec("ALTER TABLE admin_session ADD COLUMN user_agent TEXT NOT NULL DEFAULT ''"); } catch {}
+    try { this.db.exec("ALTER TABLE refresh_session ADD COLUMN family_id TEXT NOT NULL DEFAULT ''"); } catch {}
   }
 
   seedMembershipPlans() {
@@ -599,7 +661,7 @@ class ControlPlaneStore {
     };
   }
 
-  createAdminSession({adminUserId = 0, ttlHours = 12, now = new Date()} = {}) {
+  createAdminSession({adminUserId = 0, ttlHours = 12, sourceIp = "", userAgent = "", now = new Date()} = {}) {
     const user = mapAdminUser(this.db.prepare("SELECT * FROM admin_user WHERE id = ?").get(Number(adminUserId) || 0));
     if (!user) {
       throw new Error("admin user not found");
@@ -608,9 +670,9 @@ class ControlPlaneStore {
     const stamp = nowIso(now);
     const expiresAt = new Date(parseMs(stamp) + Math.max(1, Number(ttlHours) || 1) * 60 * 60 * 1000).toISOString();
     this.db.prepare(`
-      INSERT INTO admin_session(token_hash, admin_user_id, status, created_at, updated_at, expires_at, revoked_at)
-      VALUES(?, ?, 'active', ?, ?, ?, '')
-    `).run(hashToken(sessionToken), user.id, stamp, stamp, expiresAt);
+      INSERT INTO admin_session(token_hash, admin_user_id, status, created_at, updated_at, expires_at, revoked_at, source_ip, user_agent)
+      VALUES(?, ?, 'active', ?, ?, ?, '', ?, ?)
+    `).run(hashToken(sessionToken), user.id, stamp, stamp, expiresAt, toText(sourceIp), toText(userAgent));
     return {
       session_token: sessionToken,
       expires_at: expiresAt
@@ -669,7 +731,7 @@ class ControlPlaneStore {
     return {ok: true};
   }
 
-  createRefreshSession({userId = 0, deviceId = "", ttlDays = 30, now = new Date()} = {}) {
+  createRefreshSession({userId = 0, deviceId = "", ttlDays = 30, familyId = "", now = new Date()} = {}) {
     const user = this.getClientUserById(userId);
     if (!user) {
       throw new Error("user not found");
@@ -680,16 +742,18 @@ class ControlPlaneStore {
     }
     const refreshToken = createOpaqueToken(24);
     const stamp = nowIso(now);
+    const resolvedFamilyId = toText(familyId) || createId("fam");
     const expiresAt = new Date(parseMs(stamp) + Math.max(1, Number(ttlDays) || 1) * 24 * 60 * 60 * 1000).toISOString();
     const result = this.db.prepare(`
       INSERT INTO refresh_session(
-        token_hash, user_id, device_id, status, created_at, updated_at, last_used_at, expires_at, revoked_at
-      ) VALUES(?, ?, ?, 'active', ?, ?, ?, ?, '')
-    `).run(hashToken(refreshToken), user.id, deviceText, stamp, stamp, stamp, expiresAt);
+        token_hash, user_id, device_id, status, created_at, updated_at, last_used_at, expires_at, revoked_at, family_id
+      ) VALUES(?, ?, ?, 'active', ?, ?, ?, ?, '', ?)
+    `).run(hashToken(refreshToken), user.id, deviceText, stamp, stamp, stamp, expiresAt, resolvedFamilyId);
     return {
       id: Number(result.lastInsertRowid) || 0,
       refresh_token: refreshToken,
-      expires_at: expiresAt
+      expires_at: expiresAt,
+      family_id: resolvedFamilyId
     };
   }
 
@@ -737,6 +801,27 @@ class ControlPlaneStore {
   }
 
   rotateRefreshSession({refreshToken = "", deviceId = "", ttlDays = 30, now = new Date()} = {}) {
+    const row = this.db.prepare(`
+      SELECT *
+      FROM refresh_session
+      WHERE token_hash = ?
+      LIMIT 1
+    `).get(hashToken(refreshToken));
+    if (!row) {
+      return {ok: false, reason: "refresh_token_not_found"};
+    }
+    if (toText(row.status) !== "active" || toText(row.revoked_at)) {
+      const familyIdValue = toText(row.family_id);
+      if (familyIdValue) {
+        const replayStamp = nowIso(now);
+        this.db.prepare(`
+          UPDATE refresh_session
+          SET status = 'revoked', revoked_at = ?, updated_at = ?
+          WHERE family_id = ? AND status = 'active' AND revoked_at = ''
+        `).run(replayStamp, replayStamp, familyIdValue);
+      }
+      return {ok: false, reason: "refresh_token_replayed"};
+    }
     const resolved = this.resolveRefreshSession({refreshToken, deviceId, now});
     if (!resolved.ok) {
       return resolved;
@@ -752,6 +837,7 @@ class ControlPlaneStore {
         userId: resolved.user.id,
         deviceId,
         ttlDays,
+        familyId: toText(row.family_id),
         now
       });
     });

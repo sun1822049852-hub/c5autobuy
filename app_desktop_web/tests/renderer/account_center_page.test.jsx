@@ -362,6 +362,10 @@ describe("account center page", () => {
         };
       }
 
+      if (url.pathname === "/proxy-pool" && method === "GET") {
+        return { ok: true, json: async () => [] };
+      }
+
       throw new Error(`Unhandled request: ${method} ${url.pathname}`);
     });
 
@@ -438,6 +442,10 @@ describe("account center page", () => {
           ok: true,
           json: async () => initialRows,
         };
+      }
+
+      if (url.pathname === "/proxy-pool" && method === "GET") {
+        return { ok: true, json: async () => [] };
       }
 
       throw new Error(`Unhandled request: ${method} ${url.pathname}`);

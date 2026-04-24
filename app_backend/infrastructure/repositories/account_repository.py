@@ -59,6 +59,8 @@ class SqliteAccountRepository:
                 balance_updated_at=account.balance_updated_at,
                 balance_refresh_after_at=account.balance_refresh_after_at,
                 balance_last_error=account.balance_last_error,
+                browser_proxy_id=account.browser_proxy_id,
+                api_proxy_id=account.api_proxy_id,
             )
             session.add(row)
             session.commit()
@@ -140,4 +142,6 @@ class SqliteAccountRepository:
             balance_updated_at=getattr(row, "balance_updated_at", None),
             balance_refresh_after_at=getattr(row, "balance_refresh_after_at", None),
             balance_last_error=getattr(row, "balance_last_error", None),
+            browser_proxy_id=getattr(row, "browser_proxy_id", None),
+            api_proxy_id=getattr(row, "api_proxy_id", None),
         )

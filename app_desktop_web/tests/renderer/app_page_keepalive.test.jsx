@@ -133,6 +133,10 @@ function createFetchHarness() {
       });
     }
 
+    if (url.pathname === "/proxy-pool" && method === "GET") {
+      return jsonResponse([]);
+    }
+
     throw new Error(`Unhandled request: ${method} ${url.pathname}${url.search}`);
   });
 

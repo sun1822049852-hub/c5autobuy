@@ -37,6 +37,8 @@ class Account:
     balance_updated_at: str | None = None
     balance_refresh_after_at: str | None = None
     balance_last_error: str | None = None
+    browser_proxy_id: str | None = None
+    api_proxy_id: str | None = None
 
     @property
     def display_name(self) -> str:

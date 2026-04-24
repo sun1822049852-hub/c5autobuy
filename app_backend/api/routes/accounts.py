@@ -59,7 +59,10 @@ async def create_account(
     payload: AccountCreateRequest,
     request: Request,
 ) -> AccountResponse:
-    use_case = CreateAccountUseCase(_repository(request))
+    use_case = CreateAccountUseCase(
+        _repository(request),
+        getattr(request.app.state, "proxy_pool_repository", None),
+    )
     account = use_case.execute(
         remark_name=payload.remark_name,
         browser_proxy_mode=payload.browser_proxy_mode,
@@ -67,6 +70,8 @@ async def create_account(
         api_proxy_mode=payload.api_proxy_mode,
         api_proxy_url=payload.api_proxy_url,
         api_key=payload.api_key,
+        browser_proxy_id=payload.browser_proxy_id,
+        api_proxy_id=payload.api_proxy_id,
     )
     return AccountResponse.model_validate(account)
 
@@ -86,7 +91,10 @@ async def update_account(
     payload: AccountUpdateRequest,
     request: Request,
 ) -> AccountResponse:
-    use_case = UpdateAccountUseCase(_repository(request))
+    use_case = UpdateAccountUseCase(
+        _repository(request),
+        getattr(request.app.state, "proxy_pool_repository", None),
+    )
     try:
         account = use_case.execute(
             account_id=account_id,
@@ -96,6 +104,8 @@ async def update_account(
             api_proxy_mode=payload.api_proxy_mode,
             api_proxy_url=payload.api_proxy_url,
             api_key=payload.api_key,
+            browser_proxy_id=payload.browser_proxy_id,
+            api_proxy_id=payload.api_proxy_id,
         )
     except KeyError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found") from exc

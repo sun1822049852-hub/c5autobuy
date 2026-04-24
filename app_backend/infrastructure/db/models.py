@@ -41,6 +41,22 @@ class AccountRecord(Base):
     balance_updated_at: Mapped[str | None] = mapped_column(Text, nullable=True)
     balance_refresh_after_at: Mapped[str | None] = mapped_column(Text, nullable=True)
     balance_last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    browser_proxy_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    api_proxy_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class ProxyPoolRecord(Base):
+    __tablename__ = "proxy_pool"
+
+    proxy_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    scheme: Mapped[str] = mapped_column(Text, nullable=False, default="http")
+    host: Mapped[str] = mapped_column(Text, nullable=False)
+    port: Mapped[str] = mapped_column(Text, nullable=False)
+    username: Mapped[str | None] = mapped_column(Text, nullable=True)
+    password: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False)
 
 
 class AccountSessionBundleRecord(Base):

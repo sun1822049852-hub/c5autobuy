@@ -1,11 +1,40 @@
 import { useEffect, useState } from "react";
 
 
+const CUSTOM_VALUE = "__custom__";
+
+
+function formatProxyLabel(proxy) {
+  const auth = proxy.username ? `${proxy.username}:***@` : "";
+  return `${proxy.name} — ${proxy.scheme}://${auth}${proxy.host}:${proxy.port}`;
+}
+
+
+function buildInitialSelect(account, proxies) {
+  if (!account) {
+    return "";
+  }
+  if (account.browser_proxy_mode === "pool" && account.browser_proxy_id) {
+    const found = proxies.find((p) => p.proxy_id === account.browser_proxy_id);
+    if (found) {
+      return account.browser_proxy_id;
+    }
+  }
+  if (account.browser_proxy_mode === "custom" && account.browser_proxy_url) {
+    return CUSTOM_VALUE;
+  }
+  return "";
+}
+
+
 function buildInitialInput(account) {
   if (!account) {
     return "";
   }
-  return account.browser_proxy_mode === "direct" ? "direct" : (account.browser_proxy_url ?? "");
+  if (account.browser_proxy_mode === "custom") {
+    return account.browser_proxy_url ?? "";
+  }
+  return "";
 }
 
 
@@ -14,17 +43,36 @@ export function AccountBrowserProxyDialog({
   open,
   onClose,
   onSubmit,
+  proxies = [],
 }) {
-  const [browserProxyInput, setBrowserProxyInput] = useState("");
+  const [selectValue, setSelectValue] = useState("");
+  const [inputValue, setInputValue] = useState("");
 
   useEffect(() => {
     if (open && account) {
-      setBrowserProxyInput(buildInitialInput(account));
+      setSelectValue(buildInitialSelect(account, proxies));
+      setInputValue(buildInitialInput(account));
     }
-  }, [account, open]);
+  }, [account, open, proxies]);
 
   if (!open || !account) {
     return null;
+  }
+
+  function buildPayload() {
+    if (!selectValue) {
+      return { browser_proxy_mode: "direct", browser_proxy_url: null, browser_proxy_id: null };
+    }
+    if (selectValue === CUSTOM_VALUE) {
+      const trimmed = inputValue.trim();
+      const isDirect = !trimmed || trimmed.toLowerCase() === "direct";
+      return {
+        browser_proxy_mode: isDirect ? "direct" : "custom",
+        browser_proxy_url: isDirect ? null : trimmed,
+        browser_proxy_id: null,
+      };
+    }
+    return { browser_proxy_mode: "pool", browser_proxy_url: null, browser_proxy_id: selectValue };
   }
 
   return (
@@ -43,34 +91,42 @@ export function AccountBrowserProxyDialog({
         role="dialog"
         onSubmit={async (event) => {
           event.preventDefault();
-          const normalizedInput = browserProxyInput.trim();
-          const isDirect = !normalizedInput || normalizedInput.toLowerCase() === "direct";
-          await onSubmit?.({
-            browser_proxy_mode: isDirect ? "direct" : "custom",
-            browser_proxy_url: isDirect ? null : normalizedInput,
-          });
+          await onSubmit?.(buildPayload());
         }}
       >
         <div className="surface-header">
           <div>
             <h2 className="surface-title" id="browser-proxy-dialog-title">浏览器代理设置</h2>
-            <p className="surface-subtitle">输入代理地址即可切换浏览器出口，输入 `direct` 或留空则回到直连。</p>
+            <p className="surface-subtitle">从代理池选择或自定义输入，选择「直连」则不使用代理。</p>
           </div>
           <button className="ghost-button" type="button" onClick={onClose}>取消</button>
         </div>
 
         <div className="form-grid">
           <div className="form-field">
-            <label className="form-label" htmlFor="account-browser-proxy-input">浏览器代理</label>
-            <input
-              aria-describedby="account-browser-proxy-hint"
+            <label className="form-label" htmlFor="account-browser-proxy-select">浏览器代理</label>
+            <select
               className="form-input"
-              id="account-browser-proxy-input"
-              placeholder="输入 direct 为直连，或输入 127.0.0.1:9000 / user:pass@127.0.0.1:9000 / socks5://..."
-              value={browserProxyInput}
-              onChange={(event) => setBrowserProxyInput(event.target.value)}
-            />
-            <span className="form-hint" id="account-browser-proxy-hint">
+              id="account-browser-proxy-select"
+              value={selectValue}
+              onChange={(e) => setSelectValue(e.target.value)}
+            >
+              <option value="">直连（不使用代理）</option>
+              {proxies.map((p) => (
+                <option key={p.proxy_id} value={p.proxy_id}>{formatProxyLabel(p)}</option>
+              ))}
+              <option value={CUSTOM_VALUE}>── 自定义输入 ──</option>
+            </select>
+            {selectValue === CUSTOM_VALUE && (
+              <input
+                className="form-input"
+                placeholder="输入 127.0.0.1:9000 / user:pass@127.0.0.1:9000 / socks5://..."
+                style={{ marginTop: 6 }}
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+              />
+            )}
+            <span className="form-hint">
               这里只影响浏览器登录与浏览器查询的代理出口，不会同步改动 API 代理。
             </span>
           </div>

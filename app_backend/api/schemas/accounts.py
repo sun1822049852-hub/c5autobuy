@@ -10,6 +10,8 @@ class AccountCreateRequest(BaseModel):
     api_proxy_mode: str
     api_proxy_url: str | None = None
     api_key: str | None = None
+    browser_proxy_id: str | None = None
+    api_proxy_id: str | None = None
 
 
 class AccountUpdateRequest(BaseModel):
@@ -19,6 +21,8 @@ class AccountUpdateRequest(BaseModel):
     api_proxy_mode: str
     api_proxy_url: str | None = None
     api_key: str | None = None
+    browser_proxy_id: str | None = None
+    api_proxy_id: str | None = None
 
 
 class AccountResponse(BaseModel):
@@ -57,6 +61,8 @@ class AccountResponse(BaseModel):
     balance_updated_at: str | None = None
     balance_refresh_after_at: str | None = None
     balance_last_error: str | None = None
+    browser_proxy_id: str | None = None
+    api_proxy_id: str | None = None
 
 
 class AccountQueryModeUpdateRequest(BaseModel):
