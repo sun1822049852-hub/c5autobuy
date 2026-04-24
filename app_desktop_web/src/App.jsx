@@ -53,6 +53,28 @@ const EMPTY_NAV_PROMPT = {
   nextItem: null,
 };
 
+const KEEPALIVE_PAGE_IDS = [
+  "account-center",
+  "query-system",
+  "purchase-system",
+  "query-stats",
+  "account-capability-stats",
+  "diagnostics",
+];
+
+
+function resolveKnownActiveItem(activeItem) {
+  return KEEPALIVE_PAGE_IDS.includes(activeItem) ? activeItem : "account-center";
+}
+
+
+function createInitialMountedKeepAliveItems(activeItem) {
+  const resolvedActiveItem = resolveKnownActiveItem(activeItem);
+  return Object.fromEntries(
+    KEEPALIVE_PAGE_IDS.map((itemId) => [itemId, itemId === resolvedActiveItem]),
+  );
+}
+
 
 function ProgramAccessShellBanner() {
   const programAccess = useProgramAccess();
@@ -91,15 +113,15 @@ function ProgramAccessShellBanner() {
 
 export function App({ runtimeStore }) {
   const [initialAppShellState] = useState(() => readAppShellState());
+  const initialActiveItem = resolveKnownActiveItem(initialAppShellState.activeItem);
   const [bootstrapConfig] = useState(() => getDesktopBootstrapConfig());
   const [fallbackRuntimeStore] = useState(() => createAppRuntimeStore());
-  const [activeItem, setActiveItem] = useState(initialAppShellState.activeItem);
-  const [mountedKeepAliveItems, setMountedKeepAliveItems] = useState(() => ({
-    "query-system": initialAppShellState.activeItem === "query-system",
-    "purchase-system": initialAppShellState.activeItem === "purchase-system",
-  }));
+  const [activeItem, setActiveItem] = useState(initialActiveItem);
+  const [mountedKeepAliveItems, setMountedKeepAliveItems] = useState(() => (
+    createInitialMountedKeepAliveItems(initialAppShellState.activeItem)
+  ));
   const [reloadNotice] = useState(() => initializeRendererReloadNotice({
-    activeItem: initialAppShellState.activeItem,
+    activeItem: initialActiveItem,
   }));
   const [navPrompt, setNavPrompt] = useState(EMPTY_NAV_PROMPT);
   const [querySystemLeaveState, setQuerySystemLeaveState] = useState(EMPTY_QUERY_SYSTEM_LEAVE_STATE);
@@ -220,7 +242,7 @@ export function App({ runtimeStore }) {
       : EMPTY_QUERY_SYSTEM_LEAVE_STATE;
 
   const activateItem = useCallback((nextItem) => {
-    if (nextItem === "query-system" || nextItem === "purchase-system") {
+    if (KEEPALIVE_PAGE_IDS.includes(nextItem)) {
       setMountedKeepAliveItems((current) => (
         current[nextItem]
           ? current
@@ -230,7 +252,7 @@ export function App({ runtimeStore }) {
           }
       ));
     }
-    setActiveItem(nextItem);
+    setActiveItem(resolveKnownActiveItem(nextItem));
   }, []);
 
   const handleSelectItem = useCallback((nextItem) => {
@@ -301,6 +323,14 @@ export function App({ runtimeStore }) {
             reloadNotice={reloadNotice}
             sidebarTopContent={<ProgramAccessShellBanner />}
           >
+            {mountedKeepAliveItems["account-center"] ? (
+              <div hidden={activeItem !== "account-center"}>
+                <AccountCenterPage
+                  bootstrapConfig={bootstrapConfig}
+                  client={client}
+                />
+              </div>
+            ) : null}
             {mountedKeepAliveItems["query-system"] ? (
               <div hidden={activeItem !== "query-system"}>
                 <QuerySystemPage
@@ -311,16 +341,21 @@ export function App({ runtimeStore }) {
                 />
               </div>
             ) : null}
-            {activeItem === "query-stats" ? (
-              <QueryStatsPage
-                bootstrapConfig={bootstrapConfig}
-                client={client}
-              />
-            ) : activeItem === "account-capability-stats" ? (
-              <AccountCapabilityStatsPage
-                bootstrapConfig={bootstrapConfig}
-                client={client}
-              />
+            {mountedKeepAliveItems["query-stats"] ? (
+              <div hidden={activeItem !== "query-stats"}>
+                <QueryStatsPage
+                  bootstrapConfig={bootstrapConfig}
+                  client={client}
+                />
+              </div>
+            ) : null}
+            {mountedKeepAliveItems["account-capability-stats"] ? (
+              <div hidden={activeItem !== "account-capability-stats"}>
+                <AccountCapabilityStatsPage
+                  bootstrapConfig={bootstrapConfig}
+                  client={client}
+                />
+              </div>
             ) : null}
             {mountedKeepAliveItems["purchase-system"] ? (
               <div hidden={activeItem !== "purchase-system"}>
@@ -332,30 +367,15 @@ export function App({ runtimeStore }) {
                 />
               </div>
             ) : null}
-            {activeItem === "diagnostics" ? (
-              <DiagnosticsPanel
-                error={diagnostics.error}
-                isLoading={diagnostics.isLoading}
-                isRefreshing={diagnostics.isRefreshing}
-                snapshot={diagnostics.snapshot}
-              />
-            ) : null}
-            {activeItem === "account-center" ? (
-              <AccountCenterPage
-                bootstrapConfig={bootstrapConfig}
-                client={client}
-              />
-            ) : null}
-            {activeItem !== "query-system"
-            && activeItem !== "query-stats"
-            && activeItem !== "account-capability-stats"
-            && activeItem !== "purchase-system"
-            && activeItem !== "diagnostics"
-            && activeItem !== "account-center" ? (
-              <AccountCenterPage
-                bootstrapConfig={bootstrapConfig}
-                client={client}
-              />
+            {mountedKeepAliveItems["diagnostics"] ? (
+              <div hidden={activeItem !== "diagnostics"}>
+                <DiagnosticsPanel
+                  error={diagnostics.error}
+                  isLoading={diagnostics.isLoading}
+                  isRefreshing={diagnostics.isRefreshing}
+                  snapshot={diagnostics.snapshot}
+                />
+              </div>
             ) : null}
           </AppShell>
 

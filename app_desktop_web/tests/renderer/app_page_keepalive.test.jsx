@@ -1,0 +1,208 @@
+// @vitest-environment jsdom
+
+import "@testing-library/jest-dom/vitest";
+
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { App } from "../../src/App.jsx";
+
+
+function jsonResponse(payload, status = 200) {
+  return Promise.resolve({
+    ok: status >= 200 && status < 300,
+    status,
+    json: async () => payload,
+    text: async () => JSON.stringify(payload),
+  });
+}
+
+
+function installDesktopApp(fetchImpl) {
+  window.fetch = fetchImpl;
+  window.desktopApp = {
+    getBootstrapConfig() {
+      return {
+        apiBaseUrl: "http://127.0.0.1:8123",
+        backendStatus: "ready",
+      };
+    },
+  };
+}
+
+
+function createFetchHarness() {
+  const calls = [];
+  const fetchImpl = vi.fn(async (input, options = {}) => {
+    const url = new URL(input);
+    const method = String(options.method ?? "GET").toUpperCase();
+    calls.push({
+      method,
+      pathname: url.pathname,
+      search: url.search,
+    });
+
+    if (url.pathname === "/app/bootstrap" && method === "GET") {
+      return jsonResponse({
+        version: 1,
+        generated_at: "2026-04-24T08:00:00.000Z",
+        program_access: {
+          mode: "local_pass_through",
+          stage: "prepackaging",
+          guard_enabled: false,
+          message: "local",
+          username: null,
+          auth_state: null,
+          runtime_state: null,
+          grace_expires_at: null,
+          last_error_code: null,
+          registration_flow_version: 2,
+        },
+        query_system: {
+          configs: [],
+          capacitySummary: { modes: {} },
+          runtimeStatus: { running: false, item_rows: [] },
+        },
+        purchase_system: {
+          runtimeStatus: { running: false, accounts: [], item_rows: [] },
+          uiPreferences: { selected_config_id: null, updated_at: null },
+          runtimeSettings: { per_batch_ip_fanout_limit: 1, max_inflight_per_account: 3 },
+        },
+      });
+    }
+
+    if (url.pathname === "/account-center/accounts" && method === "GET") {
+      return jsonResponse([]);
+    }
+
+    if (url.pathname === "/stats/query-items" && method === "GET") {
+      return jsonResponse({
+        items: [
+          {
+            external_item_id: "query-item-1",
+            item_name: "AK-47 | Redline",
+            query_execution_count: 4,
+            matched_product_count: 2,
+            purchase_success_count: 1,
+            purchase_failed_count: 1,
+            source_mode_stats: [],
+          },
+        ],
+      });
+    }
+
+    if (url.pathname === "/stats/account-capability" && method === "GET") {
+      return jsonResponse({
+        items: [
+          {
+            account_id: "account-1",
+            account_display_name: "购买账号-A",
+            new_api: { display_text: "182ms · 12次" },
+            fast_api: { display_text: "--" },
+            browser: { display_text: "340ms · 4次" },
+            create_order: { display_text: "520ms · 3次" },
+            submit_order: { display_text: "810ms · 3次" },
+          },
+        ],
+      });
+    }
+
+    if (url.pathname === "/diagnostics/sidebar" && method === "GET") {
+      return jsonResponse({
+        summary: {
+          query_running: false,
+          purchase_running: false,
+          active_query_config_name: "",
+          last_error: "",
+        },
+        query: {
+          last_error: "",
+          account_rows: [],
+          recent_events: [],
+        },
+        purchase: {
+          last_error: "",
+          account_rows: [],
+          recent_events: [],
+        },
+        login_tasks: {
+          recent_tasks: [],
+        },
+        updated_at: "2026-04-24T08:00:00.000Z",
+      });
+    }
+
+    throw new Error(`Unhandled request: ${method} ${url.pathname}${url.search}`);
+  });
+
+  return { calls, fetchImpl };
+}
+
+
+function countCalls(calls, pathname) {
+  return calls.filter((call) => call.method === "GET" && call.pathname === pathname).length;
+}
+
+
+describe("app page keepalive", () => {
+  afterEach(() => {
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    delete window.desktopApp;
+  });
+
+  it("does not refetch account center and stats pages when revisiting from the sidebar", async () => {
+    const harness = createFetchHarness();
+    const user = userEvent.setup();
+    installDesktopApp(harness.fetchImpl);
+
+    render(<App />);
+
+    await screen.findByRole("searchbox", { name: "搜索账号" });
+    await waitFor(() => {
+      expect(countCalls(harness.calls, "/account-center/accounts")).toBe(1);
+    });
+
+    await user.click(screen.getByRole("button", { name: "查询统计" }));
+    await screen.findByRole("table", { name: "查询统计表" });
+    expect(countCalls(harness.calls, "/stats/query-items")).toBe(1);
+
+    await user.click(screen.getByRole("button", { name: "账号能力统计" }));
+    await screen.findByRole("table", { name: "账号能力统计表" });
+    expect(countCalls(harness.calls, "/stats/account-capability")).toBe(1);
+
+    await user.click(screen.getByRole("button", { name: "账号中心" }));
+    await screen.findByRole("searchbox", { name: "搜索账号" });
+    expect(countCalls(harness.calls, "/account-center/accounts")).toBe(1);
+
+    await user.click(screen.getByRole("button", { name: "查询统计" }));
+    await screen.findByRole("table", { name: "查询统计表" });
+    expect(countCalls(harness.calls, "/stats/query-items")).toBe(1);
+
+    await user.click(screen.getByRole("button", { name: "账号能力统计" }));
+    await screen.findByRole("table", { name: "账号能力统计表" });
+    expect(countCalls(harness.calls, "/stats/account-capability")).toBe(1);
+  });
+
+  it("does not immediately refetch diagnostics when reopening the diagnostics page", async () => {
+    const harness = createFetchHarness();
+    const user = userEvent.setup();
+    installDesktopApp(harness.fetchImpl);
+
+    render(<App />);
+
+    await screen.findByRole("searchbox", { name: "搜索账号" });
+
+    await user.click(screen.getByRole("button", { name: "通用诊断" }));
+    await screen.findByRole("complementary", { name: "通用诊断面板" });
+    expect(countCalls(harness.calls, "/diagnostics/sidebar")).toBe(1);
+
+    await user.click(screen.getByRole("button", { name: "账号中心" }));
+    await screen.findByRole("searchbox", { name: "搜索账号" });
+
+    await user.click(screen.getByRole("button", { name: "通用诊断" }));
+    await screen.findByRole("complementary", { name: "通用诊断面板" });
+    expect(countCalls(harness.calls, "/diagnostics/sidebar")).toBe(1);
+  });
+});

@@ -285,6 +285,11 @@ export function useSidebarDiagnostics(client, { enabled = true } = {}) {
     snapshot: null,
   });
   const requestInFlightRef = useRef(false);
+  const snapshotRef = useRef(null);
+
+  useEffect(() => {
+    snapshotRef.current = state.snapshot;
+  }, [state.snapshot]);
 
   const loadSnapshot = useEffectEvent(async ({ background = false } = {}) => {
     if (!enabled || !client || requestInFlightRef.current) {
@@ -343,12 +348,9 @@ export function useSidebarDiagnostics(client, { enabled = true } = {}) {
       }, delayMs);
     };
 
-    void loadSnapshot({ background: false }).then(() => {
-      const nextDelay = document.visibilityState === "hidden"
-        ? BACKGROUND_POLL_MS
-        : FOREGROUND_POLL_MS;
-      scheduleNext(nextDelay);
-    });
+    const nextDelay = document.visibilityState === "hidden"
+      ? BACKGROUND_POLL_MS
+      : FOREGROUND_POLL_MS;
 
     const handleVisibilityChange = () => {
       if (timerId !== null) {
@@ -358,6 +360,25 @@ export function useSidebarDiagnostics(client, { enabled = true } = {}) {
     };
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    if (snapshotRef.current) {
+      scheduleNext(nextDelay);
+      return () => {
+        disposed = true;
+        if (timerId !== null) {
+          window.clearTimeout(timerId);
+        }
+        document.removeEventListener("visibilitychange", handleVisibilityChange);
+      };
+    }
+
+    void loadSnapshot({ background: false }).then(() => {
+      const nextDelay = document.visibilityState === "hidden"
+        ? BACKGROUND_POLL_MS
+        : FOREGROUND_POLL_MS;
+      scheduleNext(nextDelay);
+    });
+
     return () => {
       disposed = true;
       if (timerId !== null) {
