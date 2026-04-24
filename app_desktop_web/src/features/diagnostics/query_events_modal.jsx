@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 import { DiagnosticsEventList } from "./diagnostics_event_list.jsx";
 import { formatSourceModeLabel } from "../stats/stats_shared.js";
@@ -47,6 +47,13 @@ function RuntimeEventsModal({
   title,
 }) {
   const [activeTab, setActiveTab] = useState("all");
+  const bodyRef = useRef(null);
+  const handleTabSelect = useCallback((tabId) => {
+    if (bodyRef.current) {
+      bodyRef.current.scrollTop = 0;
+    }
+    setActiveTab(tabId);
+  }, []);
   const filterTabs = buildFilterTabs(resolveMode);
   const currentTab = filterTabs.find((tab) => tab.id === activeTab) || filterTabs[0];
 
@@ -85,7 +92,7 @@ function RuntimeEventsModal({
                 role="tab"
                 aria-selected={tab.id === activeTab}
                 className={`query-events-modal__tab${tab.id === activeTab ? " is-active" : ""}`}
-                onClick={() => setActiveTab(tab.id)}
+                onClick={() => handleTabSelect(tab.id)}
               >
                 {tab.label}
                 <span className="query-events-modal__tab-count">{count}</span>
@@ -95,7 +102,7 @@ function RuntimeEventsModal({
         </div>
 
         {/* 事件列表（可滚动） */}
-        <div className="query-events-modal__body">
+        <div className="query-events-modal__body" ref={bodyRef}>
           <DiagnosticsEventList
             formatSourceLabel={formatSourceLabel}
             rows={filtered}

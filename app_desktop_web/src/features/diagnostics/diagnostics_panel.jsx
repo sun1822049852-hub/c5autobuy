@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 import { DiagnosticsSummary } from "./diagnostics_summary.jsx";
 import { DiagnosticsTabs } from "./diagnostics_tabs.jsx";
@@ -20,6 +20,13 @@ function renderTabBody(activeTab, snapshot) {
 
 export function DiagnosticsPanel({ error, isLoading, isRefreshing, snapshot }) {
   const [activeTab, setActiveTab] = useState("query");
+  const bodyRef = useRef(null);
+  const handleTabSelect = useCallback((tabId) => {
+    if (bodyRef.current) {
+      bodyRef.current.scrollTop = 0;
+    }
+    setActiveTab(tabId);
+  }, []);
 
   return (
     <aside className="diagnostics-panel" aria-label="通用诊断面板">
@@ -47,8 +54,8 @@ export function DiagnosticsPanel({ error, isLoading, isRefreshing, snapshot }) {
               },
             ]}
           />
-          <DiagnosticsTabs activeTab={activeTab} onSelect={setActiveTab} />
-          <div className="diagnostics-panel__body">{renderTabBody(activeTab, snapshot)}</div>
+          <DiagnosticsTabs activeTab={activeTab} onSelect={handleTabSelect} />
+          <div className="diagnostics-panel__body" ref={bodyRef}>{renderTabBody(activeTab, snapshot)}</div>
         </>
       ) : (
         <div className="diagnostics-panel__empty">
