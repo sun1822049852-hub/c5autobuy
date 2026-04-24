@@ -15,6 +15,7 @@ function buildLocalDebugLaunchEnv(env = process.env) {
   return {
     ...env,
     CLIENT_CONFIG_FILE: LOCAL_DEBUG_CONFIG_PATH,
+    C5_LOCAL_DEBUG_REUSE_RENDERER_DIST: "1",
     C5_PROGRAM_ACCESS_STAGE: "prepackaging",
   };
 }

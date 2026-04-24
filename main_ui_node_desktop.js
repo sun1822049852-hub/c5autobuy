@@ -243,6 +243,7 @@ function getLatestModifiedTimeMs(
 function ensureRendererBuild(
   appDirectory,
   {
+    env = process.env,
     existsSync = fs.existsSync,
     readdirSync = fs.readdirSync,
     resolveNpmCliScript: resolveNpmCliScriptImpl = resolveNpmCliScript,
@@ -258,8 +259,13 @@ function ensureRendererBuild(
     path.join(appDirectory, "index.html"),
     path.join(appDirectory, "vite.config.js"),
   ];
+  const reuseExistingDist = String(env.C5_LOCAL_DEBUG_REUSE_RENDERER_DIST || "").trim() === "1";
+  const hasBuiltDist = existsSync(distEntryPath);
+  if (reuseExistingDist && hasBuiltDist) {
+    return;
+  }
 
-  const shouldBuild = !existsSync(distEntryPath) || sourcePaths.some((sourcePath) => (
+  const shouldBuild = !hasBuiltDist || sourcePaths.some((sourcePath) => (
     getLatestModifiedTimeMs(sourcePath, {
       existsSync,
       readdirSync,

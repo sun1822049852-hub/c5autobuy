@@ -218,6 +218,76 @@ describe("desktop launcher", () => {
       PATH: "C:/Windows/System32",
       C5_PROGRAM_ACCESS_STAGE: "prepackaging",
       CLIENT_CONFIG_FILE: expect.stringMatching(/client_config\.local_debug\.json$/),
+      C5_LOCAL_DEBUG_REUSE_RENDERER_DIST: "1",
     }));
+  });
+
+  it("reuses the existing renderer dist for local debug even when source files are newer", () => {
+    const appDirectory = "C:/demo/project/app_desktop_web";
+    const distEntryPath = path.join(appDirectory, "dist", "index.html");
+    const srcDirectory = path.join(appDirectory, "src");
+    const featuresDirectory = path.join(srcDirectory, "features");
+    const querySystemDirectory = path.join(featuresDirectory, "query-system");
+    const queryPagePath = path.join(srcDirectory, "features", "query-system", "query_system_page.jsx");
+    const rootIndexPath = path.join(appDirectory, "index.html");
+    const viteConfigPath = path.join(appDirectory, "vite.config.js");
+    const npmCliPath = "C:/Program Files/nodejs/node_modules/npm/bin/npm-cli.js";
+
+    const existingPaths = new Set([
+      distEntryPath,
+      srcDirectory,
+      featuresDirectory,
+      querySystemDirectory,
+      queryPagePath,
+      rootIndexPath,
+      viteConfigPath,
+    ]);
+
+    const existsSync = vi.fn((targetPath) => existingPaths.has(targetPath));
+    const statSync = vi.fn((targetPath) => {
+      if (targetPath === distEntryPath) {
+        return { isDirectory: () => false, mtimeMs: 100 };
+      }
+      if (targetPath === srcDirectory) {
+        return { isDirectory: () => true, mtimeMs: 0 };
+      }
+      if (targetPath === featuresDirectory || targetPath === querySystemDirectory) {
+        return { isDirectory: () => true, mtimeMs: 0 };
+      }
+      if (targetPath === queryPagePath) {
+        return { isDirectory: () => false, mtimeMs: 200 };
+      }
+      if (targetPath === rootIndexPath || targetPath === viteConfigPath) {
+        return { isDirectory: () => false, mtimeMs: 90 };
+      }
+      throw new Error(`unexpected path: ${targetPath}`);
+    });
+    const readdirSync = vi.fn((targetPath) => {
+      if (targetPath === srcDirectory) {
+        return ["features"];
+      }
+      if (targetPath === path.join(srcDirectory, "features")) {
+        return ["query-system"];
+      }
+      if (targetPath === path.join(srcDirectory, "features", "query-system")) {
+        return ["query_system_page.jsx"];
+      }
+      return [];
+    });
+    const spawnSync = vi.fn(() => ({ status: 0 }));
+
+    launcher.ensureRendererBuild(appDirectory, {
+      env: {
+        C5_LOCAL_DEBUG_REUSE_RENDERER_DIST: "1",
+      },
+      existsSync,
+      readdirSync,
+      resolveNpmCliScript: () => npmCliPath,
+      spawnSync,
+      statSync,
+      platform: "win32",
+    });
+
+    expect(spawnSync).not.toHaveBeenCalled();
   });
 });
