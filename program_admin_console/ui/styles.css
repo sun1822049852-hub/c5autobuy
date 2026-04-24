@@ -50,7 +50,7 @@ button:hover {
   background: var(--accent-strong);
 }
 
-button[hidden] {
+[hidden] {
   display: none !important;
 }
 
