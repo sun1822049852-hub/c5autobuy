@@ -188,6 +188,16 @@ class QueryRuntimeService:
                 return self._build_idle_snapshot()
             return self._normalize_snapshot(self._runtime.snapshot(), getattr(self._runtime, "config", None))
 
+    def get_last_known_config_id(self) -> str | None:
+        with self._state_lock:
+            active_config_id = self._get_active_config_id_locked()
+            if active_config_id:
+                return active_config_id
+            runtime = self._retained_runtime
+            if runtime is None:
+                return None
+            return self._extract_runtime_config_id(runtime)
+
     def apply_query_item_runtime(self, *, config_id: str, query_item_id: str) -> dict[str, str]:
         config = self._query_config_repository.get_config(config_id)
         if config is None:

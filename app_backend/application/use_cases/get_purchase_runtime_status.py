@@ -12,6 +12,7 @@ class GetPurchaseRuntimeStatusUseCase:
         query_config_repository=None,
         purchase_ui_preferences_repository=None,
         stats_repository=None,
+        stats_flush_callback=None,
         now_provider=None,
         include_recent_events: bool = True,
     ) -> None:
@@ -20,6 +21,7 @@ class GetPurchaseRuntimeStatusUseCase:
         self._query_config_repository = query_config_repository
         self._purchase_ui_preferences_repository = purchase_ui_preferences_repository
         self._stats_repository = stats_repository
+        self._stats_flush_callback = stats_flush_callback if callable(stats_flush_callback) else None
         self._now_provider = now_provider or datetime.now
         self._include_recent_events = bool(include_recent_events)
 
@@ -42,7 +44,11 @@ class GetPurchaseRuntimeStatusUseCase:
             purchase_snapshot["item_rows"] = self._build_inactive_item_rows() or []
             return purchase_snapshot
 
-        purchase_snapshot["item_rows"] = self._build_item_rows(
+        purchase_snapshot["item_rows"] = self._build_active_item_rows(
+            active_query_config=active_query_config,
+            raw_purchase_item_rows=purchase_snapshot.get("item_rows"),
+            raw_query_item_rows=query_snapshot.get("item_rows"),
+        ) or self._build_item_rows(
             purchase_snapshot.get("item_rows"),
             query_snapshot.get("item_rows"),
         )
@@ -111,18 +117,124 @@ class GetPurchaseRuntimeStatusUseCase:
             )
         return rows
 
+    def _build_active_item_rows(
+        self,
+        *,
+        active_query_config: dict[str, object],
+        raw_purchase_item_rows: object,
+        raw_query_item_rows: object,
+    ) -> list[dict[str, object]]:
+        config = self._resolve_config_by_id(active_query_config.get("config_id"))
+        if config is None:
+            return []
+
+        daily_stats = self._load_daily_stats_by_external_item_id()
+        query_rows_by_id: dict[str, dict[str, object]] = {}
+        if isinstance(raw_query_item_rows, list):
+            for row in raw_query_item_rows:
+                if not isinstance(row, dict):
+                    continue
+                query_item_id = str(row.get("query_item_id") or "").strip()
+                if not query_item_id:
+                    continue
+                query_rows_by_id[query_item_id] = dict(row)
+
+        purchase_rows_by_id: dict[str, dict[str, object]] = {}
+        if isinstance(raw_purchase_item_rows, list):
+            for row in raw_purchase_item_rows:
+                if not isinstance(row, dict):
+                    continue
+                query_item_id = str(row.get("query_item_id") or "").strip()
+                if not query_item_id:
+                    continue
+                purchase_rows_by_id[query_item_id] = dict(row)
+
+        rows: list[dict[str, object]] = []
+        for item in getattr(config, "items", []) or []:
+            query_item_id = str(getattr(item, "query_item_id", "") or "")
+            query_row = query_rows_by_id.get(query_item_id, {})
+            purchase_row = purchase_rows_by_id.get(query_item_id, {})
+            stats_row = daily_stats.get(str(getattr(item, "external_item_id", "") or ""), {})
+            source_mode_stats = self._normalize_hit_sources(
+                purchase_row.get("source_mode_stats")
+                if purchase_row.get("source_mode_stats")
+                else stats_row.get("source_mode_stats")
+            )
+            recent_hit_sources = self._normalize_hit_sources(
+                purchase_row.get("recent_hit_sources")
+                if purchase_row.get("recent_hit_sources")
+                else source_mode_stats
+            )
+            rows.append(
+                {
+                    "query_item_id": query_item_id,
+                    "item_name": (
+                        query_row.get("item_name")
+                        or getattr(item, "item_name", None)
+                        or getattr(item, "market_hash_name", None)
+                        or query_item_id
+                    ),
+                    "max_price": query_row.get("max_price", getattr(item, "max_price", None)),
+                    "min_wear": query_row.get("min_wear", getattr(item, "min_wear", None)),
+                    "max_wear": query_row.get("max_wear", getattr(item, "max_wear", None)),
+                    "detail_min_wear": query_row.get("detail_min_wear", getattr(item, "detail_min_wear", None)),
+                    "detail_max_wear": query_row.get("detail_max_wear", getattr(item, "detail_max_wear", None)),
+                    "manual_paused": bool(query_row.get("manual_paused", getattr(item, "manual_paused", False))),
+                    "query_execution_count": int(stats_row.get("query_execution_count", query_row.get("query_count", 0))),
+                    "matched_product_count": int(
+                        stats_row.get("matched_product_count", purchase_row.get("matched_product_count", 0))
+                    ),
+                    "purchase_success_count": int(
+                        stats_row.get("purchase_success_count", purchase_row.get("purchase_success_count", 0))
+                    ),
+                    "purchase_failed_count": int(
+                        stats_row.get("purchase_failed_count", purchase_row.get("purchase_failed_count", 0))
+                    ),
+                    "modes": self._normalize_modes(query_row.get("modes")),
+                    "source_mode_stats": source_mode_stats,
+                    "recent_hit_sources": recent_hit_sources,
+                }
+            )
+        return rows
+
     def _resolve_selected_config(self):
         if self._query_config_repository is None or self._purchase_ui_preferences_repository is None:
-            return None
+            return self._resolve_last_runtime_config()
         get_preferences = getattr(self._purchase_ui_preferences_repository, "get", None)
         get_config = getattr(self._query_config_repository, "get_config", None)
         if not callable(get_preferences) or not callable(get_config):
-            return None
+            return self._resolve_last_runtime_config()
         preferences = get_preferences()
         config_id = str(getattr(preferences, "selected_config_id", "") or "").strip()
         if not config_id:
+            return self._resolve_last_runtime_config()
+        config = get_config(config_id)
+        if config is not None:
+            return config
+        return self._resolve_last_runtime_config()
+
+    def _resolve_last_runtime_config(self):
+        if self._query_config_repository is None or self._query_runtime_service is None:
+            return None
+        get_config = getattr(self._query_config_repository, "get_config", None)
+        last_config_id_getter = getattr(self._query_runtime_service, "get_last_known_config_id", None)
+        if not callable(get_config) or not callable(last_config_id_getter):
+            return None
+        config_id = str(last_config_id_getter() or "").strip()
+        if not config_id:
             return None
         return get_config(config_id)
+
+    def _resolve_config_by_id(self, config_id: object):
+        if self._query_config_repository is None:
+            return None
+        get_config = getattr(self._query_config_repository, "get_config", None)
+        if not callable(get_config):
+            return None
+        normalized_config_id = str(config_id or "").strip()
+        if not normalized_config_id:
+            return None
+        return get_config(normalized_config_id)
 
     def _load_daily_stats_by_external_item_id(self) -> dict[str, dict[str, object]]:
         if self._stats_repository is None:
@@ -130,6 +242,7 @@ class GetPurchaseRuntimeStatusUseCase:
         list_query_item_stats = getattr(self._stats_repository, "list_query_item_stats", None)
         if not callable(list_query_item_stats):
             return {}
+        self._flush_pending_stats()
         stat_date = self._current_stat_date()
         rows = list_query_item_stats(range_mode="day", date=stat_date)
         if not isinstance(rows, list):
@@ -143,6 +256,19 @@ class GetPurchaseRuntimeStatusUseCase:
                 continue
             stats_by_external_item_id[external_item_id] = dict(row)
         return stats_by_external_item_id
+
+    def _flush_pending_stats(self) -> None:
+        flush_pending = self._stats_flush_callback
+        if not callable(flush_pending):
+            return
+
+        for _ in range(1000):
+            try:
+                drained = int(flush_pending() or 0)
+            except Exception:
+                return
+            if drained <= 0:
+                return
 
     def _current_stat_date(self) -> str:
         now_value = self._now_provider()

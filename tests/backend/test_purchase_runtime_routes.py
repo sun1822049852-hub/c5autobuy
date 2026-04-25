@@ -4,6 +4,12 @@ import asyncio
 from types import SimpleNamespace
 from app_backend.domain.models.account import Account
 from app_backend.infrastructure.purchase.runtime.runtime_events import PurchaseExecutionResult
+from app_backend.infrastructure.stats.runtime.stats_pipeline import StatsPipeline
+from app_backend.infrastructure.stats.runtime.stats_events import (
+    PurchaseSubmitOrderStatsEvent,
+    QueryExecutionStatsEvent,
+    QueryHitStatsEvent,
+)
 
 
 def _build_account(account_id: str) -> Account:
@@ -219,6 +225,449 @@ async def test_purchase_runtime_status_keeps_selected_config_daily_item_stats_wh
     assert response.status_code == 200
     assert response.json()["running"] is False
     assert response.json()["active_query_config"] is None
+    assert response.json()["item_rows"] == [
+        {
+            "query_item_id": query_item.query_item_id,
+            "item_name": "AK-47 | Redline",
+            "max_price": 123.45,
+            "min_wear": 0.1,
+            "max_wear": 0.7,
+            "detail_min_wear": 0.12,
+            "detail_max_wear": 0.3,
+            "manual_paused": False,
+            "query_execution_count": 1,
+            "matched_product_count": 2,
+            "purchase_success_count": 1,
+            "purchase_failed_count": 1,
+            "modes": {},
+            "source_mode_stats": [
+                {
+                    "mode_type": "new_api",
+                    "hit_count": 2,
+                    "last_hit_at": None,
+                    "account_id": None,
+                    "account_display_name": None,
+                }
+            ],
+            "recent_hit_sources": [
+                {
+                    "mode_type": "new_api",
+                    "hit_count": 2,
+                    "last_hit_at": None,
+                    "account_id": None,
+                    "account_display_name": None,
+                }
+            ],
+        }
+    ]
+
+
+async def test_stop_purchase_runtime_keeps_daily_item_stats_without_pre_saved_ui_preferences(client, app):
+    today = datetime.now().date().isoformat()
+    config_id = await _create_query_config(client)
+    query_item = app.state.query_config_repository.add_item(
+        config_id=config_id,
+        product_url="https://www.c5game.com/csgo/730/asset/1380979899390261111",
+        external_item_id="1380979899390261111",
+        item_name="AK-47 | Redline",
+        market_hash_name="AK-47 | Redline (Field-Tested)",
+        min_wear=0.1,
+        max_wear=0.7,
+        detail_min_wear=0.12,
+        detail_max_wear=0.3,
+        max_price=123.45,
+        last_market_price=118.88,
+        last_detail_sync_at=f"{today}T10:00:00",
+    )
+    app.state.account_repository.create_account(_build_account("a1"))
+    app.state.purchase_runtime_service._inventory_refresh_gateway_factory = None
+    app.state.purchase_runtime_service._inventory_snapshot_repository.save(
+        account_id="a1",
+        selected_steam_id="steam-1",
+        inventories=[{"steamId": "steam-1", "inventory_num": 910, "inventory_max": 1000}],
+        refreshed_at=f"{today}T10:00:00",
+        last_error=None,
+    )
+    start_response = await client.post("/purchase-runtime/start", json={"config_id": config_id})
+    assert start_response.status_code == 200
+
+    app.state.stats_repository.apply_query_execution_event(
+        SimpleNamespace(
+            timestamp=f"{today}T10:00:00",
+            query_item_id=query_item.query_item_id,
+            external_item_id=query_item.external_item_id,
+            item_name=query_item.item_name,
+            product_url=query_item.product_url,
+            rule_fingerprint="rule-1",
+            detail_min_wear=query_item.detail_min_wear,
+            detail_max_wear=query_item.detail_max_wear,
+            max_price=query_item.max_price,
+            mode_type="new_api",
+            account_id="query-a",
+            account_display_name="查询账号A",
+            latency_ms=120.0,
+            success=True,
+            error=None,
+        )
+    )
+    app.state.stats_repository.apply_query_hit_event(
+        SimpleNamespace(
+            timestamp=f"{today}T10:00:01",
+            runtime_session_id="run-day-1",
+            query_config_id=config_id,
+            query_item_id=query_item.query_item_id,
+            external_item_id=query_item.external_item_id,
+            item_name=query_item.item_name,
+            product_url=query_item.product_url,
+            rule_fingerprint="rule-1",
+            detail_min_wear=query_item.detail_min_wear,
+            detail_max_wear=query_item.detail_max_wear,
+            max_price=query_item.max_price,
+            mode_type="new_api",
+            account_id="query-a",
+            account_display_name="查询账号A",
+            matched_count=2,
+            product_ids=["p-1", "p-2"],
+        )
+    )
+    app.state.stats_repository.apply_purchase_submit_order_event(
+        SimpleNamespace(
+            timestamp=f"{today}T10:00:02",
+            runtime_session_id="run-day-1",
+            query_config_id=config_id,
+            query_item_id=query_item.query_item_id,
+            external_item_id=query_item.external_item_id,
+            item_name=query_item.item_name,
+            product_url=query_item.product_url,
+            rule_fingerprint="rule-1",
+            detail_min_wear=query_item.detail_min_wear,
+            detail_max_wear=query_item.detail_max_wear,
+            max_price=query_item.max_price,
+            account_id="purchase-a",
+            account_display_name="购买账号A",
+            submit_order_latency_ms=450.0,
+            submitted_count=2,
+            success_count=1,
+            failed_count=1,
+            status="success",
+            error=None,
+        )
+    )
+
+    stop_response = await client.post("/purchase-runtime/stop")
+
+    assert stop_response.status_code == 200
+    assert stop_response.json()["item_rows"] == [
+        {
+            "query_item_id": query_item.query_item_id,
+            "item_name": "AK-47 | Redline",
+            "max_price": 123.45,
+            "min_wear": 0.1,
+            "max_wear": 0.7,
+            "detail_min_wear": 0.12,
+            "detail_max_wear": 0.3,
+            "manual_paused": False,
+            "query_execution_count": 1,
+            "matched_product_count": 2,
+            "purchase_success_count": 1,
+            "purchase_failed_count": 1,
+            "modes": {},
+            "source_mode_stats": [
+                {
+                    "mode_type": "new_api",
+                    "hit_count": 2,
+                    "last_hit_at": None,
+                    "account_id": None,
+                    "account_display_name": None,
+                }
+            ],
+            "recent_hit_sources": [
+                {
+                    "mode_type": "new_api",
+                    "hit_count": 2,
+                    "last_hit_at": None,
+                    "account_id": None,
+                    "account_display_name": None,
+                }
+            ],
+        }
+    ]
+
+
+async def test_purchase_runtime_status_keeps_daily_item_stats_while_running(client, app):
+    today = datetime.now().date().isoformat()
+    config_id = await _create_query_config(client)
+    query_item = app.state.query_config_repository.add_item(
+        config_id=config_id,
+        product_url="https://www.c5game.com/csgo/730/asset/1380979899390261111",
+        external_item_id="1380979899390261111",
+        item_name="AK-47 | Redline",
+        market_hash_name="AK-47 | Redline (Field-Tested)",
+        min_wear=0.1,
+        max_wear=0.7,
+        detail_min_wear=0.12,
+        detail_max_wear=0.3,
+        max_price=123.45,
+        last_market_price=118.88,
+        last_detail_sync_at=f"{today}T10:00:00",
+    )
+    for _ in range(3):
+        app.state.stats_repository.apply_query_execution_event(
+            SimpleNamespace(
+                timestamp=f"{today}T09:59:00",
+                query_item_id=query_item.query_item_id,
+                external_item_id=query_item.external_item_id,
+                item_name=query_item.item_name,
+                product_url=query_item.product_url,
+                rule_fingerprint="rule-1",
+                detail_min_wear=query_item.detail_min_wear,
+                detail_max_wear=query_item.detail_max_wear,
+                max_price=query_item.max_price,
+                mode_type="new_api",
+                account_id="query-history",
+                account_display_name="历史查询账号",
+                latency_ms=90.0,
+                success=True,
+                error=None,
+            )
+        )
+    app.state.stats_repository.apply_query_hit_event(
+        SimpleNamespace(
+            timestamp=f"{today}T09:59:01",
+            runtime_session_id="history-run-1",
+            query_config_id=config_id,
+            query_item_id=query_item.query_item_id,
+            external_item_id=query_item.external_item_id,
+            item_name=query_item.item_name,
+            product_url=query_item.product_url,
+            rule_fingerprint="rule-1",
+            detail_min_wear=query_item.detail_min_wear,
+            detail_max_wear=query_item.detail_max_wear,
+            max_price=query_item.max_price,
+            mode_type="new_api",
+            account_id="query-history",
+            account_display_name="历史查询账号",
+            matched_count=2,
+            product_ids=["history-p-1", "history-p-2"],
+        )
+    )
+    app.state.stats_repository.apply_purchase_submit_order_event(
+        SimpleNamespace(
+            timestamp=f"{today}T09:59:02",
+            runtime_session_id="history-run-1",
+            query_config_id=config_id,
+            query_item_id=query_item.query_item_id,
+            external_item_id=query_item.external_item_id,
+            item_name=query_item.item_name,
+            product_url=query_item.product_url,
+            rule_fingerprint="rule-1",
+            detail_min_wear=query_item.detail_min_wear,
+            detail_max_wear=query_item.detail_max_wear,
+            max_price=query_item.max_price,
+            account_id="purchase-history",
+            account_display_name="历史购买账号",
+            submit_order_latency_ms=320.0,
+            submitted_count=2,
+            success_count=1,
+            failed_count=1,
+            status="success",
+            error=None,
+        )
+    )
+    app.state.account_repository.create_account(_build_account("a1"))
+    app.state.purchase_runtime_service._inventory_refresh_gateway_factory = None
+    app.state.purchase_runtime_service._inventory_snapshot_repository.save(
+        account_id="a1",
+        selected_steam_id="steam-1",
+        inventories=[{"steamId": "steam-1", "inventory_num": 910, "inventory_max": 1000}],
+        refreshed_at=f"{today}T10:00:00",
+        last_error=None,
+    )
+    start_response = await client.post("/purchase-runtime/start", json={"config_id": config_id})
+    assert start_response.status_code == 200
+    original_stats_pipeline = app.state.stats_pipeline
+    app.state.stats_pipeline.stop()
+    app.state.stats_pipeline = StatsPipeline(repository=app.state.stats_repository, flush_batch_size=1)
+    try:
+        app.state.stats_repository.apply_query_execution_event(
+            SimpleNamespace(
+                timestamp=f"{today}T10:00:00",
+                query_item_id=query_item.query_item_id,
+                external_item_id=query_item.external_item_id,
+                item_name=query_item.item_name,
+                product_url=query_item.product_url,
+                rule_fingerprint="rule-1",
+                detail_min_wear=query_item.detail_min_wear,
+                detail_max_wear=query_item.detail_max_wear,
+                max_price=query_item.max_price,
+                mode_type="new_api",
+                account_id="query-a",
+                account_display_name="查询账号A",
+                latency_ms=120.0,
+                success=True,
+                error=None,
+            )
+        )
+        app.state.stats_repository.apply_query_hit_event(
+            SimpleNamespace(
+                timestamp=f"{today}T10:00:01",
+                runtime_session_id="run-day-1",
+                query_config_id=config_id,
+                query_item_id=query_item.query_item_id,
+                external_item_id=query_item.external_item_id,
+                item_name=query_item.item_name,
+                product_url=query_item.product_url,
+                rule_fingerprint="rule-1",
+                detail_min_wear=query_item.detail_min_wear,
+                detail_max_wear=query_item.detail_max_wear,
+                max_price=query_item.max_price,
+                mode_type="new_api",
+                account_id="query-a",
+                account_display_name="查询账号A",
+                matched_count=2,
+                product_ids=["p-1", "p-2"],
+            )
+        )
+        app.state.stats_repository.apply_purchase_submit_order_event(
+            SimpleNamespace(
+                timestamp=f"{today}T10:00:02",
+                runtime_session_id="run-day-1",
+                query_config_id=config_id,
+                query_item_id=query_item.query_item_id,
+                external_item_id=query_item.external_item_id,
+                item_name=query_item.item_name,
+                product_url=query_item.product_url,
+                rule_fingerprint="rule-1",
+                detail_min_wear=query_item.detail_min_wear,
+                detail_max_wear=query_item.detail_max_wear,
+                max_price=query_item.max_price,
+                account_id="purchase-a",
+                account_display_name="购买账号A",
+                submit_order_latency_ms=450.0,
+                submitted_count=2,
+                success_count=1,
+                failed_count=1,
+                status="success",
+                error=None,
+            )
+        )
+
+        response = await client.get("/purchase-runtime/status")
+    finally:
+        app.state.stats_pipeline = original_stats_pipeline
+
+    assert response.status_code == 200
+    assert response.json()["running"] is True
+    assert response.json()["active_query_config"] == {
+        "config_id": config_id,
+        "config_name": "查询配置A",
+        "state": "running",
+        "message": "运行中",
+    }
+    assert len(response.json()["item_rows"]) == 1
+    assert response.json()["item_rows"][0]["query_item_id"] == query_item.query_item_id
+    assert response.json()["item_rows"][0]["item_name"] == "AK-47 | Redline"
+    assert response.json()["item_rows"][0]["query_execution_count"] >= 3
+    assert response.json()["item_rows"][0]["matched_product_count"] >= 2
+    assert response.json()["item_rows"][0]["purchase_success_count"] >= 1
+    assert response.json()["item_rows"][0]["purchase_failed_count"] >= 1
+
+
+async def test_purchase_runtime_status_flushes_pending_stats_pipeline_before_stopped_daily_snapshot(client, app):
+    today = datetime.now().date().isoformat()
+    config_id = await _create_query_config(client)
+    query_item = app.state.query_config_repository.add_item(
+        config_id=config_id,
+        product_url="https://www.c5game.com/csgo/730/asset/1380979899390261111",
+        external_item_id="1380979899390261111",
+        item_name="AK-47 | Redline",
+        market_hash_name="AK-47 | Redline (Field-Tested)",
+        min_wear=0.1,
+        max_wear=0.7,
+        detail_min_wear=0.12,
+        detail_max_wear=0.3,
+        max_price=123.45,
+        last_market_price=118.88,
+        last_detail_sync_at=f"{today}T10:00:00",
+    )
+    await client.put(
+        "/purchase-runtime/ui-preferences",
+        json={"selected_config_id": config_id},
+    )
+
+    original_stats_pipeline = app.state.stats_pipeline
+    stats_pipeline = StatsPipeline(repository=app.state.stats_repository, flush_batch_size=1)
+    app.state.stats_pipeline = stats_pipeline
+    try:
+        assert stats_pipeline.enqueue(
+            QueryExecutionStatsEvent(
+                timestamp=f"{today}T10:00:00",
+                query_config_id=config_id,
+                query_item_id=query_item.query_item_id,
+                external_item_id=query_item.external_item_id,
+                rule_fingerprint="rule-1",
+                detail_min_wear=query_item.detail_min_wear,
+                detail_max_wear=query_item.detail_max_wear,
+                max_price=query_item.max_price,
+                mode_type="new_api",
+                account_id="query-a",
+                account_display_name="查询账号A",
+                item_name=query_item.item_name,
+                product_url=query_item.product_url,
+                latency_ms=120.0,
+                success=True,
+                error=None,
+            )
+        )
+        assert stats_pipeline.enqueue(
+            QueryHitStatsEvent(
+                timestamp=f"{today}T10:00:01",
+                runtime_session_id="run-day-1",
+                query_config_id=config_id,
+                query_item_id=query_item.query_item_id,
+                external_item_id=query_item.external_item_id,
+                rule_fingerprint="rule-1",
+                detail_min_wear=query_item.detail_min_wear,
+                detail_max_wear=query_item.detail_max_wear,
+                max_price=query_item.max_price,
+                mode_type="new_api",
+                account_id="query-a",
+                account_display_name="查询账号A",
+                item_name=query_item.item_name,
+                product_url=query_item.product_url,
+                matched_count=2,
+                product_ids=["p-1", "p-2"],
+            )
+        )
+        assert stats_pipeline.enqueue(
+            PurchaseSubmitOrderStatsEvent(
+                timestamp=f"{today}T10:00:02",
+                runtime_session_id="run-day-1",
+                query_config_id=config_id,
+                query_item_id=query_item.query_item_id,
+                external_item_id=query_item.external_item_id,
+                rule_fingerprint="rule-1",
+                detail_min_wear=query_item.detail_min_wear,
+                detail_max_wear=query_item.detail_max_wear,
+                max_price=query_item.max_price,
+                item_name=query_item.item_name,
+                product_url=query_item.product_url,
+                account_id="purchase-a",
+                account_display_name="购买账号A",
+                submit_order_latency_ms=450.0,
+                submitted_count=2,
+                success_count=1,
+                failed_count=1,
+                status="success",
+                error=None,
+            )
+        )
+
+        response = await client.get("/purchase-runtime/status")
+    finally:
+        app.state.stats_pipeline = original_stats_pipeline
+
+    assert response.status_code == 200
     assert response.json()["item_rows"] == [
         {
             "query_item_id": query_item.query_item_id,

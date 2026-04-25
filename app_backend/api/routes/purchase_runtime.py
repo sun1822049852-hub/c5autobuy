@@ -53,6 +53,10 @@ def _stats_repository(request: Request):
     return request.app.state.stats_repository
 
 
+def _stats_flush_callback(request: Request):
+    return getattr(getattr(request.app.state, "stats_pipeline", None), "flush_pending", None)
+
+
 @router.get("/status", response_model=PurchaseRuntimeStatusResponse)
 def get_purchase_runtime_status(request: Request) -> PurchaseRuntimeStatusResponse:
     use_case = GetPurchaseRuntimeStatusUseCase(
@@ -61,6 +65,7 @@ def get_purchase_runtime_status(request: Request) -> PurchaseRuntimeStatusRespon
         query_config_repository=_query_config_repository(request),
         purchase_ui_preferences_repository=_purchase_ui_preferences_repository(request),
         stats_repository=_stats_repository(request),
+        stats_flush_callback=_stats_flush_callback(request),
         include_recent_events=False,
     )
     return PurchaseRuntimeStatusResponse.model_validate(use_case.execute())
@@ -142,6 +147,7 @@ def start_purchase_runtime(
         query_config_repository=_query_config_repository(request),
         purchase_ui_preferences_repository=_purchase_ui_preferences_repository(request),
         stats_repository=_stats_repository(request),
+        stats_flush_callback=_stats_flush_callback(request),
         include_recent_events=False,
     ).execute()
     return PurchaseRuntimeStatusResponse.model_validate(snapshot)
@@ -160,6 +166,7 @@ def stop_purchase_runtime(request: Request) -> PurchaseRuntimeStatusResponse:
         query_config_repository=_query_config_repository(request),
         purchase_ui_preferences_repository=_purchase_ui_preferences_repository(request),
         stats_repository=_stats_repository(request),
+        stats_flush_callback=_stats_flush_callback(request),
         include_recent_events=False,
     ).execute()
     return PurchaseRuntimeStatusResponse.model_validate(snapshot)
