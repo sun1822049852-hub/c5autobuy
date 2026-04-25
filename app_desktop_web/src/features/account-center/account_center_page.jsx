@@ -1,26 +1,27 @@
-import { useEffect, useRef, useState } from "react";
+import React, { Suspense, useEffect, useRef, useState } from "react";
 
 import { NO_SELECT_STYLE } from "../../shared/no_select_style.js";
 import { logRendererDiagnostic } from "../../desktop/renderer_diagnostics.js";
-import { ProxyPoolDialog } from "../proxy-pool/proxy_pool_dialog.jsx";
-import { useProxyPool } from "../proxy-pool/use_proxy_pool.js";
-import { AccountContextMenu } from "./components/account_context_menu.jsx";
-import { AccountLogsModal } from "./components/account_logs_modal.jsx";
 import { AccountTable } from "./components/account_table.jsx";
 import { OverviewCards } from "./components/overview_cards.jsx";
-import { AccountApiKeyDialog } from "./dialogs/account_api_key_dialog.jsx";
-import { AccountBrowserProxyDialog } from "./dialogs/account_browser_proxy_dialog.jsx";
-import { AccountCreateDialog } from "./dialogs/account_create_dialog.jsx";
-import { AccountDeleteDialog } from "./dialogs/account_delete_dialog.jsx";
-import { FeatureUnavailableDialog } from "./dialogs/feature_unavailable_dialog.jsx";
-import { AccountProxyDialog } from "./dialogs/account_proxy_dialog.jsx";
-import { AccountRemarkDialog } from "./dialogs/account_remark_dialog.jsx";
-import { LoginDrawer } from "./drawers/login_drawer.jsx";
-import { PurchaseConfigDrawer } from "./drawers/purchase_config_drawer.jsx";
 import { useAccountCenterPage } from "./hooks/use_account_center_page.js";
+
+const AccountCenterLazySurfaces = React.lazy(() =>
+  import("./account_center_lazy_surfaces.jsx").then((m) => ({ default: m.AccountCenterLazySurfaces }))
+);
+
+function readPerformanceNow() {
+  return globalThis.performance?.now?.() ?? Date.now();
+}
 
 
 export function AccountCenterPage({ client }) {
+  const firstRenderTraceRef = useRef(null);
+  if (firstRenderTraceRef.current === null) {
+    firstRenderTraceRef.current = {
+      renderStartMs: readPerformanceNow(),
+    };
+  }
   const {
     activeFilter,
     accountLogs,
@@ -70,6 +71,7 @@ export function AccountCenterPage({ client }) {
     searchTerm,
     setActiveFilter,
     setSearchTerm,
+    startupInitTrace,
     syncAccountOpenApi,
     startLoginFromDrawer,
     submitApiKey,
@@ -81,14 +83,24 @@ export function AccountCenterPage({ client }) {
     loginTaskSnapshot,
     isLoginTaskStarting,
   } = useAccountCenterPage({ client });
+  if (firstRenderTraceRef.current.afterHookMs == null) {
+    firstRenderTraceRef.current.afterHookMs = readPerformanceNow();
+  }
   const [proxyPoolDialogOpen, setProxyPoolDialogOpen] = useState(false);
-  const shouldLoadProxyPool = proxyPoolDialogOpen
-    || createDialogOpen
-    || Boolean(browserProxyDialogAccount)
-    || Boolean(proxyDialogAccount);
-  const proxyPool = useProxyPool({ client, enabled: shouldLoadProxyPool });
   const hasLoggedFirstCommitRef = useRef(false);
   const activeCardLabel = overviewCards.find((card) => card.id === activeFilter)?.label ?? "全部账号";
+  const shouldRenderLazySurfaces = proxyPoolDialogOpen
+    || createDialogOpen
+    || featureUnavailableDialog.isOpen
+    || Boolean(deleteDialogAccount)
+    || Boolean(remarkDialogAccount)
+    || Boolean(apiKeyDialogAccount)
+    || Boolean(browserProxyDialogAccount)
+    || Boolean(proxyDialogAccount)
+    || purchaseDrawerState.open
+    || Boolean(loginDrawerAccount)
+    || logsModalState.isOpen
+    || Boolean(contextMenu);
   const heroCards = [
     ...overviewCards,
     {
@@ -100,17 +112,36 @@ export function AccountCenterPage({ client }) {
       onClick: openLogsModal,
     },
   ];
+  if (firstRenderTraceRef.current.beforeReturnMs == null) {
+    firstRenderTraceRef.current.beforeReturnMs = readPerformanceNow();
+  }
 
   useEffect(() => {
     if (hasLoggedFirstCommitRef.current) {
       return;
     }
     hasLoggedFirstCommitRef.current = true;
+    const firstRenderTrace = firstRenderTraceRef.current ?? {};
     logRendererDiagnostic("startup_trace_account_center_first_commit", {
       hasRows: filteredRows.length > 0,
       isLoading,
+      hookInitMs: Number.isFinite(firstRenderTrace.afterHookMs - firstRenderTrace.renderStartMs)
+        ? Math.max(0, Math.round((firstRenderTrace.afterHookMs - firstRenderTrace.renderStartMs) * 100) / 100)
+        : null,
+      renderTailMs: Number.isFinite(firstRenderTrace.beforeReturnMs - firstRenderTrace.afterHookMs)
+        ? Math.max(0, Math.round((firstRenderTrace.beforeReturnMs - firstRenderTrace.afterHookMs) * 100) / 100)
+        : null,
     });
-  }, [filteredRows.length, isLoading]);
+    logRendererDiagnostic("startup_trace_account_center_render_breakdown", {
+      accountCenterHookInit: startupInitTrace ?? null,
+      hookInitMs: Number.isFinite(firstRenderTrace.afterHookMs - firstRenderTrace.renderStartMs)
+        ? Math.max(0, Math.round((firstRenderTrace.afterHookMs - firstRenderTrace.renderStartMs) * 100) / 100)
+        : null,
+      renderTailMs: Number.isFinite(firstRenderTrace.beforeReturnMs - firstRenderTrace.afterHookMs)
+        ? Math.max(0, Math.round((firstRenderTrace.beforeReturnMs - firstRenderTrace.afterHookMs) * 100) / 100)
+        : null,
+    });
+  }, [filteredRows.length, isLoading, startupInitTrace]);
 
   return (
     <section className="account-page">
@@ -193,83 +224,54 @@ export function AccountCenterPage({ client }) {
           rows={filteredRows}
         />
       </section>
-
-      <AccountCreateDialog open={createDialogOpen} onClose={closeCreateDialog} onSubmit={submitCreate} proxies={proxyPool.proxies} />
-      <FeatureUnavailableDialog
-        isOpen={featureUnavailableDialog.isOpen}
-        message={featureUnavailableDialog.message}
-        onClose={closeFeatureUnavailableDialog}
-      />
-      <AccountDeleteDialog
-        account={deleteDialogAccount}
-        isDeleting={isDeletingAccount}
-        open={Boolean(deleteDialogAccount)}
-        onClose={closeDeleteDialog}
-        onConfirm={confirmDeleteAccount}
-      />
-      <AccountRemarkDialog account={remarkDialogAccount} open={Boolean(remarkDialogAccount)} onClose={closeRemarkDialog} onSubmit={submitRemark} />
-      <AccountApiKeyDialog account={apiKeyDialogAccount} open={Boolean(apiKeyDialogAccount)} onClose={closeApiKeyDialog} onSubmit={submitApiKey} />
-      <AccountBrowserProxyDialog
-        account={browserProxyDialogAccount}
-        open={Boolean(browserProxyDialogAccount)}
-        onClose={closeBrowserProxyDialog}
-        onSubmit={submitBrowserProxy}
-        proxies={proxyPool.proxies}
-      />
-      <AccountProxyDialog
-        account={proxyDialogAccount}
-        isOpeningBindingPage={isOpeningBindingPage}
-        open={Boolean(proxyDialogAccount)}
-        onClose={closeProxyDialog}
-        onOpenBindingPage={openAccountOpenApiBindingPage}
-        onSubmit={submitProxy}
-        proxies={proxyPool.proxies}
-      />
-      <PurchaseConfigDrawer
-        account={purchaseDrawerState.account}
-        detail={purchaseDrawerState.detail}
-        isLoading={purchaseDrawerState.isLoading}
-        isRefreshing={purchaseDrawerState.isRefreshing}
-        open={purchaseDrawerState.open}
-        onClose={closePurchaseDrawer}
-        onRefresh={refreshPurchaseConfigInventory}
-        onSubmit={submitPurchaseConfig}
-      />
-      <LoginDrawer
-        account={loginDrawerAccount}
-        isStarting={isLoginTaskStarting}
-        onClose={closeLoginDrawer}
-        onStartLogin={startLoginFromDrawer}
-        open={Boolean(loginDrawerAccount)}
-        task={loginTaskSnapshot}
-      />
-      <AccountLogsModal
-        entries={accountLogs}
-        isOpen={logsModalState.isOpen}
-        onClose={logsModalState.onClose}
-        onPositionChange={logsModalState.onPositionChange}
-        onSizeChange={logsModalState.onSizeChange}
-        position={logsModalState.position}
-        size={logsModalState.size}
-      />
-      <AccountContextMenu
-        menu={contextMenu}
-        mutationsDisabled={isReadonlyLocked}
-        onClose={closeContextMenu}
-        onDelete={deleteAccount}
-        onOpenOpenApiBindingPage={openAccountOpenApiBindingPage}
-        onSyncOpenApi={syncAccountOpenApi}
-      />
-      <ProxyPoolDialog
-        open={proxyPoolDialogOpen}
-        proxies={proxyPool.proxies}
-        onClose={() => setProxyPoolDialogOpen(false)}
-        onCreateProxy={proxyPool.createProxy}
-        onUpdateProxy={proxyPool.updateProxy}
-        onDeleteProxy={proxyPool.deleteProxy}
-        onTestProxy={proxyPool.testProxy}
-        onBatchImport={proxyPool.batchImport}
-      />
+      {shouldRenderLazySurfaces ? (
+        <Suspense fallback={null}>
+          <AccountCenterLazySurfaces
+            accountLogs={accountLogs}
+            apiKeyDialogAccount={apiKeyDialogAccount}
+            browserProxyDialogAccount={browserProxyDialogAccount}
+            client={client}
+            closeApiKeyDialog={closeApiKeyDialog}
+            closeBrowserProxyDialog={closeBrowserProxyDialog}
+            closeContextMenu={closeContextMenu}
+            closeCreateDialog={closeCreateDialog}
+            closeDeleteDialog={closeDeleteDialog}
+            closeFeatureUnavailableDialog={closeFeatureUnavailableDialog}
+            closeLoginDrawer={closeLoginDrawer}
+            closeProxyDialog={closeProxyDialog}
+            closePurchaseDrawer={closePurchaseDrawer}
+            closeRemarkDialog={closeRemarkDialog}
+            confirmDeleteAccount={confirmDeleteAccount}
+            contextMenu={contextMenu}
+            createDialogOpen={createDialogOpen}
+            deleteAccount={deleteAccount}
+            deleteDialogAccount={deleteDialogAccount}
+            featureUnavailableDialog={featureUnavailableDialog}
+            isDeletingAccount={isDeletingAccount}
+            isLoginTaskStarting={isLoginTaskStarting}
+            isOpeningBindingPage={isOpeningBindingPage}
+            isReadonlyLocked={isReadonlyLocked}
+            loginDrawerAccount={loginDrawerAccount}
+            loginTaskSnapshot={loginTaskSnapshot}
+            logsModalState={logsModalState}
+            onCloseProxyPoolDialog={() => setProxyPoolDialogOpen(false)}
+            openAccountOpenApiBindingPage={openAccountOpenApiBindingPage}
+            proxyDialogAccount={proxyDialogAccount}
+            proxyPoolDialogOpen={proxyPoolDialogOpen}
+            purchaseDrawerState={purchaseDrawerState}
+            refreshPurchaseConfigInventory={refreshPurchaseConfigInventory}
+            remarkDialogAccount={remarkDialogAccount}
+            startLoginFromDrawer={startLoginFromDrawer}
+            submitApiKey={submitApiKey}
+            submitBrowserProxy={submitBrowserProxy}
+            submitCreate={submitCreate}
+            submitProxy={submitProxy}
+            submitPurchaseConfig={submitPurchaseConfig}
+            submitRemark={submitRemark}
+            syncAccountOpenApi={syncAccountOpenApi}
+          />
+        </Suspense>
+      ) : null}
     </section>
   );
 }

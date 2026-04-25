@@ -2,12 +2,40 @@
 
 import "@testing-library/jest-dom/vitest";
 
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "../../src/App.jsx";
 import { createAppRuntimeStore } from "../../src/runtime/app_runtime_store.js";
+
+vi.mock("../../src/features/account-center/dialogs/account_create_dialog.jsx", () => ({
+  AccountCreateDialog({ onClose, open }) {
+    if (!open) {
+      return <div aria-hidden="true" data-testid="account-create-dialog-eager-marker" />;
+    }
+
+    return (
+      <div aria-label="添加账号" role="dialog">
+        <button type="button" onClick={onClose}>关闭添加账号</button>
+      </div>
+    );
+  },
+}));
+
+vi.mock("../../src/features/proxy-pool/proxy_pool_dialog.jsx", () => ({
+  ProxyPoolDialog({ onClose, open }) {
+    if (!open) {
+      return <div aria-hidden="true" data-testid="proxy-pool-dialog-eager-marker" />;
+    }
+
+    return (
+      <div aria-label="代理管理" role="dialog">
+        <button type="button" onClick={onClose}>关闭代理管理</button>
+      </div>
+    );
+  },
+}));
 
 
 function installDesktopApp(fetchImpl) {
@@ -268,6 +296,114 @@ beforeEach(() => {
 });
 
 describe("account center page", () => {
+  it("hydrates persisted filter state after the first paint idle phase instead of blocking the initial render", async () => {
+    const originalRequestIdleCallback = window.requestIdleCallback;
+    const originalCancelIdleCallback = window.cancelIdleCallback;
+    let idleCallback = null;
+    window.requestIdleCallback = vi.fn((callback) => {
+      idleCallback = callback;
+      return 1;
+    });
+    window.cancelIdleCallback = vi.fn();
+    window.localStorage.setItem("account-center-page", JSON.stringify({
+      activeFilter: "missing_api_key",
+      searchTerm: "账号 B",
+    }));
+
+    const fetchImpl = vi.fn(async (input, options = {}) => {
+      const url = new URL(input);
+      const method = String(options.method ?? "GET").toUpperCase();
+
+      if (url.pathname === "/account-center/accounts" && method === "GET") {
+        return {
+          ok: true,
+          json: async () => accountRows(),
+        };
+      }
+
+      if (url.pathname === "/proxy-pool" && method === "GET") {
+        return {
+          ok: true,
+          json: async () => [],
+        };
+      }
+
+      throw new Error(`Unhandled request: ${method} ${url.pathname}`);
+    });
+
+    installDesktopApp(fetchImpl);
+
+    render(<App />);
+
+    await screen.findByText("账号 A");
+    expect(screen.getByRole("searchbox", { name: "搜索账号" })).toHaveValue("");
+    expect(screen.getByText("当前聚焦 总账号")).toBeInTheDocument();
+    expect(window.requestIdleCallback).toHaveBeenCalledTimes(1);
+    expect(typeof idleCallback).toBe("function");
+
+    await act(async () => {
+      idleCallback({
+        didTimeout: false,
+        timeRemaining: () => 8,
+      });
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("searchbox", { name: "搜索账号" })).toHaveValue("账号 B");
+    });
+    expect(screen.getByText("当前聚焦 无 API Key")).toBeInTheDocument();
+
+    window.requestIdleCallback = originalRequestIdleCallback;
+    window.cancelIdleCallback = originalCancelIdleCallback;
+  });
+
+  it("keeps heavyweight overlay surfaces out of the first paint and opens them on first interaction", async () => {
+    const fetchImpl = vi.fn(async (input, options = {}) => {
+      const url = new URL(input);
+      const method = String(options.method ?? "GET").toUpperCase();
+
+      if (url.pathname === "/account-center/accounts" && method === "GET") {
+        return {
+          ok: true,
+          json: async () => accountRows(),
+        };
+      }
+
+      if (url.pathname === "/proxy-pool" && method === "GET") {
+        return {
+          ok: true,
+          json: async () => [],
+        };
+      }
+
+      throw new Error(`Unhandled request: ${method} ${url.pathname}`);
+    });
+
+    installDesktopApp(fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await screen.findByText("账号 A");
+    expect(screen.getByRole("button", { name: "代理管理" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "添加账号" })).toBeInTheDocument();
+    expect(screen.getByRole("searchbox", { name: "搜索账号" })).toBeInTheDocument();
+    expect(screen.queryByTestId("proxy-pool-dialog-eager-marker")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("account-create-dialog-eager-marker")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "代理管理" }));
+    expect(await screen.findByRole("dialog", { name: "代理管理" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "关闭代理管理" }));
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "代理管理" })).not.toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "添加账号" }));
+    expect(await screen.findByRole("dialog", { name: "添加账号" })).toBeInTheDocument();
+  });
+
   it("does not prefetch proxy pool on home load before any proxy dialog is opened", async () => {
     const fetchImpl = vi.fn(async (input, options = {}) => {
       const url = new URL(input);

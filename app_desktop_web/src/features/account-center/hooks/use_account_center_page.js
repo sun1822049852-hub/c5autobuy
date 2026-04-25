@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { startTransition, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   extractProgramAccessError,
@@ -47,6 +47,26 @@ const QUERY_REASON_TEXTS = {
   missing_api_key: "未配置",
   not_logged_in: "未登录",
 };
+
+function readPerformanceNow() {
+  return globalThis.performance?.now?.() ?? Date.now();
+}
+
+function scheduleDeferredUiStateHydration(callback) {
+  if (typeof globalThis.requestIdleCallback === "function") {
+    const requestId = globalThis.requestIdleCallback(callback, { timeout: 5000 });
+    return () => {
+      if (typeof globalThis.cancelIdleCallback === "function") {
+        globalThis.cancelIdleCallback(requestId);
+      }
+    };
+  }
+
+  const timeoutId = globalThis.setTimeout(() => callback(), 0);
+  return () => {
+    globalThis.clearTimeout(timeoutId);
+  };
+}
 
 
 function getDisplayName(row) {
@@ -418,16 +438,27 @@ function getErrorMeta(error) {
 
 
 export function useAccountCenterPage({ client }) {
+  const startupInitTraceRef = useRef(null);
+  if (startupInitTraceRef.current === null) {
+    startupInitTraceRef.current = {
+      hookStartMs: readPerformanceNow(),
+    };
+  }
+  const startupInitTrace = startupInitTraceRef.current;
   const { runProgramAccessAction } = useProgramAccessGuard();
+  if (startupInitTrace.afterProgramAccessGuardMs == null) {
+    startupInitTrace.afterProgramAccessGuardMs = readPerformanceNow();
+  }
   const programAccess = useProgramAccess();
+  if (startupInitTrace.afterProgramAccessSelectorMs == null) {
+    startupInitTrace.afterProgramAccessSelectorMs = readPerformanceNow();
+  }
   const isReadonlyLocked = isProgramReadonlyLocked(programAccess);
   const [rows, setRows] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
-  const [uiState, setUiState] = useState(() => ({
-    ...DEFAULT_UI_STATE,
-    ...PAGE_STORE.read(DEFAULT_UI_STATE),
-  }));
+  const [uiState, setUiState] = useState(DEFAULT_UI_STATE);
+  const [uiStateHydrated, setUiStateHydrated] = useState(false);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [featureUnavailableDialog, setFeatureUnavailableDialog] = useState({
     isOpen: false,
@@ -454,10 +485,16 @@ export function useAccountCenterPage({ client }) {
   const [contextMenu, setContextMenu] = useState(null);
   const [accountLogs, setAccountLogs] = useState(INITIAL_LOG_ENTRIES);
   const loginTaskStream = useLoginTaskStream({ client });
+  if (startupInitTrace.afterLoginTaskStreamMs == null) {
+    startupInitTrace.afterLoginTaskStreamMs = readPerformanceNow();
+  }
   const logsModalState = useFloatingRuntimeModalState({
     initialPosition: { x: 168, y: 104 },
     initialSize: { width: 760, height: 520 },
   });
+  if (startupInitTrace.afterLogsModalStateMs == null) {
+    startupInitTrace.afterLogsModalStateMs = readPerformanceNow();
+  }
   const hasLoggedInitialAccountsLoadedRef = useRef(false);
 
   function appendLogEntry(entry) {
@@ -496,6 +533,9 @@ export function useAccountCenterPage({ client }) {
       setLoadError("");
 
       try {
+        logRendererDiagnostic("startup_trace_account_center_accounts_requested", {
+          source: "loadInitialAccounts",
+        });
         const nextRows = await client.listAccountCenterAccounts();
         if (!isMounted) {
           return;
@@ -505,6 +545,9 @@ export function useAccountCenterPage({ client }) {
         setRows(normalizedRows);
         if (!hasLoggedInitialAccountsLoadedRef.current) {
           hasLoggedInitialAccountsLoadedRef.current = true;
+          logRendererDiagnostic("startup_trace_account_center_accounts_response_received", {
+            rowCount: normalizedRows.length,
+          });
           logRendererDiagnostic("startup_trace_account_center_accounts_loaded", {
             rowCount: normalizedRows.length,
           });
@@ -532,8 +575,55 @@ export function useAccountCenterPage({ client }) {
   }, [client]);
 
   useEffect(() => {
+    let cancelled = false;
+    const cancelHydration = scheduleDeferredUiStateHydration(() => {
+      const pageStoreReadStartMs = readPerformanceNow();
+      const persistedUiState = {
+        ...DEFAULT_UI_STATE,
+        ...PAGE_STORE.read(DEFAULT_UI_STATE),
+      };
+      const pageStoreReadMs = Math.max(
+        0,
+        Math.round((readPerformanceNow() - pageStoreReadStartMs) * 100) / 100,
+      );
+
+      if (cancelled) {
+        return;
+      }
+
+      logRendererDiagnostic("startup_trace_account_center_ui_state_hydrated", {
+        pageStoreReadMs,
+        persistedFilter: persistedUiState.activeFilter,
+        persistedSearchTerm: persistedUiState.searchTerm,
+      });
+
+      startTransition(() => {
+        setUiState((current) => {
+          const hasUserModifiedUiState = current.activeFilter !== DEFAULT_UI_STATE.activeFilter
+            || current.searchTerm !== DEFAULT_UI_STATE.searchTerm;
+
+          if (hasUserModifiedUiState) {
+            return current;
+          }
+
+          return persistedUiState;
+        });
+        setUiStateHydrated(true);
+      });
+    });
+
+    return () => {
+      cancelled = true;
+      cancelHydration();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!uiStateHydrated) {
+      return;
+    }
     PAGE_STORE.write(uiState);
-  }, [uiState]);
+  }, [uiState, uiStateHydrated]);
 
   useEffect(() => {
     loginDrawerAccountRef.current = loginDrawerAccount;
@@ -552,6 +642,9 @@ export function useAccountCenterPage({ client }) {
   const filteredRows = useMemo(() => rows.filter((row) => (
     matchesFilter(row, uiState.activeFilter) && matchesSearch(row, uiState.searchTerm)
   )), [rows, uiState.activeFilter, uiState.searchTerm]);
+  if (startupInitTrace.afterDerivedStateMs == null) {
+    startupInitTrace.afterDerivedStateMs = readPerformanceNow();
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -971,6 +1064,27 @@ export function useAccountCenterPage({ client }) {
         ...current,
         searchTerm: nextSearchTerm,
       }));
+    },
+    startupInitTrace: {
+      hookInitMs: Number.isFinite(startupInitTrace.afterDerivedStateMs - startupInitTrace.hookStartMs)
+        ? Math.max(0, Math.round((startupInitTrace.afterDerivedStateMs - startupInitTrace.hookStartMs) * 100) / 100)
+        : null,
+      programAccessGuardMs: Number.isFinite(startupInitTrace.afterProgramAccessGuardMs - startupInitTrace.hookStartMs)
+        ? Math.max(0, Math.round((startupInitTrace.afterProgramAccessGuardMs - startupInitTrace.hookStartMs) * 100) / 100)
+        : null,
+      programAccessSelectorMs: Number.isFinite(startupInitTrace.afterProgramAccessSelectorMs - startupInitTrace.afterProgramAccessGuardMs)
+        ? Math.max(0, Math.round((startupInitTrace.afterProgramAccessSelectorMs - startupInitTrace.afterProgramAccessGuardMs) * 100) / 100)
+        : null,
+      loginTaskStreamPhaseMs: Number.isFinite(startupInitTrace.afterLoginTaskStreamMs - startupInitTrace.afterProgramAccessSelectorMs)
+        ? Math.max(0, Math.round((startupInitTrace.afterLoginTaskStreamMs - startupInitTrace.afterProgramAccessSelectorMs) * 100) / 100)
+        : null,
+      logsModalPhaseMs: Number.isFinite(startupInitTrace.afterLogsModalStateMs - startupInitTrace.afterLoginTaskStreamMs)
+        ? Math.max(0, Math.round((startupInitTrace.afterLogsModalStateMs - startupInitTrace.afterLoginTaskStreamMs) * 100) / 100)
+        : null,
+      derivedStatePhaseMs: Number.isFinite(startupInitTrace.afterDerivedStateMs - startupInitTrace.afterLogsModalStateMs)
+        ? Math.max(0, Math.round((startupInitTrace.afterDerivedStateMs - startupInitTrace.afterLogsModalStateMs) * 100) / 100)
+        : null,
+      deferredUiStateHydration: true,
     },
     toggleApiQueryMode,
     toggleBrowserQueryMode,

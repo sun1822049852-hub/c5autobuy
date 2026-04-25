@@ -543,6 +543,7 @@ describe("app remote bootstrap", () => {
     render(<App />);
 
     expect(await screen.findByText("本地服务启动中")).toBeInTheDocument();
+    expect(screen.queryByRole("searchbox", { name: "搜索账号" })).not.toBeInTheDocument();
     expect(fetchImpl).not.toHaveBeenCalled();
 
     await act(async () => {
@@ -558,6 +559,8 @@ describe("app remote bootstrap", () => {
     await waitFor(() => {
       expect(fetchImpl.mock.calls.some(([input]) => String(input) === "http://127.0.0.1:59192/account-center/accounts")).toBe(true);
     });
+    expect(await screen.findByRole("searchbox", { name: "搜索账号" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "代理管理" })).toBeInTheDocument();
   });
 
   it("reports home interactive only after the embedded home load settles", async () => {

@@ -2808,3 +2808,122 @@
       - `renderer.account.center.chunk.ready`
       - `renderer.account.center.first.commit`
       - `renderer.account.center.accounts.loaded`
+
+## 2026-04-26 00:05 (Asia/Shanghai)
+- 背景：
+  - 承接 `2026-04-25 23:13` handoff，本轮严格只做 renderer 侧 `account-center first paint thinning` 的 `Task 1 -> Task 3`，没有回 backend。
+  - 先按 TDD 执行：先补“首屏先可见、overlay 不提前 mount、首点再 lazy 打开”的 renderer test，确认红灯后再切首页页树。
+- 已完成：
+  - `app_desktop_web/src/features/account-center/account_center_page.jsx`
+    - 首页首帧只保留 hero / toolbar / search / table 同步树。
+    - 新增 `shouldRenderLazySurfaces` 边界；只有第一次真正打开 overlay 时，才懒加载非首屏 surfaces。
+  - `app_desktop_web/src/features/account-center/account_center_lazy_surfaces.jsx`
+    - 新建 overlay 懒加载闭包，统一承接：
+      - proxy pool
+      - add-account
+      - feature-unavailable
+      - delete / remark / api-key / browser-proxy / api-proxy dialogs
+      - purchase config drawer
+      - login drawer
+      - logs modal
+      - context menu
+    - `useProxyPool()` 也随 lazy surfaces 一起延后，避免首页首帧进入这组 overlay 闭包。
+  - `app_desktop_web/tests/renderer/account_center_page.test.jsx`
+    - 新增契约测试：首屏按钮/搜索/表格先可见，但 `代理管理` / `添加账号` overlay 在首个用户动作前不得出现在 render tree；首次点击后仍能正常打开。
+  - `app_desktop_web/tests/renderer/app_remote_bootstrap.test.jsx`
+    - 补强 embedded desktop bootstrap 断言：backend 未 ready 前不应出现首页搜索框；ready 后仍直接回到账号中心首页。
+- TDD / focused verification：
+  - `npm --prefix app_desktop_web run test -- tests/renderer/account_center_page.test.jsx --run`
+    - 先红后绿；红灯原因准确命中 `proxy-pool-dialog-eager-marker` 仍在首帧同步树里。
+  - `npm --prefix app_desktop_web run test -- tests/renderer/app_remote_bootstrap.test.jsx --run`
+    - 通过。
+- 回归验证：
+  - `npm --prefix app_desktop_web run test -- tests/renderer/account_center_page.test.jsx tests/renderer/app_remote_bootstrap.test.jsx tests/renderer/program_access_sidebar_card.test.jsx tests/electron/electron_remote_mode.test.js --run`
+    - `4 files passed, 60 tests passed`
+  - `npm --prefix app_desktop_web run build`
+    - 通过；产物已拆出新 chunk：`account_center_lazy_surfaces-*.js`
+- 真机 startup trace：
+  - 启动口径：
+    - `C5_STARTUP_TRACE=1`
+    - `C5_LOCAL_DEBUG_REUSE_RENDERER_DIST=1`
+    - `node main_ui_node_desktop.js`
+  - 关键样本：
+    - `desktop.window.visible` `602ms`
+    - `desktop.backend.ready` `3576ms`
+    - `renderer.bootstrap.config.consumed` `3580ms`
+    - `renderer.account.center.chunk.ready` `3587ms`
+    - `renderer.home.interactive` `6354ms`
+    - `renderer.account.center.first.commit` `6365ms`
+    - `renderer.account.center.accounts.loaded` `6408ms`
+  - 相比 handoff 基线（`3626 / 6387 / 6421`）：
+    - `chunk.ready` 再降约 `39ms`
+    - `first.commit` 再降约 `22ms`
+    - `accounts.loaded` 再降约 `13ms`
+- 结论与余险：
+  - `Task 1 -> Task 3` 已落地，首页最小闭包与非首屏 overlay 首次交互 lazy load 已生效。
+  - 但本轮收益是“实打实但不大”；`renderer.account.center.chunk.ready -> first.commit` 仍约 `2778ms`，主慢段还在 renderer 首页自身而不是 overlay import 阶段。
+  - 按计划边界，本轮停在 `Task 3`，没有继续拆 hook/state；若下一轮继续，应转 `Task 4` 方向，检查首屏列表/过滤/行内控件是否还有可延后的同步状态或 effect。
+- 文档同步：
+  - `docs/agent/session-log.md` 已更新
+  - `docs/agent/memory.md` 本轮无新增稳定约束，未改
+  - `README.md` 已核对，本次无需改动
+
+## 2026-04-26 00:21 (Asia/Shanghai)
+- 背景：
+  - 魔尊明确要求“要实打实降低延迟，不要继续做只值几十毫秒的小修”。
+  - 因此前轮 `Task 3` 收口后，当前主线改为直接追 `renderer.account.center.chunk.ready -> first.commit` 的 `~2.7s` 黑洞，而不是继续沿 overlay lazy 做边角优化。
+- 诊断收敛：
+  - 先补细粒度 startup trace，把首页首帧拆成 `hook init / render tail / accounts request` 三段。
+  - 真机证据直接指向：
+    - `useAccountCenterPage()` 首次装配几乎全部耗时都被 `PAGE_STORE.read()` 吃掉；
+    - 首轮样本里 `pageStoreReadMs ~= 2763.2ms`
+    - 这说明真正卡住首页 first commit 的不是账号表格、不是 overlay chunk、也不是 rows normalize，而是账号中心筛选/搜索持久化状态的同步 `localStorage` 读取。
+- 已完成：
+  - `app_desktop_web/src/features/account-center/hooks/use_account_center_page.js`
+    - 首页首帧 `uiState` 改为直接从 `DEFAULT_UI_STATE` 进入，不再同步读取 `PAGE_STORE.read()`
+    - 新增 deferred hydration：持久化筛选/搜索改到 `requestIdleCallback`（fallback `setTimeout`）后再回填
+    - hydration 采用低优先级 `startTransition`
+    - 若用户已在当前会话手动修改筛选/搜索，则不再让旧持久化状态反向覆盖当前输入
+    - 新增 trace：
+      - `renderer.account.center.render.breakdown`
+      - `renderer.account.center.accounts.requested`
+      - `renderer.account.center.accounts.response.received`
+      - `renderer.account.center.ui.state.hydrated`
+  - `app_desktop_web/tests/renderer/account_center_page.test.jsx`
+    - 新增契约测试：旧筛选/搜索状态必须在 first paint 后的 idle hydration 才回填，不能堵住首页首屏。
+  - `docs/agent/memory.md`
+    - 已新增一条跨会话热路径护栏，冻结“账号中心 `PAGE_STORE.read()` 不得再进首渲染同步路径”。
+- focused verification：
+  - `npm --prefix app_desktop_web run test -- tests/renderer/account_center_page.test.jsx --run`
+    - 先红后绿；红灯准确证明旧实现会在初次 render 里直接带上持久化搜索/筛选。
+- 回归验证：
+  - `npm --prefix app_desktop_web run test -- tests/renderer/account_center_page.test.jsx tests/renderer/app_remote_bootstrap.test.jsx tests/renderer/program_access_sidebar_card.test.jsx tests/electron/electron_remote_mode.test.js --run`
+    - `4 files passed, 61 tests passed`
+  - `npm --prefix app_desktop_web run build`
+    - 通过
+- 真机 startup trace：
+  - 启动口径：
+    - `C5_STARTUP_TRACE=1`
+    - `C5_LOCAL_DEBUG_REUSE_RENDERER_DIST=1`
+    - `node main_ui_node_desktop.js`
+  - 关键样本：
+    - `desktop.window.visible` `609ms`
+    - `desktop.backend.ready` `3469ms`
+    - `renderer.account.center.chunk.ready` `3479ms`
+    - `renderer.account.center.accounts.requested` `3778ms`
+    - `renderer.account.center.first.commit` `3780ms`
+    - `renderer.account.center.accounts.response.received` `6367ms`
+    - `renderer.account.center.accounts.loaded` `6368ms`
+    - `renderer.account.center.ui.state.hydrated` `6370ms`
+  - 对比上一轮（`chunk.ready 3587 / first.commit 6365 / accounts.loaded 6408`）：
+    - `first.commit` 直接下降约 `2585ms`
+    - `chunk.ready -> first.commit` 从约 `2778ms` 降到约 `301ms`
+    - `accounts.loaded` 只改善约 `40ms`
+- 结论与余险：
+  - 这轮已经拿到“实打实”的 renderer 首屏提速，黑洞不再在首页 first render。
+  - 但首页数据真正到齐的剩余慢段已被证据改判为：`/account-center/accounts` 从请求发出到响应返回仍需约 `2589ms`。
+  - 也就是说，当前 renderer 侧大黑洞已经基本切掉；若还要继续压“看到数据”的总时延，下轮就不能再把锅甩给 account-center 首帧树，而要么接受“先亮壳后等数据”，要么单独处理 `accounts` 接口链路。
+- 文档同步：
+  - `docs/agent/session-log.md` 已更新
+  - `docs/agent/memory.md` 已更新
+  - `README.md` 已核对，本次无需改动
