@@ -44,22 +44,25 @@ class _ReadinessGateMiddleware(BaseHTTPMiddleware):
 
 
 # ---------------------------------------------------------------------------
-# Lifespan — used only when *deferred_init=True* (production / main()).
+# Lifespan — shared by both modes. Deferred mode also starts Phase 2 init.
 # ---------------------------------------------------------------------------
 
 @asynccontextmanager
-async def _deferred_lifespan(app: FastAPI):
-    """Run heavy init in a background task so uvicorn can accept /health immediately."""
-    init_task = asyncio.create_task(_deferred_init(app))
+async def _app_lifespan(app: FastAPI):
+    """Run shared shutdown cleanup and optional deferred init."""
+    init_task = None
+    if getattr(app.state, "_deferred_init_enabled", False):
+        init_task = asyncio.create_task(_deferred_init(app))
     try:
         yield
     finally:
-        # Shutdown: cancel init if still running, then run cleanup.
-        init_task.cancel()
-        try:
-            await init_task
-        except asyncio.CancelledError:
-            pass
+        if init_task is not None:
+            # Shutdown: cancel init if still running, then run cleanup.
+            init_task.cancel()
+            try:
+                await init_task
+            except asyncio.CancelledError:
+                pass
         _shutdown_program_access(app)
 
 
@@ -256,7 +259,7 @@ def create_app(
     # ------------------------------------------------------------------
     app = FastAPI(
         title="C5 Account Center Backend",
-        lifespan=_deferred_lifespan if deferred_init else None,
+        lifespan=_app_lifespan,
     )
     app.add_middleware(
         CORSMiddleware,
@@ -269,6 +272,7 @@ def create_app(
 
     app.state._ready = False
     app.state._init_error = None
+    app.state._deferred_init_enabled = deferred_init
 
     @app.get("/health")
     async def health() -> dict:
@@ -322,11 +326,6 @@ def create_app(
         "program_access_probe_registration_readiness": program_access_probe_registration_readiness,
         "program_access_start_refresh_scheduler": program_access_start_refresh_scheduler,
     })
-
-    # Legacy shutdown hook for non-deferred mode (lifespan handles deferred).
-    @app.on_event("shutdown")
-    async def _shutdown_program_access_services() -> None:
-        _shutdown_program_access(app)
 
     return app
 

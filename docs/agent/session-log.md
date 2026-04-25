@@ -1017,3 +1017,57 @@
   - 已把同一条稳定约束同步更新到 [docs/agent/memory.md](C:/Users/18220/Desktop/C5autobug更新接口%20-%20副本%20(2)/docs/agent/memory.md)。
   - 已核对 `README.md`，本轮仅补 agent/记忆约束，不涉及用户入口说明，因此 README 无需改动。
 - 当前进度：桌面启动链的回归保护已从一次性排障结论升级为仓库硬约束；后续再碰这条链，默认先被规则和 focused regression 拦下。
+
+## 2026-04-25 13:37 (Asia/Shanghai)
+- 背景：本轮会话收口，按 handoff 规则补最后断点。当前主目标已完成：桌面启动链修复、规则沉淀、并确认“历史数据丢失”实为看错窗口而非切库或删库。
+- 当前方案 / 断点：
+  - plan：`桌面启动链回归收口 + agent 约束固化`
+  - chunk：`收尾 / handoff`
+  - task：`记录真实现场，避免下会话重做已完成部分`
+- 已完成：
+  - 已提交 commit：`f8a4857 fix: 修复桌面启动链 readiness 回归并补保护约束`。
+  - 已确认两个运行中的 C5 窗口都来自 `main_ui_node_desktop_local_debug.js`，并且都连接同一份 `data/app.db`；“历史没了”不是切库，而是魔尊当时未切到目标窗口。
+  - 已把两条稳定约束写入仓库规则与长期记忆：
+    - 证据足够时先直指出问题，不先铺方案树；
+    - 桌面启动链 / readiness / local debug 属于关键保护行为，后续改动前后必须跑 focused regression。
+- 现场状态：
+  - 工作目录：`C:/Users/18220/Desktop/C5autobug更新接口 - 副本 (2)`
+  - 分支：`master`
+  - worktree：根工作树
+  - 工作树状态：已提交代码改动；当前仅剩未跟踪目录 `.playwright-mcp/`、`node_modules/`、`program_admin_console/node_modules/`，本轮未纳入提交，也不要在下会话误当业务改动处理。
+- 已尝试但失败 / 不要再犯：
+  - 不要再把 `/health` 的单纯 HTTP 200 当成 backend ready；必须看 `ready=true`。
+  - 不要在 deferred startup 的 lifespan / `_deferred_init()` 里再 `add_middleware()`；这会直接触发 `Cannot add middleware after an application has started`。
+  - 遇到“历史没了 / 数据没了”这类现场，先核对窗口、页签、筛选、运行时状态，不要在证据不足时先按切库或删库展开。
+- 关键行为与保护约束：
+  - `main_ui_node_desktop.js`、`main_ui_node_desktop_local_debug.js`、embedded backend readiness gate、`/health` 语义、deferred startup 装配顺序，当前都属于硬保护链路。
+  - 任何后续改动若触及这条链，默认先读 `AGENTS.md` 中“桌面启动链路保护（强制）”再动手。
+- 验证状态：
+  - 已执行：
+    - `npm exec vitest run tests/electron/python_backend.test.js tests/renderer/app_remote_bootstrap.test.jsx` -> `18 passed`
+    - `.\.venv\Scripts\python.exe -m pytest tests/backend/test_backend_health.py -q` -> `2 passed`
+  - 已确认现场：
+    - 两个运行窗口对应 backend 端口 `63158` / `62388`，接口返回一致，且都连接同一份 `data/app.db`
+  - 验证缺口：
+    - 本轮未做新的完整 GUI 手点回归；若下会话继续追 UI 现场，需要明确是“真新问题”还是旧窗口残留状态。
+- 下会话第一刀：
+  - 若无新需求，先读最新 `docs/agent/session-log.md`、`docs/agent/memory.md`、`AGENTS.md`，确认本轮已结束，不要重做启动链修复。
+  - 若魔尊要求继续，第一步先复述：`f8a4857` 已提交、两个窗口同库、问题是看错窗口；然后再基于新目标决定是否需要新改动。
+
+## 2026-04-25 13:55 (Asia/Shanghai)
+- 背景：魔尊追问当前 FastAPI 的 `@app.on_event("shutdown")` 既然只是 legacy 写法、且当前 API 查询口径已是最终态，本轮是否可以直接移除；同时明确允许并鼓励多 agent 并行。
+- 已完成：
+  - 已先定位根因：弃用告警并不是“API 查询是否最终态”的问题，而是 `create_app(deferred_init=False)` 仍注册了 legacy `@app.on_event("shutdown")`，在当前 FastAPI 版本下创建 app 即会报 `DeprecationWarning`。
+  - 已按 TDD 先补 focused 回归到 `tests/backend/test_backend_health.py`：一条锁定“创建 non-deferred app 不再出现 `on_event is deprecated` 警告”，一条锁定“non-deferred 关闭时仍会按顺序执行 `scheduler.stop()` -> `gateway.close()`”。
+  - 已把 `app_backend/main.py` 的生命周期收口为统一 lifespan：deferred 模式继续在 lifespan 内启动 `_deferred_init`，non-deferred 模式不再注册 `@app.on_event("shutdown")`，但仍复用同一条 shutdown cleanup 路径。
+  - 已核对 `README.md`，本轮只修 backend 生命周期接线与回归测试，不改用户启动口径与操作说明，因此 README 无需改动。
+- 已做验证：
+  - `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_backend_health.py -q -W default` -> `4 passed`
+  - `npm --prefix app_desktop_web test -- tests/electron/python_backend.test.js tests/renderer/app_remote_bootstrap.test.jsx` -> `18 passed`
+  - `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_desktop_web_backend_bootstrap.py -q` -> `7 passed`
+  - `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_backend_main_entry.py -q` -> `6 passed`
+- 当前进度：FastAPI `on_event("shutdown")` 弃用告警已从 backend 主线移除，deferred / non-deferred 两条 app 创建路径仍保持既有初始化与关闭语义。
+- 余险：
+  - `AsyncClient + ASGITransport` 这类不托管 lifespan 的调用方式，退出时本就不会自动触发 app shutdown；本轮没有改变这件事，真正的关闭清理仍依赖 `TestClient`/ASGI server 这类会发出 lifespan shutdown 的宿主。
+- 下一步：
+  - 若魔尊后续还想继续收口生命周期，可再补一条 deferred 模式退出时也执行 cleanup 的 focused 回归，但本轮主诉求“移除弃用告警且不破坏关闭回收”已完成。
