@@ -1653,3 +1653,31 @@
   - README 仍无需改动。
 - 下一步：
   - 把上述 UI 文件单独 staged + commit，继续保留构建链与 backend 旁支脏改在工作树。
+
+## 2026-04-25 17:29 (Asia/Shanghai)
+- 背景：
+  - 魔尊继续要求“提交”；此时工作树只剩 3 处非 UI 脏改：
+    - `app_desktop_web/electron-builder.config.cjs`
+    - `app_desktop_web/python_backend.js`
+    - `tests/backend/test_query_config_routes.py`
+  - 这 3 处可以收口成一笔“packaging + backend readiness + backend fixture 对齐”提交。
+- 已完成：
+  - `app_desktop_web/electron-builder.config.cjs`
+    - 补齐 packaged 桌面白名单：
+      - `python_runtime_bootstrap.js`
+      - `python_runtime_config.cjs`
+      - `test.wasm`
+    - 目标是让 embedded packaged backend 的动态 import 链和 `xsign` wasm 资源在真实发布包里都可达。
+  - `app_desktop_web/python_backend.js`
+    - `isBackendHealthReady()` 彻底收口到“只有 `/health` JSON 明确返回 `ready===true` 才算 ready”；不再把“无 JSON / JSON 解析失败 / 仅 HTTP 200”当成 backend 可接管。
+  - `tests/backend/test_query_config_routes.py`
+    - query config route 的测试夹具补齐 `browser_proxy_id` / `api_proxy_id` 字段，跟当前账号模型保持一致，避免老夹具继续漂移。
+- 已做验证：
+  - `npm --prefix app_desktop_web test -- tests/electron/python_backend.test.js tests/electron/program_access_packaging.test.js --run` -> `28 passed`
+  - `& 'C:/Users/18220/Desktop/C5autobug更新接口 - 副本 (2)/.venv/Scripts/python.exe' -m pytest tests/backend/test_query_config_routes.py -q` -> `22 passed`
+- 文档同步：
+  - `docs/agent/session-log.md` 已更新。
+  - `docs/agent/memory.md` 本轮无需更新：相关稳定约束此前已沉淀（ready gate、packaged whitelist、`test.wasm`）。
+  - README 仍无需改动。
+- 下一步：
+  - 把这 3 处剩余改动与本条会话日志一起提交；未跟踪目录继续留在工作树，不纳入提交。

@@ -26,6 +26,8 @@ function buildElectronBuilderConfig({
       "electron_runtime_mode.cjs",
       "program_access_config.cjs",
       "python_backend.js",
+      "python_runtime_bootstrap.js",
+      "python_runtime_config.cjs",
       "renderer_diagnostics_logger.cjs",
       "window_state.js",
       "package.json",
@@ -58,6 +60,14 @@ function buildElectronBuilderConfig({
           resourcePath: "xsign.py",
         }),
         to: "xsign.py",
+      },
+      {
+        from: resolveBundledResourcePath({
+          appDir: normalizedAppDir,
+          existsSync,
+          resourcePath: "test.wasm",
+        }),
+        to: "test.wasm",
       },
       {
         from: path.join(normalizedAppDir, "build", "python_deps"),

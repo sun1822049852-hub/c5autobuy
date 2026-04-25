@@ -79,7 +79,7 @@ async function isBackendHealthReady(response) {
   }
 
   if (typeof response.json !== "function") {
-    return true;
+    return false;
   }
 
   try {
@@ -88,11 +88,10 @@ async function isBackendHealthReady(response) {
       return payload.ready === true;
     }
   } catch {
-    // Older callers may not expose a JSON health payload; keep the previous
-    // "HTTP 200 means alive" fallback when the body cannot be parsed.
+    return false;
   }
 
-  return true;
+  return false;
 }
 
 
