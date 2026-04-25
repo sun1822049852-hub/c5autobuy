@@ -13,12 +13,14 @@
 
 - 用户希望保留“会话日志 + 记忆文件”机制，用于跨会话承接上下文，而不是仅靠即时聊天历史。
 - 用户不希望用函数名、文件路径、线程名来解释问题；默认应以模块职责、链路作用、等待点、边界条件与架构权衡来沟通，代码标识最多作为补充注脚。
+- 魔尊不操作服务器：凡涉及远端部署、重启、SSH 隧道、容器替换、curl/smoke 验证等服务端动作，默认都由吾完成，不把服务器侧手工步骤甩给魔尊。
 - `autobuy.py` 属于历史参考文件；真实运行与后续需求修改统一落在 `app_backend/` 与 `app_desktop_web/`，不得再把行业务逻辑修复写回 `autobuy.py`。
 - `查询 -> 命中 -> 购买` 是项目核心主链路；任何可能拖慢该链路时延、吞吐或稳定性的修改，都必须先上报并获得确认，不能直接实现。
 - 用户当前追求“极限低延迟”：查询命中到购买提交必须优先，普通查询事件/统计/运行态广播，以及购买成功后的本地容量扣减、切仓判断、远端仓库校准、快照/统计/状态写回，默认走后台异步；只有账号认证失效类信号保持同步处理。
 - 本仓当前只保留一个主远端：`origin` 指向用户自己的 GitHub 仓库 `git@github.com:sun1822049852-hub/c5autobuy.git`；后续默认不再依赖 Gitee。
 - 查询侧到购买侧的主链路桥接口径已确认：查询命中优先直达购买侧 async fast-path，不再优先经过 intake 队列；购买侧对“全部账号忙碌”的命中只保留 `50ms` 本地豁免窗口，不再做固定间隔轮询，而是等待账号释放/恢复/扩容触发的 idle 信号唤醒，窗口内抢到空闲账号就立即派发，超时仍忙则直接丢弃，不进入等待队列。
 - 购买调度热路径已确认采用“账号按代理桶常驻待命池，命中按桶直取”的结构：账号在恢复可接单或释放出并发余量时主动回到对应待命桶；主链不再允许为每次命中扫描总可用账号名单，总名单仅保留给活跃账号统计与兼容性接口。
+- 购买主链路的结构护栏继续冻结：命中分发保持“fast-path 优先 + 队列兜底”两级模型；`_resolve_hit_sink` 优先级固定为 `fast_async > async > sync > enqueue`；每个购买账号继续保持独立线程 + 独立 asyncio loop；`xsign` 等阻塞签名调用必须留在 `asyncio.to_thread` 旁路线程，不能回灌到主链同步热路径。
 - fast-path 热路径继续收薄：命中入口的“运行中”判断不得依赖完整 `snapshot`；`queued`/`duplicate`/`dropped_busy_accounts_after_grace` 这类中间命中态不再触发全量 `purchase_runtime.updated` 广播；命中统计标准化与 backlog 过期清理不得占用 fast-path 同步热路径。
 - 购买侧“最近事件”已拆成两层：运行页不再展示也不再依赖它，`/purchase-runtime/status` 与 runtime update 广播默认返回空 `recent_events`；真实最近购买日志仅保留给诊断链路，并通过旁路缓冲异步落库/落缓存，避免把人类可见信息上报重新拉回主链。
 - 购买成功件数的稳定口径已确认：运行态 `purchase_success_count`、按账号/按商品聚合统计，以及 submit-order 统计事件里的 `success_count`，都必须按支付接口返回的真实 `purchased_count` / `successCount` 记账；`submitted_product_count` 只表示本次批次载荷里的商品条目数，不能再拿它当成功件数上限。若后续再次出现“总购买件数与成功件数对不上、成功数量一多就少记”，优先检查 `app_backend/infrastructure/purchase/runtime/purchase_stats_aggregator.py` 与 `app_backend/infrastructure/purchase/runtime/purchase_runtime_service.py` 中是否又把 `purchased_count/successCount` 裁剪到 `piece_count/submitted_count`。
@@ -55,11 +57,15 @@
 - 当前桌面发行瘦身主线已冻结：packaged release 不再允许整包内置开发 `.venv`；首刀方案固定为“首次启动从 Python 官方下载固定版本 Windows embeddable runtime，失败则阻断进入程序并允许重试”。开发态仍保留 `.venv/Scripts/python.exe` 解析；实现时不得回到“复制整套开发环境发行”的旧路径。
 - packaged embeddable Python runtime 还有一条稳定隔离约束：`python311._pth` 必须显式包含应用资源根目录，且不得重新启用 `import site`；packaged backend 子进程环境必须同时设置 `PYTHONNOUSERSITE=1`。否则用户全局 `site-packages` / editable hook 会污染 `sys.path`，导致打包内的 `xsign.py`、`app_backend` 等模块被错误遮蔽或导入失败。
 - 打包验证新增一条稳定执行约束：除非用户在当前会话主动明确指定，否则不得把“重新生成安装包 / 执行 `build:win`”当成默认验证步骤；常规发行验尸优先停留在 `pack:win`、现有 installer 体积核对或 `win-unpacked` 结构检查。
+- `2026-04-24` 打包瘦身的实现护栏已冻结：`app_desktop_web/python_runtime_config.cjs` 的 `EXCLUDED_TOP_LEVEL_ENTRIES`、`app_desktop_web/python_runtime_resources.cjs` 的 `buildCopyFilter`、`app_desktop_web/electron-builder.config.cjs` 的 `compression: "maximum"` / `electronLanguages: ["zh-CN", "en-US"]` / `electronDist` 本地 dist 指向，以及 `app_desktop_web/vite.config.js` 的 `build.emptyOutDir=true`，都属于当前有效的体积/稳定性基线，后续不要无说明回退。
+- 包体积验尸前必须先清旧产物：`release/` 里的旧 `.venv` 只能视为历史残留，不能拿来判断当前发行策略失效；只要改了 Python 依赖排除列表，就必须重建 `app_desktop_web/build/python_deps`，避免 preflight 复用旧缓存。若再次出现体积异常，优先按 `docs/guides/package-size-troubleshooting.md` 排查。
 - 扫货系统商品卡片的统计口径新增一条稳定产品约束：停止扫货后，所选配置的商品级 `查询次数 / 命中 / 成功 / 失败` 必须继续显示当天累计值，不得因 stop 动作清空；清空边界按自然日切换，而不是按开始/停止按钮切换。
 - 当前 embedded 桌面启动口径新增一条稳定交互约束：主界面壳必须先亮，不再把 renderer 首次加载硬卡在本地 backend `/health` 之后；backend `ready` 后再通过主进程 bootstrap 更新把真实 `apiBaseUrl/backendStatus` 推给 renderer，并在此之前禁止首页页面抢跑数据请求。
 - `app_backend.main` 的默认 `app` 现已冻结为懒加载口径：导入模块本身不得立刻执行 `create_app()`；只有显式访问 `app_backend.main.app` 时才允许首次构建并缓存默认实例，避免桌面 embedded 启动重复建 app。
 - `main_ui_node_desktop_local_debug.js` 的本地调试启动口径也已冻结：只要 `app_desktop_web/dist/index.html` 已存在，就优先复用现有 dist，不再因为源码时间戳更新而在窗口前同步重跑一遍前端 build；若需要最新前端代码，先手动执行 `npm --prefix app_desktop_web run build`。
 - 程序会员控制台管理员登录失败文案已冻结为“用户名或者密码错误”；同时管理员密码在远端 `control-plane.sqlite` 中只以 `scrypt` 哈希保存，后续若再遇到控制台登录失败，不要尝试“查看原密码”，应优先确认当前管理员用户名或直接执行密码重置。
+- 程序会员控制台登录态与首屏展示又冻结三条约束：管理员 token 只允许保留在当前页面内存，刷新后默认回到未登录态，不得恢复 `localStorage` 持久化；前端认证/初始化状态统一收口到 `/api/admin/session`，不再重新分叉旧 `bootstrap state` 链；未登录态不暴露业务细节，且在已存在管理员后不应再把初始化管理员入口混回普通登录流。
+- 程序会员控制台 `/admin` 静态资源继续保持 `Cache-Control: no-cache, no-store, must-revalidate` 口径，避免因浏览器或代理缓存把旧前端误判成“代码未生效”。
 - 程序会员控制台的远端开发机访问口径已发生一次关键收口：`8.138.39.139` 上的后台 `/admin` 不再长期对公网开放，当前稳定姿势是“宿主机只绑定 `127.0.0.1:18787`，本机先建 SSH 隧道，再访问 `http://127.0.0.1:18787/admin`”。后续若有 AI/维护者继续改控制台部署，默认应保持这条本机绑定 + SSH 隧道口径，不要因为 README 中仍保留历史公网示例就无说明地重新打开公网端口。
 - 程序会员控制台的本机连接脚本也新增一条稳定操作约束：`program_admin_console/tools/connectProgramAdminConsole.{ps1,cmd}` 默认不再把 URL 交给已运行的默认浏览器，而是启动一个专用 Chromium 窗口（独立临时 profile）来访问 `/admin`；关闭这个专用窗口后，脚本会自动断开它自己创建的 SSH 隧道。后续若继续调整该脚本，默认不要回退到“复用已有浏览器窗口/标签页”的不可靠模式。
 - 程序会员控制台又新增一条稳定发布约束：`connectProgramAdminConsole` 命中的永远是远端运行中的 `c5-program-admin`，不是本地工作树。因此凡是 `program_admin_console/src/` 或 `program_admin_console/ui/` 的用户可见/接口行为改动，默认都必须在同一轮同步远端源码 `/home/admin/c5-program-admin-src`、重建/替换远端容器，并至少验 `http://127.0.0.1:18787/api/health`、`/api/admin/session`、`/admin`、`/admin/app.js`、`/admin/styles.css`；未完成这组对齐前，不得宣称 connect 入口已生效。同步时还要覆盖新代码依赖到的文件闭包，不能只拷“看起来改过”的单文件，否则会出现 `server.js` 已更新但 `validation.js` 缺失、容器启动失败的漂移事故。

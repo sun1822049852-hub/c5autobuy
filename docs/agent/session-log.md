@@ -970,3 +970,12 @@
   - `listUsersWithEntitlements()` 现在走单条 `IN (?, ?, ...)` 批量查询；当前测试锁住了返回口径，但没有专门压参数上限或大用户量场景，后续若控制台用户规模明显上升，应再补压力侧验证。
 - 下一步：
   - 若魔尊继续追控制台稳态质量，优先考虑把“远端对齐 + connect 同路径静态哈希验尸 + health/session smoke”脚本化，减少人工发布时遗漏依赖文件或少验一步的风险。
+
+## 2026-04-25 12:39 (Asia/Shanghai)
+- 背景：魔尊要求把 `claude4.24` 的项目记忆同步到当前仓库，并明确允许本轮并行调度多 agent 收口。
+- 已完成：
+  - 并行核对了三处来源：仓库内 `docs/agent/memory.md` / `docs/agent/session-log.md`、Claude 项目持久记忆 `C:/Users/18220/.claude/projects/c--Users-18220-Desktop-C5autobug-----------2-/memory/MEMORY.md`、以及相关实现/说明文档。
+  - 仅把已在当前仓库和文档中得到二次印证、且跨会话仍稳定的约束同步进 `docs/agent/memory.md`：包括“魔尊不操作服务器”的协作边界、购买主链路的结构护栏、`2026-04-24` 打包瘦身的实现护栏与验尸陷阱、控制台登录态 memory-only / `/api/admin/session` 收口 / 未登录态不暴露细节，以及 `/admin` 静态资源 no-cache 口径。
+  - 已核对 `README.md`，本轮只是内部记忆同步，不涉及新的用户操作说明或产品行为变更，因此 README 无需改动。
+- 当前进度：当前仓库的 `memory` 已与 `claude4.24` 项目记忆完成一次去噪同步；过程性日志、debug/paste-cache 等一次性材料未被误写入长期记忆。
+- 下一步：后续若继续从外部 agent/Claude 会话回灌记忆，默认沿“只同步稳定约束，不同步一次性排障流水”这条口径执行。
