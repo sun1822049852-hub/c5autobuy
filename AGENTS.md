@@ -61,6 +61,7 @@
 - 不以文件清单、函数名、代码术语作为主要沟通载体；必要时仅作为补充。
 - 解释链路、性能、调度或并发时，默认按“这一层负责什么、为什么存在、会不会增加等待、能否被上/下游吸收”来表述，不按函数调用顺序报菜名。
 - 若用户明确表示看不懂代码，则后续回答中默认避免连续抛出函数名、线程名、类名；必须引用时，先说人话作用，再补代码标识。
+- 若已有足够证据把问题直接归因到单一现象（例如看错窗口、未切换页面/筛选、旧窗口保留旧状态），默认先直接指出问题本身，再补证据；不要在证据已充分时先铺多种可能性或先给修复方案。
 
 ## 需要用户确认时的确认对象
 
@@ -108,6 +109,16 @@
 - 对关键行为，若当前仓库没有自动化测试，不得凭感觉静默改写；至少补最小回归测试，或明确写出人工验证路径与验证缺口。
 - 不得把辅助动作反向绑死主成功链路。
   - 例如 profile 持久化、cookie 续期、缓存刷新、诊断写入失败，不能直接打断“登录成功”“白名单打开成功”“购买成功”这类主结果，除非产品明确要求如此。
+
+## 桌面启动链路保护（强制）
+
+- `main_ui_node_desktop.js`、`main_ui_node_desktop_local_debug.js` 与 embedded Python backend 的启动/接管链路，默认按关键可用性行为处理；未给出验证证据前，不得静默改写 ready 判定、deferred startup 装配顺序或 local debug 启动口径。
+- Electron 侧把 backend 视为 `ready` 的前提，必须是 `/health` 明确返回 `ready=true`；单纯 HTTP 200 只表示进程活着，不代表 `/app/bootstrap` 等业务接口已可接管。
+- deferred startup 所需 middleware 必须在 `create_app()` 阶段预先注册；不得在 lifespan 或 `_deferred_init()` 内再调用 `add_middleware()`，避免再次触发 `Cannot add middleware after an application has started`。
+- 若改动触及桌面启动链、backend readiness gate、`/health` 语义、或 local debug 入口，收口前至少要补/跑对应 focused regression，默认包括：
+  - `app_desktop_web/tests/electron/python_backend.test.js`
+  - `tests/backend/test_backend_health.py`
+  - `app_desktop_web/tests/renderer/app_remote_bootstrap.test.jsx`
 
 ## 已确认的产品约束（当前会话）
 

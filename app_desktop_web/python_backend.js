@@ -73,6 +73,29 @@ function buildBackendExitError({ code, signal, stderrOutput }) {
 }
 
 
+async function isBackendHealthReady(response) {
+  if (!response?.ok) {
+    return false;
+  }
+
+  if (typeof response.json !== "function") {
+    return true;
+  }
+
+  try {
+    const payload = await response.json();
+    if (payload && typeof payload === "object" && Object.prototype.hasOwnProperty.call(payload, "ready")) {
+      return payload.ready === true;
+    }
+  } catch {
+    // Older callers may not expose a JSON health payload; keep the previous
+    // "HTTP 200 means alive" fallback when the body cannot be parsed.
+  }
+
+  return true;
+}
+
+
 export function buildPythonBackendEnv(projectRoot, baseEnv = process.env, programAccessConfig = null) {
   const explicitAppPrivateDir = typeof programAccessConfig?.appPrivateDir === "string"
     ? programAccessConfig.appPrivateDir.trim()
@@ -157,7 +180,7 @@ export async function startPythonBackend({
       }
       try {
         const response = await fetchImpl(`${baseUrl}/health`);
-        if (response?.ok) {
+        if (await isBackendHealthReady(response)) {
           return {
             process: child,
             port,

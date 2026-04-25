@@ -249,6 +249,7 @@ def create_app(
     request_diagnostics_log_path = request_diagnostics_log_path or (
         database_path.parent / "runtime" / "request_diagnostics.runtime.jsonl"
     )
+    from app_backend.infrastructure.request_diagnostics import RequestDiagnosticsMiddleware
 
     # ------------------------------------------------------------------
     # Phase 1 — minimal app: /health reachable immediately
@@ -275,6 +276,15 @@ def create_app(
         if error:
             return {"status": "error", "ready": False, "error": str(error)}
         return {"status": "ok", "ready": getattr(app.state, "_ready", False)}
+
+    # Register request diagnostics before startup begins. In deferred mode this
+    # preserves the existing middleware order while avoiding Starlette's
+    # "cannot add middleware after startup" restriction inside lifespan.
+    app.add_middleware(
+        RequestDiagnosticsMiddleware,
+        log_path=request_diagnostics_log_path,
+        slow_ms=request_diagnostics_slow_ms,
+    )
 
     if deferred_init:
         # Store params for _deferred_init to pick up later.
@@ -402,7 +412,6 @@ def _sync_heavy_init(app: FastAPI, params: dict) -> None:
     from app_backend.infrastructure.proxy.proxy_test_service import ProxyTestService
     from app_backend.application.services.account_balance_service import AccountBalanceService
     from app_backend.workers.manager.task_manager import TaskManager
-    from app_backend.infrastructure.request_diagnostics import RequestDiagnosticsMiddleware
     database_path: Path = params["database_path"]
     program_access_stage = params["program_access_stage"]
     program_access_app_data_root = params["program_access_app_data_root"]
@@ -554,15 +563,6 @@ def _sync_heavy_init(app: FastAPI, params: dict) -> None:
 
     if program_access_refresh_scheduler is not None and program_access_start_refresh_scheduler:
         program_access_refresh_scheduler.start()
-
-    # -- Request diagnostics middleware (deferred from Phase 1) ----------------
-    request_diagnostics_log_path = params["request_diagnostics_log_path"]
-    request_diagnostics_slow_ms = params["request_diagnostics_slow_ms"]
-    app.add_middleware(
-        RequestDiagnosticsMiddleware,
-        log_path=request_diagnostics_log_path,
-        slow_ms=request_diagnostics_slow_ms,
-    )
 
     # -- Register routers --------------------------------------------------
     app.include_router(account_center_routes.router)

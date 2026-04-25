@@ -979,3 +979,41 @@
   - 已核对 `README.md`，本轮只是内部记忆同步，不涉及新的用户操作说明或产品行为变更，因此 README 无需改动。
 - 当前进度：当前仓库的 `memory` 已与 `claude4.24` 项目记忆完成一次去噪同步；过程性日志、debug/paste-cache 等一次性材料未被误写入长期记忆。
 - 下一步：后续若继续从外部 agent/Claude 会话回灌记忆，默认沿“只同步稳定约束，不同步一次性排障流水”这条口径执行。
+
+## 2026-04-25 12:52 (Asia/Shanghai)
+- 背景：魔尊反馈源码态桌面出现 `{"detail":"service is starting"}`，且 `main_ui_node_desktop_local_debug.js` 进入程序不可用；本轮允许并鼓励多 agent 并行排障。
+- 已完成：
+  - 并行排查后确认是两条启动链同时断：1. Electron `startPythonBackend()` 之前只看 `/health` 的 HTTP 200，就把 backend 判为 ready，导致 renderer 过早请求业务接口时撞上 backend readiness gate 的 `503 {"detail":"service is starting"}`；2. Python backend 的 deferred init 又在 lifespan 里补挂 `RequestDiagnosticsMiddleware`，触发 Starlette `RuntimeError: Cannot add middleware after an application has started`，导致 backend 很快落入 `health.status=error`。
+  - 已先按 TDD 补两条红灯：`app_desktop_web/tests/electron/python_backend.test.js` 新增“`/health` 返回 `ready:false` 时继续轮询”的回归；`tests/backend/test_backend_health.py` 新增 deferred startup 契约，锁定“`/health` 最终进入 `ready:true`、且 `/app/bootstrap` 可访问”。
+  - 已做最小修复：`app_desktop_web/python_backend.js` 现在只有在 `/health` 明确返回 `ready:true` 时才 resolve backend ready；`app_backend/main.py` 把 `RequestDiagnosticsMiddleware` 前移到 `create_app()` 阶段注册，避免 deferred init 期间再修改 middleware 栈。
+  - 已核对 `README.md`：本轮修的是启动竞态与装配时机，不改用户入口口径与操作说明，因此 README 无需改动。
+- 已做验证：
+  - 红灯：`npm exec vitest run tests/electron/python_backend.test.js` 先因“只轮询 1 次就提前通过”失败；`python -m pytest tests/backend/test_backend_health.py -q` 先因 `Cannot add middleware after an application has started` 失败。
+  - 绿灯：`npm exec vitest run tests/electron/python_backend.test.js` -> `12 passed`；`npm exec vitest run tests/renderer/app_remote_bootstrap.test.jsx` -> `6 passed`；`python -m pytest tests/backend/test_backend_health.py -q` -> `2 passed`。
+  - 真实链路验尸：用 `app_desktop_web/python_backend.js` 直接拉起真实 backend 后，再访问 `http://127.0.0.1:8132/health` 与 `/app/bootstrap`，结果分别为 `{"status":"ok","ready":true}` 与 HTTP 200，已不再出现 `service is starting`。
+- 当前进度：embedded/backend 启动竞态与 deferred init 崩溃点已收口；当前仓库已恢复到“主界面先亮、backend 真 ready 后再接管数据”的既定口径。
+- 余险：
+  - 本轮 focused 验证集中在启动链，没有顺手回归更大范围的 backend pytest 或完整 Electron GUI 手测；若魔尊继续追 UI 现场，可再做一次真实 `node main_ui_node_desktop_local_debug.js` 手测。
+  - backend 仍保留 FastAPI `on_event("shutdown")` 的既有弃用告警，本轮未动。
+- 下一步：
+  - 若魔尊继续要求现场复验，优先直接从 `main_ui_node_desktop_local_debug.js` 入口做一次真机手测，看是否已从“卡在 service is starting / 直接不可用”恢复为正常进入首页。
+
+## 2026-04-25 13:27 (Asia/Shanghai)
+- 背景：在继续排查“历史数据丢失”时，最终确认不是 DB 切错，而是魔尊现场未切换到目标窗口；魔尊要求把“证据足够时先直指出问题，不先给方案树”写进 agent 规则。
+- 已完成：
+  - 已在仓库级 [AGENTS.md](C:/Users/18220/Desktop/C5autobug更新接口%20-%20副本%20(2)/AGENTS.md) 的“沟通表达优先级”中补入新约束：若证据已足够把问题归因到单一现象（如看错窗口、未切换页面/筛选、旧窗口保留旧状态），默认先直接指出问题本身，再补证据，不再先铺多种可能性或先给方案。
+  - 已把同一条稳定偏好同步沉淀到 [docs/agent/memory.md](C:/Users/18220/Desktop/C5autobug更新接口%20-%20副本%20(2)/docs/agent/memory.md)，作为跨会话协作记忆。
+  - 已核对 `README.md`，本轮仅调整 agent 协作约束，不涉及用户功能或操作口径，因此 README 无需改动。
+- 当前进度：该沟通偏好已写入仓库 agent 规则与长期记忆，后续同类场景默认按“先直指问题，再补证据”执行。
+
+## 2026-04-25 13:33 (Asia/Shanghai)
+- 背景：魔尊要求把本轮最初的“`service is starting` / local debug 入口被改炸”问题上升成明确约束，避免后续再有人改坏桌面启动链。
+- 已完成：
+  - 已在仓库级 [AGENTS.md](C:/Users/18220/Desktop/C5autobug更新接口%20-%20副本%20(2)/AGENTS.md) 新增“桌面启动链路保护（强制）”章节，把以下内容冻结为硬约束：
+    - desktop 主入口与 local debug 入口属于关键可用性行为；
+    - Electron 只有在 `/health` 明确返回 `ready=true` 时才可把 backend 视为 ready；
+    - deferred startup 所需 middleware 必须在 `create_app()` 阶段预先注册，禁止在 lifespan / `_deferred_init()` 里再 `add_middleware()`；
+    - 任何触及启动链 / readiness / local debug 的改动，收口前默认必须回归 `app_desktop_web/tests/electron/python_backend.test.js`、`tests/backend/test_backend_health.py`、`app_desktop_web/tests/renderer/app_remote_bootstrap.test.jsx`。
+  - 已把同一条稳定约束同步更新到 [docs/agent/memory.md](C:/Users/18220/Desktop/C5autobug更新接口%20-%20副本%20(2)/docs/agent/memory.md)。
+  - 已核对 `README.md`，本轮仅补 agent/记忆约束，不涉及用户入口说明，因此 README 无需改动。
+- 当前进度：桌面启动链的回归保护已从一次性排障结论升级为仓库硬约束；后续再碰这条链，默认先被规则和 focused regression 拦下。

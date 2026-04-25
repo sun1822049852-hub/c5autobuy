@@ -35,6 +35,7 @@
 - 本项目 backend 测试若在导入阶段因缺少 `xsign` 失败，后续默认先检查测试入口兜底（如 `tests/backend/conftest.py`）、统一测试脚本或现有 stub/fallback，不再优先采用单次命令临时注入；同类环境坑重复出现时应沉淀为仓库规则或自动兜底。
 - 程序会员 / 程序账号的产品语义已冻结：本地桌面主线只有一份共享业务数据；程序账号只承载远端鉴权与会员权限，不拥有本地数据；切换程序账号只改变权限态，不切换本地工作区；登出或会员失效后本地数据仍可只读查看，但关键动作必须统一锁死；切到有会员的账号后在原工作区上直接恢复可用。
 - 程序账号入口 UI 也已冻结一条稳定约束：左侧侧栏只允许显示最小登录状态摘要，即 `未登录` 或当前 `username`，不得再把权限说明、注册/找回密码、到期时间等细节重新塞回侧栏；具体账号操作统一在屏幕中央弹窗中完成，且已登录时弹窗只显示当前账号状态与 `刷新状态` / `退出`，不再显示登录表单。
+- 沟通上又冻结一条仓库级协作约束：只要现场证据已经足够把问题直接归因到单一现象（如看错窗口、未切换页面/筛选、旧窗口保留旧状态），后续默认先直接指出问题本身，再补证据；不要在证据已充分时先展开多种可能性或先给方案树。
 - C5 账号登录任务的用户可见状态文案已冻结为“集中映射、统一复用”模式：唯一维护点是 `app_desktop_web/src/features/account-center/login_task_state_labels.js`；账号中心登录抽屉、诊断页登录任务标签页、账号中心日志中的状态显示都必须走这份映射，后续若用户要求改某个状态文案，应优先改这里而不是在各组件内散改。
 - 用户可见的正式入口文案继续冻结一条风格约束：普通用户直接能看到的页眉/眉标默认优先中文，不再保留 `ACCOUNT CENTER`、`PROGRAM ACCESS`、`Diagnostics` 这类英文眉标；只有显式本地调试分支里的提示，例如 `本地调试模式`，才允许保留调试口径作为区分标记。
 - 主导航按钮也已冻结一条 UI 文案约束：不再展示英文状态签条 `Live`；导航只保留中文功能名本身，不再额外挂英文视觉标签。
@@ -61,6 +62,7 @@
 - 包体积验尸前必须先清旧产物：`release/` 里的旧 `.venv` 只能视为历史残留，不能拿来判断当前发行策略失效；只要改了 Python 依赖排除列表，就必须重建 `app_desktop_web/build/python_deps`，避免 preflight 复用旧缓存。若再次出现体积异常，优先按 `docs/guides/package-size-troubleshooting.md` 排查。
 - 扫货系统商品卡片的统计口径新增一条稳定产品约束：停止扫货后，所选配置的商品级 `查询次数 / 命中 / 成功 / 失败` 必须继续显示当天累计值，不得因 stop 动作清空；清空边界按自然日切换，而不是按开始/停止按钮切换。
 - 当前 embedded 桌面启动口径新增一条稳定交互约束：主界面壳必须先亮，不再把 renderer 首次加载硬卡在本地 backend `/health` 之后；backend `ready` 后再通过主进程 bootstrap 更新把真实 `apiBaseUrl/backendStatus` 推给 renderer，并在此之前禁止首页页面抢跑数据请求。
+- embedded backend 的启动判定口径也已冻结：Electron 侧只有在 `/health` 明确返回 `ready:true` 时，才允许把 `backendStatus` 切成 `ready` 并放行 renderer 请求业务接口；单纯 HTTP 200 只代表进程活着，不代表 `/app/bootstrap` 等业务路由已可用。同时，deferred startup 需要的 middleware 必须在 `create_app()` 阶段预先注册，不能在 lifespan 里的 `_deferred_init()` 再调用 `add_middleware()`，否则 Starlette 会直接报 `Cannot add middleware after an application has started`。这条链路属于稳定保护行为，后续凡是改动启动/ready 判定/local debug 入口，默认都要先回归 `app_desktop_web/tests/electron/python_backend.test.js`、`tests/backend/test_backend_health.py`、`app_desktop_web/tests/renderer/app_remote_bootstrap.test.jsx`。
 - `app_backend.main` 的默认 `app` 现已冻结为懒加载口径：导入模块本身不得立刻执行 `create_app()`；只有显式访问 `app_backend.main.app` 时才允许首次构建并缓存默认实例，避免桌面 embedded 启动重复建 app。
 - `main_ui_node_desktop_local_debug.js` 的本地调试启动口径也已冻结：只要 `app_desktop_web/dist/index.html` 已存在，就优先复用现有 dist，不再因为源码时间戳更新而在窗口前同步重跑一遍前端 build；若需要最新前端代码，先手动执行 `npm --prefix app_desktop_web run build`。
 - 程序会员控制台管理员登录失败文案已冻结为“用户名或者密码错误”；同时管理员密码在远端 `control-plane.sqlite` 中只以 `scrypt` 哈希保存，后续若再遇到控制台登录失败，不要尝试“查看原密码”，应优先确认当前管理员用户名或直接执行密码重置。
