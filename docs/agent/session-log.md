@@ -1071,3 +1071,18 @@
   - `AsyncClient + ASGITransport` 这类不托管 lifespan 的调用方式，退出时本就不会自动触发 app shutdown；本轮没有改变这件事，真正的关闭清理仍依赖 `TestClient`/ASGI server 这类会发出 lifespan shutdown 的宿主。
 - 下一步：
   - 若魔尊后续还想继续收口生命周期，可再补一条 deferred 模式退出时也执行 cleanup 的 focused 回归，但本轮主诉求“移除弃用告警且不破坏关闭回收”已完成。
+
+## 2026-04-25 14:04 (Asia/Shanghai)
+- 背景：魔尊要求定位“代理选择”里的白色字体下拉框，并对同类暗色主题 UI 一次性收口，避免后续反复返工；本轮明确允许并鼓励多 agent 并行。
+- 已完成：
+  - 并行排查确认根因不是单个代理弹窗，而是暗色主题下原生 `select` 缺少统一约束：多个页面把下拉文本设成浅色，但展开层仍可能回退到系统浅底，导致“浅底白字”。
+  - 在 `app_desktop_web/src/styles/app.css` 为表单控件补齐统一暗色约束：表单控件启用 `color-scheme: dark`，聚焦态统一高亮，并为原生 `select` 统一箭头、右侧留白与 `option/optgroup` 暗底文本，避免展开层再退回系统浅色方案。
+  - 把暗色主前端里 7 处原生 `select` 统一收口到 `form-select` 语义类，覆盖账号中心代理选择、代理池协议/批量导入、购买配置仓库选择、查询设置冷却策略。
+  - 补 focused renderer 断言，锁定“添加账号 / API 代理编辑 / 浏览器代理编辑 / 仓库选择 / 查询设置”这些已有入口必须继续使用 `form-select`；README 已核对，本轮无需改动。
+- 已做验证：
+  - `npm test -- tests/renderer/account_center_editing.test.jsx tests/renderer/purchase_system_page.test.jsx` -> `2 passed`, `52 passed`
+- 当前进度：代理选择及同类暗色下拉控件已到可手测状态；样式层与已有测试入口都已加上统一约束。
+- 余险：
+  - 本轮 focused 回归覆盖的是已有用户路径，未额外新增代理池弹窗的独立组件测试；不过样式已在全局 `select.form-select/select.form-input` 层统一兜底。
+- 下一步：
+  - 若魔尊继续追 UI 细节，可直接做一次真机手测，重点看 Windows/Electron 下拉展开面板是否已与当前暗色主题一致。

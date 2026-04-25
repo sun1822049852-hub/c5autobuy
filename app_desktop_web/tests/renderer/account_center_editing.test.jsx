@@ -581,6 +581,8 @@ describe("account center editing flows", () => {
     await user.click(screen.getByRole("button", { name: "添加账号" }));
 
     await screen.findByRole("heading", { name: "添加账号" });
+    expect(screen.getByLabelText("浏览器代理")).toHaveClass("form-select");
+    expect(screen.getByLabelText("API代理")).toHaveClass("form-select");
     await user.type(screen.getByLabelText("备注"), "账号 D");
     await user.selectOptions(screen.getByLabelText("浏览器代理"), "__custom__");
     const browserCustomInputs = screen.getAllByPlaceholderText(/127\.0\.0\.1:9000/);
@@ -837,6 +839,7 @@ describe("account center editing flows", () => {
     });
 
     const warehouseSelect = within(purchaseDrawer).getByLabelText("当前仓库");
+    expect(warehouseSelect).toHaveClass("form-select");
     expect(within(warehouseSelect).getByRole("option", { name: "满仓仓库（库存已满）" })).toBeDisabled();
     await user.selectOptions(warehouseSelect, "steam-2");
     await user.click(within(purchaseDrawer).getByLabelText("禁用该账号的购买能力"));
@@ -917,7 +920,9 @@ describe("account center editing flows", () => {
 
     await user.click(screen.getByRole("button", { name: "编辑API IP 账号 A" }));
     await screen.findByRole("heading", { name: "API IP 设置" });
-    await user.selectOptions(screen.getByLabelText("API代理"), "__custom__");
+    const apiProxySelect = screen.getByLabelText("API代理");
+    expect(apiProxySelect).toHaveClass("form-select");
+    await user.selectOptions(apiProxySelect, "__custom__");
     await user.type(screen.getByPlaceholderText(/127\.0\.0\.1:9000/), "127.0.0.1:9100");
     await user.click(screen.getByRole("button", { name: "保存" }));
 
@@ -1095,7 +1100,9 @@ describe("account center editing flows", () => {
 
     await user.click(screen.getByRole("button", { name: "编辑浏览器 IP 账号 A" }));
     await screen.findByRole("heading", { name: "浏览器代理设置" });
-    await user.selectOptions(screen.getByLabelText("浏览器代理"), "__custom__");
+    const browserProxySelect = screen.getByLabelText("浏览器代理");
+    expect(browserProxySelect).toHaveClass("form-select");
+    await user.selectOptions(browserProxySelect, "__custom__");
     await user.type(screen.getByPlaceholderText(/127\.0\.0\.1:9000/), "127.0.0.1:9200");
     await user.click(screen.getByRole("button", { name: "保存" }));
 

@@ -1775,6 +1775,7 @@ describe("purchase system page", () => {
     const newApiItemStrategySelect = within(dialog).getByLabelText("new API 商品冷却策略");
 
     expect(newApiItemMinInput).toHaveValue(0.5);
+    expect(newApiItemStrategySelect).toHaveClass("form-select");
     expect(newApiItemStrategySelect).toHaveValue("divide_by_assigned_count");
 
     await user.clear(fastApiMinInput);

@@ -106,7 +106,7 @@ export function AccountBrowserProxyDialog({
           <div className="form-field">
             <label className="form-label" htmlFor="account-browser-proxy-select">浏览器代理</label>
             <select
-              className="form-input"
+              className="form-select"
               id="account-browser-proxy-select"
               value={selectValue}
               onChange={(e) => setSelectValue(e.target.value)}

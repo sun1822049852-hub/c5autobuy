@@ -112,7 +112,7 @@ export function ProxyEditDialog({ open, proxy, onClose, onSubmit, onTest }) {
           <label className="form-field">
             <span className="form-label">协议</span>
             <select
-              className="form-input"
+              className="form-select"
               value={form.scheme}
               onChange={(e) => updateField("scheme", e.target.value)}
             >

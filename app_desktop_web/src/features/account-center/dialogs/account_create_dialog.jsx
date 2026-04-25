@@ -25,7 +25,7 @@ function ProxySelectField({ id, label, hint, proxies, selectValue, inputValue, o
     <div className="form-field">
       <label className="form-label" htmlFor={id}>{label}</label>
       <select
-        className="form-input"
+        className="form-select"
         id={id}
         value={selectValue}
         onChange={(e) => onSelectChange(e.target.value)}

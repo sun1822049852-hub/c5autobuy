@@ -126,7 +126,7 @@ export function AccountProxyDialog({
           <div className="form-field">
             <label className="form-label" htmlFor="account-api-proxy-select">API代理</label>
             <select
-              className="form-input"
+              className="form-select"
               id="account-api-proxy-select"
               value={selectValue}
               onChange={(e) => setSelectValue(e.target.value)}

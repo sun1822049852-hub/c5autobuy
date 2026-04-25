@@ -1375,11 +1375,45 @@ textarea,
   border: 1px solid var(--line-soft);
   border-radius: 14px;
   color: var(--text-main);
-  background: rgba(255, 255, 255, 0.04);
+  background-color: rgba(255, 255, 255, 0.04);
+  color-scheme: dark;
+  transition: border-color 140ms ease, box-shadow 140ms ease, background-color 140ms ease;
 }
 
 .form-select {
   font-weight: 600;
+}
+
+.form-input:focus,
+.form-input:focus-visible,
+.form-select:focus,
+.form-select:focus-visible {
+  outline: none;
+  border-color: rgba(220, 164, 76, 0.48);
+  box-shadow:
+    0 0 0 1px rgba(220, 164, 76, 0.2),
+    0 0 0 4px rgba(220, 164, 76, 0.08);
+  background-color: rgba(255, 255, 255, 0.06);
+}
+
+/* 暗色主题 select 统一约束，避免原生下拉继续回退成浅底白字。 */
+select.form-input,
+select.form-select {
+  padding-right: 42px;
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M1.5 3.25 5 6.75l3.5-3.5' fill='none' stroke='%23dca44c' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 14px center;
+  background-size: 18px 18px;
+}
+
+select.form-input option,
+select.form-input optgroup,
+select.form-select option,
+select.form-select optgroup {
+  color: var(--text-main);
+  background: #171b21;
 }
 
 .form-input:disabled,

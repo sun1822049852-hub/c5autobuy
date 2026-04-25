@@ -75,7 +75,7 @@ export function ProxyBatchImportDialog({ open, onClose, onSubmit }) {
           <label className="form-field">
             <span className="form-label">默认协议</span>
             <select
-              className="form-input"
+              className="form-select"
               value={defaultScheme}
               onChange={(e) => setDefaultScheme(e.target.value)}
             >
