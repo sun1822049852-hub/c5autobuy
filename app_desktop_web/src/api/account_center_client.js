@@ -236,11 +236,13 @@ export function createAccountCenterClient({
     },
     async listQueryConfigs() {
       return http.getJson("/query-configs", {
+        dedupeInFlight: true,
         method: "GET",
       });
     },
     async getQueryConfig(configId) {
       return http.getJson(`/query-configs/${configId}`, {
+        dedupeInFlight: true,
         method: "GET",
       });
     },

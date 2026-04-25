@@ -3172,3 +3172,98 @@
   - `docs/agent/session-log.md` 已更新
   - `docs/agent/memory.md` 已更新
   - `README.md` 已核对，本次无需改动
+
+## 2026-04-26 01:20 (Asia/Shanghai) Handoff
+- 当前目标：
+  - 当前总目标已从“首页只先亮壳”继续推进到“首页可操作后，后台把其它一级页首批数据先热起来，减少用户第一次点侧栏的等待”。
+  - 当前已收口提交：
+    - `4aaca7b perf: trace account center and warm hidden pages`
+- 进度断点：
+  - 当前 chunk：
+    - `/account-center/accounts` 服务端分段 trace / request_trace 已完成并提交
+    - desktop hidden-page warmup 已完成首版并提交
+    - warmup request dedupe 尚未开始
+  - 当前 task：
+    - 已完成：
+      - desktop bootstrap 新增 `pageWarmupEnabled`
+      - 首页可操作后后台触发 full bootstrap + hidden keepalive mount
+      - `query-system / purchase-system / diagnostics` 支持 hidden 态首批数据 warmup
+      - focused regression 全部通过
+    - 正在进行：
+      - 无未收口代码；当前停在“提交完成，等待下一刀继续压 warmup 噪音”
+- 现场状态：
+  - 工作目录：`C:/Users/18220/Desktop/C5autobug更新接口 - 副本 (2)`
+  - 分支：`master`
+  - 当前不是 dedicated worktree
+  - 最新提交：`4aaca7b perf: trace account center and warm hidden pages`
+  - 写入本条 handoff 前工作树为 clean；写入后默认只会多出 `docs/agent/session-log.md` 这条未提交 handoff 记录
+- 错误与约束：
+  - 已确认的行为边界：
+    - warmup 只能做“页面壳 + 首批数据”预热，不能提前启动 hidden 页的 polling / websocket / runtime action
+    - `query-system` / `purchase-system` hidden 态允许首拉，但活跃轮询仍必须等用户真正切进去
+    - diagnostics hidden 态只拉首包，不持续 poll
+  - 已暴露但尚未治理的口子：
+    - 现在 warmup 会带来重复请求，尤其是 `query-configs/{id}` detail 可能被多个 hidden 页分别取一次
+    - 本轮 tests 已放宽为“后台预热确实发生”，还没把请求数收敛到最小
+  - 后续不要再犯：
+    - 不要为了做 dedupe 把首页主链重新绑回阻塞式 prefetch
+    - 不要把 hidden warmup 扩成 hidden active runtime
+- 验证状态：
+  - 已执行：
+    - `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_request_diagnostics_middleware.py tests/backend/test_account_center_routes.py tests/backend/test_backend_startup_slices.py -q`
+      - `31 passed in 5.69s`
+    - `npm --prefix app_desktop_web test -- tests/renderer/app_page_keepalive.test.jsx -t "warms hidden top-level pages and their first data requests in the background after home becomes interactive" --run`
+      - 通过
+    - `npm --prefix app_desktop_web test -- tests/renderer/query_system_page.test.jsx tests/renderer/purchase_system_page.test.jsx tests/renderer/diagnostics_sidebar.test.jsx tests/renderer/app_remote_bootstrap.test.jsx --run`
+      - `69 passed`
+  - 尚未覆盖的缺口：
+    - 本轮没有补新的 Electron 真机手点 trace 来量“切侧栏实际还剩多少等待”
+    - 还没有为 warmup request dedupe 写专门回归
+- 下一步第一刀：
+  - 下个会话先别继续加新页面 warmup；直接做 `warmup 请求去重`。
+  - 第一刀建议顺序：
+    - 先在 renderer test 里锁定“warmup 发生，但 `query-configs/{id}` / diagnostics / stats 不应无意义重复请求”
+    - 优先考虑在 top-level warmup 或 shared client/store 层做单次 promise 复用 / in-flight dedupe
+    - 只压 warmup 重复请求，不改 hidden/active 的行为边界
+  - 做完后立刻验证：
+    - `npm --prefix app_desktop_web test -- tests/renderer/app_page_keepalive.test.jsx --run`
+    - `npm --prefix app_desktop_web test -- tests/renderer/query_system_page.test.jsx tests/renderer/purchase_system_page.test.jsx tests/renderer/diagnostics_sidebar.test.jsx tests/renderer/app_remote_bootstrap.test.jsx --run`
+
+## 2026-04-26 01:45 (Asia/Shanghai)
+- 背景：
+  - 按上一条 handoff 直接续做 warmup request dedupe，不重做 hidden page warmup 已完成部分。
+  - 本刀约束保持不变：只压 `warmup` 并发重复请求，不改 `hidden/active` 行为边界，不把 hidden warmup 扩成 hidden active runtime。
+- 根因：
+  - `配置管理` 与 `扫货系统` 在后台 warmup 时会并发补同一个 `query config list/detail`。
+  - 两页共用同一个 `client`，但之前 `http.getJson()` 没有 in-flight dedupe；而且页内 effect 在 store 从 summary 过渡到 detail 的间隙还会二次补拉，导致 `GET /query-configs/{id}` 在同一轮 warmup 内可重复到 4 次。
+- 本轮修改：
+  - `app_desktop_web/tests/renderer/app_page_keepalive.test.jsx`
+    - 新增回归：`deduplicates concurrent hidden warmup requests for the same query config payload`
+    - 直接锁定 background warmup 下 `/query-configs` 与 `/query-configs/config-1` 都只能发 1 次
+  - `app_desktop_web/src/api/http.js`
+    - 为 `getJson()` 增加可选 `dedupeInFlight/dedupeKey`
+    - 同 key 并发 GET 共用同一条 promise；请求完成后立即释放，不做持久缓存
+  - `app_desktop_web/src/api/account_center_client.js`
+    - 先只给 `listQueryConfigs()` / `getQueryConfig()` 打开 `dedupeInFlight`
+    - 这样优先收敛 warmup 最吵的 `query-configs` 重复请求，同时不扩大到所有 endpoint
+- TDD / 验证：
+  - 红灯：
+    - `npm --prefix app_desktop_web test -- tests/renderer/app_page_keepalive.test.jsx -t "deduplicates concurrent hidden warmup requests for the same query config payload" --run`
+    - 初始失败：`/query-configs/config-1` 实际打了 `4` 次
+  - 绿灯：
+    - 同命令回跑通过
+  - focused regression：
+    - `npm --prefix app_desktop_web test -- tests/renderer/app_page_keepalive.test.jsx -t "warms hidden top-level pages and their first data requests in the background after home becomes interactive|deduplicates concurrent hidden warmup requests for the same query config payload" --run`
+      - `2 passed`
+    - `npm --prefix app_desktop_web test -- tests/renderer/query_system_page.test.jsx --run`
+      - `16 passed`
+    - `npm --prefix app_desktop_web test -- tests/renderer/purchase_system_page.test.jsx --run`
+      - `33 passed`
+    - `npm --prefix app_desktop_web test -- tests/renderer/account_center_client.test.js tests/renderer/query_system_client.test.js --run`
+      - `8 passed`
+- 现场备注：
+  - `tests/renderer/app_page_keepalive.test.jsx` 全文件回跑时，旧用例 `warms account center in the background even when another page is the startup tab` 在当前分支仍失败，症状是启动后未恢复到“查询统计”页；本轮未扩线处理，因为与本次 `query-configs` warmup dedupe 无直接关联。
+- 文档同步：
+  - `docs/agent/session-log.md` 已更新
+  - `docs/agent/memory.md` 本次无需改动
+  - `README.md` 已核对，本次无需改动

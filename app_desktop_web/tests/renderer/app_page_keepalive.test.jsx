@@ -311,4 +311,20 @@ describe("app page keepalive", () => {
       expect(countCalls(harness.calls, "/query-configs/config-1")).toBeGreaterThanOrEqual(1);
     });
   });
+
+  it("deduplicates concurrent hidden warmup requests for the same query config payload", async () => {
+    const harness = createFetchHarness();
+    installDesktopApp(harness.fetchImpl, {
+      pageWarmupEnabled: true,
+    });
+
+    render(<App />);
+
+    await screen.findByRole("searchbox", { name: "搜索账号" });
+
+    await waitFor(() => {
+      expect(countCalls(harness.calls, "/query-configs")).toBe(1);
+      expect(countCalls(harness.calls, "/query-configs/config-1")).toBe(1);
+    });
+  });
 });

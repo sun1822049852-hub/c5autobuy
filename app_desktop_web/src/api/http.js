@@ -44,9 +44,16 @@ export function createHttpClient({
     throw new Error("Fetch API 不可用，无法初始化 HTTP 客户端");
   }
 
+  const inFlightJsonRequests = new Map();
+
   async function request(path, options = {}) {
-    const method = String(options.method ?? "GET").toUpperCase();
-    const timeoutMs = Number(options.timeoutMs ?? requestTimeoutMs);
+    const {
+      dedupeInFlight: _dedupeInFlight,
+      dedupeKey: _dedupeKey,
+      ...fetchOptions
+    } = options;
+    const method = String(fetchOptions.method ?? "GET").toUpperCase();
+    const timeoutMs = Number(fetchOptions.timeoutMs ?? requestTimeoutMs);
     const controller = typeof AbortController === "function"
       ? new AbortController()
       : null;
@@ -55,12 +62,12 @@ export function createHttpClient({
     let timeoutError = null;
     let didTimeout = false;
 
-    if (controller && options.signal) {
-      if (options.signal.aborted) {
+    if (controller && fetchOptions.signal) {
+      if (fetchOptions.signal.aborted) {
         controller.abort();
-      } else if (typeof options.signal.addEventListener === "function") {
+      } else if (typeof fetchOptions.signal.addEventListener === "function") {
         abortListener = () => controller.abort();
-        options.signal.addEventListener("abort", abortListener, { once: true });
+        fetchOptions.signal.addEventListener("abort", abortListener, { once: true });
       }
     }
 
@@ -68,10 +75,10 @@ export function createHttpClient({
       method,
       headers: {
         Accept: "application/json",
-        ...options.headers,
+        ...fetchOptions.headers,
       },
-      ...options,
-      signal: controller?.signal ?? options.signal,
+      ...fetchOptions,
+      signal: controller?.signal ?? fetchOptions.signal,
     });
 
     let response;
@@ -104,8 +111,8 @@ export function createHttpClient({
       if (timeoutId !== null) {
         globalThis.clearTimeout(timeoutId);
       }
-      if (abortListener && typeof options.signal?.removeEventListener === "function") {
-        options.signal.removeEventListener("abort", abortListener);
+      if (abortListener && typeof fetchOptions.signal?.removeEventListener === "function") {
+        fetchOptions.signal.removeEventListener("abort", abortListener);
       }
     }
 
@@ -126,8 +133,30 @@ export function createHttpClient({
 
   return {
     async getJson(path, options = {}) {
-      const response = await request(path, options);
-      return response.json();
+      const { dedupeInFlight = false, dedupeKey = null, ...requestOptions } = options;
+      const method = String(requestOptions.method ?? "GET").toUpperCase();
+      const shouldDedupe = dedupeInFlight && method === "GET";
+      const inFlightKey = shouldDedupe
+        ? String(dedupeKey || `${method} ${path}`)
+        : null;
+
+      if (inFlightKey && inFlightJsonRequests.has(inFlightKey)) {
+        return inFlightJsonRequests.get(inFlightKey);
+      }
+
+      const nextPromise = request(path, requestOptions)
+        .then((response) => response.json())
+        .finally(() => {
+          if (inFlightKey && inFlightJsonRequests.get(inFlightKey) === nextPromise) {
+            inFlightJsonRequests.delete(inFlightKey);
+          }
+        });
+
+      if (inFlightKey) {
+        inFlightJsonRequests.set(inFlightKey, nextPromise);
+      }
+
+      return nextPromise;
     },
     async postJson(path, payload, options = {}) {
       const response = await request(path, {
