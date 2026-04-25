@@ -6,6 +6,7 @@ import {
 } from "../../../program_access/program_access_provider.jsx";
 import { isProgramReadonlyLocked } from "../../../program_access/program_access_readonly.js";
 import { useProgramAccess } from "../../../runtime/use_app_runtime.js";
+import { logRendererDiagnostic } from "../../../desktop/renderer_diagnostics.js";
 import { useFloatingRuntimeModalState } from "../../purchase-system/hooks/use_floating_runtime_modal_state.js";
 import { getLoginTaskStateLabel } from "../login_task_state_labels.js";
 import { useLoginTaskStream } from "./use_login_task_stream.js";
@@ -457,6 +458,7 @@ export function useAccountCenterPage({ client }) {
     initialPosition: { x: 168, y: 104 },
     initialSize: { width: 760, height: 520 },
   });
+  const hasLoggedInitialAccountsLoadedRef = useRef(false);
 
   function appendLogEntry(entry) {
     setAccountLogs((current) => [createLogEntry(entry), ...current]);
@@ -499,7 +501,14 @@ export function useAccountCenterPage({ client }) {
           return;
         }
 
-        setRows(normalizeAccountRows(nextRows));
+        const normalizedRows = normalizeAccountRows(nextRows);
+        setRows(normalizedRows);
+        if (!hasLoggedInitialAccountsLoadedRef.current) {
+          hasLoggedInitialAccountsLoadedRef.current = true;
+          logRendererDiagnostic("startup_trace_account_center_accounts_loaded", {
+            rowCount: normalizedRows.length,
+          });
+        }
       } catch (error) {
         if (!isMounted) {
           return;

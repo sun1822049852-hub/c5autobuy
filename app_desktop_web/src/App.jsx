@@ -11,9 +11,19 @@ import {
 import { useSidebarDiagnostics } from "./features/diagnostics/use_sidebar_diagnostics.js";
 
 // Lazy-loaded non-first-screen pages (code-split for faster initial load)
-const AccountCenterPage = React.lazy(() =>
-  import("./features/account-center/account_center_page.jsx").then(m => ({ default: m.AccountCenterPage }))
-);
+function loadAccountCenterPage() {
+  logRendererDiagnostic("startup_trace_account_center_lazy_requested", {
+    module: "account-center",
+  });
+  return import("./features/account-center/account_center_page.jsx").then((m) => {
+    logRendererDiagnostic("startup_trace_account_center_chunk_ready", {
+      module: "account-center",
+    });
+    return { default: m.AccountCenterPage };
+  });
+}
+
+const AccountCenterPage = React.lazy(loadAccountCenterPage);
 const QuerySystemPage = React.lazy(() =>
   import("./features/query-system/query_system_page.jsx").then(m => ({ default: m.QuerySystemPage }))
 );
@@ -36,8 +46,6 @@ import {
   useProgramAccessGuard,
 } from "./program_access/program_access_provider.jsx";
 import {
-  initializeRendererReloadNotice,
-  readAppShellState,
   updateRendererActiveItem,
   writeAppShellState,
 } from "./features/shell/app_shell_state.js";
@@ -152,17 +160,17 @@ function BackendStartupPanel({ backendStatus }) {
 
 
 export function App({ runtimeStore }) {
-  const [initialAppShellState] = useState(() => readAppShellState());
-  const initialActiveItem = resolveKnownActiveItem(initialAppShellState.activeItem);
+  const initialActiveItem = "account-center";
   const [bootstrapConfig, setBootstrapConfig] = useState(() => getDefaultDesktopBootstrapConfig());
   const [fallbackRuntimeStore] = useState(() => createAppRuntimeStore());
   const [activeItem, setActiveItem] = useState(initialActiveItem);
   const [mountedKeepAliveItems, setMountedKeepAliveItems] = useState(() => (
-    createInitialMountedKeepAliveItems(initialAppShellState.activeItem)
+    createInitialMountedKeepAliveItems(initialActiveItem)
   ));
-  const [reloadNotice] = useState(() => initializeRendererReloadNotice({
-    activeItem: initialActiveItem,
-  }));
+  const [reloadNotice] = useState(() => null);
+  const [shellStatePersistenceEnabled, setShellStatePersistenceEnabled] = useState(false);
+  const hasReportedBootstrapConfigConsumedRef = useRef(false);
+  const hasReportedAccountCenterRenderRequestedRef = useRef(false);
   const hasReportedHomeInteractiveRef = useRef(false);
   const [navPrompt, setNavPrompt] = useState(EMPTY_NAV_PROMPT);
   const [querySystemLeaveState, setQuerySystemLeaveState] = useState(EMPTY_QUERY_SYSTEM_LEAVE_STATE);
@@ -252,9 +260,12 @@ export function App({ runtimeStore }) {
   }, []);
 
   useEffect(() => {
+    if (!shellStatePersistenceEnabled) {
+      return;
+    }
     writeAppShellState({ activeItem });
     updateRendererActiveItem(activeItem);
-  }, [activeItem]);
+  }, [activeItem, shellStatePersistenceEnabled]);
 
   useEffect(() => {
     logRendererDiagnostic("renderer_navigation_state", {
@@ -269,20 +280,34 @@ export function App({ runtimeStore }) {
     logRendererDiagnostic("renderer_reload_detected", reloadNotice);
   }, [reloadNotice]);
 
-  useEffect(() => subscribeDesktopBootstrapConfig((nextBootstrapConfig) => {
-    setBootstrapConfig((current) => {
-      const nextApiBaseUrl = String(nextBootstrapConfig.apiBaseUrl || "");
+  useLayoutEffect(() => {
+    return subscribeDesktopBootstrapConfig((nextBootstrapConfig) => {
+      const normalizedApiBaseUrl = String(nextBootstrapConfig.apiBaseUrl || "");
       if (
-        current.backendMode === nextBootstrapConfig.backendMode
-        && current.backendStatus === nextBootstrapConfig.backendStatus
-        && String(current.apiBaseUrl || "") === nextApiBaseUrl
-        && String(current.runtimeWebSocketUrl || "") === String(nextBootstrapConfig.runtimeWebSocketUrl || "")
+        nextBootstrapConfig.backendStatus === "ready"
+        && !hasReportedBootstrapConfigConsumedRef.current
       ) {
-        return current;
+        hasReportedBootstrapConfigConsumedRef.current = true;
+        logRendererDiagnostic("startup_trace_bootstrap_config_consumed", {
+          apiBaseUrl: normalizedApiBaseUrl,
+          backendMode: nextBootstrapConfig.backendMode,
+          backendStatus: nextBootstrapConfig.backendStatus,
+        });
       }
-      return nextBootstrapConfig;
+
+      setBootstrapConfig((current) => {
+        if (
+          current.backendMode === nextBootstrapConfig.backendMode
+          && current.backendStatus === nextBootstrapConfig.backendStatus
+          && String(current.apiBaseUrl || "") === normalizedApiBaseUrl
+          && String(current.runtimeWebSocketUrl || "") === String(nextBootstrapConfig.runtimeWebSocketUrl || "")
+        ) {
+          return current;
+        }
+        return nextBootstrapConfig;
+      });
     });
-  }), []);
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -309,6 +334,21 @@ export function App({ runtimeStore }) {
     isBackendReady,
     runtimeConnectionManager,
   ]);
+
+  useLayoutEffect(() => {
+    if (
+      !isBackendReady
+      || activeItem !== "account-center"
+      || hasReportedAccountCenterRenderRequestedRef.current
+    ) {
+      return;
+    }
+
+    hasReportedAccountCenterRenderRequestedRef.current = true;
+    logRendererDiagnostic("startup_trace_account_center_render_requested", {
+      activeItem,
+    });
+  }, [activeItem, isBackendReady]);
 
   useEffect(() => {
     if (
@@ -396,6 +436,7 @@ export function App({ runtimeStore }) {
     const emitWhenHomeToolbarReady = () => {
       if (doc?.querySelector(".account-page__toolbar")) {
         hasReportedHomeInteractiveRef.current = true;
+        setShellStatePersistenceEnabled(true);
         logRendererDiagnostic("startup_trace_home_interactive", {
           selector: ".account-page__toolbar",
         });

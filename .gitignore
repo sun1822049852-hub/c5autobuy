@@ -10,3 +10,6 @@ proxy_auth_plugin_*.zip
 data/
 app_desktop_web/release/
 app_desktop_web/build/python_deps/
+.playwright-mcp/
+node_modules/
+program_admin_console/node_modules/

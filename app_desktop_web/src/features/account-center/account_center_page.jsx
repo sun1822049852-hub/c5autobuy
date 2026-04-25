@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { NO_SELECT_STYLE } from "../../shared/no_select_style.js";
+import { logRendererDiagnostic } from "../../desktop/renderer_diagnostics.js";
 import { ProxyPoolDialog } from "../proxy-pool/proxy_pool_dialog.jsx";
 import { useProxyPool } from "../proxy-pool/use_proxy_pool.js";
 import { AccountContextMenu } from "./components/account_context_menu.jsx";
@@ -86,6 +87,7 @@ export function AccountCenterPage({ client }) {
     || Boolean(browserProxyDialogAccount)
     || Boolean(proxyDialogAccount);
   const proxyPool = useProxyPool({ client, enabled: shouldLoadProxyPool });
+  const hasLoggedFirstCommitRef = useRef(false);
   const activeCardLabel = overviewCards.find((card) => card.id === activeFilter)?.label ?? "全部账号";
   const heroCards = [
     ...overviewCards,
@@ -98,6 +100,17 @@ export function AccountCenterPage({ client }) {
       onClick: openLogsModal,
     },
   ];
+
+  useEffect(() => {
+    if (hasLoggedFirstCommitRef.current) {
+      return;
+    }
+    hasLoggedFirstCommitRef.current = true;
+    logRendererDiagnostic("startup_trace_account_center_first_commit", {
+      hasRows: filteredRows.length > 0,
+      isLoading,
+    });
+  }, [filteredRows.length, isLoading]);
 
   return (
     <section className="account-page">

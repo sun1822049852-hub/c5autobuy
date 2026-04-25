@@ -683,7 +683,12 @@ function createWindow({
   return mainWindow;
 }
 
-function publishBootstrapConfig(nextBootstrapConfig = bootstrapConfig) {
+function publishBootstrapConfig(
+  nextBootstrapConfig = bootstrapConfig,
+  {
+    startupTraceImpl = startupTrace,
+  } = {},
+) {
   const windowInstance = mainWindow;
   const webContents = windowInstance?.webContents;
   if (!webContents || typeof webContents.send !== "function") {
@@ -691,6 +696,13 @@ function publishBootstrapConfig(nextBootstrapConfig = bootstrapConfig) {
   }
   if (typeof webContents.isDestroyed === "function" && webContents.isDestroyed()) {
     return;
+  }
+  if (nextBootstrapConfig?.backendStatus === "ready") {
+    startupTraceImpl("desktop.bootstrap.config.updated.published", {
+      apiBaseUrl: nextBootstrapConfig.apiBaseUrl,
+      backendMode: nextBootstrapConfig.backendMode,
+      backendStatus: nextBootstrapConfig.backendStatus,
+    });
   }
   webContents.send(DESKTOP_BOOTSTRAP_CONFIG_UPDATED_CHANNEL, nextBootstrapConfig);
 }

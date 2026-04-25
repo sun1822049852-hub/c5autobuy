@@ -2475,3 +2475,336 @@
   - `docs/agent/session-log.md` 已更新。
   - `docs/agent/memory.md` 本轮无新增跨会话稳定约束，未改。
   - `README.md` 已核对，本次无需改动。
+
+## 2026-04-25 22:00 (Asia/Shanghai)
+- 背景：
+  - 承接上一条提交后，工作树里只剩 `.playwright-mcp/`、根目录 `node_modules/`、`program_admin_console/node_modules/` 三类未跟踪生成物目录。
+- 已完成：
+  - `.gitignore`
+    - 补充忽略：
+      - `.playwright-mcp/`
+      - `node_modules/`
+      - `program_admin_console/node_modules/`
+    - 目标仅是收口当前生成物噪音，不改源码行为，不删除现场目录内容。
+- 验证：
+  - `git status --short`
+    - 预期只剩本轮新增的 `.gitignore` 与 `docs/agent/session-log.md` 文件改动，不再显示上述三个未跟踪生成物目录。
+- 文档同步：
+  - `docs/agent/session-log.md` 已更新。
+  - `docs/agent/memory.md` 本轮无新增稳定约束，未改。
+  - `README.md` 已核对，本次无需改动。
+
+## 2026-04-25 22:10 (Asia/Shanghai)
+- 背景：
+  - 魔尊追问“为什么拆完 backend startup slice 后，桌面加载体感仍慢”。
+  - 本轮按 system debugging 继续拆 startup 链，不直接猜；目标是把“慢”落到具体阶段。
+- 已完成：
+  - 先复跑一轮未新增埋点的真机 trace：
+    - `desktop.static_shell.visible` `948ms`
+    - `desktop.window.visible` `993ms`
+    - `desktop.backend.ready` `3947ms`
+    - `renderer.home.interactive` `13103ms`
+    - 结论：当前主慢点不在“显窗前”或“backend ready 前”，而在 `backend.ready -> home.interactive` 之间，约 `9.1s`。
+  - 为继续拆这 `~9s`，新增 3 个 renderer startup trace：
+    - `renderer.account.center.chunk.ready`
+    - `renderer.account.center.first.commit`
+    - `renderer.account.center.accounts.loaded`
+  - 埋点位置：
+    - `app_desktop_web/src/App.jsx`
+    - `app_desktop_web/src/features/account-center/account_center_page.jsx`
+    - `app_desktop_web/src/features/account-center/hooks/use_account_center_page.js`
+  - 复跑真机 trace 后拿到：
+    - 本次源码入口先同步触发了 `vite build`（stdout 可见），这一刀额外吃掉约 `1.3s`
+    - `desktop.static_shell.visible` `3032ms`
+    - `desktop.window.visible` `3065ms`
+    - `desktop.backend.ready` `5944ms`
+    - `renderer.account.center.chunk.ready` `14917ms`
+    - `renderer.account.center.first.commit` `15212ms`
+    - `renderer.home.interactive` `15217ms`
+    - `renderer.account.center.accounts.loaded` `16418ms`
+- 当前结论：
+  - 体感“还慢”主要不是 backend startup slice 没拆开，而是 renderer 首页链还在吃一段很长的等待。
+  - 更具体地说：
+    - `backend.ready -> account-center chunk ready` 仍约 `9.0s`
+    - `account-center first commit -> accounts loaded` 只约 `1.2s`
+  - 所以当前主慢点不是 `/account-center/accounts` 数据接口，也不是首页列表回填，而是 renderer 在 backend ready 之后到账号页 chunk 真正 ready / 首次 commit 之前的链路。
+  - 这也解释了为什么“拆了 query/purchase/browser slice 仍觉得慢”：本轮优化搬走的是 backend 重运行时，但当前卡点已经换到 renderer 首页 chunk / bootstrap 接管阶段。
+- 余险：
+  - 本轮新增的是诊断埋点，不是最终修复；还未对 renderer 这段 `~9s` 慢链下刀。
+  - 当前源码入口 `main_ui_node_desktop.js` 仍可能因 freshness 判定触发同步 `vite build`，这会继续放大开发态体感，但不是 warm 样本中 `backend.ready -> home.interactive` 的主因。
+- 下一步：
+  - 若继续优化，下一刀不该再拆 backend slice，而应优先剖 renderer：
+    - 先量 `backend ready` 的 bootstrap 更新到 renderer 何时真正被消费；
+    - 再决定是取消 account-center 首屏 lazy、提前 preload 首页 chunk，还是继续拆首页模块闭包。
+
+## 2026-04-25 22:18 (Asia/Shanghai) Handoff
+- 当前目标：
+  - 当前总目标已从“修 code review blocker”切到“解释并继续压缩桌面体感启动慢点”。
+  - 当前方案仍以 `docs/superpowers/plans/2026-04-25-desktop-startup-thinning.md` 为背景，但主任务已进入计划后的 post-plan 诊断阶段：继续拆 `backend.ready -> 首页可操作` 的真实慢链。
+- 进度断点：
+  - 当前 chunk：
+    - `startup thinning` 主计划实现与 review blocker 修复已完成。
+    - 当前新 chunk 是“首页慢链诊断”，不再是原计划里的 `Chunk 1~4` 实施段。
+  - 当前 task：
+    - 已完成 `backend.ready -> home.interactive` 分段证据采集；
+    - 尚未进入最终修复。
+  - 已完成：
+    - commit `145361b` 已提交 `feat: thin desktop startup and fix review blockers`
+    - startup thinning / backend runtime route 稳定注册 / frontend review blocker 修复均已收口
+    - 额外证据：
+      - 真机 trace 1：`desktop.window.visible ~993ms`，`desktop.backend.ready ~3947ms`，`renderer.home.interactive ~13103ms`
+      - 真机 trace 2（新增诊断埋点后，源码入口先触发一次 `vite build`）：
+        - `desktop.static_shell.visible ~3032ms`
+        - `desktop.window.visible ~3065ms`
+        - `desktop.backend.ready ~5944ms`
+        - `renderer.account.center.chunk.ready ~14917ms`
+        - `renderer.account.center.first.commit ~15212ms`
+        - `renderer.home.interactive ~15217ms`
+        - `renderer.account.center.accounts.loaded ~16418ms`
+      - 结论已收敛：
+        - 当前主慢点不在 backend slice；
+        - 也不在 `/account-center/accounts` 接口本身；
+        - 主要卡在 `backend.ready -> account-center chunk ready / first commit` 之间。
+  - 正在进行：
+    - 无代码修复执行中；当前停在 handoff，等待下个会话继续剖 renderer 接管慢链。
+- 现场状态：
+  - 工作目录：`C:/Users/18220/Desktop/C5autobug更新接口 - 副本 (2)`
+  - 分支：`master`
+  - 当前不是 dedicated worktree
+  - 当前存在未提交改动：
+    - `.gitignore`
+    - `app_desktop_web/src/App.jsx`
+    - `app_desktop_web/src/features/account-center/account_center_page.jsx`
+    - `app_desktop_web/src/features/account-center/hooks/use_account_center_page.js`
+    - `docs/agent/session-log.md`
+  - 这些未提交改动的性质：
+    - `.gitignore`：忽略 `.playwright-mcp/`、根 `node_modules/`、`program_admin_console/node_modules/`
+    - 其余 3 个前端文件：本轮新增 startup trace 诊断埋点，不是最终性能修复
+  - 与当前主线最相关、下个会话优先看的文件：
+    - `main_ui_node_desktop.js`
+    - `app_desktop_web/electron-main.cjs`
+    - `app_desktop_web/src/App.jsx`
+    - `app_desktop_web/src/features/account-center/account_center_page.jsx`
+    - `app_desktop_web/src/features/account-center/hooks/use_account_center_page.js`
+    - `app_desktop_web/src/api/account_center_client.js`
+- 错误与约束：
+  - 已尝试路径：
+    - 已先拆 backend core/runtime/browser slice
+    - 已修掉 review blocker
+    - 已用真机 trace 证明“不是 backend startup 主慢点”
+  - 已确认不要再犯的误判：
+    - 不要再把“拆了 backend heavy slice”直接等同于“首页一定快”
+    - 不要再把当前慢感归因到 `/account-center/accounts`；现有证据显示它只占后段约 `1.2s`
+    - 不要再优先继续拆 query/purchase/browser slice；当前最值钱的刀口不在那里
+  - 必须保持不变的关键行为：
+    - 首页 shell-only 启动口径
+    - `accounts.py` 的 browser-actions lazy 边界
+    - 登录成功链路
+    - open-api 打开与复用链
+    - `query -> hit -> purchase` 主链
+    - `/health ready=true` 才切 `backendStatus=ready`
+- 验证状态：
+  - 已执行：
+    - backend focused pytest：`92 passed`
+    - frontend 指定 vitest 集合：`7 files passed, 116 tests passed`
+    - `runtime_connection_manager.test.js` focused：`26 passed`
+    - 真机 `main_ui_node_desktop.js` startup trace 两轮
+  - 尚未覆盖的缺口：
+    - 当前新增 trace 埋点未补自动化测试；它们只是诊断代码
+    - 还没有量“backend ready 的 bootstrap 更新何时被 renderer 真正消费”
+    - 还没有验证“取消 account-center 首屏 lazy / 预热首页 chunk”哪个收益更高
+- 下一步第一刀：
+  - 下个会话先继续量 renderer 接管链，不要先改 backend：
+    - 第一刀先补两个埋点：
+      - 主进程发布 `desktop:bootstrap-config-updated`
+      - renderer 收到并消费更新、开始 account-center mount 的时间点
+    - 若证据继续指向首页 lazy chunk，则第二刀直接做最小试验：
+      - 取消 account-center 首屏 `React.lazy`，或在 backend ready 前预热 account-center chunk
+  - 做完后立刻验证：
+    - 先重跑一轮真机 `node main_ui_node_desktop.js` + `C5_STARTUP_TRACE=1`
+    - 对比至少这几项：
+      - `desktop.window.visible`
+      - `desktop.backend.ready`
+      - `renderer.account.center.chunk.ready`
+      - `renderer.account.center.first.commit`
+      - `renderer.home.interactive`
+      - `renderer.account.center.accounts.loaded`
+    - 若进入实现，再补对应 focused test 或最小回归。
+
+## 2026-04-25 22:42 (Asia/Shanghai)
+- 背景：
+  - 承接 `22:18` handoff，本轮严格按“先补主进程发布 / renderer 消费埋点，再重跑真机 trace”的顺序推进，没有回头继续拆 backend heavy slice。
+  - 保持不变项：
+    - 首页 shell-only 启动口径
+    - `/health ready=true` gate
+    - `accounts.py` 的 browser-actions lazy 边界
+    - 登录 / open-api / `query -> hit -> purchase` 主链
+- 诊断过程与收敛：
+  - 先补埋点并复跑真机启动，确认：
+    - `desktop.backend.ready -> desktop:bootstrap-config-updated published` 几乎同刻
+    - `renderer.bootstrap.config.consumed -> account-center chunk ready` 也只差几毫秒
+    - 原先约 `9s` 的黑洞并不在首页 lazy chunk，而在 renderer 首帧自身
+  - 继续把黑洞往里拆后，定位到两段同步 storage 访问卡死首帧：
+    - `readAppShellState()` 约吃 `5.7s`
+    - `initializeRendererReloadNotice()` 再吃约 `6.0s`
+  - 结论：
+    - 真正拖慢首页接管的不是 backend ready 之后的 account-center lazy chunk
+    - 而是 renderer 首渲染里同步读取 `localStorage/sessionStorage` 的壳状态 / reload notice
+- 已完成：
+  - `app_desktop_web/electron-main.cjs`
+    - 增加主进程发布 `desktop:bootstrap-config-updated` 的 startup trace
+  - `app_desktop_web/src/App.jsx`
+    - 增加 renderer 消费 bootstrap 更新、开始 account-center render、chunk ready 的 startup trace
+    - 首页首渲染不再同步读取 `readAppShellState()` / `initializeRendererReloadNotice()`
+    - 首帧固定从 `account-center` + `reloadNotice=null` 进入，避免 storage 访问反向绑死 renderer 首 commit
+    - shell state 持久化改为首页进入可操作态后才放行
+    - desktop bootstrap 订阅改为 `useLayoutEffect`，确保首 commit 后立刻接上主进程更新
+  - 期间做过一次 `flushSync` 单变量试验，证据表明它会把显窗也拖到 `12s+`，因此已撤回，不作为最终方案
+- 真机 trace（最终有效样本，`C5_STARTUP_TRACE=1` + `C5_LOCAL_DEBUG_REUSE_RENDERER_DIST=1`）：
+  - `desktop.static_shell.visible` `676ms`
+  - `desktop.window.visible` `751ms`
+  - `desktop.backend.ready` `3615ms`
+  - `desktop.bootstrap.config.updated.published` `3616ms`
+  - `renderer.bootstrap.config.consumed` `3618ms`
+  - `renderer.account.center.lazy.requested` `3619ms`
+  - `renderer.account.center.render.requested` `3622ms`
+  - `renderer.account.center.chunk.ready` `3626ms`
+  - `renderer.account.center.first.commit` `6387ms`
+  - `renderer.account.center.accounts.loaded` `6421ms`
+  - 相比 handoff 前样本，`backend.ready -> account-center chunk ready` 已从约 `9s` 收敛到约 `11ms`
+- 验证：
+  - `npm --prefix app_desktop_web run build`
+    - 通过
+  - `npm --prefix app_desktop_web run test -- tests/renderer/app_remote_bootstrap.test.jsx tests/electron/electron_remote_mode.test.js tests/renderer/program_access_sidebar_card.test.jsx --run`
+    - `3 files passed, 51 tests passed`
+  - 真机启动 trace：
+    - `node main_ui_node_desktop.js` + `C5_STARTUP_TRACE=1` + `C5_LOCAL_DEBUG_REUSE_RENDERER_DIST=1`
+    - 已拿到上述最终样本
+- 余险：
+  - 当前 fix 先保启动热路径，不再在首帧恢复“上次停留页签 / reload notice”；这些壳状态现在延后到首页可操作后才允许落回 storage
+  - `renderer.home.interactive` 在最终样本里未重复打出，但 `account-center first commit/accounts loaded` 已恢复到 `~6.4s`，首页接管主黑洞已消失
+  - Chromium disk cache 仍会打印 `Unable to move the cache / Gpu Cache Creation failed` 到 stderr；当前证据看它不是本轮首页接管主慢点
+- 文档同步：
+  - `docs/agent/session-log.md` 已更新
+  - `docs/agent/memory.md` 已补一条跨会话启动护栏
+  - `README.md` 已核对，本次无需改动
+
+## 2026-04-25 22:49 (Asia/Shanghai)
+- 背景：
+  - 魔尊确认下一轮优化目标是“更快可见可点”，接受非首屏面板第一次点开时再慢半拍加载。
+  - 本轮不进入实现，只把下一刀的设计与执行顺序固定成文档，避免后续又把重货塞回首页首屏。
+- 已完成：
+  - 新增 design spec：
+    - `docs/superpowers/specs/2026-04-25-account-center-first-paint-thinning-design.md`
+  - 新增 implementation plan：
+    - `docs/superpowers/plans/2026-04-25-account-center-first-paint-thinning.md`
+  - 设计结论已锁定：
+    - 不再继续拆 backend
+    - 下一刀主攻 `account-center chunk.ready -> first.commit`
+    - 采用“账号中心首屏最小闭包 + 非首屏 overlay 首次交互 lazy load”
+- 设计要点：
+  - 首页同步保留：
+    - hero / toolbar / search / refresh / add-account / account table
+  - 延后到首次交互：
+    - proxy pool
+    - purchase config drawer
+    - login drawer
+    - logs modal
+    - context menu
+    - remark / proxy / api-key / create / delete 等编辑弹层
+  - 保持不变：
+    - shell-only
+    - `/health ready=true`
+    - browser-actions lazy 边界
+    - 登录 / open-api / `query -> hit -> purchase`
+- 文档同步：
+  - `docs/agent/session-log.md` 已更新
+  - `docs/agent/memory.md` 本轮无新增稳定约束，未改
+  - `README.md` 本轮未改
+
+## 2026-04-25 23:13 (Asia/Shanghai) Handoff
+- 当前目标：
+  - 当前总目标仍是继续压缩桌面首页接管时延，但本轮已经先把“storage 热路径修正 + 下一刀设计/计划”收口到可恢复状态。
+  - 当前方案分两段：
+    - 已完成的修正：去掉 renderer 首帧同步 storage 读取，并保留 desktop bootstrap 发布/消费埋点；
+    - 下一轮执行计划：`docs/superpowers/plans/2026-04-25-account-center-first-paint-thinning.md`
+- 进度断点：
+  - 当前 chunk：
+    - `startup trace + storage hot-path fix` 已完成并验证；
+    - `account-center first paint thinning` 仍停在 spec/plan，尚未开始实现。
+  - 当前 task：
+    - 已完成 commit 前验证、会话日志更新、handoff 落盘；
+    - 尚未开始“首页最小闭包 + overlay 首次交互 lazy load”代码实现。
+  - 已完成内容：
+    - `app_desktop_web/electron-main.cjs`
+      - 主进程发布 `desktop:bootstrap-config-updated` 时写 startup trace
+    - `app_desktop_web/src/App.jsx`
+      - renderer 消费 bootstrap 更新、开始 account-center render、chunk ready 的埋点
+      - 首页首帧固定从 `account-center` + `reloadNotice=null` 进入
+      - 不再在首渲染同步读取 `readAppShellState()` / `initializeRendererReloadNotice()`
+      - shell state 持久化延后到首页进入可操作态后才放行
+      - desktop bootstrap 订阅改为 `useLayoutEffect`
+    - 设计与计划文档：
+      - `docs/superpowers/specs/2026-04-25-account-center-first-paint-thinning-design.md`
+      - `docs/superpowers/plans/2026-04-25-account-center-first-paint-thinning.md`
+  - 正在进行：
+    - 无实现中代码；本轮停在“准备以当前 commit 收口并交接”
+- 现场状态：
+  - 工作目录：`C:/Users/18220/Desktop/C5autobug更新接口 - 副本 (2)`
+  - 分支：`master`
+  - 当前不是 dedicated worktree
+  - 写入本条 handoff 时，工作树包含待提交改动：
+    - `.gitignore`
+    - `app_desktop_web/electron-main.cjs`
+    - `app_desktop_web/src/App.jsx`
+    - `app_desktop_web/src/features/account-center/account_center_page.jsx`
+    - `app_desktop_web/src/features/account-center/hooks/use_account_center_page.js`
+    - `app_desktop_web/src/main.jsx`
+    - `docs/agent/memory.md`
+    - `docs/agent/session-log.md`
+    - `docs/superpowers/specs/2026-04-25-account-center-first-paint-thinning-design.md`
+    - `docs/superpowers/plans/2026-04-25-account-center-first-paint-thinning.md`
+  - 这些改动会在本轮作为单次 commit 收口；下个会话默认应先看最新 commit + 本 handoff。
+- 错误与约束：
+  - 已尝试但已撤回的路径：
+    - 曾做过一次 `flushSync` 单变量试验；证据显示它会把显窗也拖到 `12s+`，已撤回，不得再把它当正式方案
+  - 后续不要再犯：
+    - 不要再把当前慢点归因到 backend 或首页 lazy chunk；现有真机证据显示它们已不是主黑洞
+    - 不要把 `readAppShellState()` / `initializeRendererReloadNotice()` 重新塞回首帧同步热路径
+    - 不要为了恢复“上次页签 / reload notice”而牺牲首页 first commit
+  - 必须保持不变的关键行为：
+    - 首页 shell-only 启动口径
+    - `/health ready=true` gate
+    - `accounts.py` 的 browser-actions lazy 边界
+    - 登录成功链
+    - open-api 打开与复用链
+    - `query -> hit -> purchase` 主链
+- 验证状态：
+  - 已执行：
+    - `npm --prefix app_desktop_web run build`
+      - 通过
+    - `npm --prefix app_desktop_web run test -- tests/electron/electron_remote_mode.test.js tests/electron/python_backend.test.js tests/renderer/app_remote_bootstrap.test.jsx tests/renderer/account_center_page.test.jsx tests/renderer/program_access_sidebar_card.test.jsx --run`
+      - `5 files passed, 72 tests passed`
+    - 本轮已有真机启动 trace 证据：
+      - `desktop.window.visible` `751ms`
+      - `desktop.backend.ready` `3615ms`
+      - `renderer.bootstrap.config.consumed` `3618ms`
+      - `renderer.account.center.chunk.ready` `3626ms`
+      - `renderer.account.center.first.commit` `6387ms`
+      - `renderer.account.center.accounts.loaded` `6421ms`
+  - 尚未覆盖的缺口：
+    - 还没开始执行 `account-center first paint thinning` 计划
+    - 还没验证“overlay 首次交互 lazy load”落地后，`chunk.ready -> first.commit` 是否继续明显下降
+- 下一步第一刀：
+  - 下个会话先按 `docs/superpowers/plans/2026-04-25-account-center-first-paint-thinning.md` 执行 `Task 1 -> Task 3`
+  - 第一刀聚焦：
+    - 保留首页主框架、搜索、刷新、添加账号、账号表格同步可见可点
+    - 把 proxy pool / purchase config drawer / login drawer / logs modal / context menu / 各类编辑弹层移出首帧同步闭包
+  - 做完后立刻验证：
+    - `npm --prefix app_desktop_web run test -- tests/renderer/account_center_page.test.jsx tests/renderer/app_remote_bootstrap.test.jsx tests/renderer/program_access_sidebar_card.test.jsx tests/electron/electron_remote_mode.test.js --run`
+    - `npm --prefix app_desktop_web run build`
+    - `node main_ui_node_desktop.js` + `C5_STARTUP_TRACE=1` + `C5_LOCAL_DEBUG_REUSE_RENDERER_DIST=1`
+    - 重点比对：
+      - `renderer.account.center.chunk.ready`
+      - `renderer.account.center.first.commit`
+      - `renderer.account.center.accounts.loaded`
