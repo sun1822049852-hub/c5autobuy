@@ -1,9 +1,10 @@
 import { NO_SELECT_STYLE } from "../../shared/no_select_style.js";
+import { RuntimePageGuard } from "../shell/runtime_page_guard.jsx";
 import { StatsRangeControls } from "../stats/stats_range_controls.jsx";
 import { useAccountCapabilityStatsPage } from "./hooks/use_account_capability_stats_page.js";
 
 
-export function AccountCapabilityStatsPage({ client }) {
+function AccountCapabilityStatsPageContent({ client }) {
   const {
     filters,
     isLoading,
@@ -75,4 +76,26 @@ export function AccountCapabilityStatsPage({ client }) {
       </section>
     </section>
   );
+}
+
+export function AccountCapabilityStatsPage({
+  client,
+  onRetryBootstrap = null,
+  runtimeBootstrapError = "",
+  runtimeBootstrapStatus = "ready",
+}) {
+  if (runtimeBootstrapStatus !== "ready") {
+    return (
+      <RuntimePageGuard
+        description={runtimeBootstrapStatus === "error"
+          ? "账号能力统计运行时预热失败，请留在当前页重试。"
+          : "首次进入账号能力统计时，正在补齐统计快照与运行态汇总。"}
+        error={runtimeBootstrapStatus === "error" ? runtimeBootstrapError : ""}
+        onRetry={runtimeBootstrapStatus === "error" ? onRetryBootstrap : null}
+        title="正在加载账号能力统计运行时"
+      />
+    );
+  }
+
+  return <AccountCapabilityStatsPageContent client={client} />;
 }

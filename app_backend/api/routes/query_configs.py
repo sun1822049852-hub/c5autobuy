@@ -33,40 +33,53 @@ from app_backend.application.use_cases.update_query_mode_setting import UpdateQu
 router = APIRouter(prefix="/query-configs", tags=["query-configs"])
 
 
+def _ensure_runtime_full_ready(request: Request) -> None:
+    ensure = getattr(request.app.state, "ensure_runtime_full_ready", None)
+    if callable(ensure):
+        ensure()
+
+
+def _state_attr(request: Request, name: str):
+    if not hasattr(request.app.state, name):
+        _ensure_runtime_full_ready(request)
+    return getattr(request.app.state, name)
+
+
 def _repository(request: Request):
-    return request.app.state.query_config_repository
+    return _state_attr(request, "query_config_repository")
 
 
 def _detail_collector(request: Request):
-    return request.app.state.product_detail_collector
+    return _state_attr(request, "product_detail_collector")
 
 
 def _detail_refresh_service(request: Request):
-    return request.app.state.query_item_detail_refresh_service
+    return _state_attr(request, "query_item_detail_refresh_service")
 
 
 def _account_repository(request: Request):
-    return request.app.state.account_repository
+    return _state_attr(request, "account_repository")
 
 
 def _query_runtime_service(request: Request):
-    return request.app.state.query_runtime_service
+    return _state_attr(request, "query_runtime_service")
 
 
 def _purchase_runtime_service(request: Request):
-    return request.app.state.purchase_runtime_service
+    return _state_attr(request, "purchase_runtime_service")
 
 
 def _purchase_ui_preferences_repository(request: Request):
-    return request.app.state.purchase_ui_preferences_repository
+    return _state_attr(request, "purchase_ui_preferences_repository")
 
 
 def _stats_repository(request: Request):
-    return request.app.state.stats_repository
+    return _state_attr(request, "stats_repository")
 
 
 def _stats_flush_callback(request: Request):
-    return getattr(getattr(request.app.state, "stats_pipeline", None), "flush_pending", None)
+    stats_pipeline = _state_attr(request, "stats_pipeline")
+    return getattr(stats_pipeline, "flush_pending", None)
 
 
 def _runtime_update_hub(request: Request):
@@ -190,7 +203,7 @@ async def add_query_item(
 ) -> QueryItemResponse:
     use_case = AddQueryItemUseCase(
         _repository(request),
-        request.app.state.product_url_parser,
+        _state_attr(request, "product_url_parser"),
         _detail_collector(request),
     )
     try:

@@ -140,6 +140,37 @@ async def test_patch_account_normalizes_scheme_less_proxy_and_auth(client):
     assert payload["api_proxy_url"] == "http://user:pass@127.0.0.1:8080"
 
 
+async def test_patch_account_refreshes_query_runtime_accounts(client, app):
+    class FakeQueryRuntimeService:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def refresh_runtime_accounts(self) -> None:
+            self.calls += 1
+
+    app.state.query_runtime_service = FakeQueryRuntimeService()
+    created = await client.post(
+        "/accounts",
+        json=_account_payload(remark_name="账号A", api_key="key-123"),
+    )
+    account_id = created.json()["account_id"]
+
+    response = await client.patch(
+        f"/accounts/{account_id}",
+        json=_account_payload(
+            remark_name="账号A-变更",
+            browser_proxy_mode="custom",
+            browser_proxy_url="http://127.0.0.1:18080",
+            api_proxy_mode="custom",
+            api_proxy_url="http://127.0.0.1:18081",
+            api_key="key-456",
+        ),
+    )
+
+    assert response.status_code == 200
+    assert app.state.query_runtime_service.calls == 1
+
+
 async def test_patch_account_query_modes_updates_api_and_browser_flags(client):
     created = await client.post(
         "/accounts",

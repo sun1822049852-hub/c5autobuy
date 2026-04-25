@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app_backend.domain.models.account import Account
+from app_backend.infrastructure.browser_runtime.login_adapter import LoginCapture
 
 
 def _build_account(
@@ -291,6 +292,76 @@ async def test_account_center_accounts_route_returns_cached_balance_fields(clien
     assert row["balance_updated_at"] == "2026-03-29T12:00:00"
     assert row["balance_refresh_after_at"] == "2026-03-29T12:09:00"
     assert row["balance_last_error"] is None
+
+
+async def test_account_center_accounts_route_returns_proxy_pool_ids(client, app):
+    account = _build_account(
+        "pool-bound",
+        remark_name="代理池绑定账号",
+        api_key="api-pool-bound",
+    )
+    account.browser_proxy_id = "browser-proxy-1"
+    account.api_proxy_id = "api-proxy-1"
+    app.state.account_repository.create_account(account)
+
+    response = await client.get("/account-center/accounts")
+
+    assert response.status_code == 200
+    row = response.json()[0]
+    assert row["browser_proxy_id"] == "browser-proxy-1"
+    assert row["api_proxy_id"] == "api-proxy-1"
+
+
+async def test_account_center_accounts_route_falls_back_to_repo_when_runtime_service_missing(client, app):
+    app.state.account_repository.create_account(
+        _build_account(
+            "fallback-list",
+            remark_name="回退列表账号",
+            c5_nick_name="回退平台号",
+            api_key="api-fallback-list",
+            balance_amount=66.6,
+            balance_source="openapi",
+            balance_updated_at="2026-03-29T13:00:00",
+            balance_refresh_after_at="2026-03-29T13:09:00",
+        )
+    )
+    delattr(app.state, "purchase_runtime_service")
+
+    response = await client.get("/account-center/accounts")
+
+    assert response.status_code == 200
+    rows = response.json()
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["account_id"] == "fallback-list"
+    assert row["display_name"] == "回退列表账号"
+    assert row["purchase_status_code"] == "runtime_unavailable"
+    assert row["purchase_status_text"] == "运行时未就绪"
+    assert row["selected_steam_id"] is None
+    assert row["selected_warehouse_text"] is None
+    assert row["balance_amount"] == 66.6
+    assert row["balance_source"] == "openapi"
+
+
+async def test_account_center_single_account_route_falls_back_to_repo_when_runtime_service_missing(client, app):
+    app.state.account_repository.create_account(
+        _build_account(
+            "fallback-single",
+            remark_name="回退详情账号",
+            api_key="api-fallback-single",
+        )
+    )
+    delattr(app.state, "purchase_runtime_service")
+
+    response = await client.get("/account-center/accounts/fallback-single")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["account_id"] == "fallback-single"
+    assert payload["purchase_status_code"] == "runtime_unavailable"
+    assert payload["purchase_status_text"] == "运行时未就绪"
+    assert payload["selected_steam_id"] is None
+    assert payload["selected_warehouse_text"] is None
 
 
 async def test_update_purchase_config_route_updates_purchase_disabled_and_selected_inventory(client, app):
@@ -596,3 +667,109 @@ async def test_open_open_api_binding_page_route_rejects_not_logged_in_account(cl
 
     assert response.status_code == 409
     assert response.json()["detail"] == "当前账号缺少可复用登录会话，请重新登录后再添加白名单"
+
+
+async def test_start_login_route_ensures_browser_actions_when_login_adapter_missing(client, app):
+    account_response = await client.post(
+        "/accounts",
+        json={
+            "remark_name": "缺适配器登录账号",
+            "browser_proxy_mode": "custom",
+            "browser_proxy_url": "http://127.0.0.1:9701",
+            "api_proxy_mode": "custom",
+            "api_proxy_url": "http://127.0.0.1:9701",
+            "api_key": "api-login-ensure",
+        },
+    )
+    assert account_response.status_code == 201
+    account_id = account_response.json()["account_id"]
+
+    delattr(app.state, "login_adapter")
+    ensure_calls: list[str] = []
+
+    class FakeLoginAdapter:
+        async def run_login(self, *, proxy_url: str | None, emit_state=None) -> LoginCapture:
+            for state in ("waiting_for_scan", "captured_login_info", "waiting_for_browser_close"):
+                await emit_state(state)
+            return LoginCapture(
+                c5_user_id="70011",
+                c5_nick_name="ensure-login",
+                cookie_raw="NC5_accessToken=token",
+            )
+
+    def _ensure_browser_actions_ready() -> None:
+        ensure_calls.append("ready")
+        app.state.login_adapter = FakeLoginAdapter()
+
+    app.state.ensure_browser_actions_ready = _ensure_browser_actions_ready
+
+    response = await client.post(f"/accounts/{account_id}/login")
+
+    assert response.status_code == 202
+    assert ensure_calls == ["ready"]
+
+
+async def test_open_open_api_binding_route_ensures_browser_actions_when_launcher_missing(client, app):
+    account = _build_account(
+        "open-open-api-ensure",
+        remark_name="打开绑定页确保 browser-actions",
+        api_key="api-open-ensure",
+    )
+    app.state.account_repository.create_account(account)
+    bundle_repository = app.state.account_session_bundle_repository
+    staged = bundle_repository.stage_bundle(
+        account_id="open-open-api-ensure",
+        captured_c5_user_id="10001",
+        payload={
+            "cookie_raw": "NC5_accessToken=token",
+            "profile_root": "C:/profiles/open-open-api-ensure",
+            "profile_directory": "Default",
+            "profile_kind": "account",
+        },
+    )
+    bundle_repository.activate_bundle(
+        bundle_repository.mark_bundle_verified(staged.bundle_id).bundle_id,
+        account_id="open-open-api-ensure",
+    )
+
+    delattr(app.state, "open_api_binding_page_launcher")
+    ensure_calls: list[str] = []
+    launch_calls: list[dict[str, object]] = []
+
+    class FakeLauncher:
+        def launch(
+            self,
+            *,
+            account_id: str | None = None,
+            profile_root: str | None = None,
+            profile_directory: str | None = None,
+            login_session_root: str | None = None,
+            debugger_address: str | None = None,
+            proxy_url: str | None = None,
+            sync_service=None,
+        ) -> dict[str, object]:
+            launch_calls.append(
+                {
+                    "account_id": account_id,
+                    "profile_root": profile_root,
+                    "profile_directory": profile_directory,
+                    "login_session_root": login_session_root,
+                    "debugger_address": debugger_address,
+                    "proxy_url": proxy_url,
+                    "sync_service": sync_service,
+                }
+            )
+            return {"open_api_url": "https://www.c5game.com/user/user/open-api"}
+
+    def _ensure_browser_actions_ready() -> None:
+        ensure_calls.append("ready")
+        app.state.open_api_binding_page_launcher = FakeLauncher()
+
+    app.state.ensure_browser_actions_ready = _ensure_browser_actions_ready
+
+    response = await client.post("/accounts/open-open-api-ensure/open-api/open")
+
+    assert response.status_code == 200
+    assert response.json()["launched"] is True
+    assert ensure_calls == ["ready"]
+    assert launch_calls[0]["account_id"] == "open-open-api-ensure"

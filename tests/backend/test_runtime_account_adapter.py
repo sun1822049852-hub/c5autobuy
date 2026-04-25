@@ -138,3 +138,37 @@ async def test_runtime_account_adapter_uses_browser_proxy_for_global_session(mon
     await adapter.get_global_session(force_new=True)
 
     assert created_calls[0]["proxy_url"] == "http://browser.proxy:9001"
+
+
+async def test_runtime_account_adapter_rebuilds_session_when_proxy_changes_on_bind(monkeypatch):
+    from app_backend.infrastructure.query.runtime.runtime_account_adapter import RuntimeAccountAdapter
+
+    adapter = RuntimeAccountAdapter(
+        _build_account(
+            browser_proxy_url="http://browser.proxy:9001",
+            api_proxy_url="http://api.proxy:9002",
+        )
+    )
+    old_api_session = _FakeSession(loop=asyncio.get_running_loop())
+    adapter._api_session = old_api_session
+    created_sessions: list[_FakeSession] = []
+
+    def fake_create_session(**_kwargs):
+        session = _FakeSession(loop=asyncio.get_running_loop())
+        created_sessions.append(session)
+        return session
+
+    monkeypatch.setattr(adapter, "_create_session", fake_create_session)
+    adapter.bind_account(
+        _build_account(
+            browser_proxy_url="http://browser.proxy:9001",
+            api_proxy_url="http://api.proxy:9010",
+        )
+    )
+
+    session = await adapter.get_api_session()
+
+    assert old_api_session.close_calls == 1
+    assert len(created_sessions) == 1
+    assert session is created_sessions[0]
+    assert adapter._api_session is created_sessions[0]

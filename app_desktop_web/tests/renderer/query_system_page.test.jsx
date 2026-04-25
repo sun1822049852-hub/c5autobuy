@@ -19,6 +19,30 @@ function jsonResponse(payload, status = 200) {
   });
 }
 
+function createDeferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((nextResolve, nextReject) => {
+    resolve = nextResolve;
+    reject = nextReject;
+  });
+  return { promise, resolve, reject };
+}
+
+function buildShellBootstrapPayload() {
+  return {
+    version: 1,
+    generated_at: "2026-04-25T12:00:00.000Z",
+  };
+}
+
+function buildFullBootstrapPayload() {
+  return {
+    version: 2,
+    generated_at: "2026-04-25T12:00:01.000Z",
+  };
+}
+
 
 function installDesktopApp(fetchImpl) {
   window.fetch = fetchImpl;
@@ -176,7 +200,7 @@ function buildRunningPurchaseStatus({
 }
 
 
-function createFetchHarness({ initialRuntimeStatus, initialPurchaseStatus } = {}) {
+function createFetchHarness({ fullBootstrapPromise = null, initialRuntimeStatus, initialPurchaseStatus } = {}) {
   const configs = [
     {
       config_id: "cfg-1",
@@ -215,6 +239,13 @@ function createFetchHarness({ initialRuntimeStatus, initialPurchaseStatus } = {}
       method,
       pathname: url.pathname,
     });
+
+    if (url.pathname === "/app/bootstrap" && url.searchParams.get("scope") === "shell") {
+      return jsonResponse(buildShellBootstrapPayload());
+    }
+    if (url.pathname === "/app/bootstrap") {
+      return fullBootstrapPromise || jsonResponse(buildFullBootstrapPayload());
+    }
 
     if (url.pathname === "/account-center/accounts" && method === "GET") {
       return jsonResponse([]);
@@ -732,6 +763,32 @@ describe("query system page", () => {
     await user.click(screen.getByRole("button", { name: "配置管理" }));
     expect(await screen.findByRole("heading", { name: "白天配置" })).toBeInTheDocument();
     expect(findQueryPayloadCalls(harness.calls)).toHaveLength(0);
+  });
+
+  it("shows a page-level runtime guard before the first full bootstrap finishes", async () => {
+    const user = userEvent.setup();
+    const fullBootstrap = createDeferred();
+    const harness = createFetchHarness({
+      fullBootstrapPromise: fullBootstrap.promise,
+    });
+    installDesktopApp(harness.fetchImpl);
+
+    render(<App />);
+
+    await screen.findByText("C5 交易助手");
+    await user.click(screen.getByRole("button", { name: "配置管理" }));
+
+    expect(await screen.findByRole("heading", { name: "正在加载配置管理运行时" })).toBeInTheDocument();
+    expect(screen.getByText("首次进入配置管理时，正在补齐查询配置与运行时快照。")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "新建配置" })).not.toBeInTheDocument();
+    expect(findQueryPayloadCalls(harness.calls)).toHaveLength(0);
+
+    fullBootstrap.resolve(jsonResponse(buildFullBootstrapPayload()));
+
+    await waitFor(() => {
+      expect(findQueryPayloadCalls(harness.calls).length).toBeGreaterThan(0);
+    });
+    expect(await screen.findByRole("heading", { name: "白天配置" })).toBeInTheDocument();
   });
 
   it("switches from account center into the real query system page and renders the skeleton", async () => {

@@ -624,8 +624,9 @@ function createWindow({
   }
 
   const windowState = loadWindowStateImpl();
+  const isFirstWindow = !mainWindow;
 
-  if (!mainWindow) {
+  if (isFirstWindow) {
     mainWindow = new BrowserWindowImpl({
       ...windowState,
       show: false,
@@ -676,7 +677,9 @@ function createWindow({
   }
 
   mainWindow.loadFile(rendererEntryPath);
-  mainWindow.show?.();
+  if (!isFirstWindow) {
+    mainWindow.show?.();
+  }
   return mainWindow;
 }
 

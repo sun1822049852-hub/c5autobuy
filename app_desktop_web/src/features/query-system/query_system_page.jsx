@@ -8,7 +8,9 @@ import { QueryItemEditDialog } from "./components/query_item_edit_dialog.jsx";
 import { QueryItemTable } from "./components/query_item_table.jsx";
 import { QueryWorkbenchHeader } from "./components/query_workbench_header.jsx";
 import { UnsavedChangesDialog } from "../shell/unsaved_changes_dialog.jsx";
+import { RuntimePageGuard } from "../shell/runtime_page_guard.jsx";
 import { useQuerySystemPage } from "./hooks/use_query_system_page.js";
+import { useQuerySystemServerHydrated } from "../../runtime/use_app_runtime.js";
 
 const EMPTY_CONFIG_SWITCH_PROMPT = {
   error: "",
@@ -18,7 +20,7 @@ const EMPTY_CONFIG_SWITCH_PROMPT = {
 };
 
 
-export function QuerySystemPage({ bootstrapConfig, client, isActive, onLeaveStateChange }) {
+function QuerySystemPageContent({ client, isActive, onLeaveStateChange }) {
   const {
     addDraftItem,
     capacityModes,
@@ -262,5 +264,42 @@ export function QuerySystemPage({ bootstrapConfig, client, isActive, onLeaveStat
         onSave={handleSaveAndSwitchConfig}
       />
     </section>
+  );
+}
+
+export function QuerySystemPage({
+  bootstrapConfig,
+  client,
+  isActive,
+  onLeaveStateChange,
+  onRetryBootstrap = null,
+  runtimeBootstrapError = "",
+  runtimeBootstrapStatus = "ready",
+}) {
+  const queryServerHydrated = useQuerySystemServerHydrated();
+  const isRuntimeReady = queryServerHydrated || runtimeBootstrapStatus === "ready";
+
+  if (!isRuntimeReady) {
+    return (
+      <RuntimePageGuard
+        description={runtimeBootstrapStatus === "error"
+          ? "配置管理运行时预热失败，请留在当前页重试。"
+          : "首次进入配置管理时，正在补齐查询配置与运行时快照。"}
+        error={runtimeBootstrapStatus === "error" ? runtimeBootstrapError : ""}
+        onRetry={runtimeBootstrapStatus === "error" ? onRetryBootstrap : null}
+        title="正在加载配置管理运行时"
+      />
+    );
+  }
+
+  return (
+    <QuerySystemPageContent
+      bootstrapConfig={bootstrapConfig}
+      client={client}
+      isActive={isActive && isRuntimeReady}
+      onLeaveStateChange={onLeaveStateChange}
+      runtimeBootstrapError={runtimeBootstrapError}
+      runtimeBootstrapStatus={runtimeBootstrapStatus}
+    />
   );
 }

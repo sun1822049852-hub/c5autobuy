@@ -1,9 +1,14 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 
-export function useProxyPool({ client }) {
+export function useProxyPool({ client, enabled = false }) {
   const [proxies, setProxies] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
+  const proxiesRef = useRef(proxies);
+
+  useEffect(() => {
+    proxiesRef.current = proxies;
+  }, [proxies]);
 
   const refresh = useCallback(async () => {
     setIsLoading(true);
@@ -12,15 +17,18 @@ export function useProxyPool({ client }) {
       setProxies(list);
       return list;
     } catch {
-      return proxies;
+      return proxiesRef.current;
     } finally {
       setIsLoading(false);
     }
   }, [client]);
 
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    if (!enabled) {
+      return;
+    }
+    void refresh();
+  }, [enabled, refresh]);
 
   const createProxy = useCallback(async (payload) => {
     const entry = await client.createProxy(payload);

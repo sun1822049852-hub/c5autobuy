@@ -74,6 +74,34 @@ def test_create_app_keeps_account_center_services_wired(tmp_path: Path):
     assert getattr(app.state.query_runtime_service._stats_sink, "__name__", "") == "enqueue"
 
 
+def test_create_app_deferred_mode_registers_core_home_routes_before_runtime_full_init(tmp_path: Path):
+    app = create_app(
+        db_path=tmp_path / "desktop-web-deferred.db",
+        deferred_init=True,
+        program_access_start_refresh_scheduler=False,
+    )
+
+    route_paths = {route.path for route in app.routes}
+
+    assert {
+        "/health",
+        "/app/bootstrap",
+        "/program-auth/status",
+        "/account-center/accounts",
+    }.issubset(route_paths)
+
+
+def test_create_app_exposes_startup_slice_registry_entries(tmp_path: Path):
+    app = create_app(
+        db_path=tmp_path / "desktop-web-startup-slices.db",
+        program_access_start_refresh_scheduler=False,
+    )
+
+    assert callable(getattr(app.state, "ensure_runtime_full_ready", None))
+    assert callable(getattr(app.state, "ensure_browser_actions_ready", None))
+    assert app.state.account_center_snapshot_service is not None
+
+
 def test_create_app_packaged_release_wires_remote_program_access_services(tmp_path: Path):
     app = create_app(
         db_path=tmp_path / "desktop-web.db",

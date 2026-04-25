@@ -268,6 +268,55 @@ beforeEach(() => {
 });
 
 describe("account center page", () => {
+  it("does not prefetch proxy pool on home load before any proxy dialog is opened", async () => {
+    const fetchImpl = vi.fn(async (input, options = {}) => {
+      const url = new URL(input);
+      const method = String(options.method ?? "GET").toUpperCase();
+
+      if (url.pathname === "/account-center/accounts" && method === "GET") {
+        return {
+          ok: true,
+          json: async () => accountRows(),
+        };
+      }
+
+      if (url.pathname === "/proxy-pool" && method === "GET") {
+        return {
+          ok: true,
+          json: async () => [],
+        };
+      }
+
+      throw new Error(`Unhandled request: ${method} ${url.pathname}`);
+    });
+
+    installDesktopApp(fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await screen.findByText("账号 A");
+    expect(
+      fetchImpl.mock.calls.some(([input, options = {}]) => {
+        const url = new URL(input);
+        const method = String(options.method ?? "GET").toUpperCase();
+        return url.pathname === "/proxy-pool" && method === "GET";
+      }),
+    ).toBe(false);
+
+    await user.click(screen.getByRole("button", { name: "代理管理" }));
+
+    await waitFor(() => {
+      expect(
+        fetchImpl.mock.calls.some(([input, options = {}]) => {
+          const url = new URL(input);
+          const method = String(options.method ?? "GET").toUpperCase();
+          return url.pathname === "/proxy-pool" && method === "GET";
+        }),
+      ).toBe(true);
+    });
+  });
+
   it("keeps purchase status derived fields when patching a pushed account row", async () => {
     class FakeWebSocket {
       static instances = [];

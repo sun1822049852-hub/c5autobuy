@@ -8,16 +8,28 @@ from app_backend.application.use_cases.get_sidebar_diagnostics import GetSidebar
 router = APIRouter(prefix="/diagnostics", tags=["diagnostics"])
 
 
+def _ensure_runtime_full_ready(request: Request) -> None:
+    ensure = getattr(request.app.state, "ensure_runtime_full_ready", None)
+    if callable(ensure):
+        ensure()
+
+
+def _state_attr(request: Request, name: str):
+    if not hasattr(request.app.state, name):
+        _ensure_runtime_full_ready(request)
+    return getattr(request.app.state, name)
+
+
 def _query_runtime_service(request: Request):
-    return request.app.state.query_runtime_service
+    return _state_attr(request, "query_runtime_service")
 
 
 def _purchase_runtime_service(request: Request):
-    return request.app.state.purchase_runtime_service
+    return _state_attr(request, "purchase_runtime_service")
 
 
 def _task_manager(request: Request):
-    return request.app.state.task_manager
+    return _state_attr(request, "task_manager")
 
 
 @router.get("/sidebar", response_model=SidebarDiagnosticsResponse)

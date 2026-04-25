@@ -76,6 +76,14 @@ const KEEPALIVE_PAGE_IDS = [
   "diagnostics",
 ];
 
+const FULL_BOOTSTRAP_PAGE_IDS = [
+  "query-system",
+  "purchase-system",
+  "query-stats",
+  "account-capability-stats",
+  "diagnostics",
+];
+
 
 function resolveKnownActiveItem(activeItem) {
   return KEEPALIVE_PAGE_IDS.includes(activeItem) ? activeItem : "account-center";
@@ -159,6 +167,12 @@ export function App({ runtimeStore }) {
   const [navPrompt, setNavPrompt] = useState(EMPTY_NAV_PROMPT);
   const [querySystemLeaveState, setQuerySystemLeaveState] = useState(EMPTY_QUERY_SYSTEM_LEAVE_STATE);
   const [purchaseSystemLeaveState, setPurchaseSystemLeaveState] = useState(EMPTY_PURCHASE_SYSTEM_LEAVE_STATE);
+  const [fullBootstrapState, setFullBootstrapState] = useState({
+    error: "",
+    status: "idle",
+  });
+  const fullBootstrapPromiseRef = useRef(null);
+  const fullBootstrapGenerationRef = useRef(0);
   const appRuntimeStore = runtimeStore ?? fallbackRuntimeStore;
   const client = useMemo(() => createAccountCenterClient({
     apiBaseUrl: bootstrapConfig.apiBaseUrl,
@@ -172,9 +186,62 @@ export function App({ runtimeStore }) {
     store: appRuntimeStore,
   }), [appRuntimeStore, client]);
   const diagnostics = useSidebarDiagnostics(client, {
-    enabled: activeItem === "diagnostics",
+    enabled: activeItem === "diagnostics" && fullBootstrapState.status === "ready",
   });
   const isBackendReady = bootstrapConfig.backendStatus === "ready";
+
+  const requestFullBootstrap = useCallback(({ force = false } = {}) => {
+    if (fullBootstrapPromiseRef.current) {
+      return fullBootstrapPromiseRef.current;
+    }
+    const generation = fullBootstrapGenerationRef.current;
+
+    setFullBootstrapState((current) => (
+      current.status === "ready"
+        && !force
+        ? current
+        : {
+            error: "",
+            status: "loading",
+          }
+    ));
+
+    const nextPromise = Promise.resolve()
+      .then(() => runtimeConnectionManager.ensureFullBootstrap({ force }))
+      .then((result) => {
+        if (fullBootstrapGenerationRef.current === generation) {
+          setFullBootstrapState({
+            error: "",
+            status: "ready",
+          });
+        }
+        return result;
+      })
+      .catch((error) => {
+        if (fullBootstrapGenerationRef.current === generation) {
+          setFullBootstrapState({
+            error: error instanceof Error ? error.message : String(error ?? "unknown"),
+            status: "error",
+          });
+        }
+        throw error;
+      })
+      .finally(() => {
+        if (
+          fullBootstrapGenerationRef.current === generation
+          && fullBootstrapPromiseRef.current === nextPromise
+        ) {
+          fullBootstrapPromiseRef.current = null;
+        }
+      });
+
+    fullBootstrapPromiseRef.current = nextPromise;
+    return nextPromise;
+  }, [runtimeConnectionManager]);
+
+  const handleRetryFullBootstrap = useCallback(() => {
+    void requestFullBootstrap({ force: true }).catch(() => {});
+  }, [requestFullBootstrap]);
 
   const handleQuerySystemLeaveStateChange = useCallback((nextState) => {
     setQuerySystemLeaveState(nextState || EMPTY_QUERY_SYSTEM_LEAVE_STATE);
@@ -217,12 +284,27 @@ export function App({ runtimeStore }) {
     });
   }), []);
 
+  useEffect(() => {
+    return () => {
+      runtimeConnectionManager.dispose?.();
+    };
+  }, [runtimeConnectionManager]);
+
+  useEffect(() => {
+    fullBootstrapGenerationRef.current += 1;
+    fullBootstrapPromiseRef.current = null;
+    setFullBootstrapState({
+      error: "",
+      status: "idle",
+    });
+  }, [runtimeConnectionManager]);
+
   useLayoutEffect(() => {
     if (!isBackendReady) {
       return;
     }
 
-    void runtimeConnectionManager.bootstrap().catch(() => {});
+    void runtimeConnectionManager.bootstrapShellOnly().catch(() => {});
   }, [
     isBackendReady,
     runtimeConnectionManager,
@@ -232,36 +314,43 @@ export function App({ runtimeStore }) {
     if (
       bootstrapConfig.backendMode !== "remote"
       || !isBackendReady
+      || !FULL_BOOTSTRAP_PAGE_IDS.includes(activeItem)
       || !bootstrapConfig.runtimeWebSocketUrl
       || !globalThis.WebSocket
+      || fullBootstrapState.status !== "ready"
     ) {
       return;
     }
 
-    let cancelled = false;
     let disconnect = () => {};
 
-    void runtimeConnectionManager.bootstrap()
-      .then(() => {
-        if (cancelled) {
-          return;
-        }
-        disconnect = runtimeConnectionManager.connectRuntimeUpdates({
-          websocketUrl: bootstrapConfig.runtimeWebSocketUrl,
-          WebSocketImpl: globalThis.WebSocket,
-        });
-      })
-      .catch(() => {});
+    disconnect = runtimeConnectionManager.connectRuntimeUpdates({
+      websocketUrl: bootstrapConfig.runtimeWebSocketUrl,
+      WebSocketImpl: globalThis.WebSocket,
+    });
 
     return () => {
-      cancelled = true;
       disconnect();
     };
   }, [
+    activeItem,
     bootstrapConfig.backendMode,
+    fullBootstrapState.status,
     isBackendReady,
     bootstrapConfig.runtimeWebSocketUrl,
     runtimeConnectionManager,
+  ]);
+
+  useEffect(() => {
+    if (!isBackendReady || !FULL_BOOTSTRAP_PAGE_IDS.includes(activeItem)) {
+      return;
+    }
+
+    void requestFullBootstrap().catch(() => {});
+  }, [
+    activeItem,
+    isBackendReady,
+    requestFullBootstrap,
   ]);
 
   useEffect(() => {
@@ -437,6 +526,9 @@ export function App({ runtimeStore }) {
                         client={client}
                         isActive={activeItem === "query-system"}
                         onLeaveStateChange={handleQuerySystemLeaveStateChange}
+                        onRetryBootstrap={handleRetryFullBootstrap}
+                        runtimeBootstrapError={fullBootstrapState.error}
+                        runtimeBootstrapStatus={fullBootstrapState.status}
                       />
                     </Suspense>
                   </div>
@@ -447,6 +539,9 @@ export function App({ runtimeStore }) {
                       <QueryStatsPage
                         bootstrapConfig={bootstrapConfig}
                         client={client}
+                        onRetryBootstrap={handleRetryFullBootstrap}
+                        runtimeBootstrapError={fullBootstrapState.error}
+                        runtimeBootstrapStatus={fullBootstrapState.status}
                       />
                     </Suspense>
                   </div>
@@ -457,6 +552,9 @@ export function App({ runtimeStore }) {
                       <AccountCapabilityStatsPage
                         bootstrapConfig={bootstrapConfig}
                         client={client}
+                        onRetryBootstrap={handleRetryFullBootstrap}
+                        runtimeBootstrapError={fullBootstrapState.error}
+                        runtimeBootstrapStatus={fullBootstrapState.status}
                       />
                     </Suspense>
                   </div>
@@ -469,6 +567,9 @@ export function App({ runtimeStore }) {
                         client={client}
                         isActive={activeItem === "purchase-system"}
                         onLeaveStateChange={handlePurchaseSystemLeaveStateChange}
+                        onRetryBootstrap={handleRetryFullBootstrap}
+                        runtimeBootstrapError={fullBootstrapState.error}
+                        runtimeBootstrapStatus={fullBootstrapState.status}
                       />
                     </Suspense>
                   </div>
@@ -480,6 +581,9 @@ export function App({ runtimeStore }) {
                         error={diagnostics.error}
                         isLoading={diagnostics.isLoading}
                         isRefreshing={diagnostics.isRefreshing}
+                        onRetryBootstrap={handleRetryFullBootstrap}
+                        runtimeBootstrapError={fullBootstrapState.error}
+                        runtimeBootstrapStatus={fullBootstrapState.status}
                         snapshot={diagnostics.snapshot}
                       />
                     </Suspense>

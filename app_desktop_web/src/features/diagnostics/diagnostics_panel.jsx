@@ -5,6 +5,7 @@ import { DiagnosticsTabs } from "./diagnostics_tabs.jsx";
 import { LoginTaskDiagnosticsTab } from "./login_task_diagnostics_tab.jsx";
 import { PurchaseDiagnosticsTab } from "./purchase_diagnostics_tab.jsx";
 import { QueryDiagnosticsTab } from "./query_diagnostics_tab.jsx";
+import { RuntimePageGuard } from "../shell/runtime_page_guard.jsx";
 
 
 function renderTabBody(activeTab, snapshot) {
@@ -18,7 +19,15 @@ function renderTabBody(activeTab, snapshot) {
 }
 
 
-export function DiagnosticsPanel({ error, isLoading, isRefreshing, snapshot }) {
+export function DiagnosticsPanel({
+  error,
+  isLoading,
+  isRefreshing,
+  onRetryBootstrap = null,
+  runtimeBootstrapError = "",
+  runtimeBootstrapStatus = "ready",
+  snapshot,
+}) {
   const [activeTab, setActiveTab] = useState("query");
   const bodyRef = useRef(null);
   const handleTabSelect = useCallback((tabId) => {
@@ -27,6 +36,19 @@ export function DiagnosticsPanel({ error, isLoading, isRefreshing, snapshot }) {
     }
     setActiveTab(tabId);
   }, []);
+
+  if (runtimeBootstrapStatus !== "ready") {
+    return (
+      <RuntimePageGuard
+        description={runtimeBootstrapStatus === "error"
+          ? "通用诊断运行时预热失败，请留在当前页重试。"
+          : "首次进入通用诊断时，正在补齐诊断快照与运行态汇总。"}
+        error={runtimeBootstrapStatus === "error" ? runtimeBootstrapError : ""}
+        onRetry={runtimeBootstrapStatus === "error" ? onRetryBootstrap : null}
+        title="正在加载通用诊断运行时"
+      />
+    );
+  }
 
   return (
     <aside className="diagnostics-panel" aria-label="通用诊断面板">

@@ -27,6 +27,7 @@ class GetAppBootstrapUseCase:
         purchase_runtime_service,
         purchase_ui_preferences_repository,
         stats_repository,
+        stats_flush_callback,
         runtime_settings_repository,
         task_manager,
         runtime_update_hub,
@@ -38,6 +39,7 @@ class GetAppBootstrapUseCase:
         self._purchase_runtime_service = purchase_runtime_service
         self._purchase_ui_preferences_repository = purchase_ui_preferences_repository
         self._stats_repository = stats_repository
+        self._stats_flush_callback = stats_flush_callback
         self._runtime_settings_repository = runtime_settings_repository
         self._task_manager = task_manager
         self._runtime_update_hub = runtime_update_hub
@@ -59,6 +61,7 @@ class GetAppBootstrapUseCase:
             query_config_repository=self._query_config_repository,
             purchase_ui_preferences_repository=self._purchase_ui_preferences_repository,
             stats_repository=self._stats_repository,
+            stats_flush_callback=self._stats_flush_callback,
             include_recent_events=False,
         ).execute()
         ui_preferences = GetPurchaseUiPreferencesUseCase(
@@ -94,8 +97,9 @@ class GetAppBootstrapUseCase:
         }
 
     def _build_shell_payload(self) -> dict[str, object]:
+        current_version = getattr(self._runtime_update_hub, "current_version", None)
         return {
-            "version": self._runtime_update_hub.current_version(),
+            "version": int(current_version() if callable(current_version) else 0),
             "generated_at": _now(),
             "program_access": asdict(self._program_access_gateway.get_summary()),
         }

@@ -7,6 +7,12 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 router = APIRouter()
 
 
+def _ensure_runtime_full_ready(websocket: WebSocket) -> None:
+    ensure = getattr(websocket.app.state, "ensure_runtime_full_ready", None)
+    if callable(ensure):
+        ensure()
+
+
 def _parse_since_version(raw_value: str | None) -> int | None:
     try:
         return max(int(str(raw_value or "").strip()), 0)
@@ -16,6 +22,7 @@ def _parse_since_version(raw_value: str | None) -> int | None:
 
 @router.websocket("/ws/runtime")
 async def runtime_updates_stream(websocket: WebSocket) -> None:
+    _ensure_runtime_full_ready(websocket)
     await websocket.accept()
     hub = websocket.app.state.runtime_update_hub
     subscription = hub.open_subscription(

@@ -182,3 +182,34 @@ async def test_app_bootstrap_route_reports_readonly_locked_program_access_when_p
         "grace_expires_at": None,
         "last_error_code": "program_auth_required",
     }
+
+
+async def test_app_bootstrap_shell_scope_does_not_trigger_runtime_full_ensure(client, app):
+    ensure_calls: list[str] = []
+
+    def fake_ensure() -> None:
+        ensure_calls.append("called")
+
+    app.state.ensure_runtime_full_ready = fake_ensure
+
+    response = await client.get("/app/bootstrap?scope=shell")
+
+    assert response.status_code == 200
+    assert ensure_calls == []
+
+
+async def test_app_bootstrap_full_scope_triggers_runtime_full_ensure_when_runtime_state_is_missing(client, app):
+    ensure_calls: list[str] = []
+    original_query_runtime_service = app.state.query_runtime_service
+
+    def fake_ensure() -> None:
+        ensure_calls.append("called")
+        app.state.query_runtime_service = original_query_runtime_service
+
+    delattr(app.state, "query_runtime_service")
+    app.state.ensure_runtime_full_ready = fake_ensure
+
+    response = await client.get("/app/bootstrap?scope=full")
+
+    assert response.status_code == 200
+    assert ensure_calls == ["called"]

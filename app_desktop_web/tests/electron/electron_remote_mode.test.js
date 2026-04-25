@@ -261,7 +261,7 @@ describe("electron remote runtime mode", () => {
     });
   });
 
-  it("reveals the embedded app window immediately instead of waiting for ready-to-show", () => {
+  it("keeps the first embedded app window hidden until ready-to-show to avoid a black frame", () => {
     const app = {
       on: vi.fn(),
       setAppUserModelId: vi.fn(),
@@ -281,13 +281,16 @@ describe("electron remote runtime mode", () => {
     const ipcMain = {
       on: vi.fn(),
     };
+    const windowHandlers = new Map();
     class BrowserWindow {
       static getAllWindows = vi.fn(() => []);
 
       constructor(options) {
         this.options = options;
         this.on = vi.fn();
-        this.once = vi.fn();
+        this.once = vi.fn((eventName, handler) => {
+          windowHandlers.set(eventName, handler);
+        });
         this.loadFile = vi.fn();
         this.loadURL = vi.fn();
         this.show = vi.fn();
@@ -319,6 +322,10 @@ describe("electron remote runtime mode", () => {
     });
 
     expect(windowInstance.loadFile).toHaveBeenCalledOnce();
+    expect(windowInstance.show).not.toHaveBeenCalled();
+
+    windowHandlers.get("ready-to-show")?.();
+
     expect(windowInstance.show).toHaveBeenCalledOnce();
   });
 

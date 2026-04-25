@@ -601,3 +601,38 @@ async def test_update_query_runtime_manual_allocations_returns_409_when_config_i
 
     assert response.status_code == 409
     assert response.json() == {"detail": "当前配置未在运行，无法提交运行时分配"}
+
+
+async def test_query_runtime_status_triggers_runtime_full_ensure_when_runtime_service_missing(client, app):
+    ensure_calls: list[str] = []
+
+    class FakeQueryRuntimeService:
+        def get_status(self) -> dict[str, object]:
+            return {
+                "running": False,
+                "config_id": None,
+                "config_name": None,
+                "message": "未运行",
+                "account_count": 0,
+                "started_at": None,
+                "stopped_at": None,
+                "total_query_count": 0,
+                "total_found_count": 0,
+                "modes": {},
+                "group_rows": [],
+                "recent_events": [],
+                "item_rows": [],
+            }
+
+    def fake_ensure() -> None:
+        ensure_calls.append("called")
+        app.state.query_runtime_service = FakeQueryRuntimeService()
+
+    delattr(app.state, "query_runtime_service")
+    app.state.ensure_runtime_full_ready = fake_ensure
+
+    response = await client.get("/query-runtime/status")
+
+    assert response.status_code == 200
+    assert response.json()["message"] == "未运行"
+    assert ensure_calls == ["called"]

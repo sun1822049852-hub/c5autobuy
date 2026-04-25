@@ -26,6 +26,28 @@ async def test_health_endpoint():
     assert data["ready"] is True
 
 
+def test_health_endpoint_stays_ready_after_runtime_full_state_is_detached(tmp_path):
+    app = create_app(db_path=tmp_path / "health-runtime-detached.db")
+
+    for attr in (
+        "query_config_repository",
+        "query_runtime_service",
+        "purchase_runtime_service",
+        "purchase_ui_preferences_repository",
+        "runtime_settings_repository",
+        "stats_repository",
+        "stats_pipeline",
+        "task_manager",
+    ):
+        delattr(app.state, attr)
+
+    with TestClient(app) as client:
+        response = client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok", "ready": True}
+
+
 def test_create_app_non_deferred_does_not_emit_deprecated_shutdown_warning(tmp_path):
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always", DeprecationWarning)

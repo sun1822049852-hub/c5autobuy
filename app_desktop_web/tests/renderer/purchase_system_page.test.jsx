@@ -147,6 +147,30 @@ function jsonResponse(payload, status = 200) {
   });
 }
 
+function createDeferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((nextResolve, nextReject) => {
+    resolve = nextResolve;
+    reject = nextReject;
+  });
+  return { promise, resolve, reject };
+}
+
+function buildShellBootstrapPayload() {
+  return {
+    version: 1,
+    generated_at: "2026-04-25T12:00:00.000Z",
+  };
+}
+
+function buildFullBootstrapPayload() {
+  return {
+    version: 2,
+    generated_at: "2026-04-25T12:00:01.000Z",
+  };
+}
+
 
 function installDesktopApp(fetchImpl) {
   window.fetch = fetchImpl;
@@ -421,6 +445,7 @@ function createFetchHarness({
   applyRuntimeResult,
   capacitySummary = buildCapacitySummary(),
   configDetails,
+  fullBootstrapPromise = null,
   initialStatus,
   initialPurchaseRuntimeSettings = {
     per_batch_ip_fanout_limit: 1,
@@ -458,6 +483,13 @@ function createFetchHarness({
       method,
       pathname: url.pathname,
     });
+
+    if (url.pathname === "/app/bootstrap" && url.searchParams.get("scope") === "shell") {
+      return jsonResponse(buildShellBootstrapPayload());
+    }
+    if (url.pathname === "/app/bootstrap") {
+      return fullBootstrapPromise || jsonResponse(buildFullBootstrapPayload());
+    }
 
     if (url.pathname === "/account-center/accounts" && method === "GET") {
       return jsonResponse([]);
@@ -1754,6 +1786,36 @@ describe("purchase system page", () => {
     await user.click(within(commandDeck).getByRole("button", { name: "查询设置" }));
     const queryDialog = await screen.findByRole("dialog", { name: "查询设置" });
     expect(within(queryDialog).getByRole("button", { name: "保存" })).toBeDisabled();
+  });
+
+  it("shows a page-level runtime guard before the first purchase full bootstrap finishes", async () => {
+    const user = userEvent.setup();
+    const fullBootstrap = createDeferred();
+    const harness = createFetchHarness({
+      fullBootstrapPromise: fullBootstrap.promise,
+    });
+    installDesktopApp(harness.fetchImpl);
+
+    render(<App />);
+
+    await screen.findByText("C5 交易助手");
+    await user.click(screen.getByRole("button", { name: "扫货系统" }));
+
+    expect(await screen.findByRole("heading", { name: "正在加载扫货系统运行时" })).toBeInTheDocument();
+    expect(screen.getByText("首次进入扫货系统时，正在补齐购买调度与配置快照。")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "开始扫货" })).not.toBeInTheDocument();
+    expect(
+      harness.calls.some((call) => call.method === "GET" && call.pathname === "/purchase-runtime/status"),
+    ).toBe(false);
+
+    fullBootstrap.resolve(jsonResponse(buildFullBootstrapPayload()));
+
+    await waitFor(() => {
+      expect(
+        harness.calls.some((call) => call.method === "GET" && call.pathname === "/purchase-runtime/status"),
+      ).toBe(true);
+    });
+    expect(await screen.findByRole("button", { name: "开始扫货" })).toBeInTheDocument();
   });
 
   it("opens query settings, blocks invalid minimums and warns before saving risky token cooldowns", async () => {

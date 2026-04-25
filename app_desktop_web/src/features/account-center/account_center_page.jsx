@@ -80,8 +80,12 @@ export function AccountCenterPage({ client }) {
     loginTaskSnapshot,
     isLoginTaskStarting,
   } = useAccountCenterPage({ client });
-  const proxyPool = useProxyPool({ client });
   const [proxyPoolDialogOpen, setProxyPoolDialogOpen] = useState(false);
+  const shouldLoadProxyPool = proxyPoolDialogOpen
+    || createDialogOpen
+    || Boolean(browserProxyDialogAccount)
+    || Boolean(proxyDialogAccount);
+  const proxyPool = useProxyPool({ client, enabled: shouldLoadProxyPool });
   const activeCardLabel = overviewCards.find((card) => card.id === activeFilter)?.label ?? "全部账号";
   const heroCards = [
     ...overviewCards,

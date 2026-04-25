@@ -1158,3 +1158,39 @@ async def test_purchase_runtime_inventory_refresh_route_returns_latest_detail(cl
     assert response.json()["selected_steam_id"] == "steam-1"
     assert response.json()["inventories"][0]["nickname"] == "主仓"
     assert response.json()["inventories"][0]["inventory_num"] == 800
+
+
+async def test_purchase_runtime_ui_preferences_triggers_runtime_full_ensure_when_dependencies_missing(client, app):
+    ensure_calls: list[str] = []
+
+    class FakePreferences:
+        selected_config_id = None
+        updated_at = None
+
+    class FakePurchaseUiPreferencesRepository:
+        def get(self):
+            return FakePreferences()
+
+        def clear_selected_config(self) -> None:
+            return None
+
+    class FakeQueryConfigRepository:
+        def get_config(self, _config_id: str):
+            return None
+
+    def fake_ensure() -> None:
+        ensure_calls.append("called")
+        app.state.purchase_ui_preferences_repository = FakePurchaseUiPreferencesRepository()
+        app.state.query_config_repository = FakeQueryConfigRepository()
+
+    delattr(app.state, "purchase_ui_preferences_repository")
+    app.state.ensure_runtime_full_ready = fake_ensure
+
+    response = await client.get("/purchase-runtime/ui-preferences")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "selected_config_id": None,
+        "updated_at": None,
+    }
+    assert ensure_calls == ["called"]

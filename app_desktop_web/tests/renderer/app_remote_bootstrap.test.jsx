@@ -4,10 +4,11 @@ import "@testing-library/jest-dom/vitest";
 
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "../../src/App.jsx";
 import { getDesktopBootstrapConfig } from "../../src/desktop/bridge.js";
+import { resetAppShellRuntimeForTests } from "../../src/features/shell/app_shell_state.js";
 
 
 function jsonResponse(payload, status = 200) {
@@ -19,11 +20,35 @@ function jsonResponse(payload, status = 200) {
   });
 }
 
+function createDeferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((nextResolve, nextReject) => {
+    resolve = nextResolve;
+    reject = nextReject;
+  });
+  return { promise, resolve, reject };
+}
+
 function hasRequestedUrl(fetchImpl, { origin, pathname }) {
   return fetchImpl.mock.calls.some(([input]) => {
     const url = new URL(String(input));
     return (!origin || url.origin === origin) && url.pathname === pathname;
   });
+}
+
+function countBootstrapRequests(fetchImpl, { origin, scope } = {}) {
+  return fetchImpl.mock.calls.filter(([input]) => {
+    const url = new URL(String(input));
+    if (url.pathname !== "/app/bootstrap") {
+      return false;
+    }
+    if (origin && url.origin !== origin) {
+      return false;
+    }
+    const normalizedScope = url.searchParams.get("scope") === "shell" ? "shell" : "full";
+    return !scope || normalizedScope === scope;
+  }).length;
 }
 
 function getDiagnosticCalls(logRendererDiagnosticImpl, type) {
@@ -57,6 +82,44 @@ function installEmbeddedDesktopApp(fetchImpl) {
         runtimeWebSocketUrl: "",
         backendStatus: "ready",
       };
+    },
+  };
+}
+
+function installSubscribedRemoteDesktopApp(fetchImpl, initialConfig = {}) {
+  let bootstrapListener = () => {};
+  const currentConfig = {
+    backendMode: "remote",
+    apiBaseUrl: "https://api-a.example.com",
+    runtimeWebSocketUrl: "wss://api-a.example.com/ws/runtime",
+    backendStatus: "ready",
+    ...initialConfig,
+  };
+  window.fetch = fetchImpl;
+  window.desktopApp = {
+    getBootstrapConfig() {
+      return currentConfig;
+    },
+    requestBootstrapConfig() {
+      return currentConfig;
+    },
+    subscribeBootstrapConfig(listener) {
+      bootstrapListener = listener;
+      return () => {
+        bootstrapListener = () => {};
+      };
+    },
+  };
+
+  return {
+    emitBootstrapConfig(payload = {}) {
+      bootstrapListener({
+        backendMode: "remote",
+        apiBaseUrl: "https://api-b.example.com",
+        runtimeWebSocketUrl: "wss://api-b.example.com/ws/runtime",
+        backendStatus: "ready",
+        ...payload,
+      });
     },
   };
 }
@@ -96,6 +159,12 @@ function installDeferredEmbeddedDesktopApp(fetchImpl) {
 
 
 describe("app remote bootstrap", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    resetAppShellRuntimeForTests();
+  });
+
   afterEach(() => {
     delete window.desktopApp;
   });
@@ -556,5 +625,451 @@ describe("app remote bootstrap", () => {
     await waitFor(() => {
       expect(getDiagnosticCalls(logRendererDiagnostic, "startup_trace_home_interactive")).toHaveLength(1);
     });
+  });
+
+  it("hydrates remote home with shell bootstrap only and requests full bootstrap only after explicit full ensure", async () => {
+    const user = userEvent.setup();
+    let resolveFullBootstrap;
+    const fullBootstrapPromise = new Promise((resolve) => {
+      resolveFullBootstrap = () => resolve(jsonResponse({
+        version: 2,
+        generated_at: "2026-04-25T12:00:01.000Z",
+        program_access: {
+          mode: "local_pass_through",
+          stage: "prepackaging",
+          guard_enabled: false,
+          message: "当前为本地放行模式，远端程序会员控制面尚未接入正式链路",
+          username: null,
+          auth_state: null,
+          runtime_state: null,
+          grace_expires_at: null,
+          last_error_code: null,
+          registration_flow_version: 2,
+        },
+        query_system: {
+          configs: [],
+          capacitySummary: { modes: {} },
+          runtimeStatus: { running: false, item_rows: [] },
+        },
+        purchase_system: {
+          runtimeStatus: { running: false, accounts: [], item_rows: [] },
+          uiPreferences: { selected_config_id: null, updated_at: null },
+          runtimeSettings: { per_batch_ip_fanout_limit: 1, updated_at: null },
+        },
+      }));
+    });
+    const fetchImpl = vi.fn(async (input) => {
+      const url = new URL(input);
+
+      if (url.pathname === "/app/bootstrap" && url.searchParams.get("scope") === "shell") {
+        return jsonResponse({
+          version: 1,
+          generated_at: "2026-04-25T12:00:00.000Z",
+          program_access: {
+            mode: "local_pass_through",
+            stage: "prepackaging",
+            guard_enabled: false,
+            message: "当前为本地放行模式，远端程序会员控制面尚未接入正式链路",
+            username: null,
+            auth_state: null,
+            runtime_state: null,
+            grace_expires_at: null,
+            last_error_code: null,
+            registration_flow_version: 2,
+          },
+        });
+      }
+      if (url.pathname === "/app/bootstrap") {
+        return fullBootstrapPromise;
+      }
+      if (url.pathname === "/account-center/accounts") {
+        return jsonResponse([]);
+      }
+      if (url.pathname === "/proxy-pool") {
+        return jsonResponse([]);
+      }
+      if (url.pathname === "/query-configs") {
+        return jsonResponse([]);
+      }
+      if (url.pathname === "/query-configs/capacity-summary") {
+        return jsonResponse({ modes: {} });
+      }
+      if (url.pathname === "/query-runtime/status") {
+        return jsonResponse({
+          running: false,
+          config_id: null,
+          config_name: null,
+          message: "未运行",
+          item_rows: [],
+        });
+      }
+
+      throw new Error(`Unhandled request: ${url.pathname}`);
+    });
+    installRemoteDesktopApp(fetchImpl);
+
+    render(<App />);
+
+    await screen.findByText("C5 交易助手");
+    await waitFor(() => {
+      expect(countBootstrapRequests(fetchImpl, {
+        origin: "https://api.example.com",
+        scope: "shell",
+      })).toBe(1);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(countBootstrapRequests(fetchImpl, {
+      origin: "https://api.example.com",
+      scope: "full",
+    })).toBe(0);
+
+    await user.click(screen.getByRole("button", { name: "配置管理" }));
+    await waitFor(() => {
+      expect(countBootstrapRequests(fetchImpl, {
+        origin: "https://api.example.com",
+        scope: "full",
+      })).toBe(1);
+    });
+    expect(await screen.findByRole("heading", { name: "正在加载配置管理运行时" })).toBeInTheDocument();
+    expect(screen.getByText("首次进入配置管理时，正在补齐查询配置与运行时快照。")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "新建配置" })).not.toBeInTheDocument();
+
+    resolveFullBootstrap();
+
+    expect(await screen.findByText("当前配置")).toBeInTheDocument();
+  });
+
+  it("keeps stats pages behind runtime guards until the first full bootstrap completes", async () => {
+    const user = userEvent.setup();
+    const fullBootstrap = createDeferred();
+    const fetchImpl = vi.fn(async (input) => {
+      const url = new URL(input);
+
+      if (url.pathname === "/app/bootstrap" && url.searchParams.get("scope") === "shell") {
+        return jsonResponse({
+          version: 1,
+          generated_at: "2026-04-25T12:10:00.000Z",
+          program_access: {
+            mode: "local_pass_through",
+            stage: "prepackaging",
+            guard_enabled: false,
+            message: "当前为本地放行模式，远端程序会员控制面尚未接入正式链路",
+            username: null,
+            auth_state: null,
+            runtime_state: null,
+            grace_expires_at: null,
+            last_error_code: null,
+            registration_flow_version: 2,
+          },
+        });
+      }
+      if (url.pathname === "/app/bootstrap") {
+        return fullBootstrap.promise;
+      }
+      if (url.pathname === "/account-center/accounts") {
+        return jsonResponse([]);
+      }
+      if (url.pathname === "/stats/query-items") {
+        return jsonResponse({ items: [] });
+      }
+      if (url.pathname === "/stats/account-capability") {
+        return jsonResponse({ items: [] });
+      }
+
+      throw new Error(`Unhandled request: ${url.pathname}`);
+    });
+    installRemoteDesktopApp(fetchImpl);
+
+    render(<App />);
+
+    await screen.findByText("C5 交易助手");
+    await user.click(screen.getByRole("button", { name: "查询统计" }));
+
+    expect(await screen.findByRole("heading", { name: "正在加载查询统计运行时" })).toBeInTheDocument();
+    expect(screen.getByText("首次进入查询统计时，正在补齐统计快照与运行态汇总。")).toBeInTheDocument();
+    expect(hasRequestedUrl(fetchImpl, {
+      origin: "https://api.example.com",
+      pathname: "/stats/query-items",
+    })).toBe(false);
+
+    await user.click(screen.getByRole("button", { name: "账号能力统计" }));
+
+    expect(await screen.findByRole("heading", { name: "正在加载账号能力统计运行时" })).toBeInTheDocument();
+    expect(screen.getByText("首次进入账号能力统计时，正在补齐统计快照与运行态汇总。")).toBeInTheDocument();
+    expect(hasRequestedUrl(fetchImpl, {
+      origin: "https://api.example.com",
+      pathname: "/stats/account-capability",
+    })).toBe(false);
+
+    fullBootstrap.resolve(jsonResponse({
+      version: 2,
+      generated_at: "2026-04-25T12:10:01.000Z",
+      program_access: {
+        mode: "local_pass_through",
+        stage: "prepackaging",
+        guard_enabled: false,
+        message: "当前为本地放行模式，远端程序会员控制面尚未接入正式链路",
+        username: null,
+        auth_state: null,
+        runtime_state: null,
+        grace_expires_at: null,
+        last_error_code: null,
+        registration_flow_version: 2,
+      },
+      query_system: {
+        configs: [],
+        capacitySummary: { modes: {} },
+        runtimeStatus: { running: false, item_rows: [] },
+      },
+      purchase_system: {
+        runtimeStatus: { running: false, accounts: [], item_rows: [] },
+        uiPreferences: { selected_config_id: null, updated_at: null },
+        runtimeSettings: { per_batch_ip_fanout_limit: 1, updated_at: null },
+      },
+    }));
+
+    await waitFor(() => {
+      expect(hasRequestedUrl(fetchImpl, {
+        origin: "https://api.example.com",
+        pathname: "/stats/account-capability",
+      })).toBe(true);
+    });
+    expect(await screen.findByRole("table", { name: "账号能力统计表" })).toBeInTheDocument();
+  });
+
+  it("lets the active runtime page retry full bootstrap without leaving the page", async () => {
+    const user = userEvent.setup();
+    let fullBootstrapCalls = 0;
+    const fetchImpl = vi.fn(async (input) => {
+      const url = new URL(input);
+
+      if (url.pathname === "/app/bootstrap" && url.searchParams.get("scope") === "shell") {
+        return jsonResponse({
+          version: 1,
+          generated_at: "2026-04-25T12:20:00.000Z",
+          program_access: {
+            mode: "local_pass_through",
+            stage: "prepackaging",
+            guard_enabled: false,
+            message: "当前为本地放行模式，远端程序会员控制面尚未接入正式链路",
+            username: null,
+            auth_state: null,
+            runtime_state: null,
+            grace_expires_at: null,
+            last_error_code: null,
+            registration_flow_version: 2,
+          },
+        });
+      }
+      if (url.pathname === "/app/bootstrap") {
+        fullBootstrapCalls += 1;
+        if (fullBootstrapCalls === 1) {
+          return Promise.reject(new Error("full bootstrap failed"));
+        }
+        return jsonResponse({
+          version: 2,
+          generated_at: "2026-04-25T12:20:01.000Z",
+          program_access: {
+            mode: "local_pass_through",
+            stage: "prepackaging",
+            guard_enabled: false,
+            message: "当前为本地放行模式，远端程序会员控制面尚未接入正式链路",
+            username: null,
+            auth_state: null,
+            runtime_state: null,
+            grace_expires_at: null,
+            last_error_code: null,
+            registration_flow_version: 2,
+          },
+          query_system: {
+            configs: [],
+            capacitySummary: { modes: {} },
+            runtimeStatus: { running: false, item_rows: [] },
+          },
+          purchase_system: {
+            runtimeStatus: { running: false, accounts: [], item_rows: [] },
+            uiPreferences: { selected_config_id: null, updated_at: null },
+            runtimeSettings: { per_batch_ip_fanout_limit: 1, updated_at: null },
+          },
+        });
+      }
+      if (url.pathname === "/account-center/accounts") {
+        return jsonResponse([]);
+      }
+      if (url.pathname === "/query-configs") {
+        return jsonResponse([]);
+      }
+      if (url.pathname === "/query-configs/capacity-summary") {
+        return jsonResponse({ modes: {} });
+      }
+      if (url.pathname === "/query-runtime/status") {
+        return jsonResponse({
+          running: false,
+          config_id: null,
+          config_name: null,
+          message: "未运行",
+          item_rows: [],
+        });
+      }
+
+      throw new Error(`Unhandled request: ${url.pathname}`);
+    });
+    installRemoteDesktopApp(fetchImpl);
+
+    render(<App />);
+
+    await screen.findByText("C5 交易助手");
+    await user.click(screen.getByRole("button", { name: "配置管理" }));
+
+    expect(await screen.findByRole("heading", { name: "正在加载配置管理运行时" })).toBeInTheDocument();
+    expect(await screen.findByText("full bootstrap failed")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "重试加载运行时" })).toBeInTheDocument();
+    expect(fullBootstrapCalls).toBe(1);
+
+    await user.click(screen.getByRole("button", { name: "重试加载运行时" }));
+
+    await waitFor(() => {
+      expect(fullBootstrapCalls).toBe(2);
+    });
+    expect(await screen.findByText("当前配置")).toBeInTheDocument();
+  });
+
+  it("ignores late full bootstrap resolutions from an old manager generation", async () => {
+    const user = userEvent.setup();
+    const firstFullBootstrap = createDeferred();
+    const secondFullBootstrap = createDeferred();
+    const fetchImpl = vi.fn(async (input) => {
+      const url = new URL(input);
+
+      if (url.pathname === "/app/bootstrap" && url.searchParams.get("scope") === "shell") {
+        return jsonResponse({
+          version: url.origin === "https://api-a.example.com" ? 1 : 11,
+          generated_at: "2026-04-25T12:30:00.000Z",
+          program_access: {
+            mode: "local_pass_through",
+            stage: "prepackaging",
+            guard_enabled: false,
+            message: "当前为本地放行模式，远端程序会员控制面尚未接入正式链路",
+            username: null,
+            auth_state: null,
+            runtime_state: null,
+            grace_expires_at: null,
+            last_error_code: null,
+            registration_flow_version: 2,
+          },
+        });
+      }
+      if (url.pathname === "/app/bootstrap") {
+        return url.origin === "https://api-a.example.com"
+          ? firstFullBootstrap.promise
+          : secondFullBootstrap.promise;
+      }
+      if (url.pathname === "/account-center/accounts") {
+        return jsonResponse([]);
+      }
+      if (url.pathname === "/query-configs") {
+        return jsonResponse([]);
+      }
+      if (url.pathname === "/query-configs/capacity-summary") {
+        return jsonResponse({ modes: {} });
+      }
+      if (url.pathname === "/query-runtime/status") {
+        return jsonResponse({
+          running: false,
+          config_id: null,
+          config_name: null,
+          message: "未运行",
+          item_rows: [],
+        });
+      }
+
+      throw new Error(`Unhandled request: ${url.origin}${url.pathname}`);
+    });
+    const desktopHarness = installSubscribedRemoteDesktopApp(fetchImpl);
+
+    render(<App />);
+
+    await screen.findByText("C5 交易助手");
+    await user.click(screen.getByRole("button", { name: "配置管理" }));
+
+    await waitFor(() => {
+      expect(countBootstrapRequests(fetchImpl, {
+        origin: "https://api-a.example.com",
+        scope: "full",
+      })).toBe(1);
+    });
+    expect(await screen.findByRole("heading", { name: "正在加载配置管理运行时" })).toBeInTheDocument();
+
+    await act(async () => {
+      desktopHarness.emitBootstrapConfig();
+    });
+
+    await waitFor(() => {
+      expect(countBootstrapRequests(fetchImpl, {
+        origin: "https://api-b.example.com",
+        scope: "full",
+      })).toBe(1);
+    });
+
+    firstFullBootstrap.resolve(jsonResponse({
+      version: 2,
+      generated_at: "2026-04-25T12:30:01.000Z",
+      query_system: {
+        configs: [],
+        capacitySummary: { modes: {} },
+        runtimeStatus: { running: false, item_rows: [] },
+      },
+      purchase_system: {
+        runtimeStatus: { running: false, accounts: [], item_rows: [] },
+        uiPreferences: { selected_config_id: null, updated_at: null },
+        runtimeSettings: { per_batch_ip_fanout_limit: 1, updated_at: null },
+      },
+    }));
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(screen.getByRole("heading", { name: "正在加载配置管理运行时" })).toBeInTheDocument();
+    expect(hasRequestedUrl(fetchImpl, {
+      origin: "https://api-b.example.com",
+      pathname: "/query-configs",
+    })).toBe(false);
+
+    secondFullBootstrap.resolve(jsonResponse({
+      version: 12,
+      generated_at: "2026-04-25T12:30:02.000Z",
+      program_access: {
+        mode: "local_pass_through",
+        stage: "prepackaging",
+        guard_enabled: false,
+        message: "当前为本地放行模式，远端程序会员控制面尚未接入正式链路",
+        username: null,
+        auth_state: null,
+        runtime_state: null,
+        grace_expires_at: null,
+        last_error_code: null,
+        registration_flow_version: 2,
+      },
+      query_system: {
+        configs: [],
+        capacitySummary: { modes: {} },
+        runtimeStatus: { running: false, item_rows: [] },
+      },
+      purchase_system: {
+        runtimeStatus: { running: false, accounts: [], item_rows: [] },
+        uiPreferences: { selected_config_id: null, updated_at: null },
+        runtimeSettings: { per_batch_ip_fanout_limit: 1, updated_at: null },
+      },
+    }));
+
+    expect(await screen.findByText("当前配置")).toBeInTheDocument();
+    expect(hasRequestedUrl(fetchImpl, {
+      origin: "https://api-b.example.com",
+      pathname: "/query-configs",
+    })).toBe(false);
   });
 });

@@ -1,5 +1,6 @@
 import { NO_SELECT_STYLE } from "../../shared/no_select_style.js";
 import { ErrorNotice } from "../../shared/error_notice.jsx";
+import { RuntimePageGuard } from "../shell/runtime_page_guard.jsx";
 import {
   formatQuerySourceModeSummary,
 } from "../stats/stats_shared.js";
@@ -7,7 +8,7 @@ import { StatsRangeControls } from "../stats/stats_range_controls.jsx";
 import { useQueryStatsPage } from "./hooks/use_query_stats_page.js";
 
 
-export function QueryStatsPage({ client }) {
+function QueryStatsPageContent({ client }) {
   const {
     filters,
     isLoading,
@@ -77,4 +78,26 @@ export function QueryStatsPage({ client }) {
       </section>
     </section>
   );
+}
+
+export function QueryStatsPage({
+  client,
+  onRetryBootstrap = null,
+  runtimeBootstrapError = "",
+  runtimeBootstrapStatus = "ready",
+}) {
+  if (runtimeBootstrapStatus !== "ready") {
+    return (
+      <RuntimePageGuard
+        description={runtimeBootstrapStatus === "error"
+          ? "查询统计运行时预热失败，请留在当前页重试。"
+          : "首次进入查询统计时，正在补齐统计快照与运行态汇总。"}
+        error={runtimeBootstrapStatus === "error" ? runtimeBootstrapError : ""}
+        onRetry={runtimeBootstrapStatus === "error" ? onRetryBootstrap : null}
+        title="正在加载查询统计运行时"
+      />
+    );
+  }
+
+  return <QueryStatsPageContent client={client} />;
 }

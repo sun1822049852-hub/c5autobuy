@@ -144,8 +144,12 @@ export function createRuntimeConnectionManager({
   let fullBootstrapHydrated = false;
   let resyncScheduled = false;
   let runtimeStreamCleanup = null;
+  let disposed = false;
 
   function applyBootstrap(payload) {
+    if (disposed) {
+      return payload;
+    }
     const snapshot = store.getSnapshot();
     const version = resolveBootstrapVersion(payload, snapshot.connection.lastEventVersion);
 
@@ -164,6 +168,9 @@ export function createRuntimeConnectionManager({
   }
 
   function markDisconnected(reason) {
+    if (disposed) {
+      return store.getSnapshot();
+    }
     if (typeof store.patchConnection !== "function") {
       return store.getSnapshot();
     }
@@ -176,6 +183,9 @@ export function createRuntimeConnectionManager({
   }
 
   function scheduleResync(reason) {
+    if (disposed) {
+      return null;
+    }
     if (typeof store.patchConnection === "function") {
       store.patchConnection({
         state: "stale",
@@ -213,11 +223,17 @@ export function createRuntimeConnectionManager({
     shellBootstrapPromise = (async () => {
       try {
         const payload = await fetchShellBootstrap(client);
+        if (disposed) {
+          return payload;
+        }
         if (!hasDedicatedShellBootstrap(client)) {
           fullBootstrapHydrated = true;
         }
         return applyBootstrap(payload);
       } catch (error) {
+        if (disposed) {
+          throw error;
+        }
         if (typeof store.patchBootstrap === "function" && snapshot.bootstrap.state !== "hydrated") {
           store.patchBootstrap({ state: "error" });
         }
@@ -261,9 +277,15 @@ export function createRuntimeConnectionManager({
     fullBootstrapPromise = (async () => {
       try {
         const payload = await fetchFullBootstrap(client);
+        if (disposed) {
+          return payload;
+        }
         fullBootstrapHydrated = true;
         return applyBootstrap(payload);
       } catch (error) {
+        if (disposed) {
+          throw error;
+        }
         patchFullBootstrapFailure(error);
         throw error;
       } finally {
@@ -301,11 +323,37 @@ export function createRuntimeConnectionManager({
     return shellPayload;
   }
 
+  async function bootstrapShellOnly({ force = false } = {}) {
+    const snapshot = store.getSnapshot();
+
+    if (!force && snapshot.bootstrap.state === "hydrated") {
+      return snapshot;
+    }
+
+    return hydrateShellBootstrap({ force });
+  }
+
+  async function ensureFullBootstrap({ force = false } = {}) {
+    if (!force && fullBootstrapHydrated) {
+      return store.getSnapshot();
+    }
+
+    const shellPayload = await hydrateShellBootstrap({ force });
+    if (!hasDedicatedShellBootstrap(client)) {
+      return shellPayload;
+    }
+
+    return hydrateFullBootstrap({ force });
+  }
+
   function connectRuntimeUpdates({
     websocketUrl,
     WebSocketImpl = globalThis.WebSocket,
     reconnectDelayMs = 1000,
   } = {}) {
+    if (disposed) {
+      return () => {};
+    }
     runtimeStreamCleanup?.();
     runtimeStreamCleanup = null;
 
@@ -369,7 +417,14 @@ export function createRuntimeConnectionManager({
 
       const snapshot = store.getSnapshot();
       const nextUrl = buildRuntimeWebSocketUrl(websocketUrl, snapshot.connection.lastEventVersion);
-      const websocket = new WebSocketImpl(nextUrl);
+      let websocket = null;
+      try {
+        websocket = new WebSocketImpl(nextUrl);
+      } catch (error) {
+        state.websocket = null;
+        handleSocketClosed(error);
+        return;
+      }
       state.websocket = websocket;
 
       websocket.onopen = () => {
@@ -447,10 +502,21 @@ export function createRuntimeConnectionManager({
     };
   }
 
+  function dispose() {
+    disposed = true;
+    runtimeStreamCleanup?.();
+    runtimeStreamCleanup = null;
+    shellBootstrapPromise = null;
+    fullBootstrapPromise = null;
+  }
+
   return {
     applyBootstrap,
     bootstrap,
+    bootstrapShellOnly,
     connectRuntimeUpdates,
+    dispose,
+    ensureFullBootstrap,
     markDisconnected,
     scheduleResync,
   };

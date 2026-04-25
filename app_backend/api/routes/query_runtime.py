@@ -18,12 +18,24 @@ from app_backend.application.use_cases.stop_query_runtime import StopQueryRuntim
 router = APIRouter(prefix="/query-runtime", tags=["query-runtime"])
 
 
+def _ensure_runtime_full_ready(request: Request) -> None:
+    ensure = getattr(request.app.state, "ensure_runtime_full_ready", None)
+    if callable(ensure):
+        ensure()
+
+
+def _state_attr(request: Request, name: str):
+    if not hasattr(request.app.state, name):
+        _ensure_runtime_full_ready(request)
+    return getattr(request.app.state, name)
+
+
 def _runtime_service(request: Request):
-    return request.app.state.query_runtime_service
+    return _state_attr(request, "query_runtime_service")
 
 
 def _refresh_service(request: Request):
-    return request.app.state.query_item_detail_refresh_service
+    return _state_attr(request, "query_item_detail_refresh_service")
 
 
 @router.get("/status", response_model=QueryRuntimeStatusResponse)

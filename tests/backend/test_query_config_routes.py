@@ -852,3 +852,30 @@ async def test_delete_query_item_removes_item_from_config(client, app):
     payload = listed.json()
     assert payload[0]["config_id"] == config_id
     assert payload[0]["items"] == []
+
+
+async def test_query_capacity_summary_triggers_runtime_full_ensure_when_account_repository_missing(client, app):
+    ensure_calls: list[str] = []
+
+    class FakeAccountRepository:
+        def list_accounts(self) -> list[object]:
+            return []
+
+    def fake_ensure() -> None:
+        ensure_calls.append("called")
+        app.state.account_repository = FakeAccountRepository()
+
+    delattr(app.state, "account_repository")
+    app.state.ensure_runtime_full_ready = fake_ensure
+
+    response = await client.get("/query-configs/capacity-summary")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "modes": {
+            "new_api": {"mode_type": "new_api", "available_account_count": 0},
+            "fast_api": {"mode_type": "fast_api", "available_account_count": 0},
+            "token": {"mode_type": "token", "available_account_count": 0},
+        }
+    }
+    assert ensure_calls == ["called"]

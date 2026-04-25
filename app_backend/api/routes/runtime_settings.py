@@ -14,8 +14,20 @@ from app_backend.application.use_cases.update_purchase_runtime_settings import (
 router = APIRouter(prefix="/runtime-settings", tags=["runtime-settings"])
 
 
+def _ensure_runtime_full_ready(request: Request) -> None:
+    ensure = getattr(request.app.state, "ensure_runtime_full_ready", None)
+    if callable(ensure):
+        ensure()
+
+
+def _state_attr(request: Request, name: str):
+    if not hasattr(request.app.state, name):
+        _ensure_runtime_full_ready(request)
+    return getattr(request.app.state, name)
+
+
 def _repository(request: Request):
-    return request.app.state.runtime_settings_repository
+    return _state_attr(request, "runtime_settings_repository")
 
 
 def _runtime_update_hub(request: Request):
@@ -23,7 +35,7 @@ def _runtime_update_hub(request: Request):
 
 
 def _purchase_runtime_service(request: Request):
-    return request.app.state.purchase_runtime_service
+    return _state_attr(request, "purchase_runtime_service")
 
 
 def _serialize_purchase_settings(settings) -> PurchaseRuntimeSettingsResponse:

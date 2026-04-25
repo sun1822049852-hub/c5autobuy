@@ -29,20 +29,32 @@ from app_backend.application.use_cases.update_purchase_ui_preferences import (
 router = APIRouter(prefix="/purchase-runtime", tags=["purchase-runtime"])
 
 
+def _ensure_runtime_full_ready(request: Request) -> None:
+    ensure = getattr(request.app.state, "ensure_runtime_full_ready", None)
+    if callable(ensure):
+        ensure()
+
+
+def _state_attr(request: Request, name: str):
+    if not hasattr(request.app.state, name):
+        _ensure_runtime_full_ready(request)
+    return getattr(request.app.state, name)
+
+
 def _runtime_service(request: Request):
-    return request.app.state.purchase_runtime_service
+    return _state_attr(request, "purchase_runtime_service")
 
 
 def _query_runtime_service(request: Request):
-    return request.app.state.query_runtime_service
+    return _state_attr(request, "query_runtime_service")
 
 
 def _query_config_repository(request: Request):
-    return request.app.state.query_config_repository
+    return _state_attr(request, "query_config_repository")
 
 
 def _purchase_ui_preferences_repository(request: Request):
-    return request.app.state.purchase_ui_preferences_repository
+    return _state_attr(request, "purchase_ui_preferences_repository")
 
 
 def _runtime_update_hub(request: Request):
@@ -50,11 +62,12 @@ def _runtime_update_hub(request: Request):
 
 
 def _stats_repository(request: Request):
-    return request.app.state.stats_repository
+    return _state_attr(request, "stats_repository")
 
 
 def _stats_flush_callback(request: Request):
-    return getattr(getattr(request.app.state, "stats_pipeline", None), "flush_pending", None)
+    stats_pipeline = _state_attr(request, "stats_pipeline")
+    return getattr(stats_pipeline, "flush_pending", None)
 
 
 @router.get("/status", response_model=PurchaseRuntimeStatusResponse)

@@ -9,6 +9,39 @@ import { describe, expect, it, vi } from "vitest";
 import { App } from "../../src/App.jsx";
 
 
+function jsonResponse(payload, status = 200) {
+  return Promise.resolve({
+    ok: status >= 200 && status < 300,
+    status,
+    json: async () => payload,
+    text: async () => JSON.stringify(payload),
+  });
+}
+
+function createDeferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((nextResolve, nextReject) => {
+    resolve = nextResolve;
+    reject = nextReject;
+  });
+  return { promise, resolve, reject };
+}
+
+function buildShellBootstrapPayload() {
+  return {
+    version: 1,
+    generated_at: "2026-04-25T12:00:00.000Z",
+  };
+}
+
+function buildFullBootstrapPayload() {
+  return {
+    version: 2,
+    generated_at: "2026-04-25T12:00:01.000Z",
+  };
+}
+
 function buildDiagnosticsSnapshot() {
   return {
     summary: {
@@ -199,7 +232,7 @@ function installDesktopApp(fetchImpl) {
 }
 
 
-function createFetchHarness({ snapshots } = {}) {
+function createFetchHarness({ fullBootstrapPromise = null, snapshots } = {}) {
   const diagnosticsSnapshots = (snapshots?.length ? snapshots : [buildDiagnosticsSnapshot()]).map((snapshot) => ({
     ...snapshot,
     query: {
@@ -221,6 +254,13 @@ function createFetchHarness({ snapshots } = {}) {
   let diagnosticsCallCount = 0;
   return vi.fn(async (input) => {
     const url = new URL(input);
+
+    if (url.pathname === "/app/bootstrap" && url.searchParams.get("scope") === "shell") {
+      return jsonResponse(buildShellBootstrapPayload());
+    }
+    if (url.pathname === "/app/bootstrap") {
+      return fullBootstrapPromise || jsonResponse(buildFullBootstrapPayload());
+    }
 
     if (url.pathname === "/account-center/accounts") {
       return {
@@ -292,6 +332,35 @@ describe("diagnostics page", () => {
     expect(within(panel).getByRole("button", { name: /查询事件日志/i })).toBeInTheDocument();
     expect(within(panel).getByText("1")).toBeInTheDocument();
     expect(within(panel).getAllByText("token invalid").length).toBeGreaterThan(0);
+  });
+
+  it("shows a diagnostics runtime guard before the first full bootstrap finishes", async () => {
+    const user = userEvent.setup();
+    const fullBootstrap = createDeferred();
+    const fetchImpl = createFetchHarness({
+      fullBootstrapPromise: fullBootstrap.promise,
+    });
+    installDesktopApp(fetchImpl);
+
+    render(<App />);
+
+    await screen.findByRole("button", { name: "通用诊断" });
+    await user.click(screen.getByRole("button", { name: "通用诊断" }));
+
+    expect(await screen.findByRole("heading", { name: "正在加载通用诊断运行时" })).toBeInTheDocument();
+    expect(screen.getByText("首次进入通用诊断时，正在补齐诊断快照与运行态汇总。")).toBeInTheDocument();
+    expect(
+      fetchImpl.mock.calls.some(([input]) => new URL(input).pathname === "/diagnostics/sidebar"),
+    ).toBe(false);
+
+    fullBootstrap.resolve(jsonResponse(buildFullBootstrapPayload()));
+
+    await waitFor(() => {
+      expect(
+        fetchImpl.mock.calls.some(([input]) => new URL(input).pathname === "/diagnostics/sidebar"),
+      ).toBe(true);
+    });
+    expect(await screen.findByRole("complementary", { name: "通用诊断面板" })).toBeInTheDocument();
   });
 
   it("localizes login task states in diagnostics instead of exposing raw task codes", async () => {

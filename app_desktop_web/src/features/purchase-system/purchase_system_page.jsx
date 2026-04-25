@@ -9,6 +9,8 @@ import { PurchaseRuntimeActions } from "./components/purchase_runtime_actions.js
 import { PurchaseRuntimeHeader } from "./components/purchase_runtime_header.jsx";
 import { usePurchaseSystemPage } from "./hooks/use_purchase_system_page.js";
 import { UnsavedChangesDialog } from "../shell/unsaved_changes_dialog.jsx";
+import { RuntimePageGuard } from "../shell/runtime_page_guard.jsx";
+import { usePurchaseSystemServerHydrated } from "../../runtime/use_app_runtime.js";
 
 const PREVIEW_ITEM_ROWS = [
   {
@@ -44,7 +46,7 @@ const PREVIEW_ITEM_ROWS = [
 ];
 
 
-export function PurchaseSystemPage({ bootstrapConfig, client, isActive, onLeaveStateChange }) {
+function PurchaseSystemPageContent({ client, isActive, onLeaveStateChange }) {
   const {
     activeQueryConfig,
     actionLabel,
@@ -266,5 +268,42 @@ export function PurchaseSystemPage({ bootstrapConfig, client, isActive, onLeaveS
         onSave={onConfirmSaveConfigSwitch}
       />
     </section>
+  );
+}
+
+export function PurchaseSystemPage({
+  bootstrapConfig,
+  client,
+  isActive,
+  onLeaveStateChange,
+  onRetryBootstrap = null,
+  runtimeBootstrapError = "",
+  runtimeBootstrapStatus = "ready",
+}) {
+  const purchaseSystemServerHydrated = usePurchaseSystemServerHydrated();
+  const isRuntimeReady = purchaseSystemServerHydrated || runtimeBootstrapStatus === "ready";
+
+  if (!isRuntimeReady) {
+    return (
+      <RuntimePageGuard
+        description={runtimeBootstrapStatus === "error"
+          ? "扫货系统运行时预热失败，请留在当前页重试。"
+          : "首次进入扫货系统时，正在补齐购买调度与配置快照。"}
+        error={runtimeBootstrapStatus === "error" ? runtimeBootstrapError : ""}
+        onRetry={runtimeBootstrapStatus === "error" ? onRetryBootstrap : null}
+        title="正在加载扫货系统运行时"
+      />
+    );
+  }
+
+  return (
+    <PurchaseSystemPageContent
+      bootstrapConfig={bootstrapConfig}
+      client={client}
+      isActive={isActive && isRuntimeReady}
+      onLeaveStateChange={onLeaveStateChange}
+      runtimeBootstrapError={runtimeBootstrapError}
+      runtimeBootstrapStatus={runtimeBootstrapStatus}
+    />
   );
 }

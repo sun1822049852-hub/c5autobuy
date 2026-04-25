@@ -890,6 +890,8 @@ describe("runtime connection manager", () => {
       },
     });
     await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
 
     expect(store.getSnapshot().bootstrap).toEqual({
       state: "hydrated",
@@ -953,5 +955,181 @@ describe("runtime connection manager", () => {
     });
     expect(store.getSnapshot().querySystem.serverHydrated).toBe(true);
     expect(store.getSnapshot().purchaseSystem.serverHydrated).toBe(true);
+  });
+
+  it("bootstrapShellOnly only hydrates the shell endpoint without touching full bootstrap", async () => {
+    const store = createAppRuntimeStore();
+    const client = {
+      getAppBootstrapShell: vi.fn().mockResolvedValue({
+        version: 13,
+        generated_at: "2026-04-25T13:00:00.000Z",
+        program_access: {
+          mode: "remote_entitlement",
+          stage: "packaged_release",
+          guard_enabled: true,
+          message: "程序会员控制面已接入",
+        },
+      }),
+      getAppBootstrapFull: vi.fn(),
+    };
+    const manager = createRuntimeConnectionManager({
+      client,
+      now: () => "2026-04-25T13:00:01.000Z",
+      store,
+    });
+
+    const payload = await manager.bootstrapShellOnly();
+
+    expect(payload.version).toBe(13);
+    expect(client.getAppBootstrapShell).toHaveBeenCalledTimes(1);
+    expect(client.getAppBootstrapFull).not.toHaveBeenCalled();
+    expect(store.getSnapshot().bootstrap).toEqual({
+      state: "hydrated",
+      hydratedAt: "2026-04-25T13:00:00.000Z",
+      version: 13,
+    });
+    expect(store.getSnapshot().querySystem.serverHydrated).toBe(false);
+    expect(store.getSnapshot().purchaseSystem.serverHydrated).toBe(false);
+  });
+
+  it("ensureFullBootstrap deduplicates concurrent full bootstrap requests", async () => {
+    const store = createAppRuntimeStore();
+    let resolveShellBootstrap;
+    const shellBootstrapPromise = new Promise((resolve) => {
+      resolveShellBootstrap = resolve;
+    });
+    let resolveFullBootstrap;
+    const fullBootstrapPromise = new Promise((resolve) => {
+      resolveFullBootstrap = resolve;
+    });
+    const client = {
+      getAppBootstrapShell: vi.fn().mockReturnValue(shellBootstrapPromise),
+      getAppBootstrapFull: vi.fn().mockReturnValue(fullBootstrapPromise),
+    };
+    const manager = createRuntimeConnectionManager({
+      client,
+      now: () => "2026-04-25T13:10:01.000Z",
+      store,
+    });
+
+    const firstPromise = manager.ensureFullBootstrap();
+    const secondPromise = manager.ensureFullBootstrap();
+
+    expect(client.getAppBootstrapShell).toHaveBeenCalledTimes(1);
+    expect(client.getAppBootstrapFull).toHaveBeenCalledTimes(0);
+
+    resolveShellBootstrap({
+      version: 14,
+      generated_at: "2026-04-25T13:10:00.000Z",
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(client.getAppBootstrapFull).toHaveBeenCalledTimes(1);
+
+    resolveFullBootstrap({
+      version: 15,
+      generated_at: "2026-04-25T13:10:02.000Z",
+      query_system: {
+        configs: [],
+        capacitySummary: { modes: {} },
+        runtimeStatus: { running: false, item_rows: [] },
+      },
+      purchase_system: {
+        runtimeStatus: { running: false, accounts: [], item_rows: [] },
+        uiPreferences: {},
+        runtimeSettings: {},
+      },
+    });
+    await firstPromise;
+    await secondPromise;
+
+    expect(store.getSnapshot().bootstrap).toEqual({
+      state: "hydrated",
+      hydratedAt: "2026-04-25T13:10:02.000Z",
+      version: 15,
+    });
+    expect(store.getSnapshot().querySystem.serverHydrated).toBe(true);
+    expect(store.getSnapshot().purchaseSystem.serverHydrated).toBe(true);
+  });
+
+  it("falls back to legacy getAppBootstrap when dedicated shell/full methods are unavailable", async () => {
+    const store = createAppRuntimeStore();
+    const client = {
+      getAppBootstrap: vi.fn().mockResolvedValue({
+        version: 16,
+        generated_at: "2026-04-25T13:20:00.000Z",
+        query_system: {
+          configs: [],
+          capacitySummary: { modes: {} },
+          runtimeStatus: { running: false, item_rows: [] },
+        },
+        purchase_system: {
+          runtimeStatus: { running: false, accounts: [], item_rows: [] },
+          uiPreferences: {},
+          runtimeSettings: {},
+        },
+      }),
+    };
+    const manager = createRuntimeConnectionManager({
+      client,
+      now: () => "2026-04-25T13:20:01.000Z",
+      store,
+    });
+
+    await manager.bootstrapShellOnly();
+    await manager.ensureFullBootstrap();
+
+    expect(client.getAppBootstrap).toHaveBeenCalledTimes(1);
+    expect(store.getSnapshot().querySystem.serverHydrated).toBe(true);
+    expect(store.getSnapshot().purchaseSystem.serverHydrated).toBe(true);
+  });
+
+  it("handles synchronous WebSocket constructor failures without throwing through the renderer", async () => {
+    const store = createAppRuntimeStore();
+    const schedule = vi.fn(() => 0);
+    const client = {
+      getAppBootstrap: vi.fn().mockResolvedValue({
+        version: 17,
+        generated_at: "2026-04-25T13:30:00.000Z",
+        query_system: {
+          configs: [],
+          capacitySummary: { modes: {} },
+          runtimeStatus: { running: false, item_rows: [] },
+        },
+        purchase_system: {
+          runtimeStatus: { running: false, accounts: [], item_rows: [] },
+          uiPreferences: {},
+          runtimeSettings: {},
+        },
+      }),
+    };
+    const manager = createRuntimeConnectionManager({
+      client,
+      now: () => "2026-04-25T13:30:01.000Z",
+      schedule,
+      store,
+    });
+
+    await manager.bootstrap();
+
+    expect(() => manager.connectRuntimeUpdates({
+      websocketUrl: "wss://api.example.com/ws/runtime",
+      WebSocketImpl: class ThrowingWebSocket {
+        constructor() {
+          throw new Error("constructor failed");
+        }
+      },
+      reconnectDelayMs: 1000,
+    })).not.toThrow();
+
+    expect(store.getSnapshot().connection).toMatchObject({
+      state: "stale",
+      stale: true,
+      lastError: "constructor failed",
+    });
+    expect(schedule).toHaveBeenCalled();
   });
 });

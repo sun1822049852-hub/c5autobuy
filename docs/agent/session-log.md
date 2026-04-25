@@ -1681,3 +1681,797 @@
   - README 仍无需改动。
 - 下一步：
   - 把这 3 处剩余改动与本条会话日志一起提交；未跟踪目录继续留在工作树，不纳入提交。
+
+## 2026-04-25 19:05 (Asia/Shanghai)
+- 背景：
+  - 魔尊补充新的桌面启动现象：部分用户不是先看到“加载中”，而是先黑屏，再直接进入主页面；要求优先消灭这条首屏黑帧。
+  - 排查确认：`app_desktop_web/index.html` 与 `dist/index.html` 都已内置静态 startup shell，黑屏不是因为加载文案缺失，而是 Electron 主进程在 `mode="app"` 首次 `loadFile()` 后立刻 `show()`，导致窗口可能先露出纯 `backgroundColor` 背景，再等 renderer 首帧接管。
+- 已完成：
+  - `app_desktop_web/tests/electron/electron_remote_mode.test.js`
+    - 把旧断言“embedded app window 立即显示”改成回归约束：首次 `mode="app"` 时必须先保持隐藏，直到 `ready-to-show` 触发才显示，避免黑帧。
+  - `app_desktop_web/electron-main.cjs`
+    - `createWindow()` 新增 `isFirstWindow` 分支。
+    - 首次 `mode="app"` 加载 renderer 时，不再在 `loadFile()` 后立刻 `show()`；继续复用既有 `ready-to-show` 钩子负责首次显示。
+    - `mode="loading"` 和已存在窗口的后续显示路径保持原口径，不扩改 backend ready / bootstrap / local debug 启动链。
+- 已做验证：
+  - 先跑红灯：
+    - `npm --prefix app_desktop_web test -- tests/electron/electron_remote_mode.test.js --run` -> 1 条新回归失败，证明旧行为确实会在 `ready-to-show` 前提前 `show()`
+  - 改完再跑 focused regression：
+    - `npm --prefix app_desktop_web test -- tests/electron/electron_remote_mode.test.js --run` -> `26 passed`
+    - `npm --prefix app_desktop_web test -- tests/electron/python_backend.test.js --run` -> `13 passed`
+    - `npm --prefix app_desktop_web test -- tests/renderer/app_remote_bootstrap.test.jsx --run` -> `8 passed`
+    - `./.venv/Scripts/python.exe -m pytest tests/backend/test_backend_health.py -q` -> `6 passed`
+  - 真实启动 trace：
+    - `node main_ui_node_desktop.js` 配 `C5_STARTUP_TRACE=1` 后，记录顺序已变为 `desktop.static_shell.visible` -> `desktop.window.visible`，说明窗口现在会等静态首帧 ready 后再露出，不再先暴露纯黑底。
+- 文档同步：
+  - `docs/agent/session-log.md` 已更新。
+  - `docs/agent/memory.md` 本轮无需更新：没有形成新的跨会话稳定约束。
+  - README 已核对，本次无需改动。
+- 下一步：
+  - 若魔尊继续追“为什么不同入口体感快慢不同”，可在当前黑帧已消除的前提下，再单独剖开 `backend.ready` 差异与首页 hydration 慢链，避免两条问题继续混在一起。
+
+## 2026-04-25 19:15 (Asia/Shanghai)
+- 背景：
+  - 魔尊反馈“开始扫货后会正常计数，但点停止后计数又清空；正确口径应是按日期清空，不是按 stop 清空”，并明确这是已修过的回归问题。
+  - 现场排查后确认：旧的“停止态读当天统计”逻辑还在，但当前统计落库已经走异步 `stats_pipeline`；停止态状态出口会立刻从日统计仓回读，若 pipeline 里还有未刷新的事件，就会瞬间看到全 0。
+- 已完成：
+  - `tests/backend/test_purchase_runtime_routes.py`
+    - 新增回归：显式停掉 `stats_pipeline` worker、把 `flush_batch_size` 压到 `1`，再把查询/命中/购买统计事件只塞进 pending queue，锁定“停止态状态出口若不主动 flush，就会回空统计”的竞态。
+  - `app_backend/application/use_cases/get_purchase_runtime_status.py`
+    - 增加可注入的 `stats_flush_callback`，且只在“查询运行时 inactive、准备回读日统计补商品行”这条分支里循环 flush pending stats，再读取当天 `stats_repository`。
+  - 状态出口同步接线：
+    - `app_backend/api/routes/purchase_runtime.py`
+    - `app_backend/api/routes/query_configs.py`
+    - `app_backend/application/use_cases/get_app_bootstrap.py`
+    - `app_backend/api/routes/app_bootstrap.py`
+    - `app_backend/infrastructure/purchase/runtime/purchase_runtime_service.py`
+    - `app_backend/main.py`
+    - 以上出口现在统一拿 `stats_pipeline.flush_pending` 做 stopped-state daily stats 的前置 flush，保证 stop 响应、后续 `/purchase-runtime/status`、bootstrap 和 runtime update payload 口径一致。
+- 已做验证：
+  - 红灯：
+    - `& 'C:/Users/18220/Desktop/C5autobug更新接口 - 副本 (2)/.venv/Scripts/python.exe' -m pytest tests/backend/test_purchase_runtime_routes.py -k flushes_pending_stats_pipeline_before_stopped_daily_snapshot -q`
+    - 结果：`1 failed`，失败点为 `item_rows` 仍是 `查询次数0/命中0/成功0/失败0`。
+  - backend focused regression：
+    - `& 'C:/Users/18220/Desktop/C5autobug更新接口 - 副本 (2)/.venv/Scripts/python.exe' -m pytest tests/backend/test_purchase_runtime_routes.py tests/backend/test_app_bootstrap_route.py tests/backend/test_runtime_update_websocket.py -q`
+    - 结果：`37 passed`
+  - renderer smoke：
+    - `npm --prefix app_desktop_web test -- purchase_system_page.test.jsx -t "keeps stopped-state daily stats visible for the selected config"`
+    - 结果：`1 passed`
+- 当前进度：
+  - 停止扫货后，商品卡片统计不再受异步落库时序影响；只要当天已有 pending stats，状态出口会先刷空再回读，页面继续按自然日展示当天累计。
+- 余险：
+  - 本轮没有改统计表结构，也没改查询/命中/购买主链，只修 stopped-state status 读口径。
+  - `source_mode_stats` 的停止态口径仍只保留 mode hit 数，不回填命中账号/时间戳；这与当前仓库的既有序列化一致，本轮未扩改。
+  - README 已核对，本次无需改动。
+- 下一步：
+  - 让魔尊在真实桌面里再走一遍“开始扫货 -> 产生命中 -> 停止扫货”，确认停止后商品卡片继续保留当天 `查询次数 / 命中 / 成功 / 失败`；若仍异常，再转查“所选配置是否在某条入口上丢失”的次级分支。
+
+## 2026-04-25 19:25 (Asia/Shanghai)
+- 背景：
+  - 魔尊在上一轮修完后仍反馈“真实桌面 stop 以后还是清空”，说明仅修 `stats_pipeline` flush 还没打中全部现场。
+  - 继续补红灯后确认第二个真实缺口：如果服务端 `purchase_ui_preferences.selected_config_id` 没有预存，仅靠运行中的 `active_query_config` 驱动页面，那么一旦 stop 后 `active_query_config=null`，`/purchase-runtime/stop` 会直接回 `item_rows=[]`，因为后端不知道该按哪个 config 去日统计仓回填。
+- 已完成：
+  - `tests/backend/test_purchase_runtime_routes.py`
+    - 新增回归：`test_stop_purchase_runtime_keeps_daily_item_stats_without_pre_saved_ui_preferences`，覆盖“未预写 `selected_config_id`，只通过运行中的 config 启动，再 stop 仍必须保留当天统计”。
+  - `app_backend/infrastructure/query/runtime/query_runtime_service.py`
+    - 新增 `get_last_known_config_id()`，在无运行态时会回退到 retained runtime 的 config，而不是只看当前 active/pending。
+  - `app_backend/application/use_cases/get_purchase_runtime_status.py`
+    - `_resolve_selected_config()` 不再只信服务端 UI 偏好；若 `selected_config_id` 为空或已失效，会继续回退到 query runtime 的 `get_last_known_config_id()`，拿最后一次真实运行的 config 做停止态日统计回填。
+- 已做验证：
+  - 红灯：
+    - `& 'C:/Users/18220/Desktop/C5autobug更新接口 - 副本 (2)/.venv/Scripts/python.exe' -m pytest tests/backend/test_purchase_runtime_routes.py -k without_pre_saved_ui_preferences -q`
+    - 结果：`1 failed`，失败点为 `/purchase-runtime/stop` 返回 `item_rows=[]`。
+  - backend focused regression：
+    - `& 'C:/Users/18220/Desktop/C5autobug更新接口 - 副本 (2)/.venv/Scripts/python.exe' -m pytest tests/backend/test_purchase_runtime_routes.py tests/backend/test_app_bootstrap_route.py tests/backend/test_runtime_update_websocket.py -q`
+    - 结果：`38 passed`
+  - renderer smoke：
+    - `npm --prefix app_desktop_web test -- purchase_system_page.test.jsx -t "keeps stopped-state daily stats visible for the selected config"`
+    - 结果：`1 passed`
+- 当前进度：
+  - 停止态现在有两层兜底：
+    - 先 flush 异步 stats pipeline，避免“有事件没落库”导致的瞬时清空；
+    - 再在 `selected_config_id` 缺失时回退到最后一次真实运行的 config，避免“后端不知道该按哪个配置回填”导致的直接空白。
+- 余险：
+  - 这次仍未扩大去动查询/购买主链，只修停止态状态出口的取数口径。
+  - 若用户在完全重启程序后、且服务端也没有保存 `selected_config_id`，停止态 fallback 不会跨进程保留 retained runtime；这种场景仍依赖用户显式选中过配置或服务端已有持久化偏好。
+- 下一步：
+  - 让魔尊用真实桌面再验一轮“启动 -> 计数增长 -> 停止”，若还会清空，下一刀就改为把“最后一次运行 config”显式持久化到 `purchase_ui_preferences`，不再只靠运行时 retained fallback。
+
+## 2026-04-25 19:48 (Asia/Shanghai)
+- 背景：
+  - 魔尊补了两张现场图到 `C:/Users/18220/Desktop/problem/`，要求先解释“吾到底改了什么、为什么会误判”，再根据图片继续定位。
+  - 两张图把真相直接暴露出来：
+    - 运行中图：商品卡片查询次数是 `4 / 6 / 6`
+    - 停止后图：同一配置同一天却变成 `17544 / 17539 / 17541`
+  - 由此确认：当前真实问题已经不再是“stop 后直接清零”，而是“运行态仍按本次 session 计数、停止态按当天累计计数”，两套口径不一致，导致一重新开始扫货就像从零重计。
+- 已完成：
+  - backend `app_backend/application/use_cases/get_purchase_runtime_status.py`
+    - 在 `active_query_config != null` 的运行态分支新增“配置 + 日统计”组装逻辑：
+      - `modes` 仍取 query runtime 的实时状态；
+      - `查询次数 / 命中 / 成功 / 失败` 改为统一取当天 `stats_repository` 累计值；
+      - 这样运行中与停止后都走同一套“按天累计”计数口径，不再一个看 session、一个看 daily。
+  - backend `tests/backend/test_purchase_runtime_routes.py`
+    - 新增回归：`test_purchase_runtime_status_keeps_daily_item_stats_while_running`，锁定“当天已有历史统计时，重新进入运行态也不能回零附近”。
+    - 同时把两条涉及 pending stats 的测试都切到独立 `StatsPipeline` 假体，避免真实后台线程并发把测试结果搅脏。
+  - 旁支修复（非本轮主诉，但被验证时暴露）：
+    - `app_backend/main.py` 的 `_router_registration_key()` 之前只用 `prefix + tags + route_count` 去重，导致多个 websocket router 撞 key，`/ws/runtime` 会被静默跳过。
+    - 已改成按真实 route 身份（类型/path/methods/name）去重，`runtime websocket` 恢复正确挂载。
+- 已做验证：
+  - backend focused regression：
+    - `& 'C:/Users/18220/Desktop/C5autobug更新接口 - 副本 (2)/.venv/Scripts/python.exe' -m pytest tests/backend/test_purchase_runtime_routes.py tests/backend/test_app_bootstrap_route.py tests/backend/test_runtime_update_websocket.py -q`
+    - 结果：`39 passed`
+  - renderer smoke：
+    - `npm --prefix app_desktop_web test -- purchase_system_page.test.jsx -t "switches into purchase system page|keeps stopped-state daily stats visible for the selected config"`
+    - 结果：`2 passed`
+- 当前进度：
+  - 现在吾能明确回答魔尊：
+    - 吾前两刀改的是“停止态状态出口怎么取数”，所以自动化也只证明“停止后别清空”；
+    - 图里新暴露的是第三条链：“运行中仍读 session 计数”，这条此前根本没被覆盖；
+    - 现在这条运行态口径也已经统一到当天累计。
+- 余险：
+  - 本轮仍未改购买/查询主链本身，只动状态出口与 router 去重。
+  - 若真实桌面此刻仍显示“运行中从 0 开始”，下一刀要转查“桌面窗口是否仍连着旧 backend 进程/旧前端 bundle”，而不是继续猜业务口径。
+- 下一步：
+  - 让魔尊直接在当前桌面里再测一轮“运行中计数是否承接当天累计”；若现场仍不对，吾就按“本地窗口连的是不是旧后端/旧静态资源”这条部署态链继续剖。
+
+## 2026-04-25 19:18 (Asia/Shanghai)
+- 背景：
+  - 魔尊继续追问“启动开始到底在加载什么、为什么这么慢”，并要求把桌面启动链按“首页必须 / deferred / lazy”拆成可执行瘦身方案。
+- 已完成：
+  - 新建计划文档 `docs/superpowers/plans/2026-04-25-desktop-startup-thinning.md`。
+  - 计划核心结论：
+    - 首页同步必须链仅保留 Electron 壳、FastAPI skeleton、SQLite/session factory、账号仓储、bundle 仓储、program access summary、shell bootstrap 与账号中心首页数据源。
+    - `stats/query/purchase/task/diagnostics` 迁到 `runtime-full` deferred slice。
+    - `ManagedBrowserRuntime/login/open-api/detail-refresh` 迁到 `browser-actions` lazy slice。
+    - 前端启动阶段只拿 shell bootstrap；首次进入 query/purchase/diagnostics 页时才 ensure full bootstrap。
+  - 计划中明确点名当前最该先砍的耦合点：
+    - `/account-center/accounts` 现在硬绑 `purchase_runtime_service`
+    - `App.jsx + runtime_connection_manager` 首页 ready 后会自动 backfill full bootstrap
+    - `main.py` 仍由 `_sync_heavy_init()` 一次性装整机
+- 文档同步：
+  - `docs/agent/session-log.md` 已更新。
+  - `docs/agent/memory.md` 本轮无需更新：没有形成新的跨会话稳定约束。
+  - README 已核对，本次无需改动。
+- 下一步：
+  - 若魔尊拍板“账号中心首页允许先显示 repo-backed fallback 状态”，即可按该计划直接执行启动链瘦身；若不允许首页状态有任何退化，则需把购买 runtime 留在首屏同步链，只做后台 deferred warm。
+
+## 2026-04-25 19:26 (Asia/Shanghai) Handoff
+- 当前目标：
+  - 为“桌面启动链瘦身”任务收敛一份可直接执行的 implementation plan，并在不执行代码的前提下留下可恢复 handoff。
+  - 当前采用的计划：`docs/superpowers/plans/2026-04-25-desktop-startup-thinning.md`
+- 进度断点：
+  - 当前 chunk：计划完成，尚未进入执行
+  - 当前 task：无执行中代码任务；最新动作是把“首页允许 repo-backed fallback”正式写入计划并补全验收/回退原则
+  - 已完成：
+    - 启动链诊断与黑屏问题分析
+    - 黑帧修复已落地并验证
+    - 启动链瘦身计划已写完，并补上 locked decisions / non-goals / acceptance criteria / rollback / first execution boundary
+  - 正在进行：
+    - 无代码实现；当前停在 handoff
+- 现场状态：
+  - 工作目录：`C:/Users/18220/Desktop/C5autobug更新接口 - 副本 (2)`
+  - 分支：`master`
+  - 当前工作树不是干净态；除本轮新增计划与日志外，还存在此前遗留/旁支改动：
+    - 已跟踪脏改：`app_backend/main.py`、`app_backend/api/routes/app_bootstrap.py`、`app_backend/api/routes/purchase_runtime.py`、`app_backend/api/routes/query_configs.py`、`app_backend/application/use_cases/get_app_bootstrap.py`、`app_backend/application/use_cases/get_purchase_runtime_status.py`、`app_backend/infrastructure/purchase/runtime/purchase_runtime_service.py`、`tests/backend/test_purchase_runtime_routes.py`、`app_desktop_web/electron-main.cjs`、`app_desktop_web/tests/electron/electron_remote_mode.test.js`、`docs/agent/memory.md`、`docs/agent/session-log.md`
+    - 未跟踪目录：`.playwright-mcp/`、`node_modules/`、`program_admin_console/node_modules/`
+  - 本轮新增/修改的计划相关文件：
+    - `docs/superpowers/plans/2026-04-25-desktop-startup-thinning.md`
+    - `docs/agent/session-log.md`
+- 错误与约束：
+  - 不要再把“首页尽快可见”和“整机 full runtime ready”混成一个目标。
+  - 已拍板：账号中心首页允许 repo-backed fallback；不要在下轮重复询问这个产品分歧。
+  - 关键行为必须保持不变：
+    - 登录成功链路
+    - open-api 打开与复用链
+    - `query -> hit -> purchase` 主链
+    - 程序会员 guard 语义
+  - 若执行计划，优先在 dedicated worktree 做；若只能在当前工作树推进，必须先识别并绕开上述既有脏改。
+- 验证状态：
+  - 本轮没有执行启动链瘦身代码，只做计划完善与 handoff。
+  - 已有新鲜证据仅覆盖前一轮黑帧修复，不覆盖本计划执行结果。
+  - 尚未覆盖的缺口：
+    - `core-home / runtime-full / browser-actions` 分层实现本身尚未开始
+    - 首页 fallback 数据结构与文案尚未测试
+    - runtime route/browser lazy ensure 尚未验证
+- 下一步第一刀：
+  - 下个会话先从计划的 `Chunk 1 / Task 1` 开始，先写 backend startup slice 契约测试，锁死“home ready 不等 runtime-full”。
+  - 做完后立刻验证：
+    - `./.venv/Scripts/python.exe -m pytest tests/backend/test_backend_health.py tests/backend/test_desktop_web_backend_bootstrap.py tests/backend/test_backend_startup_slices.py -q`
+
+## 2026-04-25 19:26 (Asia/Shanghai)
+- 背景：
+  - 按上一条 handoff 直接承接 `Chunk 1 / Task 1`，只写 backend startup slice 契约测试，不动启动链实现，也不碰既有脏改。
+- 已完成：
+  - 新增 `tests/backend/test_backend_startup_slices.py`，锁两条新契约：
+    - core-home 路由在 runtime-full 缺席时仍应可用：`/app/bootstrap?scope=shell`、`/program-auth/status`、`/account-center/accounts`
+    - `/app/bootstrap?scope=full` 首次请求应显式 ensure runtime-full，而不是默认要求启动期已装好
+  - 更新 `tests/backend/test_desktop_web_backend_bootstrap.py`：
+    - 增补 deferred 模式下应先注册 core-home 路由的契约测试
+  - 更新 `tests/backend/test_backend_health.py`：
+    - 增补 health `ready` 语义只绑定 home/core takeover，不反向依赖 runtime-full state 挂件的测试
+- 验证：
+  - 已执行：
+    - `./.venv/Scripts/python.exe -m pytest tests/backend/test_backend_health.py tests/backend/test_desktop_web_backend_bootstrap.py tests/backend/test_backend_startup_slices.py -q`
+  - 结果：`3 failed, 14 passed`
+  - 失败点与计划预期一致：
+    - deferred `create_app()` 目前只先挂 `/health`，还没先注册 `/app/bootstrap`、`/program-auth/status`、`/account-center/accounts`
+    - shell bootstrap 仍在 route 装配阶段直接抓 full runtime 依赖，runtime-full 缺席即 `500`
+    - account-center 首页仍硬绑 `purchase_runtime_service`，runtime-full 缺席即 `500`
+    - full bootstrap 也尚未走显式 `ensure_runtime_full_ready()`
+- 当前进度：
+  - `Chunk 1 / Task 1` 的“写 failing tests + 跑 backend focused tests，确认当前失败”已完成。
+  - 启动链瘦身实现本身仍未开始。
+- 文档同步：
+  - `docs/agent/session-log.md` 已更新。
+  - `docs/agent/memory.md` 本轮无需更新：没有新增跨会话稳定约束。
+  - README 已核对，本次无需改动。
+- 下一步：
+  - 继续按计划进入 backend startup registry / core-home route 注册 / shell-full bootstrap 解耦 / account-center repo-backed fallback 的最小实现，把上述 3 个契约失败点逐个转绿。
+
+## 2026-04-25 19:26 (Asia/Shanghai)
+- 背景：
+  - 继续承接 `Chunk 1 / Task 1` 的实现段，按“只修到新契约成立，不提前做性能优化重构”的边界推进。
+  - 本轮允许并实际使用多 agent：主线程负责 `main.py + /app/bootstrap` 契约，侧线程负责账号中心 repo-backed fallback。
+- 已完成：
+  - `app_backend/main.py`
+    - 在 `create_app()` 阶段预注册 core-home 路由：`/app/bootstrap`、`/program-auth/status`、`/account-center/accounts`
+    - 新增 router 去重注册，避免 deferred/non-deferred 重复 include
+    - 收口 `init_params` 到统一字典，deferred 与 non-deferred 共用
+  - `app_backend/api/routes/app_bootstrap.py`
+    - `scope=full` 改为先显式调用 `ensure_runtime_full_ready()`（若存在）
+    - `scope=shell` 改为只通过安全 `getattr` 读取 state，避免隐式硬绑 runtime-full
+  - `app_backend/application/use_cases/get_app_bootstrap.py`
+    - shell payload 改为可在缺少 runtime-full 组件时仍返回版本/生成时间/program_access
+    - full payload 继续保留原有 query/purchase/diagnostics 聚合口径
+  - 账号中心 repo-backed fallback 已落地：
+    - 新增 `app_backend/application/services/account_center_snapshot_service.py`
+    - `account_center` route 与两个 use case 改为 runtime 优先、缺席时 fallback 到 repository snapshot
+    - fallback 下不伪造 runtime 真相：`selected_steam_id=None`、`selected_warehouse_text=None`、`purchase_status_code=runtime_unavailable`
+  - 契约测试与回归测试已补齐：
+    - `tests/backend/test_backend_startup_slices.py`
+    - `tests/backend/test_backend_health.py`
+    - `tests/backend/test_desktop_web_backend_bootstrap.py`
+    - `tests/backend/test_account_center_routes.py`
+- 验证：
+  - `./.venv/Scripts/python.exe -m pytest tests/backend/test_backend_health.py tests/backend/test_desktop_web_backend_bootstrap.py tests/backend/test_backend_startup_slices.py -q`
+    - 结果：`17 passed`
+  - `./.venv/Scripts/python.exe -m pytest tests/backend/test_account_center_routes.py -q`
+    - 结果：`19 passed`
+  - `./.venv/Scripts/python.exe -m pytest tests/backend/test_backend_health.py tests/backend/test_desktop_web_backend_bootstrap.py tests/backend/test_backend_startup_slices.py tests/backend/test_account_center_routes.py tests/backend/test_app_bootstrap_route.py -q`
+    - 结果：`42 passed`
+- 当前进度：
+  - `Chunk 1 / Task 1` 已完成到“测试锁定 + 最小实现 + focused backend 回归转绿”。
+  - `home/core` 与 `runtime-full` 的接口边界已开始从 route/use case 层剥离，但真正的 startup registry / slice builder 还没做。
+- 余险：
+  - 当前 `account-center` fallback 新增了 `purchase_status_code=runtime_unavailable`；若 renderer 仍对白名单状态码做硬编码，需要在前端任务里补确认。
+  - `ensure_runtime_full_ready()` 当前只先把契约入口接上；真正的 runtime-full builder/lock/once 语义仍待后续 `Chunk 2 / Task 3` 实现。
+- 文档同步：
+  - `docs/agent/session-log.md` 已更新。
+  - `docs/agent/memory.md` 本轮未新增稳定跨会话约束，暂不改。
+  - README 已核对，本次无需改动。
+- 下一步：
+  - 进入 `Chunk 2 / Task 3`，开始建立 backend startup slice registry，把当前“契约层已切开”的边界收敛成真正的 `core-home / runtime-full / browser-actions` 装配入口。
+
+## 2026-04-25 19:52 (Asia/Shanghai)
+- 背景：
+  - 承接 `Chunk 2 / Task 3`，目标是先把 backend startup slice registry 建起来，并保持 non-deferred 测试口径兼容，不提前改 runtime routes / browser routes 的 route-level ensure 语义。
+  - 本轮继续使用多 agent：一支新增 `app_backend/startup/*` builder/registry 文件，一支只读勘探 core-home 真实依赖面与硬取 `app.state.xxx` 的 routes。
+- 已完成：
+  - 新增 startup package：
+    - `app_backend/startup/__init__.py`
+    - `app_backend/startup/service_registry.py`
+    - `app_backend/startup/build_core_home_services.py`
+    - `app_backend/startup/build_runtime_full_services.py`
+    - `app_backend/startup/build_browser_action_services.py`
+  - `app_backend/main.py`
+    - `create_app()` 现已先构建并绑定 core-home services
+    - 新增 `startup_slice_registry`、`ensure_runtime_full_ready()`、`ensure_browser_actions_ready()` 到 `app.state`
+    - deferred 口径改为“core-home 构建完成即 `ready=true`，不再自动后台整机 full init”
+    - non-deferred 口径继续通过 `_sync_heavy_init()` eager ensure runtime/browser slices，维持现有 backend tests 兼容
+    - route 注册切成三层：
+      - core-home：`/app/bootstrap`、`/program-auth/status`、`/account-center/accounts`
+      - runtime-full：query/purchase/diagnostics/stats/tasks 等
+      - browser-actions：`/accounts` 与 account websocket
+  - startup builder 细节：
+    - core-home 已包含 `account_center_snapshot_service`
+    - `account_session_bundle_repository` 已前移到 core-home，避免与 runtime slice 重复提供同名 service
+    - runtime-full / browser-actions 通过 registry 独立 lock + once 语义 lazy ensure
+  - 测试：
+    - 新增/更新 `tests/backend/test_backend_startup_slices.py`
+    - 更新 `tests/backend/test_desktop_web_backend_bootstrap.py`
+    - 现已锁定：
+      - `app.state` 暴露 `ensure_runtime_full_ready()` / `ensure_browser_actions_ready()`
+      - deferred `create_app()` 已具备 core-home 所需 snapshot service，且 runtime/browser heavy state 未预挂载
+- 验证：
+  - `./.venv/Scripts/python.exe -m pytest tests/backend/test_backend_health.py tests/backend/test_desktop_web_backend_bootstrap.py tests/backend/test_backend_startup_slices.py -q`
+    - 结果：`19 passed`
+  - `./.venv/Scripts/python.exe -m pytest tests/backend/test_account_center_routes.py tests/backend/test_app_bootstrap_route.py tests/backend/test_backend_main_entry.py tests/backend/test_program_auth_routes.py -q`
+    - 结果：`44 passed`
+  - `./.venv/Scripts/python.exe -m pytest tests/backend/test_account_routes.py tests/backend/test_query_runtime_routes.py tests/backend/test_purchase_runtime_routes.py -q`
+    - 结果：`46 passed`
+- 当前进度：
+  - `Chunk 2 / Task 3` 已完成到“新 registry 入口落地 + Task 3 focused tests 转绿 + 兼容回归通过”。
+  - 目前仍是“registry 已建好，route-level ensure 还没全面铺开”的中间态。
+- 余险：
+  - `browser-actions` 目前只承接了账号浏览器动作必需物件；`open_api_binding_sync_service`、`product_detail_collector`、`query_item_detail_refresh_service` 仍保留在 runtime-full，和计划中的最终边界还有偏差，后续 Task 5/6 需要再收口。
+  - `diagnostics/query_runtime/purchase_runtime` 等 routes 仍大多硬取 `app.state.xxx`；当前依赖 non-deferred eager ensure 或 `scope=full` 先拉 runtime-full，真正的 route-level lazy ensure 仍待后续任务。
+- 文档同步：
+  - `docs/agent/session-log.md` 已更新。
+  - `docs/agent/memory.md` 本轮未新增跨会话稳定约束，暂不改。
+  - README 已核对，本次无需改动。
+- 下一步：
+  - 继续按计划进入 `Chunk 2 / Task 5` 前的收口路径：优先把 full bootstrap / runtime routes 改成显式 ensure runtime-full，再逐步把 browser-actions 真正从 runtime-full 拆出去。
+
+
+## 2026-04-25 20:26 (Asia/Shanghai)
+- 背景：按 desktop startup thinning Task 6 要求，仅补 backend tests，锁定 browser-actions lazy ensure 契约（login/open-api 路由按需 ensure，deferred 启动不预挂载 browser-actions）。
+- 已完成：在 	ests/backend/test_account_center_routes.py 新增两条 RED 用例（删除 pp.state.login_adapter 或 open_api_binding_page_launcher 后注入 fake nsure_browser_actions_ready，断言请求应成功且 ensure 被调用）；在 	ests/backend/test_backend_startup_slices.py 增补 deferred 模式下 open_api_binding_page_launcher 默认未挂载断言。
+- 当前进度：focused pytest 已执行，新增两条契约测试按预期在当前实现上失败；同时发现该文件已有一条非本轮引入失败。
+- 下一步：等待主线程完成 ccounts.py / main.py 对应实现后复跑 focused pytest，确认两条契约转绿并评估是否仍受既有失败影响。
+
+## 2026-04-25 20:26 (Asia/Shanghai)
+- 背景：前端回归补测，目标锁定“账号绑定代理池条目后，再次打开编辑弹窗应保留当前池条目选择，不应回退直连/空选择”。
+- 已完成：
+  - `app_desktop_web/tests/renderer/account_center_editing.test.jsx`
+    - 补齐 harness：`/proxy-pool` 可注入列表，`/accounts/:id PATCH` 回写 `browser_proxy_id`/`api_proxy_id`，并为初始 rows 增加两个 id 字段。
+    - 新增两条 focused renderer 回归：
+      - `keeps api proxy pool selection when reopening the api ip dialog`
+      - `keeps browser proxy pool selection when reopening the browser ip dialog`
+- 验证：
+  - `npm --prefix app_desktop_web run test -- tests/renderer/account_center_editing.test.jsx`
+  - 结果：`1 passed, 22 passed`
+- 文档同步：
+  - `docs/agent/session-log.md` 已更新。
+  - `docs/agent/memory.md` 本轮无新增跨会话稳定约束，未改。
+
+## 2026-04-25 20:37 (Asia/Shanghai)
+- 背景：魔尊要求检查代理池设计并修复“账户无法切换代理、运行中也要支持动态切换代理”；本轮明确允许多 agent 并行。
+- 已完成：
+  - 账号中心数据出口补齐 `browser_proxy_id` / `api_proxy_id`，避免代理池绑定态在列表/详情接口里丢失，前端复开编辑弹窗时能正确回填当前池条目。
+  - `RuntimeAccountAdapter` 现会把 session 绑定的代理 URL 记在实例上；当账户重新绑定后代理已变化时，下一次取 API / 浏览器 session 会主动关闭旧 session 并按新代理重建，不再继续走旧出口。
+  - 购买运行时新增 `refresh_runtime_accounts()`，内部会把最新账户对象回灌到 worker 与调度器，并同步刷新代理桶键；账户代理或代理池条目变更后，运行中购买链也会切到新代理。
+  - `/accounts/{id}` 的 PATCH 现会同时刷新 query runtime / purchase runtime，并向 `account_update_hub` 发布 `update_account`；`/proxy-pool/{id}` 的更新/删除也会对受影响账号做同样的 runtime refresh + 事件广播。
+  - 新增 focused backend 回归 `tests/backend/test_account_proxy_dynamic_switch.py`，覆盖：
+    - 代理变化后 session 必须重建；
+    - 账户 PATCH 要刷新 query/purchase runtime 并发布账号更新；
+    - account-center 详情必须保留代理池 id；
+    - 购买运行时刷新后必须重绑 worker 与 bucket；
+    - 代理池 PATCH 要刷新 runtime 并广播受影响账号。
+- 验证：
+  - `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_account_center_routes.py::test_account_center_accounts_route_returns_proxy_pool_ids tests/backend/test_account_routes.py::test_patch_account_refreshes_query_runtime_accounts tests/backend/test_runtime_account_adapter.py::test_runtime_account_adapter_rebuilds_session_when_proxy_changes_on_bind tests/backend/test_account_proxy_dynamic_switch.py -q`
+  - 结果：`8 passed`
+  - `npm --prefix app_desktop_web run test -- tests/renderer/account_center_editing.test.jsx`
+  - 结果：`1 file passed, 22 tests passed`
+- 文档同步：
+  - `docs/agent/session-log.md` 已更新。
+  - `docs/agent/memory.md` 已补充稳定约束。
+  - README 已核对，本次无需改动。
+
+## 2026-04-25 20:42 (Asia/Shanghai)
+- 背景：魔尊追问“已打开浏览器切换代理是否会立即生效”，并要求在切换代理页写明提示，同时把代理池密码显示改成可见。
+- 已完成：
+  - `app_desktop_web/src/features/account-center/dialogs/account_browser_proxy_dialog.jsx`
+    - 新增明确提示：已打开的浏览器窗口不会立即切到新代理，需关闭旧窗口后重新打开或重新登录。
+  - `app_desktop_web/src/features/account-center/dialogs/account_proxy_dialog.jsx`
+  - `app_desktop_web/src/features/account-center/dialogs/account_create_dialog.jsx`
+  - `app_desktop_web/src/features/proxy-pool/proxy_pool_dialog.jsx`
+    - 代理池下拉项 / 列表地址中的认证信息不再显示 `***`，改为显示真实 `username[:password]@...`。
+  - `app_desktop_web/src/features/proxy-pool/proxy_edit_dialog.jsx`
+    - 密码输入框改为可见文本输入，编辑已有代理时直接展示当前密码。
+  - `app_desktop_web/tests/renderer/account_center_editing.test.jsx`
+    - 先补 RED：浏览器代理页提示缺失、代理池密码仍被遮蔽。
+    - 再转 GREEN：新增两条 focused renderer 断言，锁定上述文案与可见密码行为。
+- 验证：
+  - `npm --prefix app_desktop_web run test -- tests/renderer/account_center_editing.test.jsx`
+  - 结果：`1 file passed, 24 tests passed`
+- 文档同步：
+  - `docs/agent/session-log.md` 已更新。
+  - `docs/agent/memory.md` 已补充稳定约束。
+  - README 已核对，本次无需改动。
+
+## 2026-04-25 20:40 (Asia/Shanghai)
+- 背景：
+  - 吾继续承接 desktop startup thinning backend 主线，完成 `Chunk 2 / Task 5` 与 `Task 6` 的最小 backend 落地。
+  - 本轮继续并行：一支补 Task 5 route-level ensure RED 测试，一支勘探 `accounts.py` 的 core/runtime/browser 依赖分层；主线程负责生产代码接线。
+- 已完成：
+  - `Task 5`：
+    - `app_backend/main.py`
+      - deferred `create_app()` 现已提前注册 runtime entry routes：`query-runtime` / `purchase-runtime` / `query-configs` / `runtime-settings` / `diagnostics` / `ws/runtime`
+    - `app_backend/api/routes/query_runtime.py`
+    - `app_backend/api/routes/purchase_runtime.py`
+    - `app_backend/api/routes/query_configs.py`
+    - `app_backend/api/routes/runtime_settings.py`
+    - `app_backend/api/routes/diagnostics.py`
+    - `app_backend/api/websocket/runtime.py`
+      - 各 runtime-full route/websocket 已改成“缺相关 state 才 `ensure_runtime_full_ready()`”，保留显式注入的 fake service 优先级，不再无脑重建 slice 冲掉测试替身
+  - `Task 6`：
+    - `app_backend/main.py`
+      - deferred `create_app()` 现已提前注册 `/accounts` 路由入口，但不提前构造 browser-actions state
+    - `app_backend/api/routes/accounts.py`
+      - 新增 `ensure_runtime_full_ready()` / `ensure_browser_actions_ready()` 分层 getter
+      - `login`、`open-api/open` 在缺 browser-actions state 时按动作 lazy ensure
+      - `purchase-config`、`open-api/sync`、`login/resolve` 在缺 runtime-full state 时按动作 ensure runtime-full
+      - 顺手修正账号更新后的 runtime account refresh 顺序，优先刷新 `query_runtime_service`
+  - 测试：
+    - `tests/backend/test_app_bootstrap_route.py`
+    - `tests/backend/test_query_runtime_routes.py`
+    - `tests/backend/test_purchase_runtime_routes.py`
+    - `tests/backend/test_runtime_settings_routes.py`
+    - `tests/backend/test_query_config_routes.py`
+    - `tests/backend/test_account_center_routes.py`
+      - 已补齐 Task 5/6 的 RED 契约测试，并由主线程实现转绿
+- 验证：
+  - `./.venv/Scripts/python.exe -m pytest tests/backend/test_app_bootstrap_route.py tests/backend/test_query_runtime_routes.py tests/backend/test_purchase_runtime_routes.py tests/backend/test_runtime_settings_routes.py tests/backend/test_query_config_routes.py -q`
+    - 结果：`71 passed`
+  - `./.venv/Scripts/python.exe -m pytest tests/backend/test_backend_health.py tests/backend/test_desktop_web_backend_bootstrap.py tests/backend/test_backend_startup_slices.py tests/backend/test_app_bootstrap_route.py tests/backend/test_query_runtime_routes.py tests/backend/test_purchase_runtime_routes.py tests/backend/test_runtime_settings_routes.py tests/backend/test_query_config_routes.py tests/backend/test_diagnostics_routes.py tests/backend/test_runtime_update_websocket.py -q`
+    - 结果：`110 passed`
+  - `./.venv/Scripts/python.exe -m pytest tests/backend/test_backend_startup_slices.py tests/backend/test_account_routes.py tests/backend/test_account_center_smoke.py tests/backend/test_login_task_flow.py tests/backend/test_login_conflict_flow.py tests/backend/test_login_task_open_api_watch.py -q`
+    - 结果：`36 passed`
+  - `./.venv/Scripts/python.exe -m pytest tests/backend/test_account_center_routes.py -k "ensures_browser_actions" -q`
+    - 结果：`2 passed`
+  - `./.venv/Scripts/python.exe -m pytest tests/backend/test_account_center_routes.py -k "sync_open_api_binding or open_open_api_binding_page_route or ensures_browser_actions" -q`
+    - 结果：`8 passed`
+- 当前进度：
+  - `Chunk 2 / Task 5` backend 部分已完成到“route-level ensure runtime-full + focused 回归转绿”。
+  - `Chunk 2 / Task 6` backend 部分已完成到“`/accounts` 提前注册 + login/open-api browser-actions lazy ensure + 主链回归通过”。
+- 余险：
+  - `open_api_binding_sync_service`、`product_detail_collector`、`query_item_detail_refresh_service` 仍保留在 `runtime-full`，browser-actions 最终边界还未彻底收紧。
+  - `tests/backend/test_account_center_routes.py` 当前仍存在一条与本轮无关的旧口子：`test_account_center_accounts_route_returns_proxy_pool_ids` 期望响应带 `browser_proxy_id/api_proxy_id`，现有 schema/route 未覆盖；本轮未顺手扩改该非启动链需求。
+- 文档同步：
+  - `docs/agent/session-log.md` 已更新。
+  - `docs/agent/memory.md` 本轮无新增稳定跨会话约束，未改。
+  - README 已核对，本次无需改动。
+- 下一步：
+  - backend 侧可以继续往 `browser-actions` 真正拆离 `open_api_binding_sync_service` / `product_detail_collector` 等对象，或转入前端 `Task 7/8`，把 shell/full bootstrap 与页面进入时的 ensure 边界对齐。
+
+## 2026-04-25 20:48 (Asia/Shanghai)
+- 背景：
+  - 吾继续承接 startup thinning 主线，转入 `Chunk 3 / Task 7`，目标是让首页阶段只拿 shell bootstrap，不再自动 backfill full bootstrap。
+  - 本轮继续并行：一支补 renderer RED 测试，一支勘探 `App.jsx + runtime_connection_manager.js` 当前 bootstrap 链；主线程只改前端生产代码。
+- 已完成：
+  - `app_desktop_web/src/runtime/runtime_connection_manager.js`
+    - 新增 `bootstrapShellOnly()`：只做 shell hydration，不后台偷跑 full bootstrap
+    - 新增 `ensureFullBootstrap()`：在需要时显式补 full bootstrap
+    - 保留原 `bootstrap()` 兼容口径，避免把既有 runtime manager 单测整片打坏
+  - `app_desktop_web/src/App.jsx`
+    - backend ready 后首页阶段改成 `runtimeConnectionManager.bootstrapShellOnly()`
+    - remote runtime websocket 连接已后移到 `FULL_BOOTSTRAP_PAGE_IDS` 激活后，并在连接前先 `ensureFullBootstrap()`
+    - 新增页面级 full bootstrap effect：首页保持 shell-only，切到 `query-system / purchase-system / query-stats / account-capability-stats / diagnostics` 时才显式 full ensure
+  - `app_desktop_web/tests/renderer/app_remote_bootstrap.test.jsx`
+    - 新增 RED/green 用例：`hydrates remote home with shell bootstrap only and requests full bootstrap only after explicit full ensure`
+    - 增补 `beforeEach` 清空 shell/runtime 本地状态，避免前序测试把 activeItem 污染到本用例
+- 验证：
+  - `npm --prefix app_desktop_web run test -- tests/renderer/app_remote_bootstrap.test.jsx`
+    - 结果：`9 passed`
+  - `npm --prefix app_desktop_web run test -- tests/renderer/runtime_connection_manager.test.js tests/renderer/account_center_page.test.jsx tests/renderer/app_remote_bootstrap.test.jsx`
+    - 结果：`38 passed`
+- 当前进度：
+  - `Chunk 3 / Task 7` 已完成到“首页 shell-only 启动 + 显式 full ensure 入口转绿 + focused renderer 回归通过”。
+  - 目前页面进入时已会触发 full bootstrap，但还没有为 `Task 8` 单独补页面级 loading/guard 契约测试。
+- 余险：
+  - `ensureFullBootstrap()` 目前是页面切换即触发，`query-system/purchase-system/diagnostics` 还未补更细的“本页 loading/guard”交互断言。
+  - remote runtime websocket 现已跟随非首页页面激活；若后续要把 diagnostics/query/purchase 分开控制，还需在 `Task 8` 继续细拆。
+- 文档同步：
+  - `docs/agent/session-log.md` 已更新。
+  - `docs/agent/memory.md` 本轮无新增稳定跨会话约束，未改。
+  - README 已核对，本次无需改动。
+- 下一步：
+  - 继续进入 `Chunk 3 / Task 8`，把 query/purchase/diagnostics 页面首次进入时的 full bootstrap ensure 与页面内 loading/guard 行为补齐并锁进 renderer tests。
+
+## 2026-04-25 20:52 (Asia/Shanghai) Handoff
+- 当前目标：
+  - 继续执行 `docs/superpowers/plans/2026-04-25-desktop-startup-thinning.md`，把桌面启动链彻底收口到“首页 shell-only，非首页按页 ensure full/bootstrap，browser-actions 真正按动作 lazy”。
+  - 当前主线已完成 backend `Task 5/6` 与 frontend `Task 7`，下一刀是 `Chunk 3 / Task 8`。
+- 进度断点：
+  - 当前 chunk：`Chunk 3`
+  - 当前 task：`Task 8` 尚未开始实现；停在“Task 7 已转绿，准备进入页面级 loading/guard”
+  - 已完成：
+    - `Chunk 1 / Task 1`
+    - `Chunk 2 / Task 3`
+    - `Chunk 2 / Task 4`
+    - `Chunk 2 / Task 5`
+    - `Chunk 2 / Task 6`
+    - `Chunk 3 / Task 7`
+  - 正在进行：
+    - 无执行中代码任务；当前停在 handoff
+- 现场状态：
+  - 工作目录：`C:/Users/18220/Desktop/C5autobug更新接口 - 副本 (2)`
+  - 分支：`master`
+  - 当前不是 dedicated worktree；直接在根工作树推进
+  - 工作树非干净态，且混有本轮启动链主线、代理池/前端编辑态改动，以及若干既有脏改；不要在下个会话里做无关清理
+  - 与当前启动链主线最相关的文件：
+    - backend：
+      - `app_backend/main.py`
+      - `app_backend/startup/*`
+      - `app_backend/api/routes/app_bootstrap.py`
+      - `app_backend/api/routes/query_runtime.py`
+      - `app_backend/api/routes/purchase_runtime.py`
+      - `app_backend/api/routes/query_configs.py`
+      - `app_backend/api/routes/runtime_settings.py`
+      - `app_backend/api/routes/diagnostics.py`
+      - `app_backend/api/routes/accounts.py`
+      - `app_backend/api/websocket/runtime.py`
+      - `app_backend/api/routes/account_center.py`
+      - `app_backend/application/services/account_center_snapshot_service.py`
+    - frontend：
+      - `app_desktop_web/src/App.jsx`
+      - `app_desktop_web/src/runtime/runtime_connection_manager.js`
+      - `app_desktop_web/tests/renderer/app_remote_bootstrap.test.jsx`
+  - 与当前 handoff 无关但仍脏的文件也存在，例如代理池/购买链相关文件；下个会话不要把它们误当成本轮新增需求
+- 错误与约束：
+  - 不要再把“首页 shell hydration”与“后台自动偷跑 full bootstrap”混成同一件事；`Task 7` 已明确切开
+  - 不要在 runtime-full routes 上无脑每次都 `ensure`，否则会把测试/页面显式注入的 fake service 冲掉；当前正确口径是“缺该 state 时才 ensure”
+  - `accounts.py` 当前已做“缺 browser-actions 才 ensure”；不要再回退到“进入 `/accounts` 就整段 browser-actions 预热”
+  - 必须保持不变的关键行为：
+    - 登录成功链路
+    - open-api 打开与复用链
+    - `query -> hit -> purchase` 主链
+    - 程序会员 guard 语义
+  - 已知非主线旧口子：
+    - `tests/backend/test_account_center_routes.py::test_account_center_accounts_route_returns_proxy_pool_ids`
+      - 期望响应带 `browser_proxy_id/api_proxy_id`
+      - 当前 schema/route 未覆盖
+      - 与启动链主线无关，本轮未修
+- 验证状态：
+  - backend：
+    - `./.venv/Scripts/python.exe -m pytest tests/backend/test_app_bootstrap_route.py tests/backend/test_query_runtime_routes.py tests/backend/test_purchase_runtime_routes.py tests/backend/test_runtime_settings_routes.py tests/backend/test_query_config_routes.py -q`
+      - `71 passed`
+    - `./.venv/Scripts/python.exe -m pytest tests/backend/test_backend_health.py tests/backend/test_desktop_web_backend_bootstrap.py tests/backend/test_backend_startup_slices.py tests/backend/test_app_bootstrap_route.py tests/backend/test_query_runtime_routes.py tests/backend/test_purchase_runtime_routes.py tests/backend/test_runtime_settings_routes.py tests/backend/test_query_config_routes.py tests/backend/test_diagnostics_routes.py tests/backend/test_runtime_update_websocket.py -q`
+      - `110 passed`
+    - `./.venv/Scripts/python.exe -m pytest tests/backend/test_backend_startup_slices.py tests/backend/test_account_routes.py tests/backend/test_account_center_smoke.py tests/backend/test_login_task_flow.py tests/backend/test_login_conflict_flow.py tests/backend/test_login_task_open_api_watch.py -q`
+      - `36 passed`
+    - `./.venv/Scripts/python.exe -m pytest tests/backend/test_account_center_routes.py -k "sync_open_api_binding or open_open_api_binding_page_route or ensures_browser_actions" -q`
+      - `8 passed`
+  - frontend：
+    - `npm --prefix app_desktop_web run test -- tests/renderer/app_remote_bootstrap.test.jsx`
+      - `9 passed`
+    - `npm --prefix app_desktop_web run test -- tests/renderer/runtime_connection_manager.test.js tests/renderer/account_center_page.test.jsx tests/renderer/app_remote_bootstrap.test.jsx`
+      - `38 passed`
+  - 尚未覆盖的缺口：
+    - `Task 8` 的页面级 loading/guard 契约
+    - query/purchase/diagnostics 切页时只触发一次 full ensure 的交互细节
+    - 真实启动 trace 下首页 shell-only 与非首页 ensure 的链路证据（`Task 9`）
+- 下一步第一刀：
+  - 下个会话先做 `Chunk 3 / Task 8`
+  - 先补 renderer RED 测试，锁三件事：
+    - 首页不再为 `query/purchase/diagnostics` 支付 full bootstrap 成本
+    - 首次进入这些页时才 `ensureFullBootstrap()`
+    - ensure 期间有页面内 loading/guard，而不是直接裸渲染依赖 full 数据的按钮/面板
+  - 做完后立刻验证：
+    - `npm --prefix app_desktop_web run test -- tests/renderer/app_remote_bootstrap.test.jsx tests/renderer/query_system_page.test.jsx tests/renderer/purchase_system_page.test.jsx tests/renderer/diagnostics_sidebar.test.jsx`
+
+## 2026-04-25 21:06 (Asia/Shanghai)
+- 背景：
+  - 承接 `docs/superpowers/plans/2026-04-25-desktop-startup-thinning.md` 的 `Chunk 3 / Task 8`，目标是把 query / purchase / diagnostics 的 full bootstrap 成本继续留在首次入页时显式 ensure，并给出页面内 loading/guard。
+- 已完成：
+  - `app_desktop_web/src/App.jsx`
+    - 新增前端侧 full bootstrap 状态机；首页仍只做 `bootstrapShellOnly()`。
+    - 只有切入 `query-system / purchase-system / diagnostics` 等 runtime-full 页面时才会触发 `ensureFullBootstrap()`。
+    - remote runtime websocket 连接改为等待 full bootstrap ready 后再接线，不再一边 ensure 一边裸连。
+  - `app_desktop_web/src/features/shell/runtime_page_guard.jsx`
+    - 新增复用型页面内 runtime guard。
+  - `app_desktop_web/src/features/query-system/query_system_page.jsx`
+  - `app_desktop_web/src/features/purchase-system/purchase_system_page.jsx`
+  - `app_desktop_web/src/features/diagnostics/diagnostics_panel.jsx`
+    - query / purchase / diagnostics 首次进入时，若 full bootstrap 尚未就绪，会先显示页面内 guard；
+    - query / purchase 的真实页面 hook 只有在 runtime ready 后才开始工作，避免 ensure 期间提前打 runtime 页面接口或裸露依赖 full 数据的按钮。
+  - renderer tests：
+    - `app_desktop_web/tests/renderer/app_remote_bootstrap.test.jsx`
+    - `app_desktop_web/tests/renderer/query_system_page.test.jsx`
+    - `app_desktop_web/tests/renderer/purchase_system_page.test.jsx`
+    - `app_desktop_web/tests/renderer/diagnostics_sidebar.test.jsx`
+    - 先补 RED：锁首页不偷跑 full、首次进入 runtime 页才 ensure、ensure 期间先显示页面内 guard；
+    - 再由主线程实现转绿。
+- 验证：
+  - `npm --prefix app_desktop_web run test -- tests/renderer/app_remote_bootstrap.test.jsx tests/renderer/query_system_page.test.jsx tests/renderer/purchase_system_page.test.jsx tests/renderer/diagnostics_sidebar.test.jsx`
+  - 结果：`4 files passed, 66 tests passed`
+- 当前进度：
+  - `Chunk 3 / Task 8` 已完成到“query / purchase / diagnostics 首次进入时才 ensure full bootstrap，且 ensure 期间有页面内 loading/guard”的 focused renderer 收口。
+- 余险：
+  - `Chunk 4 / Task 9` 还没开始，真实启动 trace 与 Electron/backend 全链回归证据尚未补。
+  - 当前 guard 只锁了 `Task 8` 计划要求的三个 runtime 页面；`query-stats / account-capability-stats` 仍沿用既有 loading 口径，未在本轮扩改。
+- 文档同步：
+  - `docs/agent/session-log.md` 已更新。
+  - `docs/agent/memory.md` 已补充新的前端启动稳定约束。
+  - README 已核对，本次无需改动。
+- 下一步：
+  - 转入 `Chunk 4 / Task 9`，补 Electron + backend focused verification，并跑真实启动 trace，确认首页阶段只走 shell/bootstrap 路径。
+
+## 2026-04-25 21:16 (Asia/Shanghai)
+- 背景：
+  - 进入 `docs/superpowers/plans/2026-04-25-desktop-startup-thinning.md` 的 `Chunk 4 / Task 9`，目标是补齐 startup thinning 的 Electron / renderer / backend focused verification 与真实启动 trace 证据。
+  - 本轮按魔尊授权启用多 agent 并行验证；主线程只负责真实启动 trace 与日志收口。
+- 已完成：
+  - Electron focused verification：
+    - `npm --prefix app_desktop_web run test -- tests/electron/electron_remote_mode.test.js tests/electron/python_backend.test.js`
+    - 结果：`2 files passed, 39 tests passed`
+  - renderer 首屏与 runtime-page 回归：
+    - `npm --prefix app_desktop_web run test -- tests/renderer/app_remote_bootstrap.test.jsx tests/renderer/account_center_page.test.jsx tests/renderer/query_system_page.test.jsx tests/renderer/purchase_system_page.test.jsx tests/renderer/diagnostics_sidebar.test.jsx`
+    - 结果：`5 files passed, 73 tests passed`
+  - backend startup / route 回归：
+    - `./.venv/Scripts/python.exe -m pytest tests/backend/test_backend_health.py tests/backend/test_desktop_web_backend_bootstrap.py tests/backend/test_backend_startup_slices.py tests/backend/test_account_center_routes.py tests/backend/test_app_bootstrap_route.py tests/backend/test_query_runtime_routes.py tests/backend/test_purchase_runtime_routes.py tests/backend/test_runtime_settings_routes.py tests/backend/test_query_config_routes.py -q`
+    - 结果：`112 passed`
+  - 真实启动 trace：
+    - 以隐藏窗口方式短跑 `node main_ui_node_desktop.js`，设置 `C5_STARTUP_TRACE=1`，拿到 4 条关键 trace 后回收进程树。
+    - 本次 trace 只观测到以下 4 条 startup 事件：
+      - `desktop.static_shell.visible` at `668ms`
+      - `desktop.backend.ready` at `3798ms`
+      - `desktop.window.visible` at `12555ms`
+      - `renderer.home.interactive` at `12817ms`
+    - 本次 trace 输出中未出现 `query` / `purchase` / `runtime-full` 相关 startup-trace 事件；这与“首页阶段只走 shell/bootstrap”口径一致。
+- 当前进度：
+  - `Chunk 4 / Task 9` 已完成到“focused verification + 真实启动 trace 证据补齐”。
+  - 当前计划内 `Chunk 1` 到 `Chunk 4 / Task 9` 均已有对应验证证据。
+- 余险：
+  - trace 短跑 stderr 里仍出现 Chromium `disk_cache` 拒绝访问噪音；本次未阻断启动与首页可交互，但后续若要继续压首屏抖动，可再单独排查 session/cache 目录权限链。
+  - browser-actions 更细粒度拆分仍只收口到当前计划口径，尚未继续深拆 `open_api_binding_sync_service` / `product_detail_collector` 等对象出 `runtime-full`。
+- 文档同步：
+  - `docs/agent/session-log.md` 已更新。
+  - `docs/agent/memory.md` 本轮无新增稳定跨会话约束，未改。
+  - README 已核对，本次无需改动。
+- 下一步：
+  - 当前 startup thinning 计划已拿到实现与验证证据；若继续推进，优先按余险决定是否要进一步收紧 browser-actions 边界，或直接转入分支收口/代码评审。
+
+## 2026-04-25 21:29 (Asia/Shanghai) Handoff
+- 当前目标：
+  - 当前总目标已从“补 startup thinning 实现与验证证据”切到“修掉代码评审 blocker 后再决定是否收口分支”。
+  - 对应方案仍是 `docs/superpowers/plans/2026-04-25-desktop-startup-thinning.md`，但当前已不缺测试证据，缺的是 review 里暴露出来的实现硬伤。
+- 进度断点：
+  - 当前 chunk：计划主体已做到 `Chunk 4 / Task 9` 完成。
+  - 当前 task：新增主线已暂停在“代码评审后发现 blocker，尚未进入修复”。
+  - 已完成：
+    - backend `Task 5/6`
+    - frontend `Task 7/8`
+    - `Task 9` 的 Electron / renderer / backend focused verification
+    - 真实启动 trace 证据
+    - 一轮多 agent code review（frontend + backend）
+  - 正在进行：
+    - 无代码修改执行中；当前停在 handoff，等待下个会话先修 blocker
+- 现场状态：
+  - 工作目录：`C:/Users/18220/Desktop/C5autobug更新接口 - 副本 (2)`
+  - 分支：`master`
+  - 当前不是 dedicated worktree，且工作树非干净态
+  - 与当前主线最相关、下个会话优先看的文件：
+    - backend：
+      - `app_backend/main.py`
+      - `app_backend/startup/*`
+      - `app_backend/api/routes/app_bootstrap.py`
+      - `app_backend/api/routes/query_runtime.py`
+      - `app_backend/api/routes/purchase_runtime.py`
+      - `app_backend/api/routes/query_configs.py`
+      - `app_backend/api/routes/runtime_settings.py`
+      - `app_backend/api/routes/diagnostics.py`
+      - `app_backend/api/websocket/runtime.py`
+    - frontend：
+      - `app_desktop_web/src/App.jsx`
+      - `app_desktop_web/src/runtime/runtime_connection_manager.js`
+      - `app_desktop_web/src/features/account-center/account_center_page.jsx`
+      - `app_desktop_web/src/features/proxy-pool/use_proxy_pool.js`
+      - `app_desktop_web/src/features/query-stats/*`
+      - `app_desktop_web/src/features/account-capability-stats/*`
+  - 与当前 handoff 无关但仍脏的目录仍在，例如 `.playwright-mcp/`、`node_modules/`、`program_admin_console/node_modules/`；下个会话不要把它们误当成本轮新增需求
+- 错误与约束：
+  - 已尝试路径：
+    - 已完成收口前验证，Electron / renderer / backend focused tests 全绿，真实启动 trace 也拿到了 shell-only 证据
+    - 之后转代码评审，未进入修复
+  - 代码评审已确认的 blocker：
+    - `Critical`
+      - `app_backend/main.py`
+      - `ensure_runtime_full_ready()` / `ensure_browser_actions_ready()` 现在会在请求期间动态 `include_router`
+      - 这是运行中改路由表的竞态源，不能带着它做分支收口
+    - `High`
+      - `app_desktop_web/src/App.jsx`
+      - `app_desktop_web/src/runtime/runtime_connection_manager.js`
+      - runtime websocket 现在若 `new WebSocket(...)` 同步抛错，异常可能直接炸 renderer
+    - `High`
+      - `app_desktop_web/src/App.jsx`
+      - `app_desktop_web/src/features/query-stats/*`
+      - `app_desktop_web/src/features/account-capability-stats/*`
+      - `query-stats / account-capability-stats` 被列进 `FULL_BOOTSTRAP_PAGE_IDS`，但没有 page guard；首入页时可能先打 `/stats/*`，而 backend 并未把 stats 路由提前注册进 runtime entry，存在首入 404/错误态竞态
+    - `Medium`
+      - `app_desktop_web/src/features/account-center/account_center_page.jsx`
+      - `app_desktop_web/src/features/proxy-pool/use_proxy_pool.js`
+      - 首页 mount 仍会静默拉 `/proxy-pool`；backend 也未把 `/proxy-pool` 提前注册进 home/runtime-safe 入口，代理池列表可能在首页阶段被吞错成空
+    - `Medium`
+      - `app_desktop_web/src/App.jsx`
+      - full bootstrap 的 in-flight promise 没做代际隔离，旧 manager 的 promise 可能晚到并误回写 `ready/error`
+  - 后续不要再犯的约束：
+    - 不要再把“测试绿了”当成“可以收口”；当前 blocker 是实现层硬伤，不是验证缺失
+    - 不要在运行中的 FastAPI app 上继续追加动态 `include_router()` 作为按需 ensure 手段
+    - 不要把 `query-stats / account-capability-stats` 忘在 `Task 8` guard 之外；它们同样属于 `FULL_BOOTSTRAP_PAGE_IDS`
+    - 不要把首页 shell-only 与 `proxy-pool` 首帧请求重新混回去
+  - 必须保持不变的关键行为：
+    - 首页 shell-only 启动口径
+    - `accounts.py` 当前“缺 browser-actions 才 ensure”的边界
+    - 登录成功链路
+    - open-api 打开与复用链
+    - `query -> hit -> purchase` 主链
+    - 程序会员 guard 语义
+- 验证状态：
+  - 已执行：
+    - `npm --prefix app_desktop_web run test -- tests/electron/electron_remote_mode.test.js tests/electron/python_backend.test.js`
+      - `2 files passed, 39 tests passed`
+    - `npm --prefix app_desktop_web run test -- tests/renderer/app_remote_bootstrap.test.jsx tests/renderer/account_center_page.test.jsx tests/renderer/query_system_page.test.jsx tests/renderer/purchase_system_page.test.jsx tests/renderer/diagnostics_sidebar.test.jsx`
+      - `5 files passed, 73 tests passed`
+    - `./.venv/Scripts/python.exe -m pytest tests/backend/test_backend_health.py tests/backend/test_desktop_web_backend_bootstrap.py tests/backend/test_backend_startup_slices.py tests/backend/test_account_center_routes.py tests/backend/test_app_bootstrap_route.py tests/backend/test_query_runtime_routes.py tests/backend/test_purchase_runtime_routes.py tests/backend/test_runtime_settings_routes.py tests/backend/test_query_config_routes.py -q`
+      - `112 passed`
+    - 真实启动 trace：
+      - `desktop.static_shell.visible` `668ms`
+      - `desktop.backend.ready` `3798ms`
+      - `desktop.window.visible` `12555ms`
+      - `renderer.home.interactive` `12817ms`
+  - 尚未覆盖的验证缺口：
+    - 还没有针对本轮 code review blocker 的 focused regression tests
+    - 还没有验证“修复后 stats / proxy-pool 在 shell-only 阶段不会抢跑或撞 404”
+    - 还没有验证“WebSocket 构造异常不会把 renderer 打崩”
+- 下一步第一刀：
+  - 下个会话先修 backend `Critical` blocker：去掉运行中动态 `include_router()` 的路径，改成启动期一次性注册稳定入口，按需 ensure 只负责补 state，不再补路由表
+  - 做完后立刻验证：
+    - `./.venv/Scripts/python.exe -m pytest tests/backend/test_backend_health.py tests/backend/test_desktop_web_backend_bootstrap.py tests/backend/test_backend_startup_slices.py tests/backend/test_app_bootstrap_route.py tests/backend/test_query_runtime_routes.py tests/backend/test_purchase_runtime_routes.py tests/backend/test_runtime_settings_routes.py tests/backend/test_query_config_routes.py -q`
+  - 第二刀再修 frontend：
+    - WebSocket 同步抛错保护
+    - full bootstrap promise 代际隔离
+    - `query-stats / account-capability-stats` guard
+    - 首页 `proxy-pool` 抢跑
+  - 第二刀做完后立刻验证：
+    - `npm --prefix app_desktop_web run test -- tests/electron/electron_remote_mode.test.js tests/electron/python_backend.test.js tests/renderer/app_remote_bootstrap.test.jsx tests/renderer/account_center_page.test.jsx tests/renderer/query_system_page.test.jsx tests/renderer/purchase_system_page.test.jsx tests/renderer/diagnostics_sidebar.test.jsx`
+
+## 2026-04-25 21:55 (Asia/Shanghai)
+- 背景：
+  - 承接 `2026-04-25 21:29` handoff，当前主线不是继续做 startup thinning 本体，而是先修 code review blocker。
+  - 本轮按既定顺序先处理 backend Critical，再处理 frontend 4 个 review 点；保持首页 shell-only、`accounts.py` 的 browser-actions lazy 边界、登录成功链、open-api 复用链、`query -> hit -> purchase` 主链不变。
+- 已完成：
+  - backend：
+    - `app_backend/main.py`
+      - 去掉 `ensure_runtime_full_ready()` / `ensure_browser_actions_ready()` 中运行期动态 `include_router()` 的路径；
+      - 改为 `create_app()` 启动期一次性注册 runtime/browser 路由表；
+      - `ensure_*` 只负责 build/bind state，不再修改 FastAPI 路由表。
+    - `tests/backend/test_backend_startup_slices.py`
+      - 新增 focused regression：
+        - deferred app 启动时已暴露 runtime/browser 稳定入口；
+        - `ensure_runtime_full_ready()` / `ensure_browser_actions_ready()` 不再改变 `app.routes`。
+  - frontend：
+    - `app_desktop_web/src/runtime/runtime_connection_manager.js`
+      - `new WebSocket(...)` 同步抛错改为内部兜底，不再把异常直接抛回 renderer；
+      - 新增 `dispose()`，旧 manager 被替换后，晚到的 shell/full bootstrap 结果不再继续污染共享 runtime store。
+    - `app_desktop_web/src/App.jsx`
+      - full bootstrap request 新增代际隔离；
+      - 运行页 guard 失败态支持同页 `重试加载运行时`；
+      - `query-stats / account-capability-stats` 接入 full bootstrap 状态，不再在未 ready 时裸挂载。
+    - `app_desktop_web/src/features/shell/runtime_page_guard.jsx`
+      - 失败态补 retry 按钮。
+    - `app_desktop_web/src/features/query-stats/query_stats_page.jsx`
+    - `app_desktop_web/src/features/account-capability-stats/account_capability_stats_page.jsx`
+      - 两个统计页改为页面级 runtime guard，full bootstrap 未完成前不挂载真实统计 hook。
+    - `app_desktop_web/src/features/account-center/account_center_page.jsx`
+    - `app_desktop_web/src/features/proxy-pool/use_proxy_pool.js`
+      - 首页不再抢跑 `/proxy-pool`；
+      - 仅在代理相关弹窗/抽屉真正打开时再拉代理池；
+      - 失败回退改为使用最新 `ref`，避免闭包陈旧返回旧快照。
+  - focused tests：
+    - `app_desktop_web/tests/renderer/app_remote_bootstrap.test.jsx`
+      - 新增统计页 guard、同页 retry、full bootstrap 代际隔离回归。
+    - `app_desktop_web/tests/renderer/account_center_page.test.jsx`
+      - 新增首页不预取 proxy-pool、打开代理管理后才请求的回归。
+    - `app_desktop_web/tests/renderer/runtime_connection_manager.test.js`
+      - 新增 `bootstrapShellOnly`、`ensureFullBootstrap`、legacy fallback、WebSocket 同步抛错保护的 focused unit tests。
+- 验证：
+  - backend focused：
+    - `./.venv/Scripts/python.exe -m pytest tests/backend/test_backend_health.py tests/backend/test_desktop_web_backend_bootstrap.py tests/backend/test_backend_startup_slices.py tests/backend/test_app_bootstrap_route.py tests/backend/test_query_runtime_routes.py tests/backend/test_purchase_runtime_routes.py tests/backend/test_runtime_settings_routes.py tests/backend/test_query_config_routes.py -q`
+      - `92 passed`
+  - frontend focused extra：
+    - `npm --prefix app_desktop_web run test -- tests/renderer/runtime_connection_manager.test.js`
+      - `1 file passed, 26 tests passed`
+  - frontend 指定回归：
+    - `npm --prefix app_desktop_web run test -- tests/electron/electron_remote_mode.test.js tests/electron/python_backend.test.js tests/renderer/app_remote_bootstrap.test.jsx tests/renderer/account_center_page.test.jsx tests/renderer/query_system_page.test.jsx tests/renderer/purchase_system_page.test.jsx tests/renderer/diagnostics_sidebar.test.jsx`
+      - `7 files passed, 116 tests passed`
+- 当前进度：
+  - 本轮 handoff 里列出的 backend Critical + frontend 4 个 blocker 已完成实现与 focused verification。
+  - 但当前仍不能下“代码评审通过 / 分支收口”结论；本轮只证明 blocker 已修并过了指定回归。
+- 余险：
+  - 还没有重跑更大范围的 renderer/backend 全量回归；当前证据聚焦于本轮 blocker 影响面。
+  - 工作树仍处于脏态，且无关脏改目录（如 `.playwright-mcp/`、`node_modules/`、`program_admin_console/node_modules/`）仍在，后续继续推进时不要误清理。
+- 文档同步：
+  - `docs/agent/session-log.md` 已更新。
+  - `docs/agent/memory.md` 本轮无新增跨会话稳定约束，未改。
+  - `README.md` 已核对，本次无需改动。
