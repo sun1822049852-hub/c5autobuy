@@ -73,6 +73,7 @@
 - 停止态按日统计回填还有一条 fallback 护栏：不能只依赖服务端 `purchase_ui_preferences.selected_config_id`。若它为空或已失效，后端还必须能回退到 query runtime “最后一次真实运行的 config”，否则 stop 后 `active_query_config=null` 会直接把 `item_rows` 清成空白。
 - 扫货系统商品卡片的统计还有一条更底层的口径护栏：运行中与停止后必须共用同一套“当天累计”计数源，不能运行中看 session 内存计数、停止后看日统计仓；否则用户会看到“运行中从 0 开始、停止后又跳回大数”的假清零现象。
 - 当前 embedded 桌面启动口径新增一条稳定交互约束：主界面壳必须先亮，不再把 renderer 首次加载硬卡在本地 backend `/health` 之后；backend `ready` 后再通过主进程 bootstrap 更新把真实 `apiBaseUrl/backendStatus` 推给 renderer，并在此之前禁止首页页面抢跑数据请求。
+- 桌面首页的一级页面预热又新增一条稳定热路径约束：账号中心首页可操作后，允许把 `配置管理 / 扫货系统 / 查询统计 / 账号能力统计 / 通用诊断` 的首批数据放到后台暗加载，但这条 warmup 只能做“页面壳 + 首批数据”预热，不能提前启动这些页的活跃 polling / websocket / 运行中副作用，更不能反向阻塞首页主链。
 - 桌面 renderer 首帧又新增一条稳定热路径约束：`readAppShellState()` / `initializeRendererReloadNotice()` 这类基于 `localStorage/sessionStorage` 的壳状态读取，不得再放进首渲染同步热路径；在当前 Electron 现场里它们可各自额外卡住数秒。首帧默认应先以 `account-center` / `reloadNotice=null` 进入，让主进程 bootstrap 更新先接管页面；壳状态持久化或 reload notice 恢复必须延后到首页已可操作之后。与之配套，desktop bootstrap 订阅应在首 commit 后立即装上（如 `useLayoutEffect`），不要再等更晚的 passive effect 才接主进程更新。
 - 账号中心首页又新增一条稳定热路径约束：`account-center-page` 的筛选/搜索持久化状态（`PAGE_STORE.read()` / `localStorage`）不得再放进首渲染同步路径。首帧必须先用 `DEFAULT_UI_STATE` 进入，让首页先可见可点；旧筛选/搜索只允许在首屏亮起后的 idle/低优先级阶段回填，且不能覆盖用户已在当前会话手动改过的筛选条件。
 - Windows 桌面首次升级时的 Electron session 迁移也已冻结为“启动期不阻塞”口径：若专用 `session-data` 目录尚无 `.c5-session-migrated` 标记，当前启动允许继续沿用 legacy `sessionData`，并把 `cpSync/rmSync` 迁移推迟到退出阶段 `flushPendingSessionMigration()` 执行；后续不要再把整段 legacy session 搬迁重新塞回窗口出现之前的关键路径。
@@ -80,6 +81,7 @@
 - packaged release 的 program access 启动热路径也已冻结一条时序约束：`program_access_refresh_scheduler.start()` 与注册 readiness probe 不得再阻塞 backend `app.state._ready = True`；允许后台 post-ready init 去做首次 refresh / cache warmup，但 `/health ready=true` 语义本身不能放宽，且 shutdown 必须能安全 stop/close 正在 post-ready 启动的 program access 组件。
 - 桌面 renderer 首帧又新增一条稳定体验约束：`app_desktop_web/index.html` 必须自带静态启动壳，保证 Electron 主窗在 `loadFile()` 后即使 React 首次 commit 尚未完成，也不会裸露空 `#root` + 深色底形成“黑屏等待”。
 - renderer 根节点兜底也已冻结：`app_desktop_web/src/main.jsx` 必须通过 `RootErrorBoundary` 挂载 `App`，首屏渲染异常时至少展示可见 fallback 并上报 `renderer_root_error_boundary` 诊断，不能再掉成空白暗底。
+- 请求诊断链新增一条稳定 profiling 约束：凡后端请求显式挂上命名 `trace`（例如 `account_center.accounts`），`request_diagnostics.runtime.jsonl` 必须继续落独立 `request_trace` 记录，即使请求已快到低于慢请求阈值；否则热路径一旦优化成功，服务端分段剖面会反向消失，后续无法继续真机验尸。
 - `app_backend.main.create_app()` 的关闭清理链现已统一收口到 lifespan：deferred 模式仍在 lifespan 内启动 `_deferred_init`，non-deferred 模式也复用同一条 shutdown cleanup，不再依赖 legacy `@app.on_event("shutdown")`。后续若再改 backend 生命周期/清理逻辑，默认先回归 `tests/backend/test_backend_health.py` 中“无 deprecated warning + non-deferred shutdown cleanup”这组 focused 断言。
 - `app_backend.main` 的默认 `app` 现已冻结为懒加载口径：导入模块本身不得立刻执行 `create_app()`；只有显式访问 `app_backend.main.app` 时才允许首次构建并缓存默认实例，避免桌面 embedded 启动重复建 app。
 - `main_ui_node_desktop_local_debug.js` 的本地调试启动口径也已冻结：只要 `app_desktop_web/dist/index.html` 已存在，就优先复用现有 dist，不再因为源码时间戳更新而在窗口前同步重跑一遍前端 build；若需要最新前端代码，先手动执行 `npm --prefix app_desktop_web run build`。

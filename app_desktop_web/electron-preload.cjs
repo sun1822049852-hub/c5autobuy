@@ -6,6 +6,7 @@ const DEFAULT_BOOTSTRAP_CONFIG = {
   apiBaseUrl: "http://127.0.0.1:8000",
   backendStatus: "starting",
   runtimeWebSocketUrl: "",
+  pageWarmupEnabled: false,
 };
 const BOOTSTRAP_UPDATED_CHANNEL = "desktop:bootstrap-config-updated";
 const BOOTSTRAP_REQUEST_CHANNEL = "desktop:request-bootstrap-config";

@@ -20,7 +20,7 @@ const EMPTY_CONFIG_SWITCH_PROMPT = {
 };
 
 
-function QuerySystemPageContent({ client, isActive, onLeaveStateChange }) {
+function QuerySystemPageContent({ client, isActive, onLeaveStateChange, warmupEnabled }) {
   const {
     addDraftItem,
     capacityModes,
@@ -74,7 +74,7 @@ function QuerySystemPageContent({ client, isActive, onLeaveStateChange }) {
     toggleDraftItemManualPaused,
     toggleConfigDeleteMode,
     toggleItemDeleteMode,
-  } = useQuerySystemPage({ client, isActive });
+  } = useQuerySystemPage({ client, isActive, warmupEnabled });
   const saveConfigRef = useRef(saveConfig);
   const discardDraftChangesRef = useRef(discardDraftChanges);
   const selectConfigRef = useRef(selectConfig);
@@ -275,6 +275,7 @@ export function QuerySystemPage({
   onRetryBootstrap = null,
   runtimeBootstrapError = "",
   runtimeBootstrapStatus = "ready",
+  warmupEnabled = false,
 }) {
   const queryServerHydrated = useQuerySystemServerHydrated();
   const isRuntimeReady = queryServerHydrated || runtimeBootstrapStatus === "ready";
@@ -300,6 +301,7 @@ export function QuerySystemPage({
       onLeaveStateChange={onLeaveStateChange}
       runtimeBootstrapError={runtimeBootstrapError}
       runtimeBootstrapStatus={runtimeBootstrapStatus}
+      warmupEnabled={warmupEnabled}
     />
   );
 }

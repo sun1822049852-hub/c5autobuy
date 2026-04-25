@@ -468,20 +468,40 @@ class PurchaseRuntimeService:
     def set_query_runtime_service(self, query_runtime_service) -> None:
         self._query_runtime_service = query_runtime_service
 
-    def get_account_inventory_detail(self, account_id: str) -> dict[str, object] | None:
-        account = self._find_account(account_id)
+    def get_account_inventory_detail(self, account_id: str, *, trace=None) -> dict[str, object] | None:
+        if trace is not None:
+            with trace.measure("runtime.find_account"):
+                account = self._find_account(account_id, trace=trace)
+        else:
+            account = self._find_account(account_id)
         if account is None:
             return None
 
-        runtime_detail = self._get_runtime_inventory_detail(account_id, account=account)
+        if trace is not None:
+            with trace.measure("runtime.inventory_detail.runtime"):
+                runtime_detail = self._get_runtime_inventory_detail(account_id, account=account)
+        else:
+            runtime_detail = self._get_runtime_inventory_detail(account_id, account=account)
         if runtime_detail is not None:
+            if trace is not None:
+                trace.increment_detail("inventory_detail_runtime_hit_count")
             return runtime_detail
 
-        snapshot = (
-            self._inventory_snapshot_repository.get(account_id)
-            if self._inventory_snapshot_repository is not None
-            else None
-        )
+        if trace is not None:
+            with trace.measure("runtime.inventory_snapshot.get"):
+                snapshot = (
+                    self._inventory_snapshot_repository.get(account_id)
+                    if self._inventory_snapshot_repository is not None
+                    else None
+                )
+        else:
+            snapshot = (
+                self._inventory_snapshot_repository.get(account_id)
+                if self._inventory_snapshot_repository is not None
+                else None
+            )
+        if trace is not None:
+            trace.increment_detail("inventory_detail_snapshot_hit_count")
         return self._build_inventory_detail_from_snapshot(account, snapshot)
 
     def refresh_account_inventory_detail(self, account_id: str) -> dict[str, object] | None:
@@ -564,12 +584,25 @@ class PurchaseRuntimeService:
         self._publish_runtime_update()
         return detail
 
-    def list_account_center_accounts(self) -> list[dict[str, object]]:
-        runtime_accounts = self._runtime_account_map()
+    def list_account_center_accounts(self, *, trace=None) -> list[dict[str, object]]:
+        if trace is not None:
+            with trace.measure("runtime.runtime_account_map"):
+                runtime_accounts = self._runtime_account_map()
+            with trace.measure("runtime.account_repository.list_accounts"):
+                accounts = list(self._account_repository.list_accounts())
+            trace.set_detail("runtime_account_count", len(runtime_accounts))
+            trace.set_detail("account_count", len(accounts))
+        else:
+            runtime_accounts = self._runtime_account_map()
+            accounts = list(self._account_repository.list_accounts())
         rows: list[dict[str, object]] = []
-        for account in self._account_repository.list_accounts():
+        for account in accounts:
             runtime_account = runtime_accounts.get(str(getattr(account, "account_id", "") or ""))
-            rows.append(self._build_account_center_row(account, runtime_account=runtime_account))
+            if trace is not None:
+                with trace.measure("runtime.account_center_row.build"):
+                    rows.append(self._build_account_center_row(account, runtime_account=runtime_account, trace=trace))
+            else:
+                rows.append(self._build_account_center_row(account, runtime_account=runtime_account))
         return rows
 
     def get_account_center_account(self, account_id: str) -> dict[str, object] | None:
@@ -1092,13 +1125,22 @@ class PurchaseRuntimeService:
             )
         return normalized
 
-    def _find_account(self, account_id: str):
+    def _find_account(self, account_id: str, *, trace=None):
         get_account = getattr(self._account_repository, "get_account", None)
         if callable(get_account):
-            account = get_account(account_id)
+            if trace is not None:
+                with trace.measure("runtime.account_repository.get_account"):
+                    account = get_account(account_id)
+            else:
+                account = get_account(account_id)
             if account is not None:
                 return account
-        for account in self._account_repository.list_accounts():
+        if trace is not None:
+            with trace.measure("runtime.account_repository.list_accounts_fallback"):
+                fallback_accounts = list(self._account_repository.list_accounts())
+        else:
+            fallback_accounts = list(self._account_repository.list_accounts())
+        for account in fallback_accounts:
             if str(getattr(account, "account_id", "")) == str(account_id):
                 return account
         return None
@@ -1117,9 +1159,14 @@ class PurchaseRuntimeService:
         account,
         *,
         runtime_account: dict[str, object] | None = None,
+        trace=None,
     ) -> dict[str, object]:
         account_id = str(getattr(account, "account_id", "") or "")
-        inventory_detail = self.get_account_inventory_detail(account_id)
+        if trace is not None:
+            with trace.measure("runtime.account_inventory_detail.total"):
+                inventory_detail = self.get_account_inventory_detail(account_id, trace=trace)
+        else:
+            inventory_detail = self.get_account_inventory_detail(account_id)
         selected_row = self._selected_inventory_row(inventory_detail)
         selected_steam_id = str(selected_row.get("steamId") or "") if selected_row is not None else ""
         selected_warehouse_text = self._selected_inventory_display_text(selected_row)

@@ -711,7 +711,7 @@ function buildDraftPayloadItems(items, runtimeItemMap, manualAllocationDrafts) {
 }
 
 
-export function usePurchaseSystemPage({ client, isActive = true }) {
+export function usePurchaseSystemPage({ client, isActive = true, warmupEnabled = false }) {
   const { runProgramAccessAction } = useProgramAccessGuard();
   const programAccess = useProgramAccess();
   const isReadonlyLocked = isProgramReadonlyLocked(programAccess);
@@ -785,6 +785,7 @@ export function usePurchaseSystemPage({ client, isActive = true }) {
   const shouldFetchBootstrapUiPreferences = !isUiPreferencesHydrated(purchaseServer);
   const shouldFetchBootstrapRuntimeSettings = !isRuntimeSettingsHydrated(purchaseServer);
   const shouldFetchBootstrapConfigList = !isConfigListHydrated(purchaseUi);
+  const shouldLoadPurchaseState = isActive || warmupEnabled;
   const shouldBootstrapPage = !purchaseServerHydrated
     || shouldFetchBootstrapStatus
     || shouldFetchBootstrapUiPreferences
@@ -1013,7 +1014,7 @@ export function usePurchaseSystemPage({ client, isActive = true }) {
     let active = true;
 
     async function ensurePurchaseState() {
-      if (!isActive) {
+      if (!shouldLoadPurchaseState) {
         return;
       }
 
@@ -1156,7 +1157,6 @@ export function usePurchaseSystemPage({ client, isActive = true }) {
     applyPurchaseSystemServer,
     client,
     configList,
-    isActive,
     patchPurchaseUi,
     purchaseServer,
     purchaseUi?.selectedConfigId,
@@ -1168,6 +1168,7 @@ export function usePurchaseSystemPage({ client, isActive = true }) {
     shouldFetchBootstrapRuntimeSettings,
     shouldFetchBootstrapStatus,
     shouldFetchBootstrapUiPreferences,
+    shouldLoadPurchaseState,
     sharedQueryConfigList,
     status,
     uiPreferences,

@@ -74,22 +74,43 @@ class AccountBalanceService:
             wait_for_api_key=wait_for_api_key,
         )
 
-    def maybe_schedule_refresh(self, account_id: str) -> bool:
-        account = self._account_repository.get_account(account_id)
-        if account is None or not self._should_refresh(account):
+    def maybe_schedule_refresh(self, account_id: str, *, trace=None) -> bool:
+        if trace is not None:
+            with trace.measure("balance.account_repository.get_account"):
+                account = self._account_repository.get_account(account_id)
+        else:
+            account = self._account_repository.get_account(account_id)
+        if trace is not None:
+            with trace.measure("balance.should_refresh"):
+                should_refresh = account is not None and self._should_refresh(account)
+        else:
+            should_refresh = account is not None and self._should_refresh(account)
+        if not should_refresh:
             return False
         task = self._inflight.get(account_id)
         if task is not None and not task.done():
             return False
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            task = self._background_executor.submit(
-                asyncio.run,
-                self._run_refresh(account_id, force=False, wait_for_api_key=False),
-            )
+        if trace is not None:
+            with trace.measure("balance.schedule_refresh"):
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    task = self._background_executor.submit(
+                        asyncio.run,
+                        self._run_refresh(account_id, force=False, wait_for_api_key=False),
+                    )
+                else:
+                    task = loop.create_task(self._run_refresh(account_id, force=False, wait_for_api_key=False))
         else:
-            task = loop.create_task(self._run_refresh(account_id, force=False, wait_for_api_key=False))
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                task = self._background_executor.submit(
+                    asyncio.run,
+                    self._run_refresh(account_id, force=False, wait_for_api_key=False),
+                )
+            else:
+                task = loop.create_task(self._run_refresh(account_id, force=False, wait_for_api_key=False))
         self._inflight[account_id] = task
         task.add_done_callback(lambda _: self._inflight.pop(account_id, None))
         return True

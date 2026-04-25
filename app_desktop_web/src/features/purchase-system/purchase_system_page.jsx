@@ -46,7 +46,7 @@ const PREVIEW_ITEM_ROWS = [
 ];
 
 
-function PurchaseSystemPageContent({ client, isActive, onLeaveStateChange }) {
+function PurchaseSystemPageContent({ client, isActive, onLeaveStateChange, warmupEnabled }) {
   const {
     activeQueryConfig,
     actionLabel,
@@ -106,7 +106,7 @@ function PurchaseSystemPageContent({ client, isActive, onLeaveStateChange }) {
     selectedDialogConfigId,
     totalPurchasedCount,
     discardRuntimeDrafts,
-  } = usePurchaseSystemPage({ client, isActive });
+  } = usePurchaseSystemPage({ client, isActive, warmupEnabled });
   const submitRuntimeDraftsRef = useRef(onSubmitRuntimeDrafts);
   const discardRuntimeDraftsRef = useRef(discardRuntimeDrafts);
 
@@ -279,6 +279,7 @@ export function PurchaseSystemPage({
   onRetryBootstrap = null,
   runtimeBootstrapError = "",
   runtimeBootstrapStatus = "ready",
+  warmupEnabled = false,
 }) {
   const purchaseSystemServerHydrated = usePurchaseSystemServerHydrated();
   const isRuntimeReady = purchaseSystemServerHydrated || runtimeBootstrapStatus === "ready";
@@ -304,6 +305,7 @@ export function PurchaseSystemPage({
       onLeaveStateChange={onLeaveStateChange}
       runtimeBootstrapError={runtimeBootstrapError}
       runtimeBootstrapStatus={runtimeBootstrapStatus}
+      warmupEnabled={warmupEnabled}
     />
   );
 }

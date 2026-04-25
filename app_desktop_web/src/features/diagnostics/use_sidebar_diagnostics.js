@@ -277,7 +277,7 @@ function mergeDiagnosticsSnapshot(previousSnapshot, nextSnapshot) {
 }
 
 
-export function useSidebarDiagnostics(client, { enabled = true } = {}) {
+export function useSidebarDiagnostics(client, { enabled = true, warmupEnabled = false } = {}) {
   const [state, setState] = useState({
     error: "",
     isLoading: true,
@@ -286,13 +286,14 @@ export function useSidebarDiagnostics(client, { enabled = true } = {}) {
   });
   const requestInFlightRef = useRef(false);
   const snapshotRef = useRef(null);
+  const shouldLoadSnapshot = enabled || warmupEnabled;
 
   useEffect(() => {
     snapshotRef.current = state.snapshot;
   }, [state.snapshot]);
 
   const loadSnapshot = useEffectEvent(async ({ background = false } = {}) => {
-    if (!enabled || !client || requestInFlightRef.current) {
+    if (!shouldLoadSnapshot || !client || requestInFlightRef.current) {
       return;
     }
 
@@ -328,7 +329,14 @@ export function useSidebarDiagnostics(client, { enabled = true } = {}) {
   });
 
   useEffect(() => {
+    if (!shouldLoadSnapshot) {
+      return undefined;
+    }
+
     if (!enabled) {
+      if (!snapshotRef.current) {
+        void loadSnapshot({ background: false });
+      }
       return undefined;
     }
 
@@ -386,7 +394,7 @@ export function useSidebarDiagnostics(client, { enabled = true } = {}) {
       }
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [client, enabled]);
+  }, [client, enabled, shouldLoadSnapshot]);
 
   return {
     ...state,

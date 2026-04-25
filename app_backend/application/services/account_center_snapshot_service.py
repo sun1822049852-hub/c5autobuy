@@ -11,10 +11,20 @@ class AccountCenterSnapshotService:
     def __init__(self, account_repository) -> None:
         self._account_repository = account_repository
 
-    def list_account_center_accounts(self) -> list[dict[str, object]]:
+    def list_account_center_accounts(self, *, trace=None) -> list[dict[str, object]]:
         rows: list[dict[str, object]] = []
-        for account in self._account_repository.list_accounts():
-            rows.append(self._build_account_center_row(account))
+        if trace is not None:
+            with trace.measure("snapshot.account_repository.list_accounts"):
+                accounts = list(self._account_repository.list_accounts())
+            trace.set_detail("account_count", len(accounts))
+        else:
+            accounts = list(self._account_repository.list_accounts())
+        for account in accounts:
+            if trace is not None:
+                with trace.measure("snapshot.account_center_row.build"):
+                    rows.append(self._build_account_center_row(account))
+            else:
+                rows.append(self._build_account_center_row(account))
         return rows
 
     def get_account_center_account(self, account_id: str) -> dict[str, object] | None:

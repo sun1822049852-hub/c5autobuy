@@ -3,6 +3,7 @@ const DEFAULT_DESKTOP_BOOTSTRAP_CONFIG = Object.freeze({
   apiBaseUrl: "http://127.0.0.1:8000",
   runtimeWebSocketUrl: "",
   backendStatus: "starting",
+  pageWarmupEnabled: false,
 });
 
 

@@ -55,6 +55,7 @@ let backend = null;
 let bootstrapConfig = {
   ...DEFAULT_DESKTOP_BOOTSTRAP_CONFIG,
   backendStatus: "starting",
+  pageWarmupEnabled: true,
 };
 let backendDependenciesPromise = null;
 let embeddedBackendStartupPromise = null;

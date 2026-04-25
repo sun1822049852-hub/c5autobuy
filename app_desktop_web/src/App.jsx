@@ -1,4 +1,13 @@
-import React, { Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, {
+  Suspense,
+  startTransition,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { createAccountCenterClient } from "./api/account_center_client.js";
 import { createProgramAuthClient } from "./api/program_auth_client.js";
@@ -98,6 +107,22 @@ function resolveKnownActiveItem(activeItem) {
 }
 
 
+function mountKeepAliveItems(currentItems, itemIds) {
+  let changed = false;
+  const nextItems = { ...currentItems };
+
+  itemIds.forEach((itemId) => {
+    if (nextItems[itemId]) {
+      return;
+    }
+    nextItems[itemId] = true;
+    changed = true;
+  });
+
+  return changed ? nextItems : currentItems;
+}
+
+
 function createInitialMountedKeepAliveItems(activeItem) {
   const resolvedActiveItem = resolveKnownActiveItem(activeItem);
   return Object.fromEntries(
@@ -167,6 +192,8 @@ export function App({ runtimeStore }) {
   const [mountedKeepAliveItems, setMountedKeepAliveItems] = useState(() => (
     createInitialMountedKeepAliveItems(initialActiveItem)
   ));
+  const [homeInteractive, setHomeInteractive] = useState(false);
+  const [backgroundPageWarmupStarted, setBackgroundPageWarmupStarted] = useState(false);
   const [reloadNotice] = useState(() => null);
   const [shellStatePersistenceEnabled, setShellStatePersistenceEnabled] = useState(false);
   const hasReportedBootstrapConfigConsumedRef = useRef(false);
@@ -193,8 +220,10 @@ export function App({ runtimeStore }) {
     client,
     store: appRuntimeStore,
   }), [appRuntimeStore, client]);
+  const pageWarmupEnabled = Boolean(bootstrapConfig.pageWarmupEnabled);
   const diagnostics = useSidebarDiagnostics(client, {
     enabled: activeItem === "diagnostics" && fullBootstrapState.status === "ready",
+    warmupEnabled: backgroundPageWarmupStarted && fullBootstrapState.status === "ready",
   });
   const isBackendReady = bootstrapConfig.backendStatus === "ready";
 
@@ -318,6 +347,7 @@ export function App({ runtimeStore }) {
   useEffect(() => {
     fullBootstrapGenerationRef.current += 1;
     fullBootstrapPromiseRef.current = null;
+    setBackgroundPageWarmupStarted(false);
     setFullBootstrapState({
       error: "",
       status: "idle",
@@ -436,6 +466,7 @@ export function App({ runtimeStore }) {
     const emitWhenHomeToolbarReady = () => {
       if (doc?.querySelector(".account-page__toolbar")) {
         hasReportedHomeInteractiveRef.current = true;
+        setHomeInteractive(true);
         setShellStatePersistenceEnabled(true);
         logRendererDiagnostic("startup_trace_home_interactive", {
           selector: ".account-page__toolbar",
@@ -456,6 +487,55 @@ export function App({ runtimeStore }) {
       }
     };
   }, [activeItem, isBackendReady]);
+
+  useEffect(() => {
+    if (
+      !pageWarmupEnabled
+      || !isBackendReady
+      || !homeInteractive
+      || backgroundPageWarmupStarted
+    ) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    let timeoutId = null;
+    let idleCallbackId = null;
+
+    const startBackgroundWarmup = () => {
+      if (cancelled) {
+        return;
+      }
+
+      setBackgroundPageWarmupStarted(true);
+      startTransition(() => {
+        setMountedKeepAliveItems((currentItems) => mountKeepAliveItems(currentItems, FULL_BOOTSTRAP_PAGE_IDS));
+      });
+      void requestFullBootstrap().catch(() => {});
+    };
+
+    if (typeof globalThis.requestIdleCallback === "function") {
+      idleCallbackId = globalThis.requestIdleCallback(startBackgroundWarmup, { timeout: 1_200 });
+    } else {
+      timeoutId = globalThis.setTimeout(startBackgroundWarmup, 250);
+    }
+
+    return () => {
+      cancelled = true;
+      if (idleCallbackId !== null && typeof globalThis.cancelIdleCallback === "function") {
+        globalThis.cancelIdleCallback(idleCallbackId);
+      }
+      if (timeoutId !== null && typeof globalThis.clearTimeout === "function") {
+        globalThis.clearTimeout(timeoutId);
+      }
+    };
+  }, [
+    backgroundPageWarmupStarted,
+    homeInteractive,
+    isBackendReady,
+    pageWarmupEnabled,
+    requestFullBootstrap,
+  ]);
 
   const activeLeaveState = activeItem === "query-system"
     ? querySystemLeaveState
@@ -570,6 +650,7 @@ export function App({ runtimeStore }) {
                         onRetryBootstrap={handleRetryFullBootstrap}
                         runtimeBootstrapError={fullBootstrapState.error}
                         runtimeBootstrapStatus={fullBootstrapState.status}
+                        warmupEnabled={backgroundPageWarmupStarted}
                       />
                     </Suspense>
                   </div>
@@ -611,6 +692,7 @@ export function App({ runtimeStore }) {
                         onRetryBootstrap={handleRetryFullBootstrap}
                         runtimeBootstrapError={fullBootstrapState.error}
                         runtimeBootstrapStatus={fullBootstrapState.status}
+                        warmupEnabled={backgroundPageWarmupStarted}
                       />
                     </Suspense>
                   </div>

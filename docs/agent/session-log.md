@@ -2927,3 +2927,248 @@
   - `docs/agent/session-log.md` 已更新
   - `docs/agent/memory.md` 已更新
   - `README.md` 已核对，本次无需改动
+
+## 2026-04-26 00:25 (Asia/Shanghai) Handoff
+- 当前目标：
+  - 当前总目标已从“首页先亮”收敛成两段：
+    - 已完成：切掉账号中心 renderer 首帧自身的同步黑洞；
+    - 未完成：继续压“账号数据真正到齐”的总时延。
+  - 当前已收口的实现提交：
+    - `eecef80 perf: unblock account center first paint hot path`
+- 进度断点：
+  - 当前 chunk：
+    - `account-center renderer first-commit hot path` 已完成；
+    - `account-center accounts data latency` 尚未开始治理。
+  - 当前 task：
+    - 已完成 commit、回归、真机 trace、memory/session-log 更新；
+    - 尚未进入 `/account-center/accounts` 链路的进一步拆解。
+  - 已完成内容：
+    - 首页最小闭包 + overlay 首次交互 lazy load 已落地；
+    - `PAGE_STORE.read()` 已移出账号中心首帧同步 render；
+    - 持久化筛选/搜索改为 idle hydration + `startTransition` 低优先级回填；
+    - 已补细粒度 startup trace，能直接区分：
+      - `first.commit`
+      - `accounts.requested`
+      - `accounts.response.received`
+      - `accounts.loaded`
+      - `ui_state_hydrated`
+  - 正在进行：
+    - 无未收口代码；本轮停在“提交完成，准备交接到下一刀”。
+- 现场状态：
+  - 工作目录：`C:/Users/18220/Desktop/C5autobug更新接口 - 副本 (2)`
+  - 分支：`master`
+  - 当前不是 dedicated worktree
+  - 最新提交：`eecef80 perf: unblock account center first paint hot path`
+  - 写入本条 handoff 前工作树为 clean；写入后默认只会多出 `docs/agent/session-log.md` 这条未提交 handoff 记录。
+- 错误与约束：
+  - 已证伪的路径：
+    - 不要再把首页主慢点归因到 overlay eager mount；那条链只值几十毫秒。
+    - 不要再把 `PAGE_STORE.read()` / `localStorage` 同步读取塞回账号中心首帧。
+  - 已确认的新根因：
+    - renderer 侧大黑洞已切掉；
+    - 当前剩余主慢段在 `/account-center/accounts` 请求发出到响应返回之间，量级约 `2.5s+`。
+  - 必须保持不变的关键行为：
+    - shell-only 启动口径
+    - `/health ready=true` gate
+    - 登录成功链
+    - open-api 打开与复用链
+    - `query -> hit -> purchase` 主链
+    - 账号中心旧筛选/搜索只能 idle 回填，不能再阻塞首屏
+- 验证状态：
+  - 已执行：
+    - `npm --prefix app_desktop_web run test -- tests/renderer/account_center_page.test.jsx tests/renderer/app_remote_bootstrap.test.jsx tests/renderer/program_access_sidebar_card.test.jsx tests/electron/electron_remote_mode.test.js --run`
+      - `4 files passed, 61 tests passed`
+    - `npm --prefix app_desktop_web run build`
+      - 通过
+    - 真机启动 trace：
+      - `C5_STARTUP_TRACE=1`
+      - `C5_LOCAL_DEBUG_REUSE_RENDERER_DIST=1`
+      - `node main_ui_node_desktop.js`
+  - 关键真机样本：
+    - `renderer.account.center.chunk.ready` `3479ms`
+    - `renderer.account.center.accounts.requested` `3778ms`
+    - `renderer.account.center.first.commit` `3780ms`
+    - `renderer.account.center.accounts.response.received` `6367ms`
+    - `renderer.account.center.accounts.loaded` `6368ms`
+  - 结论：
+    - `chunk.ready -> first.commit` 已从约 `2778ms` 下降到约 `301ms`
+    - 当前剩余慢段是 `accounts.requested -> accounts.response.received`，不再是首页 renderer 装配
+  - 尚未覆盖的缺口：
+    - 还没对 `/account-center/accounts` 服务端链路做 slice trace / focused benchmark
+    - 还没确认 `account-center/accounts` 返回里哪些字段或聚合阶段占了主要耗时
+- 下一步第一刀：
+  - 下个会话不要重回 renderer 首帧；直接从 `/account-center/accounts` 链路下刀。
+  - 第一刀建议顺序：
+    - 先补该接口服务端分段 trace 或 focused profiling，拆清楚“查询账号列表 / 衍生状态 / 代理展示 / 余额 / 购买状态”各阶段耗时；
+    - 若证据允许，再决定是拆 shell/full 风格的 summary-first 接口，还是直接砍后端同步聚合成本。
+  - 做完后立刻验证：
+    - 真机 trace 继续比：
+      - `renderer.account.center.accounts.requested`
+      - `renderer.account.center.accounts.response.received`
+      - `renderer.account.center.accounts.loaded`
+    - 若动到后端接口，再补对应 focused regression，不得只凭前端体感下结论。
+
+## 2026-04-26 00:47 (Asia/Shanghai)
+- 背景：
+  - 魔尊要求先读最新 handoff / memory / `git status --short`，若文档与现场冲突先指出，再直接沿 `/account-center/accounts` 补服务端分段 trace / focused profiling，不再回 renderer 首帧。
+  - 本轮先按 `resume-from-handoff + systematic-debugging + TDD` 承接：先复述断点，再写红灯锁定“服务端必须能落该接口分段 trace”，然后才写实现。
+- handoff 与现场分歧：
+  - handoff 口径写的是：`renderer.account.center.accounts.requested -> accounts.response.received` 仍约 `2.5s+`，且下一刀应直接拆后端 runtime 聚合慢段。
+  - 本轮重启真实桌面主入口后拿到的新鲜真机样本却显示：
+    - renderer 侧 `accounts.requested -> accounts.response.received` 只有约 `37ms`
+    - backend 侧 `/account-center/accounts` 已走 `snapshot` 回退，不是 runtime 聚合
+    - 服务端整段 `duration_ms` 约 `30.5ms`
+  - 当前先以“新鲜真机 trace + 新鲜 request trace”作为更高优先级现场事实收敛；handoff 里的 `2.5s+` 现已不再代表当前源码态启动现场。
+- 已完成：
+  - `app_backend/infrastructure/request_diagnostics.py`
+    - 新增轻量 `RequestTraceRecorder`
+    - 允许请求链路累积分段耗时 / 次数 / 细节，并在 JSONL 中携带 `trace`
+    - 对显式命名 trace 的请求补独立 `request_trace` 事件；即使请求已快到低于慢请求阈值，也不会丢掉服务端剖面
+  - `app_backend/api/routes/account_center.py`
+    - `/account-center/accounts` 接上命名 trace：`account_center.accounts`
+    - route 侧拆出：
+      - `route.use_case.execute`
+      - `route.model_validate.row`
+      - `route.balance_refresh.schedule.row`
+    - 兼容不支持 `trace=` 的旧 `balance_service`
+  - `app_backend/application/use_cases/list_account_center_accounts.py`
+    - 记录数据来源：`runtime` / `snapshot`
+    - 把 trace 下传到 runtime/snapshot service
+  - `app_backend/application/services/account_center_snapshot_service.py`
+    - 拆出：
+      - `snapshot.account_repository.list_accounts`
+      - `snapshot.account_center_row.build`
+  - `app_backend/infrastructure/purchase/runtime/purchase_runtime_service.py`
+    - 为 runtime 版列表补分段 profiling 钩子，覆盖：
+      - `runtime.runtime_account_map`
+      - `runtime.account_repository.list_accounts`
+      - `runtime.account_center_row.build`
+      - `runtime.account_inventory_detail.total`
+      - `runtime.find_account`
+      - `runtime.account_repository.get_account`
+      - `runtime.inventory_detail.runtime`
+      - `runtime.inventory_snapshot.get`
+  - `app_backend/application/services/account_balance_service.py`
+    - `maybe_schedule_refresh()` 支持可选 trace，补：
+      - `balance.account_repository.get_account`
+      - `balance.should_refresh`
+      - `balance.schedule_refresh`
+  - `tests/backend/test_request_diagnostics_middleware.py`
+    - 新增红绿回归，锁定 `/account-center/accounts` 即使不慢也必须落 `request_trace`，并且带上服务端分段剖面
+- focused verification：
+  - 红灯：
+    - `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_request_diagnostics_middleware.py::test_request_diagnostics_logs_account_center_accounts_trace_breakdown -q`
+    - 先后准确打出两类缺口：
+      - 起初完全没有 `trace`
+      - 真机发现接口已不慢后，又暴露“没有慢请求就没有服务端剖面”
+  - 绿灯 / 回归：
+    - `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_request_diagnostics_middleware.py tests/backend/test_account_center_routes.py tests/backend/test_backend_startup_slices.py -q`
+    - `31 passed in 7.14s`
+- 真机 trace：
+  - 启动口径：
+    - 先关闭当前工作树残留的源码态 Electron 实例
+    - `C5_STARTUP_TRACE=1`
+    - `C5_LOCAL_DEBUG_REUSE_RENDERER_DIST=1`
+    - `node main_ui_node_desktop.js`
+  - renderer 日志落点：
+    - `C:/Users/18220/AppData/Roaming/c5-account-center-desktop-web/renderer-diagnostics.jsonl`
+  - backend request 日志落点：
+    - `C:/Users/18220/Desktop/C5autobug更新接口 - 副本 (2)/data/runtime/request_diagnostics.runtime.jsonl`
+  - 关键真机样本：
+    - renderer：
+      - `startup_trace_account_center_accounts_requested` at `2026-04-25T16:46:41.005Z`
+      - `startup_trace_account_center_accounts_response_received` at `2026-04-25T16:46:41.042Z`
+      - `startup_trace_account_center_accounts_loaded` at `2026-04-25T16:46:41.042Z`
+      - `requested -> response` 约 `37ms`
+    - backend：
+      - `event=request_trace`
+      - `duration_ms=30.5`
+      - `source=snapshot`
+      - `account_count=5`
+      - `row_count=5`
+      - `balance_refresh_attempted_count=5`
+      - `balance_refresh_scheduled_count=0`
+      - phases：
+        - `snapshot.account_repository.list_accounts` `19.887ms`
+        - `snapshot.account_center_row.build` `0.044ms total / 5 rows`
+        - `route.use_case.execute` `20.092ms`
+        - `route.model_validate.row` `0.052ms total / 5 rows`
+        - `balance.account_repository.get_account` `4.54ms total / 5 calls`
+        - `balance.should_refresh` `0.027ms total / 5 calls`
+        - `route.balance_refresh.schedule.row` `4.665ms total / 5 rows`
+- 结论与余险：
+  - 本轮“补服务端分段 trace / focused profiling”的目标已完成，而且剖面现在不会因为接口优化变快而消失。
+  - 但原 handoff 的核心判断已被新真机证据推翻：当前源码态启动现场里，`/account-center/accounts` 不再是 `2.5s+` 慢段，也没有走 runtime 聚合。
+  - 新的待查点不再是“怎么优化这个 2.5s 接口”，而是“为什么 handoff 样本与当前真机口径差这么大”。
+  - 更可能的差异来源：
+    - 当时样本不是当前这条 core-home `snapshot` 回退口径
+    - 或当时现场数据规模 / 运行态装配状态与当前不同
+    - 或当时并非重启后的新鲜主入口样本
+- 文档同步：
+  - `docs/agent/session-log.md` 已更新
+  - `docs/agent/memory.md` 已更新
+  - `README.md` 已核对，本次无需改动
+
+## 2026-04-26 01:17 (Asia/Shanghai)
+- 背景：
+  - 魔尊明确要求“不要等用户点左侧栏才开始其他页加载”，而是首页进入主链后，把其它一级页面的首批数据放到后台暗加载，但不能阻塞总页面，也不能把运行态副作用提前偷跑。
+  - 本轮按 `writing-plans + TDD` 收口成“真实桌面专用 page warmup 开关 + 后台 full bootstrap + 非活跃首批数据预热”。
+- 方案收敛：
+  - 只在真实 Electron desktop bootstrap 口径打开 warmup，不把所有 `App` 测试/浏览器壳默认拖进后台预热。
+  - 首页 `account-center` 先照旧亮壳；等首页可操作后，再后台触发：
+    - hidden keepalive mount
+    - full bootstrap
+    - 其他一级页首批数据预抓
+  - 保护边界：
+    - `query-system` / `purchase-system` 允许 hidden warmup 首拉一次数据
+    - 但继续禁止 hidden 状态下启动 polling / websocket / runtime action
+    - diagnostics 允许 hidden warmup 拉首包，但不在 hidden 态持续轮询
+- 已完成：
+  - `app_desktop_web/src/App.jsx`
+    - 新增首页可操作后的 background warmup 调度
+    - 背景挂起 `FULL_BOOTSTRAP_PAGE_IDS`
+    - 后台触发 `requestFullBootstrap()`
+    - warmup 只在 bootstrap 明确下发 `pageWarmupEnabled=true` 时启用
+  - desktop bootstrap config
+    - `app_desktop_web/electron-main.cjs`
+      - 真实 Electron 启动口径默认下发 `pageWarmupEnabled=true`
+    - `app_desktop_web/electron-preload.cjs`
+    - `app_desktop_web/src/desktop/bridge.js`
+    - `app_desktop_web/electron_runtime_mode.cjs`
+      - 默认补齐 `pageWarmupEnabled=false`，避免普通测试/浏览器壳被默认拖入 warmup
+  - `app_desktop_web/src/features/query-system/query_system_page.jsx`
+  - `app_desktop_web/src/features/query-system/hooks/use_query_system_page.js`
+    - 新增 `warmupEnabled`
+    - hidden 态允许首拉一次配置/详情
+    - 不把原有 active 语义改成后台持续运行
+  - `app_desktop_web/src/features/purchase-system/purchase_system_page.jsx`
+  - `app_desktop_web/src/features/purchase-system/hooks/use_purchase_system_page.js`
+    - 新增 `warmupEnabled`
+    - hidden 态允许首拉购买页首批数据
+    - `purchase-runtime/status` 轮询继续只在 `isActive` 时运行
+  - `app_desktop_web/src/features/diagnostics/use_sidebar_diagnostics.js`
+    - 新增 `warmupEnabled`
+    - hidden 态只拉首包，不启动持续 polling
+  - renderer tests
+    - `app_desktop_web/tests/renderer/app_page_keepalive.test.jsx`
+      - 新增红绿回归：打开 `pageWarmupEnabled` 后，首页稳定下来应后台预热其它一级页的首批请求
+    - `app_desktop_web/tests/renderer/app_remote_bootstrap.test.jsx`
+      - 同步更新 bridge 默认 bootstrap 断言，补上 `pageWarmupEnabled=false`
+- TDD：
+  - 红灯：
+    - `npm --prefix app_desktop_web test -- tests/renderer/app_page_keepalive.test.jsx -t "warms hidden top-level pages and their first data requests in the background after home becomes interactive" --run`
+    - 先准确失败在“后台 full bootstrap / 首批数据请求没有发生”
+  - 绿灯：
+    - 同命令回跑通过
+- focused verification：
+  - `npm --prefix app_desktop_web test -- tests/renderer/app_page_keepalive.test.jsx -t "warms hidden top-level pages and their first data requests in the background after home becomes interactive" --run`
+    - 通过
+  - `npm --prefix app_desktop_web test -- tests/renderer/query_system_page.test.jsx tests/renderer/purchase_system_page.test.jsx tests/renderer/diagnostics_sidebar.test.jsx tests/renderer/app_remote_bootstrap.test.jsx --run`
+    - `69 passed`
+- 结论与余险：
+  - 现在真实桌面口径下，首页可操作后会在后台把其它一级页的页面壳和首批数据先热起来，用户后续切页不必再从 0 开始等。
+  - 当前 warmup 只保证“后台预热发生”，没有继续压到“每个接口最多一次”；像 `query-configs/{id}` 这种 detail 请求仍可能因两个 hidden 页各自取数而重复。若魔尊后续要继续压后台噪音，可单开一刀做 warmup 去重，而不必回退本轮用户体验收益。
+- 文档同步：
+  - `docs/agent/session-log.md` 已更新
+  - `docs/agent/memory.md` 已更新
+  - `README.md` 已核对，本次无需改动

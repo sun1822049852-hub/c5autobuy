@@ -182,7 +182,7 @@ function buildSyncedDraftConfig(currentDraft, serverConfig) {
 
 
 
-export function useQuerySystemPage({ client, isActive = true }) {
+export function useQuerySystemPage({ client, isActive = true, warmupEnabled = false }) {
   const { runProgramAccessAction } = useProgramAccessGuard();
   const programAccess = useProgramAccess();
   const isReadonlyLocked = isProgramReadonlyLocked(programAccess);
@@ -200,6 +200,7 @@ export function useQuerySystemPage({ client, isActive = true }) {
   const hasUnsavedChanges = Boolean(queryDraft.hasUnsavedChanges);
   const capacitySummary = queryServer.capacitySummary || { modes: {} };
   const runtimeStatus = normalizeRuntimeStatus(queryServer.runtimeStatus);
+  const shouldLoadQueryState = isActive || warmupEnabled;
 
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -284,7 +285,7 @@ export function useQuerySystemPage({ client, isActive = true }) {
     let active = true;
 
     async function ensureQueryState() {
-      if (!isActive) {
+      if (!shouldLoadQueryState) {
         return;
       }
 
@@ -400,10 +401,10 @@ export function useQuerySystemPage({ client, isActive = true }) {
     configs,
     draftConfig?.config_id,
     hasUnsavedChanges,
-    isActive,
     queryServerHydrated,
     runtimeStatus.config_id,
     selectedConfigId,
+    shouldLoadQueryState,
   ]);
 
   const capacityModeMap = capacitySummary.modes || {};

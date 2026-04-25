@@ -19,13 +19,17 @@ function jsonResponse(payload, status = 200) {
 }
 
 
-function installDesktopApp(fetchImpl) {
+function installDesktopApp(fetchImpl, bootstrapOverrides = {}) {
   window.fetch = fetchImpl;
   window.desktopApp = {
     getBootstrapConfig() {
       return {
+        backendMode: "embedded",
         apiBaseUrl: "http://127.0.0.1:8123",
         backendStatus: "ready",
+        runtimeWebSocketUrl: "",
+        pageWarmupEnabled: false,
+        ...bootstrapOverrides,
       };
     },
   };
@@ -60,13 +64,22 @@ function createFetchHarness() {
           registration_flow_version: 2,
         },
         query_system: {
-          configs: [],
+          configs: [
+            {
+              config_id: "config-1",
+              name: "默认配置",
+              description: "背景预热配置",
+              enabled: true,
+              items: [],
+              serverShape: "summary",
+            },
+          ],
           capacitySummary: { modes: {} },
-          runtimeStatus: { running: false, item_rows: [] },
+          runtimeStatus: { running: false, config_id: "config-1", item_rows: [] },
         },
         purchase_system: {
           runtimeStatus: { running: false, accounts: [], item_rows: [] },
-          uiPreferences: { selected_config_id: null, updated_at: null },
+          uiPreferences: { selected_config_id: "config-1", updated_at: null },
           runtimeSettings: { per_batch_ip_fanout_limit: 1, max_inflight_per_account: 3 },
         },
       });
@@ -74,6 +87,50 @@ function createFetchHarness() {
 
     if (url.pathname === "/account-center/accounts" && method === "GET") {
       return jsonResponse([]);
+    }
+
+    if (url.pathname === "/query-configs" && method === "GET") {
+      return jsonResponse([
+        {
+          config_id: "config-1",
+          name: "默认配置",
+          description: "背景预热配置",
+          enabled: true,
+          items: [],
+          serverShape: "summary",
+        },
+      ]);
+    }
+
+    if (url.pathname === "/query-configs/config-1" && method === "GET") {
+      return jsonResponse({
+        config_id: "config-1",
+        name: "默认配置",
+        description: "背景预热配置",
+        enabled: true,
+        items: [],
+        serverShape: "detail",
+      });
+    }
+
+    if (url.pathname === "/query-configs/capacity-summary" && method === "GET") {
+      return jsonResponse({ modes: {} });
+    }
+
+    if (url.pathname === "/query-runtime/status" && method === "GET") {
+      return jsonResponse({ running: false, config_id: "config-1", item_rows: [] });
+    }
+
+    if (url.pathname === "/purchase-runtime/status" && method === "GET") {
+      return jsonResponse({ running: false, accounts: [], item_rows: [] });
+    }
+
+    if (url.pathname === "/purchase-runtime/ui-preferences" && method === "GET") {
+      return jsonResponse({ selected_config_id: "config-1", updated_at: null });
+    }
+
+    if (url.pathname === "/runtime-settings/purchase" && method === "GET") {
+      return jsonResponse({ per_batch_ip_fanout_limit: 1, max_inflight_per_account: 3 });
     }
 
     if (url.pathname === "/stats/query-items" && method === "GET") {
@@ -146,6 +203,15 @@ function createFetchHarness() {
 
 function countCalls(calls, pathname) {
   return calls.filter((call) => call.method === "GET" && call.pathname === pathname).length;
+}
+
+
+function countCallsWithSearch(calls, pathname, search = "") {
+  return calls.filter((call) => (
+    call.method === "GET"
+    && call.pathname === pathname
+    && call.search === search
+  )).length;
 }
 
 
@@ -224,5 +290,25 @@ describe("app page keepalive", () => {
     await user.click(screen.getByRole("button", { name: "通用诊断" }));
     await screen.findByRole("complementary", { name: "通用诊断面板" });
     expect(countCalls(harness.calls, "/diagnostics/sidebar")).toBe(1);
+  });
+
+  it("warms hidden top-level pages and their first data requests in the background after home becomes interactive", async () => {
+    const harness = createFetchHarness();
+    installDesktopApp(harness.fetchImpl, {
+      pageWarmupEnabled: true,
+    });
+
+    render(<App />);
+
+    await screen.findByRole("searchbox", { name: "搜索账号" });
+
+    await waitFor(() => {
+      expect(countCallsWithSearch(harness.calls, "/app/bootstrap", "")).toBe(1);
+      expect(countCalls(harness.calls, "/stats/query-items")).toBe(1);
+      expect(countCalls(harness.calls, "/stats/account-capability")).toBe(1);
+      expect(countCalls(harness.calls, "/diagnostics/sidebar")).toBeGreaterThanOrEqual(1);
+      expect(countCalls(harness.calls, "/query-configs")).toBeGreaterThanOrEqual(1);
+      expect(countCalls(harness.calls, "/query-configs/config-1")).toBeGreaterThanOrEqual(1);
+    });
   });
 });
