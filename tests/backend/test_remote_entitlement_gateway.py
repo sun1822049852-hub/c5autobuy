@@ -292,11 +292,14 @@ def test_remote_gateway_send_register_code_preserves_retry_after_seconds_from_co
     assert result.payload == {"retry_after_seconds": 52}
 
 
-def test_remote_gateway_summary_uses_control_plane_registration_flow_version_when_ready(tmp_path: Path) -> None:
+def test_remote_gateway_summary_does_not_probe_registration_readiness_synchronously(tmp_path: Path) -> None:
     private_key = Ed25519PrivateKey.generate()
     verifier = EntitlementVerifier(key_cache_path=_write_public_key(tmp_path, private_key))
+    remote_client = _RemoteClientStub(
+        registration_readiness_result=_ReadinessStub(ready=True, registration_flow_version=3),
+    )
     gateway = RemoteEntitlementGateway(
-        remote_client=_RemoteClientStub(registration_readiness_result=_ReadinessStub(ready=True, registration_flow_version=3)),
+        remote_client=remote_client,
         verifier=verifier,
         credential_store=_MemoryCredentialStore(ProgramCredentialBundle(device_id="device-alpha")),
         secret_store=_MemorySecretStore(),
@@ -307,7 +310,8 @@ def test_remote_gateway_summary_uses_control_plane_registration_flow_version_whe
 
     summary = gateway.get_summary()
 
-    assert summary.registration_flow_version == 3
+    assert summary.registration_flow_version == 2
+    assert remote_client.registration_readiness_calls == 0
 
 
 def test_remote_gateway_verify_register_code_returns_remote_message_and_summary(tmp_path: Path) -> None:

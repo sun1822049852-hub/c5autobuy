@@ -4,6 +4,7 @@ from datetime import datetime
 import json
 import os
 from pathlib import Path
+import threading
 from typing import Any
 from uuid import uuid4
 
@@ -32,38 +33,42 @@ class FileProgramCredentialStore:
         self._bundle_path = Path(bundle_path)
         self._secret_store = secret_store
         self._device_id_store = device_id_store
+        self._lock = threading.RLock()
 
     def load(self) -> ProgramCredentialBundle:
-        device_id = self._device_id_store.load_or_create()
-        payload, needs_repair = self._load_payload(device_id)
-        if needs_repair:
-            self._write_payload(payload)
-        return ProgramCredentialBundle(**payload)
+        with self._lock:
+            device_id = self._device_id_store.load_or_create()
+            payload, needs_repair = self._load_payload(device_id)
+            if needs_repair:
+                self._write_payload(payload)
+            return ProgramCredentialBundle(**payload)
 
     def save(self, bundle: ProgramCredentialBundle) -> None:
-        device_id = self._device_id_store.load_or_create()
-        previous_ref = self._current_refresh_ref()
-        payload = self._normalized_payload(
-            {
-                "device_id": device_id,
-                "refresh_credential_ref": bundle.refresh_credential_ref,
-                "entitlement_snapshot": bundle.entitlement_snapshot,
-                "entitlement_signature": bundle.entitlement_signature,
-                "entitlement_kid": bundle.entitlement_kid,
-                "lease_id": bundle.lease_id,
-                "clock_offset": bundle.clock_offset,
-                "last_error_code": bundle.last_error_code,
-            }
-        )
-        payload["updated_at"] = _now()
-        self._write_payload(payload)
-        self._cleanup_stale_ref(previous_ref=previous_ref, next_ref=payload["refresh_credential_ref"])
+        with self._lock:
+            device_id = self._device_id_store.load_or_create()
+            previous_ref = self._current_refresh_ref()
+            payload = self._normalized_payload(
+                {
+                    "device_id": device_id,
+                    "refresh_credential_ref": bundle.refresh_credential_ref,
+                    "entitlement_snapshot": bundle.entitlement_snapshot,
+                    "entitlement_signature": bundle.entitlement_signature,
+                    "entitlement_kid": bundle.entitlement_kid,
+                    "lease_id": bundle.lease_id,
+                    "clock_offset": bundle.clock_offset,
+                    "last_error_code": bundle.last_error_code,
+                }
+            )
+            payload["updated_at"] = _now()
+            self._write_payload(payload)
+            self._cleanup_stale_ref(previous_ref=previous_ref, next_ref=payload["refresh_credential_ref"])
 
     def clear(self) -> None:
-        device_id = self._device_id_store.load_or_create()
-        previous_ref = self._current_refresh_ref()
-        self._write_payload(self._empty_payload(device_id))
-        self._cleanup_ref(previous_ref)
+        with self._lock:
+            device_id = self._device_id_store.load_or_create()
+            previous_ref = self._current_refresh_ref()
+            self._write_payload(self._empty_payload(device_id))
+            self._cleanup_ref(previous_ref)
 
     def _load_payload(self, device_id: str) -> tuple[dict[str, Any], bool]:
         raw_payload = self._read_bundle_json()

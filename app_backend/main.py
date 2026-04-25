@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -53,6 +54,7 @@ async def _app_lifespan(app: FastAPI):
     init_task = None
     if getattr(app.state, "_deferred_init_enabled", False):
         init_task = asyncio.create_task(_deferred_init(app))
+    _schedule_program_access_post_ready_init(app)
     try:
         yield
     finally:
@@ -63,6 +65,12 @@ async def _app_lifespan(app: FastAPI):
                 await init_task
             except asyncio.CancelledError:
                 pass
+        post_ready_task = getattr(app.state, "_program_access_post_ready_init_task", None)
+        if post_ready_task is not None:
+            try:
+                await post_ready_task
+            except asyncio.CancelledError:
+                pass
         _shutdown_program_access(app)
 
 
@@ -71,20 +79,102 @@ async def _deferred_init(app: FastAPI) -> None:
     params = app.state._init_params
     try:
         await asyncio.to_thread(_sync_heavy_init, app, params)
+        _schedule_program_access_post_ready_init(app)
     except Exception:
         _logger.exception("Deferred init failed")
         app.state._init_error = "deferred init failed — check logs"
         raise
 
 
-def _shutdown_program_access(app: FastAPI) -> None:
+def _schedule_program_access_post_ready_init(app: FastAPI) -> None:
+    if not getattr(app.state, "_program_access_post_ready_init_pending", False):
+        return
+
+    task = getattr(app.state, "_program_access_post_ready_init_task", None)
+    if task is not None and not task.done():
+        return
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+
+    app.state._program_access_post_ready_init_pending = False
+    app.state._program_access_post_ready_init_task = loop.create_task(
+        _run_program_access_post_ready_init(app)
+    )
+
+
+async def _run_program_access_post_ready_init(app: FastAPI) -> None:
     scheduler = getattr(app.state, "program_access_refresh_scheduler", None)
-    if scheduler is not None:
-        scheduler.stop()
     gateway = getattr(app.state, "program_access_gateway", None)
-    close = getattr(gateway, "close", None)
-    if callable(close):
-        close()
+
+    lifecycle_lock = getattr(app.state, "_program_access_lifecycle_lock", None)
+    warm_registration_readiness_cache = _resolve_program_access_post_ready_warm(gateway)
+
+    def _post_ready_init() -> None:
+        if lifecycle_lock is None:
+            if getattr(app.state, "_program_access_shutdown_requested", False):
+                return
+            if callable(warm_registration_readiness_cache):
+                warm_registration_readiness_cache()
+            if getattr(app.state, "_program_access_shutdown_requested", False):
+                return
+            if scheduler is not None:
+                scheduler.start()
+            return
+
+        with lifecycle_lock:
+            if getattr(app.state, "_program_access_shutdown_requested", False):
+                return
+            if callable(warm_registration_readiness_cache):
+                warm_registration_readiness_cache()
+            if getattr(app.state, "_program_access_shutdown_requested", False):
+                return
+            if scheduler is not None:
+                scheduler.start()
+
+    try:
+        await asyncio.to_thread(_post_ready_init)
+    except Exception:
+        _logger.exception("Program access post-ready init failed")
+
+
+def _shutdown_program_access(app: FastAPI) -> None:
+    app.state._program_access_shutdown_requested = True
+    scheduler = getattr(app.state, "program_access_refresh_scheduler", None)
+    gateway = getattr(app.state, "program_access_gateway", None)
+    lifecycle_lock = getattr(app.state, "_program_access_lifecycle_lock", None)
+
+    if lifecycle_lock is None:
+        if scheduler is not None:
+            scheduler.stop()
+        close = getattr(gateway, "close", None)
+        if callable(close):
+            close()
+        return
+
+    with lifecycle_lock:
+        if scheduler is not None:
+            scheduler.stop()
+        close = getattr(gateway, "close", None)
+        if callable(close):
+            close()
+
+
+def _supports_program_access_post_ready_warm(gateway: object) -> bool:
+    warm = _resolve_program_access_post_ready_warm(gateway)
+    return callable(warm)
+
+
+def _resolve_program_access_post_ready_warm(gateway: object):
+    warm = getattr(gateway, "warm_registration_readiness_cache", None)
+    if callable(warm):
+        return warm
+    warm = getattr(gateway, "warm_registration_flow_version_cache", None)
+    if callable(warm):
+        return warm
+    return None
 
 
 def _resolve_program_access_stage(explicit_stage: str | None) -> str:
@@ -273,6 +363,10 @@ def create_app(
     app.state._ready = False
     app.state._init_error = None
     app.state._deferred_init_enabled = deferred_init
+    app.state._program_access_post_ready_init_pending = False
+    app.state._program_access_post_ready_init_task = None
+    app.state._program_access_shutdown_requested = False
+    app.state._program_access_lifecycle_lock = threading.Lock()
 
     @app.get("/health")
     async def health() -> dict:
@@ -560,9 +654,6 @@ def _sync_heavy_init(app: FastAPI, params: dict) -> None:
     app.state.request_diagnostics_log_path = request_diagnostics_log_path
     app.state.request_diagnostics_slow_ms = request_diagnostics_slow_ms
 
-    if program_access_refresh_scheduler is not None and program_access_start_refresh_scheduler:
-        program_access_refresh_scheduler.start()
-
     # -- Register routers --------------------------------------------------
     app.include_router(account_center_routes.router)
     app.include_router(account_routes.router)
@@ -582,6 +673,10 @@ def _sync_heavy_init(app: FastAPI, params: dict) -> None:
     app.include_router(account_websocket_routes.router)
     app.include_router(runtime_websocket_routes.router)
 
+    app.state._program_access_post_ready_init_pending = bool(
+        _supports_program_access_post_ready_warm(program_access_gateway)
+        or (program_access_refresh_scheduler is not None and program_access_start_refresh_scheduler)
+    )
     app.state._ready = True
 
 

@@ -26,6 +26,43 @@ describe("account center client", () => {
     expect(payload).toEqual({ version: 3, query_system: {}, purchase_system: {} });
   });
 
+  it("supports shell/full bootstrap scopes for staged hydration", async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ version: 3, program_access: { mode: "local_pass_through" } }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ version: 3, query_system: {}, purchase_system: {} }),
+      });
+
+    const client = createAccountCenterClient({
+      apiBaseUrl: "http://127.0.0.1:8123",
+      fetchImpl,
+    });
+
+    const shellPayload = await client.getAppBootstrapShell();
+    const fullPayload = await client.getAppBootstrapFull();
+
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      1,
+      "http://127.0.0.1:8123/app/bootstrap?scope=shell",
+      expect.objectContaining({
+        method: "GET",
+      }),
+    );
+    expect(fetchImpl).toHaveBeenNthCalledWith(
+      2,
+      "http://127.0.0.1:8123/app/bootstrap",
+      expect.objectContaining({
+        method: "GET",
+      }),
+    );
+    expect(shellPayload).toEqual({ version: 3, program_access: { mode: "local_pass_through" } });
+    expect(fullPayload).toEqual({ version: 3, query_system: {}, purchase_system: {} });
+  });
+
   it("loads account center rows from bootstrap api base url", async () => {
     const fetchImpl = vi.fn().mockResolvedValue({
       ok: true,

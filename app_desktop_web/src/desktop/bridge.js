@@ -10,34 +10,83 @@ function getDesktopApp() {
   return globalThis.window?.desktopApp ?? null;
 }
 
+function normalizeBootstrapConfig(payload) {
+  return {
+    ...DEFAULT_BOOTSTRAP_CONFIG,
+    ...(payload ?? {}),
+  };
+}
+
+function queueTask(task) {
+  if (typeof globalThis.setTimeout === "function") {
+    globalThis.setTimeout(task, 0);
+    return;
+  }
+  Promise.resolve().then(task);
+}
+
+export function getDefaultDesktopBootstrapConfig() {
+  return {
+    ...DEFAULT_BOOTSTRAP_CONFIG,
+  };
+}
+
 
 export function getDesktopBootstrapConfig() {
   const desktopApp = getDesktopApp();
 
   if (!desktopApp || typeof desktopApp.getBootstrapConfig !== "function") {
-    return DEFAULT_BOOTSTRAP_CONFIG;
+    return getDefaultDesktopBootstrapConfig();
   }
 
-  return {
-    ...DEFAULT_BOOTSTRAP_CONFIG,
-    ...desktopApp.getBootstrapConfig(),
-  };
+  return normalizeBootstrapConfig(desktopApp.getBootstrapConfig());
 }
 
 
 export function subscribeDesktopBootstrapConfig(listener) {
   const desktopApp = getDesktopApp();
-  if (!desktopApp || typeof desktopApp.subscribeBootstrapConfig !== "function") {
+  if (typeof listener !== "function") {
     return () => {};
   }
-  const unsubscribe = desktopApp.subscribeBootstrapConfig((payload) => {
-    listener({
-      ...DEFAULT_BOOTSTRAP_CONFIG,
-      ...payload,
+
+  if (!desktopApp) {
+    queueTask(() => {
+      listener(getDefaultDesktopBootstrapConfig());
     });
+    return () => {};
+  }
+
+  const emit = (payload) => {
+    listener(normalizeBootstrapConfig(payload));
+  };
+
+  let unsubscribe = () => {};
+  if (typeof desktopApp.subscribeBootstrapConfig === "function") {
+    unsubscribe = desktopApp.subscribeBootstrapConfig((payload) => {
+      emit(payload);
+    });
+  }
+
+  queueTask(() => {
+    if (typeof desktopApp.requestBootstrapConfig === "function") {
+      Promise.resolve(desktopApp.requestBootstrapConfig())
+        .then((payload) => {
+          emit(payload);
+        })
+        .catch(() => {});
+      return;
+    }
+
+    if (typeof desktopApp.subscribeBootstrapConfig !== "function") {
+      if (typeof desktopApp.getBootstrapConfig === "function") {
+        emit(desktopApp.getBootstrapConfig());
+        return;
+      }
+      emit(getDefaultDesktopBootstrapConfig());
+    }
   });
-  listener(getDesktopBootstrapConfig());
-  return unsubscribe;
+
+  return typeof unsubscribe === "function" ? unsubscribe : () => {};
 }
 
 

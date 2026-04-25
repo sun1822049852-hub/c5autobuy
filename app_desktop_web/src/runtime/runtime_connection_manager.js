@@ -84,6 +84,47 @@ function applyRuntimeUpdate(store, payload) {
 }
 
 
+function hasDedicatedShellBootstrap(client) {
+  return typeof client?.getAppBootstrapShell === "function";
+}
+
+
+function hasFullBootstrap(client) {
+  return typeof client?.getAppBootstrapFull === "function"
+    || typeof client?.getAppBootstrap === "function";
+}
+
+
+function fetchShellBootstrap(client) {
+  if (hasDedicatedShellBootstrap(client)) {
+    return client.getAppBootstrapShell();
+  }
+
+  if (typeof client?.getAppBootstrap === "function") {
+    return client.getAppBootstrap();
+  }
+
+  if (typeof client?.getAppBootstrapFull === "function") {
+    return client.getAppBootstrapFull();
+  }
+
+  throw new Error("Runtime connection manager requires a client with bootstrap fetch methods.");
+}
+
+
+function fetchFullBootstrap(client) {
+  if (typeof client?.getAppBootstrapFull === "function") {
+    return client.getAppBootstrapFull();
+  }
+
+  if (typeof client?.getAppBootstrap === "function") {
+    return client.getAppBootstrap();
+  }
+
+  throw new Error("Runtime connection manager requires a client with full bootstrap fetch methods.");
+}
+
+
 export function createRuntimeConnectionManager({
   client,
   store,
@@ -91,14 +132,16 @@ export function createRuntimeConnectionManager({
   schedule = (callback, delayMs = 0) => globalThis.setTimeout(callback, delayMs),
   resyncDelayMs = 0,
 } = {}) {
-  if (!client || typeof client.getAppBootstrap !== "function") {
-    throw new Error("Runtime connection manager requires a client with getAppBootstrap().");
+  if (!client || !hasFullBootstrap(client)) {
+    throw new Error("Runtime connection manager requires a client with full bootstrap fetch methods.");
   }
   if (!store || typeof store.getSnapshot !== "function" || typeof store.applyBootstrap !== "function") {
     throw new Error("Runtime connection manager requires a compatible runtime store.");
   }
 
-  let bootstrapPromise = null;
+  let shellBootstrapPromise = null;
+  let fullBootstrapPromise = null;
+  let fullBootstrapHydrated = false;
   let resyncScheduled = false;
   let runtimeStreamCleanup = null;
 
@@ -148,28 +191,31 @@ export function createRuntimeConnectionManager({
     resyncScheduled = true;
     return schedule(() => {
       resyncScheduled = false;
-      void bootstrap({ force: true }).catch(() => {});
+      void bootstrap({ force: true, requireFull: true }).catch(() => {});
     }, resyncDelayMs);
   }
 
-  async function bootstrap({ force = false } = {}) {
+  async function hydrateShellBootstrap({ force = false } = {}) {
     const snapshot = store.getSnapshot();
 
     if (!force && snapshot.bootstrap.state === "hydrated") {
       return snapshot;
     }
 
-    if (bootstrapPromise) {
-      return bootstrapPromise;
+    if (shellBootstrapPromise) {
+      return shellBootstrapPromise;
     }
 
     if (typeof store.patchBootstrap === "function") {
       store.patchBootstrap({ state: "loading" });
     }
 
-    bootstrapPromise = (async () => {
+    shellBootstrapPromise = (async () => {
       try {
-        const payload = await client.getAppBootstrap();
+        const payload = await fetchShellBootstrap(client);
+        if (!hasDedicatedShellBootstrap(client)) {
+          fullBootstrapHydrated = true;
+        }
         return applyBootstrap(payload);
       } catch (error) {
         if (typeof store.patchBootstrap === "function" && snapshot.bootstrap.state !== "hydrated") {
@@ -184,11 +230,75 @@ export function createRuntimeConnectionManager({
         }
         throw error;
       } finally {
-        bootstrapPromise = null;
+        shellBootstrapPromise = null;
       }
     })();
 
-    return bootstrapPromise;
+    return shellBootstrapPromise;
+  }
+
+  function patchFullBootstrapFailure(error) {
+    if (typeof store.patchConnection !== "function") {
+      return;
+    }
+
+    store.patchConnection({
+      state: "stale",
+      stale: true,
+      lastError: normalizeReason(error),
+    });
+  }
+
+  async function hydrateFullBootstrap({ force = false } = {}) {
+    if (!force && fullBootstrapHydrated) {
+      return store.getSnapshot();
+    }
+
+    if (fullBootstrapPromise) {
+      return fullBootstrapPromise;
+    }
+
+    fullBootstrapPromise = (async () => {
+      try {
+        const payload = await fetchFullBootstrap(client);
+        fullBootstrapHydrated = true;
+        return applyBootstrap(payload);
+      } catch (error) {
+        patchFullBootstrapFailure(error);
+        throw error;
+      } finally {
+        fullBootstrapPromise = null;
+      }
+    })();
+
+    return fullBootstrapPromise;
+  }
+
+  async function bootstrap({ force = false, requireFull = force } = {}) {
+    const snapshot = store.getSnapshot();
+
+    if (!force && snapshot.bootstrap.state === "hydrated") {
+      if (!fullBootstrapHydrated) {
+        if (requireFull) {
+          return hydrateFullBootstrap({ force: false });
+        }
+        void hydrateFullBootstrap({ force: false }).catch(() => {});
+      }
+      return snapshot;
+    }
+
+    const shellPayload = await hydrateShellBootstrap({ force });
+    if (requireFull) {
+      if (!hasDedicatedShellBootstrap(client)) {
+        return shellPayload;
+      }
+      return hydrateFullBootstrap({ force });
+    }
+
+    if (!fullBootstrapHydrated) {
+      void hydrateFullBootstrap({ force: false }).catch(() => {});
+    }
+    return shellPayload;
   }
 
   function connectRuntimeUpdates({

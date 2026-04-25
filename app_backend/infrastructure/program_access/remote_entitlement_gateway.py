@@ -79,6 +79,25 @@ class RemoteEntitlementGateway:
         if callable(close):
             close()
 
+    def warm_registration_readiness_cache(self) -> int:
+        if self._registration_flow_version_cache == 3:
+            return 3
+        if not self._probe_registration_readiness:
+            return self._registration_flow_version_cache
+
+        readiness = self._fetch_registration_readiness()
+        if readiness is None:
+            return self._registration_flow_version_cache
+
+        if bool(getattr(readiness, "ready", False)) and int(getattr(readiness, "registration_flow_version", 2)) == 3:
+            self._registration_flow_version_cache = 3
+        else:
+            self._registration_flow_version_cache = 2
+        return self._registration_flow_version_cache
+
+    def warm_registration_flow_version_cache(self) -> int:
+        return self.warm_registration_readiness_cache()
+
     def get_summary(self) -> ProgramAccessSummary:
         return self._build_summary(self._credential_store.load())
 
@@ -579,22 +598,16 @@ class RemoteEntitlementGateway:
         )
 
     def _resolve_registration_flow_version(self) -> int:
-        if self._registration_flow_version_cache == 3:
-            return 3
-        if not self._probe_registration_readiness:
-            return self._registration_flow_version_cache
+        return self._registration_flow_version_cache
+
+    def _fetch_registration_readiness(self):
         get_readiness = getattr(self._remote_client, "get_registration_readiness", None)
         if not callable(get_readiness):
-            return self._registration_flow_version_cache
+            return None
         try:
-            readiness = get_readiness()
+            return get_readiness()
         except Exception:
-            return self._registration_flow_version_cache
-        if bool(getattr(readiness, "ready", False)) and int(getattr(readiness, "registration_flow_version", 2)) == 3:
-            self._registration_flow_version_cache = 3
-        else:
-            self._registration_flow_version_cache = 2
-        return self._registration_flow_version_cache
+            return None
 
     def _load_verified_envelope(self, bundle: ProgramCredentialBundle) -> _VerifiedEnvelope:
         snapshot = _as_snapshot(bundle.entitlement_snapshot)

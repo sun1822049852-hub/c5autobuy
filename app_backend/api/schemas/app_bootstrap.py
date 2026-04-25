@@ -44,10 +44,13 @@ class AppBootstrapProgramAccessResponse(BaseModel):
     last_error_code: str | None = None
 
 
-class AppBootstrapResponse(BaseModel):
+class AppBootstrapShellResponse(BaseModel):
     version: int
     generated_at: str
+    program_access: AppBootstrapProgramAccessResponse
+
+
+class AppBootstrapResponse(AppBootstrapShellResponse):
     query_system: AppBootstrapQuerySystemResponse
     purchase_system: AppBootstrapPurchaseSystemResponse
     diagnostics: AppBootstrapDiagnosticsResponse
-    program_access: AppBootstrapProgramAccessResponse

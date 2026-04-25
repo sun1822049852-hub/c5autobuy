@@ -199,12 +199,25 @@ export function createAccountCenterClient({
     baseUrl: resolvedApiBaseUrl,
     fetchImpl,
   });
+  const getAppBootstrapByScope = (scope = "full") => {
+    const normalizedScope = String(scope || "full").toLowerCase() === "shell" ? "shell" : "full";
+    const path = normalizedScope === "shell"
+      ? "/app/bootstrap?scope=shell"
+      : "/app/bootstrap";
+    return http.getJson(path, {
+      method: "GET",
+    });
+  };
 
   return {
     async getAppBootstrap() {
-      return http.getJson("/app/bootstrap", {
-        method: "GET",
-      });
+      return getAppBootstrapByScope("full");
+    },
+    async getAppBootstrapShell() {
+      return getAppBootstrapByScope("shell");
+    },
+    async getAppBootstrapFull() {
+      return getAppBootstrapByScope("full");
     },
     async listAccountCenterAccounts() {
       return http.getJson("/account-center/accounts", {

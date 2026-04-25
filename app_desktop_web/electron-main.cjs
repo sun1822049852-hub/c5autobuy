@@ -17,6 +17,9 @@ const desktopAppDisplayName = "C5 交易助手";
 const desktopAppDirectoryName = "C5AccountCenter";
 const desktopAppUserModelId = "com.c5.trading-assistant";
 const sessionMigrationMarkerName = ".c5-session-migrated";
+const STARTUP_TRACE_LOG_PREFIX = "[startup-trace]";
+const DESKTOP_BOOTSTRAP_SNAPSHOT_CHANNEL = "desktop:get-bootstrap-config";
+const DESKTOP_BOOTSTRAP_REQUEST_CHANNEL = "desktop:request-bootstrap-config";
 const migratableSessionEntryNames = new Set([
   "Cookies",
   "Cookies-journal",
@@ -54,13 +57,64 @@ let bootstrapConfig = {
   backendStatus: "starting",
 };
 let backendDependenciesPromise = null;
+let embeddedBackendStartupPromise = null;
 let windowStateDependenciesPromise = null;
 let loadWindowState = null;
 let saveWindowState = null;
 let ensureManagedPythonRuntime = null;
 let resolvePythonExecutable = null;
 let startPythonBackend = null;
+let pendingSessionMigration = null;
 const DESKTOP_BOOTSTRAP_CONFIG_UPDATED_CHANNEL = "desktop:bootstrap-config-updated";
+
+
+function createStartupTraceLogger({
+  env = process.env,
+  consoleImpl = console.log,
+  nowMs = () => Date.now(),
+  source = "electron-main",
+} = {}) {
+  const enabled = String(env.C5_STARTUP_TRACE || "").trim() === "1";
+  const emittedEvents = new Set();
+
+  return (eventName, details = {}) => {
+    const normalizedEventName = typeof eventName === "string" ? eventName.trim() : "";
+    if (!enabled || !normalizedEventName || emittedEvents.has(normalizedEventName)) {
+      return false;
+    }
+
+    const timestampMs = Number(nowMs());
+    const safeTimestampMs = Number.isFinite(timestampMs) ? timestampMs : Date.now();
+    const originCandidateMs = Number.parseInt(String(env.C5_STARTUP_TRACE_ORIGIN_MS || ""), 10);
+    const originMs = Number.isFinite(originCandidateMs) ? originCandidateMs : safeTimestampMs;
+    const normalizedDetails = details && typeof details === "object" && !Array.isArray(details)
+      ? details
+      : { value: details };
+
+    emittedEvents.add(normalizedEventName);
+    consoleImpl(`${STARTUP_TRACE_LOG_PREFIX} ${JSON.stringify({
+      details: normalizedDetails,
+      event: normalizedEventName,
+      sinceOriginMs: Math.max(0, safeTimestampMs - originMs),
+      source,
+      timestamp: new Date(safeTimestampMs).toISOString(),
+    })}`);
+    return true;
+  };
+}
+
+
+function getStartupTraceEventNameFromRendererDiagnostic(payload) {
+  const diagnosticType = typeof payload?.type === "string" ? payload.type.trim() : "";
+  if (!diagnosticType.startsWith("startup_trace_")) {
+    return "";
+  }
+
+  return `renderer.${diagnosticType.slice("startup_trace_".length).replaceAll("_", ".")}`;
+}
+
+
+const startupTrace = createStartupTraceLogger();
 
 
 function readAppPath(appApi, targetPathName) {
@@ -333,6 +387,7 @@ function migrateLegacySessionData({
 function configureDesktopStoragePaths({
   appApi = app,
   cpSync = fs.cpSync,
+  deferSessionDataMigrationUntilShutdown = false,
   env = process.env,
   existsSync = fs.existsSync,
   mkdirSync = fs.mkdirSync,
@@ -375,19 +430,40 @@ function configureDesktopStoragePaths({
       let configuredPath = targetPath;
 
       if (pathName === "sessionData") {
-        const migrationReady = migrateLegacySessionData({
-          cpSync,
-          existsSync,
-          legacySessionDataPath,
-          mkdirSync,
-          pathApi,
-          readdirSync,
-          writeFileSync,
-          targetSessionDataPath: targetPath,
-        });
+        const migrationMarkerPath = pathApi.join(targetPath, sessionMigrationMarkerName);
+        const shouldDeferMigration = deferSessionDataMigrationUntilShutdown
+          && legacySessionDataPath
+          && legacySessionDataPath !== targetPath
+          && existsSync(legacySessionDataPath)
+          && !existsSync(migrationMarkerPath);
 
-        if (!migrationReady && legacySessionDataPath) {
+        if (shouldDeferMigration) {
           configuredPath = legacySessionDataPath;
+          pendingSessionMigration = {
+            cpSync,
+            existsSync,
+            legacySessionDataPath,
+            mkdirSync,
+            pathApi,
+            readdirSync,
+            targetSessionDataPath: targetPath,
+            writeFileSync,
+          };
+        } else {
+          const migrationReady = migrateLegacySessionData({
+            cpSync,
+            existsSync,
+            legacySessionDataPath,
+            mkdirSync,
+            pathApi,
+            readdirSync,
+            writeFileSync,
+            targetSessionDataPath: targetPath,
+          });
+
+          if (!migrationReady && legacySessionDataPath) {
+            configuredPath = legacySessionDataPath;
+          }
         }
       }
 
@@ -397,6 +473,16 @@ function configureDesktopStoragePaths({
       console.warn(`Failed to configure desktop ${pathName} path`, error);
     }
   }
+}
+
+function flushPendingSessionMigration() {
+  if (!pendingSessionMigration) {
+    return false;
+  }
+
+  const queuedMigration = pendingSessionMigration;
+  pendingSessionMigration = null;
+  return migrateLegacySessionData(queuedMigration);
 }
 
 
@@ -447,16 +533,100 @@ function findAvailablePort() {
   });
 }
 
+function ensureEmbeddedBackendStartup({
+  ensureBackendDependenciesImpl = ensureBackendDependencies,
+  ensureManagedPythonRuntimeImpl = null,
+  findAvailablePortImpl = findAvailablePort,
+  readProgramAccessConfigImpl = readProgramAccessConfig,
+  resolvePythonExecutableImpl = null,
+  runtimeMode = resolveDesktopRuntimeMode(process.env),
+  startPythonBackendImpl = null,
+} = {}) {
+  if (!runtimeMode?.shouldStartEmbeddedBackend) {
+    return null;
+  }
+
+  if (!embeddedBackendStartupPromise) {
+    embeddedBackendStartupPromise = (async () => {
+      const [, port] = await Promise.all([
+        ensureBackendDependenciesImpl(),
+        findAvailablePortImpl(),
+      ]);
+      const selectedEnsureManagedPythonRuntime = ensureManagedPythonRuntimeImpl ?? ensureManagedPythonRuntime;
+      const selectedResolvePythonExecutable = resolvePythonExecutableImpl ?? resolvePythonExecutable;
+      const selectedStartPythonBackend = startPythonBackendImpl ?? startPythonBackend;
+      const rawProgramAccessConfig = readProgramAccessConfigImpl({
+        appApi: app,
+      });
+      const embeddedBackendPaths = resolveEmbeddedBackendPaths({
+        appApi: app,
+        projectRootPath: projectRoot,
+      });
+      const packagedRelease = app?.isPackaged === true;
+      const controlPlaneBaseUrl = typeof rawProgramAccessConfig?.controlPlaneBaseUrl === "string"
+        ? rawProgramAccessConfig.controlPlaneBaseUrl.trim()
+        : "";
+      const probeRegistrationReadiness = Boolean(controlPlaneBaseUrl);
+      if (packagedRelease && !controlPlaneBaseUrl) {
+        throw new Error("Packaged release requires a control plane base url.");
+      }
+      const programAccessConfig = packagedRelease
+        ? {
+            ...rawProgramAccessConfig,
+            appPrivateDir: embeddedBackendPaths.appPrivateDir,
+            controlPlaneBaseUrl,
+            probeRegistrationReadiness,
+            stage: "packaged_release",
+          }
+        : {
+            ...rawProgramAccessConfig,
+            probeRegistrationReadiness,
+          };
+      const pythonExecutable = packagedRelease
+        ? (await selectedEnsureManagedPythonRuntime({
+            appPrivateDir: embeddedBackendPaths.appPrivateDir,
+            packagedPythonDepsPath: path.join(projectRoot, "python_deps"),
+            projectRoot,
+          })).pythonExecutable
+        : selectedResolvePythonExecutable(projectRoot);
+      return selectedStartPythonBackend({
+        dbPath: embeddedBackendPaths.dbPath,
+        pollIntervalMs: 100,
+        portProvider: () => port,
+        programAccessConfig,
+        projectRoot,
+        pythonExecutable,
+        timeoutMs: 15000,
+      });
+    })().catch((error) => {
+      embeddedBackendStartupPromise = null;
+      throw error;
+    });
+  }
+
+  return embeddedBackendStartupPromise;
+}
+
 function buildLoadingWindowHtml() {
   return `data:text/html;charset=utf-8,<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>${desktopAppDisplayName}</title></head><body style="margin:0;font-family:'Microsoft YaHei UI',sans-serif;background:#111317;color:#f3efe6;display:grid;place-items:center;height:100vh"><main style="max-width:560px;padding:32px;border:1px solid rgba(255,255,255,.1);border-radius:20px;background:rgba(255,255,255,.04);text-align:center"><h1 style="margin:0 0 12px">${desktopAppDisplayName}</h1><p style="margin:0;color:rgba(243,239,230,.82)">正在启动，请稍后...</p></main></body></html>`;
 }
 
 
-function createWindow({ mode = "app" } = {}) {
-  const windowState = loadWindowState();
+function createWindow({
+  mode = "app",
+  BrowserWindowImpl = BrowserWindow,
+  loadWindowStateImpl = loadWindowState,
+  saveWindowStateImpl = saveWindowState,
+  startupTraceImpl = startupTrace,
+} = {}) {
+  if (typeof loadWindowStateImpl !== "function" || typeof saveWindowStateImpl !== "function") {
+    throw new Error("Window state dependencies are not ready");
+  }
+
+  const windowState = loadWindowStateImpl();
 
   if (!mainWindow) {
-    mainWindow = new BrowserWindow({
+    mainWindow = new BrowserWindowImpl({
       ...windowState,
       show: false,
       title: desktopAppDisplayName,
@@ -474,8 +644,21 @@ function createWindow({ mode = "app" } = {}) {
         return;
       }
 
-      saveWindowState(mainWindow.getBounds());
+      saveWindowStateImpl(mainWindow.getBounds());
     });
+
+    if (mode === "app") {
+      mainWindow.once?.("show", () => {
+        startupTraceImpl("desktop.window.visible", {
+          mode,
+        });
+      });
+      mainWindow.webContents?.once?.("dom-ready", () => {
+        startupTraceImpl("desktop.static_shell.visible", {
+          signal: "dom-ready",
+        });
+      });
+    }
 
     mainWindow.once("ready-to-show", () => {
       mainWindow?.show();
@@ -488,10 +671,12 @@ function createWindow({ mode = "app" } = {}) {
 
   if (mode === "loading") {
     mainWindow.loadURL(buildLoadingWindowHtml());
+    mainWindow.show?.();
     return mainWindow;
   }
 
   mainWindow.loadFile(rendererEntryPath);
+  mainWindow.show?.();
   return mainWindow;
 }
 
@@ -566,6 +751,7 @@ async function bootstrapApplication({
   readProgramAccessConfigImpl = readProgramAccessConfig,
   resolvePythonExecutableImpl = null,
   startPythonBackendImpl = null,
+  startupTraceImpl = startupTrace,
 } = {}) {
   bootstrapConfig = {
     ...DEFAULT_DESKTOP_BOOTSTRAP_CONFIG,
@@ -580,10 +766,16 @@ async function bootstrapApplication({
       throw new Error(runtimeMode.configurationError);
     }
 
-    // Kick off backend dependency loading early (before window state) so the
-    // ESM dynamic imports run in parallel with window-state resolution.
-    const earlyBackendDepsPromise = runtimeMode.shouldStartEmbeddedBackend
-      ? ensureBackendDependenciesImpl()
+    const prewarmedEmbeddedBackendPromise = runtimeMode.shouldStartEmbeddedBackend
+      ? ensureEmbeddedBackendStartup({
+          ensureBackendDependenciesImpl,
+          ensureManagedPythonRuntimeImpl,
+          findAvailablePortImpl,
+          readProgramAccessConfigImpl,
+          resolvePythonExecutableImpl,
+          runtimeMode,
+          startPythonBackendImpl,
+        })
       : null;
 
     await ensureWindowStateDependenciesImpl();
@@ -594,66 +786,25 @@ async function bootstrapApplication({
         backendStatus: "ready",
       };
       createWindowImpl({ mode: "app" });
+      startupTraceImpl("desktop.backend.ready", {
+        apiBaseUrl: bootstrapConfig.apiBaseUrl,
+        backendMode: runtimeMode.backendMode,
+      });
       publishBootstrapConfigImpl(bootstrapConfig);
       return;
     }
 
     createWindowImpl({ mode: "app" });
-    const [, port] = await Promise.all([
-      earlyBackendDepsPromise,
-      findAvailablePortImpl(),
-    ]);
-    const selectedEnsureManagedPythonRuntime = ensureManagedPythonRuntimeImpl ?? ensureManagedPythonRuntime;
-    const selectedResolvePythonExecutable = resolvePythonExecutableImpl ?? resolvePythonExecutable;
-    const selectedStartPythonBackend = startPythonBackendImpl ?? startPythonBackend;
-    const rawProgramAccessConfig = readProgramAccessConfigImpl({
-      appApi: app,
-    });
-    const embeddedBackendPaths = resolveEmbeddedBackendPaths({
-      appApi: app,
-      projectRootPath: projectRoot,
-    });
-    const packagedRelease = app?.isPackaged === true;
-    const controlPlaneBaseUrl = typeof rawProgramAccessConfig?.controlPlaneBaseUrl === "string"
-      ? rawProgramAccessConfig.controlPlaneBaseUrl.trim()
-      : "";
-    const probeRegistrationReadiness = Boolean(controlPlaneBaseUrl);
-    if (packagedRelease && !controlPlaneBaseUrl) {
-      throw new Error("Packaged release requires a control plane base url.");
-    }
-    const programAccessConfig = packagedRelease
-      ? {
-          ...rawProgramAccessConfig,
-          appPrivateDir: embeddedBackendPaths.appPrivateDir,
-          controlPlaneBaseUrl,
-          probeRegistrationReadiness,
-          stage: "packaged_release",
-        }
-      : {
-          ...rawProgramAccessConfig,
-          probeRegistrationReadiness,
-        };
-    const pythonExecutable = packagedRelease
-      ? (await selectedEnsureManagedPythonRuntime({
-          appPrivateDir: embeddedBackendPaths.appPrivateDir,
-          packagedPythonDepsPath: path.join(projectRoot, "python_deps"),
-          projectRoot,
-        })).pythonExecutable
-      : selectedResolvePythonExecutable(projectRoot);
-    backend = await selectedStartPythonBackend({
-      dbPath: embeddedBackendPaths.dbPath,
-      pollIntervalMs: 100,
-      portProvider: () => port,
-      programAccessConfig,
-      projectRoot,
-      pythonExecutable,
-      timeoutMs: 15000,
-    });
+    backend = await prewarmedEmbeddedBackendPromise;
     bootstrapConfig = {
       ...bootstrapConfig,
       apiBaseUrl: backend.baseUrl,
       backendStatus: "ready",
     };
+    startupTraceImpl("desktop.backend.ready", {
+      apiBaseUrl: backend.baseUrl,
+      backendMode: runtimeMode.backendMode,
+    });
     publishBootstrapConfigImpl(bootstrapConfig);
   } catch (error) {
     bootstrapConfig = {
@@ -665,27 +816,50 @@ async function bootstrapApplication({
 }
 
 
-ipcMain.on("desktop:get-bootstrap-config", (event) => {
+ipcMain.on(DESKTOP_BOOTSTRAP_SNAPSHOT_CHANNEL, (event) => {
   event.returnValue = bootstrapConfig;
 });
+
+if (typeof ipcMain.handle === "function") {
+  ipcMain.handle(DESKTOP_BOOTSTRAP_REQUEST_CHANNEL, async () => bootstrapConfig);
+}
 
 ipcMain.on("desktop:log-renderer-diagnostic", (_event, payload) => {
   try {
     appendRendererDiagnostic(payload, { appApi: app });
+    const startupTraceEventName = getStartupTraceEventNameFromRendererDiagnostic(payload);
+    if (startupTraceEventName) {
+      const details = payload?.details && typeof payload.details === "object" && !Array.isArray(payload.details)
+        ? {
+            ...payload.details,
+            diagnosticType: payload.type,
+          }
+        : {
+            diagnosticType: payload?.type ?? null,
+            payload: payload?.details ?? null,
+          };
+      startupTrace(startupTraceEventName, details);
+    }
   } catch (error) {
     console.error("Failed to append renderer diagnostic", error);
   }
 });
 
-configureDesktopStoragePaths();
 // Pre-warm ESM imports while Chromium initializes (promise-cached, safe to call early)
 ensureWindowStateDependencies();
 ensureBackendDependencies();
-app.whenReady().then(bootstrapApplication);
+app.whenReady().then(() => {
+  configureDesktopStoragePaths({
+    deferSessionDataMigrationUntilShutdown: true,
+  });
+  return bootstrapApplication();
+});
 
 app.on("window-all-closed", () => {
   backend?.stop();
   backend = null;
+  embeddedBackendStartupPromise = null;
+  flushPendingSessionMigration();
 
   if (process.platform !== "darwin") {
     app.quit();
@@ -695,6 +869,8 @@ app.on("window-all-closed", () => {
 app.on("before-quit", () => {
   backend?.stop();
   backend = null;
+  embeddedBackendStartupPromise = null;
+  flushPendingSessionMigration();
 });
 
 app.on("activate", async () => {
@@ -708,9 +884,13 @@ app.on("activate", async () => {
 module.exports = {
   bootstrapApplication,
   buildStartupFailureCopy,
+  createWindow,
   createFailureWindow,
   configureDesktopStoragePaths,
+  createStartupTraceLogger,
   deriveLocalAppDataRoot,
+  flushPendingSessionMigration,
+  getStartupTraceEventNameFromRendererDiagnostic,
   migrateLegacySessionData,
   resolveEmbeddedBackendPaths,
   resolveDesktopStoragePaths,

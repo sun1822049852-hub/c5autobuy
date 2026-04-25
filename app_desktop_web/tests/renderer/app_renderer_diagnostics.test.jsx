@@ -7,6 +7,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { App } from "../../src/App.jsx";
+import { RootErrorBoundary } from "../../src/desktop/root_error_boundary.jsx";
 
 
 function jsonResponse(payload, status = 200) {
@@ -67,6 +68,34 @@ function createFetchHarness() {
     const url = new URL(input);
     const method = String(options.method ?? "GET").toUpperCase();
 
+    if (url.pathname === "/app/bootstrap" && method === "GET") {
+      return jsonResponse({
+        version: 1,
+        generated_at: "2026-04-25T09:00:00.000Z",
+        program_access: {
+          mode: "local_pass_through",
+          stage: "prepackaging",
+          guard_enabled: false,
+          message: "当前为本地放行模式，远端程序会员控制面尚未接入正式链路",
+          username: null,
+          auth_state: null,
+          runtime_state: null,
+          grace_expires_at: null,
+          last_error_code: null,
+          registration_flow_version: 2,
+        },
+        query_system: {
+          configs: [],
+          capacitySummary: { modes: {} },
+          runtimeStatus,
+        },
+        purchase_system: {
+          runtimeStatus: { running: false, accounts: [], item_rows: [] },
+          uiPreferences: { selected_config_id: null, updated_at: null },
+          runtimeSettings: { per_batch_ip_fanout_limit: 1, updated_at: null },
+        },
+      });
+    }
     if (url.pathname === "/account-center/accounts" && method === "GET") {
       return jsonResponse([]);
     }
@@ -113,7 +142,7 @@ describe("app renderer diagnostics", () => {
     });
 
     await user.click(screen.getByRole("button", { name: "配置管理" }));
-    await screen.findByRole("heading", { name: "白天配置" });
+    await screen.findByRole("heading", { name: "配置管理" });
 
     await waitFor(() => {
       expect(logRendererDiagnostic).toHaveBeenCalledWith(expect.objectContaining({
@@ -165,6 +194,32 @@ describe("app renderer diagnostics", () => {
             message: "async exploded",
           }),
         }),
+      }));
+    });
+  });
+
+  it("shows a visible startup fallback and logs diagnostics when root render crashes", async () => {
+    const logRendererDiagnostic = vi.fn();
+    window.desktopApp = {
+      logRendererDiagnostic,
+    };
+
+    function RootCrashProbe() {
+      throw new Error("root render crashed");
+    }
+
+    render(
+      <RootErrorBoundary>
+        <RootCrashProbe />
+      </RootErrorBoundary>,
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("界面加载失败");
+    expect(await screen.findByRole("button", { name: "重新加载" })).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(logRendererDiagnostic).toHaveBeenCalledWith(expect.objectContaining({
+        type: "renderer_root_error_boundary",
       }));
     });
   });

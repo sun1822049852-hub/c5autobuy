@@ -58,6 +58,30 @@ async def test_app_bootstrap_route_matches_existing_runtime_and_diagnostics_rout
     }
 
 
+async def test_app_bootstrap_route_scope_shell_returns_lightweight_payload(client, app):
+    response = await client.get("/app/bootstrap?scope=shell")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["version"] == app.state.runtime_update_hub.current_version()
+    assert payload["generated_at"] is not None
+    assert "query_system" not in payload
+    assert "purchase_system" not in payload
+    assert "diagnostics" not in payload
+    assert payload["program_access"] == {
+        "mode": "local_pass_through",
+        "stage": "prepackaging",
+        "guard_enabled": False,
+        "message": "当前为本地放行模式，远端程序会员控制面尚未接入正式链路",
+        "registration_flow_version": 2,
+        "username": None,
+        "auth_state": None,
+        "runtime_state": None,
+        "grace_expires_at": None,
+        "last_error_code": None,
+    }
+
+
 async def test_app_bootstrap_route_clears_deleted_selected_config(client):
     create_response = await client.post(
         "/query-configs",

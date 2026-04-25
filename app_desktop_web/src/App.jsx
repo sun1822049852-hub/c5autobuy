@@ -1,17 +1,19 @@
-import React, { Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
+import React, { Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { createAccountCenterClient } from "./api/account_center_client.js";
 import { createProgramAuthClient } from "./api/program_auth_client.js";
-import { getDesktopBootstrapConfig, subscribeDesktopBootstrapConfig } from "./desktop/bridge.js";
+import { getDefaultDesktopBootstrapConfig, subscribeDesktopBootstrapConfig } from "./desktop/bridge.js";
 import {
   buildUnhandledRejectionDetails,
   buildWindowErrorDetails,
   logRendererDiagnostic,
 } from "./desktop/renderer_diagnostics.js";
-import { AccountCenterPage } from "./features/account-center/account_center_page.jsx";
 import { useSidebarDiagnostics } from "./features/diagnostics/use_sidebar_diagnostics.js";
 
 // Lazy-loaded non-first-screen pages (code-split for faster initial load)
+const AccountCenterPage = React.lazy(() =>
+  import("./features/account-center/account_center_page.jsx").then(m => ({ default: m.AccountCenterPage }))
+);
 const QuerySystemPage = React.lazy(() =>
   import("./features/query-system/query_system_page.jsx").then(m => ({ default: m.QuerySystemPage }))
 );
@@ -144,7 +146,7 @@ function BackendStartupPanel({ backendStatus }) {
 export function App({ runtimeStore }) {
   const [initialAppShellState] = useState(() => readAppShellState());
   const initialActiveItem = resolveKnownActiveItem(initialAppShellState.activeItem);
-  const [bootstrapConfig, setBootstrapConfig] = useState(() => getDesktopBootstrapConfig());
+  const [bootstrapConfig, setBootstrapConfig] = useState(() => getDefaultDesktopBootstrapConfig());
   const [fallbackRuntimeStore] = useState(() => createAppRuntimeStore());
   const [activeItem, setActiveItem] = useState(initialActiveItem);
   const [mountedKeepAliveItems, setMountedKeepAliveItems] = useState(() => (
@@ -153,6 +155,7 @@ export function App({ runtimeStore }) {
   const [reloadNotice] = useState(() => initializeRendererReloadNotice({
     activeItem: initialActiveItem,
   }));
+  const hasReportedHomeInteractiveRef = useRef(false);
   const [navPrompt, setNavPrompt] = useState(EMPTY_NAV_PROMPT);
   const [querySystemLeaveState, setQuerySystemLeaveState] = useState(EMPTY_QUERY_SYSTEM_LEAVE_STATE);
   const [purchaseSystemLeaveState, setPurchaseSystemLeaveState] = useState(EMPTY_PURCHASE_SYSTEM_LEAVE_STATE);
@@ -281,6 +284,49 @@ export function App({ runtimeStore }) {
     };
   }, []);
 
+  useEffect(() => {
+    if (
+      !isBackendReady
+      || activeItem !== "account-center"
+      || hasReportedHomeInteractiveRef.current
+    ) {
+      return undefined;
+    }
+
+    let timeoutId = null;
+    let rafId = null;
+    const doc = globalThis.document;
+    const scheduleNextCheck = typeof globalThis.requestAnimationFrame === "function"
+      ? (callback) => {
+          rafId = globalThis.requestAnimationFrame(callback);
+        }
+      : (callback) => {
+          timeoutId = globalThis.setTimeout(callback, 16);
+        };
+
+    const emitWhenHomeToolbarReady = () => {
+      if (doc?.querySelector(".account-page__toolbar")) {
+        hasReportedHomeInteractiveRef.current = true;
+        logRendererDiagnostic("startup_trace_home_interactive", {
+          selector: ".account-page__toolbar",
+        });
+        return;
+      }
+      scheduleNextCheck(emitWhenHomeToolbarReady);
+    };
+
+    emitWhenHomeToolbarReady();
+
+    return () => {
+      if (rafId !== null && typeof globalThis.cancelAnimationFrame === "function") {
+        globalThis.cancelAnimationFrame(rafId);
+      }
+      if (timeoutId !== null && typeof globalThis.clearTimeout === "function") {
+        globalThis.clearTimeout(timeoutId);
+      }
+    };
+  }, [activeItem, isBackendReady]);
+
   const activeLeaveState = activeItem === "query-system"
     ? querySystemLeaveState
     : activeItem === "purchase-system"
@@ -375,10 +421,12 @@ export function App({ runtimeStore }) {
               <>
                 {mountedKeepAliveItems["account-center"] ? (
                   <div hidden={activeItem !== "account-center"}>
-                    <AccountCenterPage
-                      bootstrapConfig={bootstrapConfig}
-                      client={client}
-                    />
+                    <Suspense fallback={null}>
+                      <AccountCenterPage
+                        bootstrapConfig={bootstrapConfig}
+                        client={client}
+                      />
+                    </Suspense>
                   </div>
                 ) : null}
                 {mountedKeepAliveItems["query-system"] ? (

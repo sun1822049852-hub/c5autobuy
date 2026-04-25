@@ -4,6 +4,11 @@ const { spawn, spawnSync } = require("node:child_process");
 
 
 const DEFAULT_ELECTRON_MIRROR = "https://npmmirror.com/mirrors/electron/";
+const RENDERER_SOURCE_RELATIVE_PATHS = [
+  path.join("app_desktop_web", "src"),
+  path.join("app_desktop_web", "index.html"),
+  path.join("app_desktop_web", "vite.config.js"),
+];
 
 
 function resolveRootPath(...segments) {
@@ -104,10 +109,19 @@ function buildElectronLaunchSpec(
 }
 
 
-function buildElectronLaunchEnv(env = process.env) {
-  return Object.fromEntries(
+function buildElectronLaunchEnv(env = process.env, { nowMs = Date.now() } = {}) {
+  const launchEnv = Object.fromEntries(
     Object.entries(env).filter(([key]) => key.toUpperCase() !== "ELECTRON_RUN_AS_NODE"),
   );
+
+  if (
+    String(launchEnv.C5_STARTUP_TRACE || "").trim() === "1"
+    && !String(launchEnv.C5_STARTUP_TRACE_ORIGIN_MS || "").trim()
+  ) {
+    launchEnv.C5_STARTUP_TRACE_ORIGIN_MS = String(nowMs);
+  }
+
+  return launchEnv;
 }
 
 
@@ -240,12 +254,129 @@ function getLatestModifiedTimeMs(
 }
 
 
+function normalizeGitPath(targetPath) {
+  return targetPath.split(path.sep).join("/");
+}
+
+
+function runGitCommand(
+  args,
+  {
+    cwd = __dirname,
+    spawnSync: spawnSyncImpl = spawnSync,
+  } = {},
+) {
+  const result = spawnSyncImpl("git", args, {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
+
+  if (result.error || result.status !== 0) {
+    return null;
+  }
+
+  return typeof result.stdout === "string" ? result.stdout : null;
+}
+
+
+function getRendererBuildDecisionFromGit(
+  appDirectory,
+  {
+    existsSync = fs.existsSync,
+    runGitCommand: runGitCommandImpl = runGitCommand,
+    statSync = fs.statSync,
+  } = {},
+) {
+  const workspaceRoot = path.dirname(appDirectory);
+  const distEntryPath = path.join(appDirectory, "dist", "index.html");
+  const gitSourcePaths = RENDERER_SOURCE_RELATIVE_PATHS.map((relativePath) => (
+    normalizeGitPath(relativePath)
+  ));
+  const statusOutput = runGitCommandImpl([
+    "status",
+    "--porcelain",
+    "--untracked-files=all",
+    "--no-renames",
+    "--",
+    ...gitSourcePaths,
+  ], {
+    cwd: workspaceRoot,
+  });
+
+  if (statusOutput === null) {
+    return null;
+  }
+
+  const latestCommitOutput = runGitCommandImpl([
+    "log",
+    "-1",
+    "--format=%ct",
+    "--",
+    ...gitSourcePaths,
+  ], {
+    cwd: workspaceRoot,
+  });
+
+  const distMtimeMs = statSync(distEntryPath).mtimeMs;
+  let latestRendererChangeMs = 0;
+  if (latestCommitOutput !== null) {
+    const latestCommitSeconds = Number.parseInt(latestCommitOutput.trim(), 10);
+    if (Number.isFinite(latestCommitSeconds)) {
+      latestRendererChangeMs = latestCommitSeconds * 1000;
+    }
+  }
+
+  const statusLines = statusOutput
+    .split(/\r?\n/u)
+    .map((line) => line.trimEnd())
+    .filter(Boolean);
+
+  for (const statusLine of statusLines) {
+    const indexStatus = statusLine[0] ?? " ";
+    const worktreeStatus = statusLine[1] ?? " ";
+    const relativePath = statusLine.slice(3);
+
+    if (
+      ["D", "T", "U"].includes(indexStatus)
+      || ["D", "T", "U"].includes(worktreeStatus)
+      || !relativePath
+    ) {
+      return {
+        shouldBuild: true,
+        strategy: "git",
+      };
+    }
+
+    const absolutePath = path.join(workspaceRoot, ...relativePath.split("/"));
+    if (!existsSync(absolutePath)) {
+      return {
+        shouldBuild: true,
+        strategy: "git",
+      };
+    }
+
+    latestRendererChangeMs = Math.max(
+      latestRendererChangeMs,
+      statSync(absolutePath).mtimeMs,
+    );
+  }
+
+  return {
+    shouldBuild: latestRendererChangeMs > distMtimeMs,
+    strategy: "git",
+  };
+}
+
+
 function ensureRendererBuild(
   appDirectory,
   {
     env = process.env,
     existsSync = fs.existsSync,
     readdirSync = fs.readdirSync,
+    runGitCommand: runGitCommandImpl = runGitCommand,
     resolveNpmCliScript: resolveNpmCliScriptImpl = resolveNpmCliScript,
     spawnSync: spawnSyncImpl = spawnSync,
     statSync = fs.statSync,
@@ -265,17 +396,30 @@ function ensureRendererBuild(
     return;
   }
 
-  const shouldBuild = !hasBuiltDist || sourcePaths.some((sourcePath) => (
-    getLatestModifiedTimeMs(sourcePath, {
+  let shouldBuild = !hasBuiltDist;
+  if (!shouldBuild) {
+    const gitDecision = getRendererBuildDecisionFromGit(appDirectory, {
       existsSync,
-      readdirSync,
+      runGitCommand: runGitCommandImpl,
       statSync,
-    }) > getLatestModifiedTimeMs(distEntryPath, {
-      existsSync,
-      readdirSync,
-      statSync,
-    })
-  ));
+    });
+    if (gitDecision) {
+      shouldBuild = gitDecision.shouldBuild;
+    } else {
+      const distMtimeMs = getLatestModifiedTimeMs(distEntryPath, {
+        existsSync,
+        readdirSync,
+        statSync,
+      });
+      shouldBuild = sourcePaths.some((sourcePath) => (
+        getLatestModifiedTimeMs(sourcePath, {
+          existsSync,
+          readdirSync,
+          statSync,
+        }) > distMtimeMs
+      ));
+    }
+  }
 
   if (!shouldBuild) {
     return;
@@ -350,4 +494,5 @@ module.exports = {
   resolveElectronCliScript,
   resolveElectronInstallScript,
   resolveNpmCliScript,
+  runGitCommand,
 };

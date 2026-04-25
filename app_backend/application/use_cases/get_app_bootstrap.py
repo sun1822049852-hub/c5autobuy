@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from datetime import datetime
+from typing import Literal
 
 from app_backend.application.services.query_mode_capacity_service import QueryModeCapacityService
 from app_backend.application.use_cases.get_purchase_ui_preferences import GetPurchaseUiPreferencesUseCase
@@ -42,7 +43,11 @@ class GetAppBootstrapUseCase:
         self._runtime_update_hub = runtime_update_hub
         self._program_access_gateway = program_access_gateway
 
-    def execute(self) -> dict[str, object]:
+    def execute(self, *, scope: Literal["shell", "full"] = "full") -> dict[str, object]:
+        shell_payload = self._build_shell_payload()
+        if scope == "shell":
+            return shell_payload
+
         query_configs = ListQueryConfigsUseCase(self._query_config_repository).execute()
         capacity_summary = GetQueryCapacitySummaryUseCase(
             QueryModeCapacityService(self._account_repository)
@@ -68,8 +73,7 @@ class GetAppBootstrapUseCase:
         ).execute()["summary"]
 
         return {
-            "version": self._runtime_update_hub.current_version(),
-            "generated_at": _now(),
+            **shell_payload,
             "query_system": {
                 "configs": list(query_configs),
                 "capacity_summary": capacity_summary,
@@ -87,6 +91,12 @@ class GetAppBootstrapUseCase:
             "diagnostics": {
                 "summary": diagnostics_summary,
             },
+        }
+
+    def _build_shell_payload(self) -> dict[str, object]:
+        return {
+            "version": self._runtime_update_hub.current_version(),
+            "generated_at": _now(),
             "program_access": asdict(self._program_access_gateway.get_summary()),
         }
 

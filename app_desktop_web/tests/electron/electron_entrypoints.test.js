@@ -20,4 +20,12 @@ describe("electron entrypoints", () => {
     expect(mainEntrySource).toContain("require(\"electron\")");
     expect(preloadEntrySource).toContain("require(\"electron\")");
   });
+
+  it("keeps the preload bootstrap snapshot path free of sync ipc calls", () => {
+    const preloadEntryPath = path.join(process.cwd(), "electron-preload.cjs");
+    const preloadEntrySource = fs.readFileSync(preloadEntryPath, "utf8");
+
+    expect(preloadEntrySource).not.toContain("sendSync(");
+    expect(preloadEntrySource).toContain("invoke(");
+  });
 });

@@ -38,6 +38,7 @@ function createElectronHarness() {
   };
   const ipcMain = {
     on: vi.fn(),
+    handle: vi.fn(),
   };
   class BrowserWindow {}
   BrowserWindow.getAllWindows = vi.fn(() => []);
@@ -105,11 +106,234 @@ afterEach(() => {
 
 
 describe("electron remote runtime mode", () => {
-  it("configures dedicated desktop storage paths before the app bootstraps", () => {
+  it("formats startup trace records against the shared launcher origin when tracing is enabled", () => {
+    const electronHarness = createElectronHarness();
+    const { createStartupTraceLogger } = loadElectronMainWithMocks(electronHarness);
+    const consoleImpl = vi.fn();
+    const trace = createStartupTraceLogger({
+      consoleImpl,
+      env: {
+        C5_STARTUP_TRACE: "1",
+        C5_STARTUP_TRACE_ORIGIN_MS: "1000",
+      },
+      nowMs: () => 1365,
+      source: "test-harness",
+    });
+
+    trace("desktop.window.visible", {
+      mode: "app",
+    });
+
+    expect(consoleImpl).toHaveBeenCalledOnce();
+    const [line] = consoleImpl.mock.calls[0];
+    expect(String(line)).toContain("[startup-trace]");
+    const record = JSON.parse(String(line).replace("[startup-trace] ", ""));
+    expect(record).toEqual(expect.objectContaining({
+      details: {
+        mode: "app",
+      },
+      event: "desktop.window.visible",
+      sinceOriginMs: 365,
+      source: "test-harness",
+    }));
+  });
+
+  it("records window visibility and static shell readiness through startup trace hooks", () => {
+    const startupTraceImpl = vi.fn();
+    const app = {
+      on: vi.fn(),
+      setAppUserModelId: vi.fn(),
+      setName: vi.fn(),
+      setPath: vi.fn(),
+      getPath: vi.fn((target) => {
+        if (target === "appData") {
+          return "C:\\Users\\tester\\AppData\\Roaming";
+        }
+        return "";
+      }),
+      quit: vi.fn(),
+      whenReady: vi.fn(() => ({
+        then: vi.fn(),
+      })),
+    };
+    const ipcMain = {
+      on: vi.fn(),
+      handle: vi.fn(),
+    };
+    const windowHandlers = new Map();
+    const webContentsHandlers = new Map();
+    class BrowserWindow {
+      static getAllWindows = vi.fn(() => []);
+
+      constructor() {
+        this.on = vi.fn();
+        this.once = vi.fn((eventName, handler) => {
+          windowHandlers.set(eventName, handler);
+        });
+        this.loadFile = vi.fn();
+        this.loadURL = vi.fn();
+        this.show = vi.fn();
+        this.setTitle = vi.fn();
+        this.getBounds = vi.fn(() => ({
+          width: 1440,
+          height: 860,
+        }));
+        this.webContents = {
+          once: vi.fn((eventName, handler) => {
+            webContentsHandlers.set(eventName, handler);
+          }),
+        };
+      }
+    }
+
+    const { createWindow } = loadElectronMainWithMocks({
+      electron: {
+        BrowserWindow,
+        app,
+        ipcMain,
+      },
+    });
+
+    createWindow({
+      mode: "app",
+      loadWindowStateImpl: () => ({
+        width: 1440,
+        height: 860,
+        minWidth: 1180,
+        minHeight: 760,
+      }),
+      saveWindowStateImpl: vi.fn(),
+      startupTraceImpl,
+    });
+
+    windowHandlers.get("show")?.();
+    webContentsHandlers.get("dom-ready")?.();
+
+    expect(startupTraceImpl).toHaveBeenNthCalledWith(1, "desktop.window.visible", {
+      mode: "app",
+    });
+    expect(startupTraceImpl).toHaveBeenNthCalledWith(2, "desktop.static_shell.visible", {
+      signal: "dom-ready",
+    });
+  });
+
+  it("records embedded backend readiness through startup trace hooks without changing bootstrap flow", async () => {
+    const electronHarness = createElectronHarness();
+    const { bootstrapApplication } = loadElectronMainWithMocks(electronHarness);
+    const startupTraceImpl = vi.fn();
+    const createWindowImpl = vi.fn();
+    const publishBootstrapConfigImpl = vi.fn();
+    const startPythonBackendImpl = vi.fn().mockResolvedValue({
+      baseUrl: "http://127.0.0.1:59192",
+      port: 59192,
+      stop: vi.fn(),
+    });
+
+    await bootstrapApplication({
+      runtimeMode: {
+        apiBaseUrl: "http://127.0.0.1:8000",
+        backendMode: "embedded",
+        configurationError: "",
+        runtimeWebSocketUrl: "",
+        shouldStartEmbeddedBackend: true,
+      },
+      createWindowImpl,
+      ensureBackendDependenciesImpl: vi.fn().mockResolvedValue(),
+      ensureManagedPythonRuntimeImpl: vi.fn(),
+      ensureWindowStateDependenciesImpl: vi.fn().mockResolvedValue(),
+      findAvailablePortImpl: vi.fn().mockResolvedValue(59192),
+      publishBootstrapConfigImpl,
+      readProgramAccessConfigImpl: vi.fn(() => ({
+        controlPlaneBaseUrl: "http://8.138.39.139:18787",
+      })),
+      resolvePythonExecutableImpl: vi.fn(() => "C:/demo/project/.venv/Scripts/python.exe"),
+      startPythonBackendImpl,
+      startupTraceImpl,
+    });
+
+    expect(createWindowImpl).toHaveBeenCalledWith({
+      mode: "app",
+    });
+    expect(publishBootstrapConfigImpl).toHaveBeenCalledOnce();
+    expect(startupTraceImpl).toHaveBeenCalledWith("desktop.backend.ready", {
+      apiBaseUrl: "http://127.0.0.1:59192",
+      backendMode: "embedded",
+    });
+  });
+
+  it("reveals the embedded app window immediately instead of waiting for ready-to-show", () => {
+    const app = {
+      on: vi.fn(),
+      setAppUserModelId: vi.fn(),
+      setName: vi.fn(),
+      setPath: vi.fn(),
+      getPath: vi.fn((target) => {
+        if (target === "appData") {
+          return "C:\\Users\\tester\\AppData\\Roaming";
+        }
+        return "";
+      }),
+      quit: vi.fn(),
+      whenReady: vi.fn(() => ({
+        then: vi.fn(),
+      })),
+    };
+    const ipcMain = {
+      on: vi.fn(),
+    };
+    class BrowserWindow {
+      static getAllWindows = vi.fn(() => []);
+
+      constructor(options) {
+        this.options = options;
+        this.on = vi.fn();
+        this.once = vi.fn();
+        this.loadFile = vi.fn();
+        this.loadURL = vi.fn();
+        this.show = vi.fn();
+        this.setTitle = vi.fn();
+        this.getBounds = vi.fn(() => ({
+          width: 1440,
+          height: 860,
+        }));
+      }
+    }
+
+    const { createWindow } = loadElectronMainWithMocks({
+      electron: {
+        BrowserWindow,
+        app,
+        ipcMain,
+      },
+    });
+
+    const windowInstance = createWindow({
+      mode: "app",
+      loadWindowStateImpl: () => ({
+        width: 1440,
+        height: 860,
+        minWidth: 1180,
+        minHeight: 760,
+      }),
+      saveWindowStateImpl: vi.fn(),
+    });
+
+    expect(windowInstance.loadFile).toHaveBeenCalledOnce();
+    expect(windowInstance.show).toHaveBeenCalledOnce();
+  });
+
+  it("does not eagerly configure dedicated desktop storage paths before app ready", () => {
     const electronHarness = createElectronHarness();
     const mkdirSync = vi.fn();
     const originalAppData = process.env.APPDATA;
     const originalLocalAppData = process.env.LOCALAPPDATA;
+    let whenReadyCallback = null;
+
+    electronHarness.electron.app.whenReady = vi.fn(() => ({
+      then: vi.fn((callback) => {
+        whenReadyCallback = callback;
+      }),
+    }));
 
     process.env.APPDATA = "C:\\Users\\tester\\AppData\\Roaming";
     process.env.LOCALAPPDATA = "C:\\Users\\tester\\AppData\\Local";
@@ -136,32 +360,12 @@ describe("electron remote runtime mode", () => {
       }
     }
 
-    expect(electronHarness.electron.app.setAppUserModelId).toHaveBeenCalledWith("com.c5.trading-assistant");
-    expect(electronHarness.electron.app.setName).toHaveBeenCalledWith("C5 交易助手");
-    expect(mkdirSync.mock.calls.map(([targetPath]) => normalizePathSeparators(targetPath))).toContain(
-      "C:\\Users\\tester\\AppData\\Roaming\\C5AccountCenter",
-    );
-    expect(mkdirSync.mock.calls.map(([targetPath]) => normalizePathSeparators(targetPath))).toContain(
-      "C:\\Users\\tester\\AppData\\Local\\C5AccountCenter\\session-data",
-    );
-    expect(
-      electronHarness.electron.app.setPath.mock.calls.map(([targetName, targetPath]) => [
-        targetName,
-        normalizePathSeparators(targetPath),
-      ]),
-    ).toContainEqual([
-      "userData",
-      "C:\\Users\\tester\\AppData\\Roaming\\C5AccountCenter",
-    ]);
-    expect(
-      electronHarness.electron.app.setPath.mock.calls.map(([targetName, targetPath]) => [
-        targetName,
-        normalizePathSeparators(targetPath),
-      ]),
-    ).toContainEqual([
-      "sessionData",
-      "C:\\Users\\tester\\AppData\\Local\\C5AccountCenter\\session-data",
-    ]);
+    expect(typeof whenReadyCallback).toBe("function");
+    expect(electronHarness.electron.app.setPath).not.toHaveBeenCalled();
+    expect(electronHarness.electron.app.setAppUserModelId).not.toHaveBeenCalled();
+    expect(electronHarness.electron.app.setName).not.toHaveBeenCalled();
+
+    expect(mkdirSync).not.toHaveBeenCalled();
   });
 
   it("skips dedicated desktop storage path rewrites outside Windows", () => {
@@ -631,6 +835,90 @@ describe("electron remote runtime mode", () => {
     );
   });
 
+  it("keeps the legacy session path during startup when deferred migration is enabled and flushes migration on shutdown", () => {
+    const electronHarness = createElectronHarness();
+    const cpSync = vi.fn();
+    const existsSync = vi.fn((targetPath) => (
+      targetPath === "C:\\Users\\tester\\AppData\\Roaming\\electron"
+      || targetPath === "C:\\Users\\tester\\AppData\\Local\\C5AccountCenter\\session-data"
+    ));
+    const mkdirSync = vi.fn();
+    const readdirSync = vi.fn((targetPath) => {
+      const normalizedPath = normalizePathSeparators(targetPath);
+      if (normalizedPath.endsWith("\\session-data")) {
+        return [];
+      }
+      if (normalizedPath.endsWith("\\electron")) {
+        return ["Cookies"];
+      }
+      return [];
+    });
+    const writeFileSync = vi.fn();
+    const { configureDesktopStoragePaths, flushPendingSessionMigration } = loadElectronMainWithMocks({
+      electron: electronHarness.electron,
+      fsModule: {
+        cpSync,
+        existsSync,
+        mkdirSync,
+        readdirSync,
+        writeFileSync,
+      },
+    });
+
+    electronHarness.electron.app.getPath.mockImplementation((target) => {
+      if (target === "appData") {
+        return "C:\\Users\\tester\\AppData\\Roaming";
+      }
+      if (target === "sessionData" || target === "userData") {
+        return "C:\\Users\\tester\\AppData\\Roaming\\electron";
+      }
+      return "";
+    });
+
+    cpSync.mockClear();
+    mkdirSync.mockClear();
+    writeFileSync.mockClear();
+    electronHarness.electron.app.setPath.mockClear();
+
+    configureDesktopStoragePaths({
+      appApi: electronHarness.electron.app,
+      deferSessionDataMigrationUntilShutdown: true,
+      env: {
+        APPDATA: "C:\\Users\\tester\\AppData\\Roaming",
+        LOCALAPPDATA: "C:\\Users\\tester\\AppData\\Local",
+      },
+      existsSync,
+      mkdirSync,
+      pathApi: path.win32,
+      platform: "win32",
+      readdirSync,
+      writeFileSync,
+    });
+
+    expect(cpSync).not.toHaveBeenCalled();
+    expect(writeFileSync).not.toHaveBeenCalled();
+    expect(electronHarness.electron.app.setPath).toHaveBeenCalledWith(
+      "sessionData",
+      "C:\\Users\\tester\\AppData\\Roaming\\electron",
+    );
+
+    expect(flushPendingSessionMigration()).toBe(true);
+    expect(cpSync).toHaveBeenCalledWith(
+      "C:\\Users\\tester\\AppData\\Roaming\\electron\\Cookies",
+      "C:\\Users\\tester\\AppData\\Local\\C5AccountCenter\\session-data\\Cookies",
+      {
+        errorOnExist: false,
+        force: true,
+        recursive: true,
+      },
+    );
+    expect(writeFileSync).toHaveBeenCalledWith(
+      "C:\\Users\\tester\\AppData\\Local\\C5AccountCenter\\session-data\\.c5-session-migrated",
+      "done",
+      "utf8",
+    );
+  });
+
   it("skips legacy session migration once the dedicated migration marker exists", () => {
     const electronHarness = createElectronHarness();
     const cpSync = vi.fn();
@@ -970,6 +1258,38 @@ describe("electron remote runtime mode", () => {
     bootstrapHandler(event);
 
     expect(event.returnValue).toEqual({
+      backendMode: "remote",
+      apiBaseUrl: "https://api.example.com",
+      backendStatus: "ready",
+      runtimeWebSocketUrl: "wss://api.example.com/ws/runtime",
+    });
+  });
+
+  it("returns the remote bootstrap snapshot through async desktop:request-bootstrap-config", async () => {
+    const electronHarness = createElectronHarness();
+    const { bootstrapApplication } = loadElectronMainWithMocks(electronHarness);
+    const bootstrapHandler = electronHarness.electron.ipcMain.handle.mock.calls.find(
+      ([channel]) => channel === "desktop:request-bootstrap-config",
+    )?.[1];
+
+    expect(typeof bootstrapHandler).toBe("function");
+
+    await bootstrapApplication({
+      runtimeMode: {
+        backendMode: "remote",
+        apiBaseUrl: "https://api.example.com",
+        configurationError: "",
+        runtimeWebSocketUrl: "wss://api.example.com/ws/runtime",
+        shouldStartEmbeddedBackend: false,
+      },
+      ensureWindowStateDependenciesImpl: vi.fn().mockResolvedValue(),
+      ensureBackendDependenciesImpl: vi.fn().mockResolvedValue(),
+      startPythonBackendImpl: vi.fn(),
+      createFailureWindowImpl: vi.fn(),
+      createWindowImpl: vi.fn(),
+    });
+
+    await expect(bootstrapHandler()).resolves.toEqual({
       backendMode: "remote",
       apiBaseUrl: "https://api.example.com",
       backendStatus: "ready",

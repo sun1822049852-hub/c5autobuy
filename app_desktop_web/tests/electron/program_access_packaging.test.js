@@ -11,6 +11,14 @@ const configModulePath = require.resolve("../../program_access_config.cjs");
 const electronMainModulePath = require.resolve("../../electron-main.cjs");
 
 
+async function drainMicrotasks(iterations = 6) {
+  for (let index = 0; index < iterations; index += 1) {
+    // Keep yielding so async bootstrap branches can progress without timers.
+    await Promise.resolve();
+  }
+}
+
+
 function createElectronHarness() {
   const app = {
     getPath: vi.fn(() => "C:\\Users\\tester\\AppData\\Roaming\\C5AccountCenter"),
@@ -217,11 +225,7 @@ describe("program access packaging config", () => {
       createFailureWindowImpl: vi.fn(),
     });
 
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    await drainMicrotasks();
     expect(createWindowImpl).toHaveBeenNthCalledWith(1, { mode: "app" });
     expect(ensureManagedPythonRuntimeImpl).toHaveBeenCalledOnce();
     expect(startPythonBackendImpl).toHaveBeenCalledOnce();
@@ -238,6 +242,114 @@ describe("program access packaging config", () => {
       backendMode: "embedded",
       backendStatus: "ready",
     }));
+  });
+
+  it("starts embedded backend prewarm work before window-state dependencies resolve", async () => {
+    const electronHarness = createElectronHarness();
+    const { bootstrapApplication } = loadElectronMainWithMocks({
+      electron: electronHarness.electron,
+    });
+    const createWindowImpl = vi.fn();
+    const publishBootstrapConfigImpl = vi.fn();
+    let resolveBackendStartup;
+    let resolveWindowStateDeps;
+    const ensureWindowStateDependenciesImpl = vi.fn(() => new Promise((resolve) => {
+      resolveWindowStateDeps = resolve;
+    }));
+    const ensureManagedPythonRuntimeImpl = vi.fn().mockResolvedValue({
+      pythonExecutable: "C:/Users/tester/AppData/Roaming/C5AccountCenter/python-runtime/3.11.9/python.exe",
+    });
+    const startPythonBackendImpl = vi.fn(() => new Promise((resolve) => {
+      resolveBackendStartup = resolve;
+    }));
+
+    const bootstrapPromise = bootstrapApplication({
+      runtimeMode: {
+        backendMode: "embedded",
+        apiBaseUrl: "http://127.0.0.1:8000",
+        configurationError: "",
+        runtimeWebSocketUrl: "",
+        shouldStartEmbeddedBackend: true,
+      },
+      ensureWindowStateDependenciesImpl,
+      ensureBackendDependenciesImpl: vi.fn().mockResolvedValue(),
+      findAvailablePortImpl: vi.fn().mockResolvedValue(8233),
+      ensureManagedPythonRuntimeImpl,
+      resolvePythonExecutableImpl: vi.fn(() => "C:/demo/project/.venv/Scripts/python.exe"),
+      readProgramAccessConfigImpl: vi.fn(() => ({
+        controlPlaneBaseUrl: "http://8.138.39.139:18787",
+      })),
+      startPythonBackendImpl,
+      publishBootstrapConfigImpl,
+      createWindowImpl,
+      createFailureWindowImpl: vi.fn(),
+    });
+
+    await drainMicrotasks();
+    expect(startPythonBackendImpl).toHaveBeenCalledOnce();
+    expect(createWindowImpl).not.toHaveBeenCalled();
+    expect(publishBootstrapConfigImpl).not.toHaveBeenCalled();
+
+    resolveWindowStateDeps();
+    await drainMicrotasks();
+    expect(createWindowImpl).toHaveBeenCalledWith({ mode: "app" });
+
+    resolveBackendStartup({
+      baseUrl: "http://127.0.0.1:8233",
+      stop: vi.fn(),
+    });
+    await bootstrapPromise;
+
+    expect(publishBootstrapConfigImpl).toHaveBeenCalledWith(expect.objectContaining({
+      backendStatus: "ready",
+    }));
+  });
+
+  it("reuses one in-flight embedded backend startup promise across concurrent bootstraps", async () => {
+    const electronHarness = createElectronHarness();
+    const { bootstrapApplication } = loadElectronMainWithMocks({
+      electron: electronHarness.electron,
+    });
+    let resolveBackendStartup;
+    const startPythonBackendImpl = vi.fn(() => new Promise((resolve) => {
+      resolveBackendStartup = resolve;
+    }));
+    const sharedBootstrapArgs = {
+      runtimeMode: {
+        backendMode: "embedded",
+        apiBaseUrl: "http://127.0.0.1:8000",
+        configurationError: "",
+        runtimeWebSocketUrl: "",
+        shouldStartEmbeddedBackend: true,
+      },
+      ensureWindowStateDependenciesImpl: vi.fn().mockResolvedValue(),
+      ensureBackendDependenciesImpl: vi.fn().mockResolvedValue(),
+      findAvailablePortImpl: vi.fn().mockResolvedValue(8233),
+      ensureManagedPythonRuntimeImpl: vi.fn().mockResolvedValue({
+        pythonExecutable: "C:/Users/tester/AppData/Roaming/C5AccountCenter/python-runtime/3.11.9/python.exe",
+      }),
+      resolvePythonExecutableImpl: vi.fn(() => "C:/demo/project/.venv/Scripts/python.exe"),
+      readProgramAccessConfigImpl: vi.fn(() => ({
+        controlPlaneBaseUrl: "http://8.138.39.139:18787",
+      })),
+      startPythonBackendImpl,
+      createWindowImpl: vi.fn(),
+      createFailureWindowImpl: vi.fn(),
+      publishBootstrapConfigImpl: vi.fn(),
+    };
+
+    const firstBootstrapPromise = bootstrapApplication(sharedBootstrapArgs);
+    await drainMicrotasks();
+    const secondBootstrapPromise = bootstrapApplication(sharedBootstrapArgs);
+    await drainMicrotasks();
+
+    expect(startPythonBackendImpl).toHaveBeenCalledOnce();
+
+    resolveBackendStartup({
+      baseUrl: "http://127.0.0.1:8233",
+      stop: vi.fn(),
+    });
+    await Promise.all([firstBootstrapPromise, secondBootstrapPromise]);
   });
 
   it("fails closed for packaged embedded startup when the control-plane base url is missing", async () => {
@@ -331,10 +443,15 @@ describe("program access packaging config", () => {
       expect.objectContaining({ to: "client_config.release.json" }),
       expect.objectContaining({ to: "app_backend" }),
       expect.objectContaining({ to: "python_deps" }),
+      expect.objectContaining({ to: "test.wasm" }),
       expect.objectContaining({ to: "xsign.py" }),
     ]));
     expect(builderConfig.extraResources).not.toEqual(expect.arrayContaining([
       expect.objectContaining({ to: ".venv" }),
+    ]));
+    expect(builderConfig.files).toEqual(expect.arrayContaining([
+      "python_runtime_bootstrap.js",
+      "python_runtime_config.cjs",
     ]));
     expect(builderConfig.win).toEqual(expect.objectContaining({
       signAndEditExecutable: false,

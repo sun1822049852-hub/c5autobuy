@@ -1086,3 +1086,537 @@
   - 本轮 focused 回归覆盖的是已有用户路径，未额外新增代理池弹窗的独立组件测试；不过样式已在全局 `select.form-select/select.form-input` 层统一兜底。
 - 下一步：
   - 若魔尊继续追 UI 细节，可直接做一次真机手测，重点看 Windows/Electron 下拉展开面板是否已与当前暗色主题一致。
+
+## 2026-04-25 14:25 (Asia/Shanghai)
+- 背景：魔尊要求在打包前做一轮全面审查，本轮允许并鼓励多 agent 并行，目标是先拿到真实发布阻塞、验证证据和下一刀，而不是直接改代码或重打 installer。
+- 当前方案 / 断点：
+  - plan：`打包前全面审查 / 发布阻塞验尸`
+  - chunk：`handoff`
+  - task：`已完成审查与验证，尚未开始修 blocker`
+- 已完成：
+  - 并行完成四个审查域：Python backend 主链路、Electron/embedded 打包与启动链、renderer 页面与状态一致性、`program_admin_console` 发布链。
+  - 已跑全量/聚焦验证并取得新鲜证据：
+    - `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest -q` -> `669 passed, 1 failed`
+    - `npm --prefix app_desktop_web test` -> 全量仍红
+    - `npm --prefix program_admin_console test` -> 全绿
+    - `npm --prefix app_desktop_web run prepack:win` -> 通过，但只证明 preflight/build 通过，不证明最终包物料齐全
+    - `npm exec vitest run tests/electron/python_backend.test.js tests/electron/program_access_packaging.test.js tests/electron/electron_entrypoints.test.js tests/renderer/app_remote_bootstrap.test.jsx`（`app_desktop_web/`）-> `32 passed`
+    - `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest -q tests/backend/test_backend_health.py tests/backend/test_app_bootstrap_route.py tests/backend/test_desktop_web_backend_bootstrap.py tests/backend/test_program_auth_routes.py` -> `29 passed`
+  - 已把前端红测进一步分层确认：`query_system_page.test.jsx` 与 `remote_runtime_shell.test.jsx` 在 `app_desktop_web/` 下单跑均为绿；`query_stats_page.test.jsx` 仍有 `3` 条失败，`account_capability_stats_page.test.jsx` 仍有 `1` 条失败，说明 stats 相关既有行为/测试口径确实存在未收口项。
+  - 已直接验尸 `app_desktop_web/release/win-unpacked/resources`：存在 `xsign.py`，但 `test.wasm` 数量为 `0`，与代码里的运行时资源解析口径不一致。
+- 当前进度：
+  - 审查结论已明确，当前不建议打包。
+  - 代码未修；当前仓库改动只有这次 handoff 文档落盘。
+  - README 已核对，本轮只是审查与交接，不涉及产品行为文案或用户操作说明，因此 README 无需改动。
+- 现场状态：
+  - 工作目录：`C:/Users/18220/Desktop/C5autobug更新接口 - 副本 (2)`
+  - 分支：`master`
+  - worktree：根工作树
+  - 工作树状态：当前仅见未跟踪目录 `.playwright-mcp/`、`node_modules/`、`program_admin_console/node_modules/`；本轮未触碰业务代码文件。
+  - 多 agent 审查结论已回收：backend / desktop packaging / renderer / program admin console 均已产出 findings。
+- 已确认的发布阻塞：
+  - `BLOCKER` packaged release 当前不会带上 `test.wasm`，但查询/余额/购买三条主链都通过 `xsign` 读取 `repo_root / "test.wasm"`；`xsign.py` 单独存在不足以支撑主链。
+  - `BLOCKER` `app_desktop_web/electron-builder.config.cjs` 的 `files` 白名单未包含 `python_runtime_bootstrap.js` / `python_runtime_config.cjs`，而 `electron-main.cjs` 会动态 `import("./python_runtime_bootstrap.js")`；默认 embedded 打包后存在直接崩溃风险。
+  - `BLOCKER` 配置管理页在 `saveBarError` 非空时会关闭“切配置/离开页面”的未保存确认，导致保存失败或校验失败时反而最容易静默丢草稿。
+  - `BLOCKER` `app_desktop_web/python_backend.js` 仍保留“`/health` 只要 HTTP 200 且 JSON 解析失败就当 ready”的回退，违反仓库里对 readiness gate 的硬约束。
+  - `HIGH` backend 全量 pytest 仍有 `1` 个确定性失败：`tests/backend/test_query_config_routes.py::test_query_capacity_summary_returns_available_accounts_by_mode` 的测试夹具 `_build_query_account()` 未补 `browser_proxy_id/api_proxy_id`，而仓库 `SqliteAccountRepository.create_account()` 已无条件读取这两个字段。
+  - `HIGH` query stats 新鲜度/刷新逻辑存在真实行为偏差：stats 页显式刷新与切日期后的自动刷新会被 freshness gate 吞掉，导致相关 renderer 回归持续发红。
+  - `HIGH` 若本轮还要把 `program_admin_console` 一并作为发布对象，其 Docker 构建链仍不锁依赖、运行时隐含要求 `node:sqlite`、且默认缺私钥时会临时生成签名 key，现网发布不稳。
+- 已尝试但失败 / 不要再犯：
+  - 不要把 `prepack:win` 通过误当成“包可发”；它当前没覆盖 `test.wasm` 和 bootstrap JS 白名单这两类真实物料缺失。
+  - 不要在仓库根目录直接用 `npm --prefix app_desktop_web exec vitest run ... --reporter=...` 做单文件取证；这样会把 `.worktrees/` 里的同名测试一起扫进来，产生噪音。需要在 `app_desktop_web/` 目录内单跑。
+  - 不要把 stats 页的红测全部归为“测试陈旧”；`query_stats_page` 至少有一部分是当前刷新策略真把用户动作吞掉。
+- 关键行为与保护约束：
+  - `查询 -> 命中 -> 购买` 主链不能接受“打包后资源缺失导致 `x-sign` 不可用”的发布方式。
+  - Electron embedded 启动链必须满足：builder 白名单覆盖 backend bootstrap 依赖、`/health` 必须明确 `ready=true` 才可放行 renderer。
+  - 配置管理页的未保存保护属于关键交互护栏，不能因为 `saveError` 而失效。
+- 验证状态：
+  - 已执行：
+    - 全量 backend pytest：`669 passed, 1 failed`
+    - 全量 desktop web vitest：仍红
+    - 全量 `program_admin_console` tests：全绿
+    - focused desktop/electron/bootstrap：`32 passed`
+    - focused backend bootstrap/program auth：`29 passed`
+    - isolated renderer：`query_system_page` 绿、`remote_runtime_shell` 绿、`query_stats_page` 红 `3`、`account_capability_stats_page` 红 `1`
+  - 尚未覆盖：
+    - 未做新的 `pack:win` / `build:win` 完整产物再验尸
+    - 未修 blocker 前，不应再做“是否可发”的结论升级
+    - 未做 `program_admin_console` 远端同步 smoke，本轮只审查代码与本地测试
+- 下一步：
+  - 下个会话第一刀先修打包主阻塞：补 packaged resources 与 builder `files` 白名单，让 `test.wasm`、`python_runtime_bootstrap.js`、`python_runtime_config.cjs` 真进入最终包。
+  - 第二刀修行为阻塞：去掉 `/health` 的 HTTP 200 fallback，并恢复 `query-system` 在 `saveError` 场景下的未保存保护。
+  - 第三刀收回归：修 backend 夹具漂移与 stats 页红测，再重新跑 `python -m pytest -q`、`npm --prefix app_desktop_web test`、`npm --prefix app_desktop_web run pack:win` 后做产物验尸。
+
+## 2026-04-25 14:35 (Asia/Shanghai)
+- 背景：backend 有 1 个确定性红测：`tests/backend/test_query_config_routes.py::test_query_capacity_summary_returns_available_accounts_by_mode`。根因是测试夹具 `_build_query_account()` 未补 `browser_proxy_id/api_proxy_id`，而仓库 `SqliteAccountRepository.create_account()` 已无条件读取这两个字段。
+- 已完成：
+  - 仅在测试侧做最小修复：为 `_build_query_account()` 生成的 account 对象补齐 `browser_proxy_id=None` 与 `api_proxy_id=None`，对齐仓库当前 repository 的字段读取口径，不改任何业务行为。
+- 已做验证：
+  - `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest -q tests/backend/test_query_config_routes.py::test_query_capacity_summary_returns_available_accounts_by_mode` -> `1 passed`
+  - `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest -q tests/backend/test_query_config_routes.py` -> `22 passed`
+
+## 2026-04-25 14:40 (Asia/Shanghai)
+- 背景：修复“配置管理 / 查询系统”在 `saveBarError` 非空时未保存确认失效的问题（保存失败或校验失败时更容易静默丢草稿）。
+- 根因：
+  - `QuerySystemPage` 将 `saveBarError` 作为禁用条件，导致 `canPromptOnConfigSwitch` 与 `canPromptOnLeave` 在出现 save error 后变为 `false`，从而切配置/离开页直接跳转、不再弹出未保存确认。
+- 已完成：
+  - 去掉 `saveBarError` 对“切配置确认/离开确认”的 gating，使 save error 只负责展示错误，不影响未保存保护。
+  - 补 focused renderer 回归：在“校验失败导致保存失败”后，切配置/离开页仍必须弹出“未保存修改”对话框。
+- 已做验证：
+  - `npm test -- tests/renderer/query_system_editing.test.jsx`（`app_desktop_web/`）-> `15 passed`
+
+## 2026-04-25 14:43 (Asia/Shanghai)
+- 背景：修复 `app_desktop_web` 中 stats 相关 renderer 红测（`query_stats_page.test.jsx` 3 条失败、`account_capability_stats_page.test.jsx` 1 条失败）；handoff 已指出 freshness gate 会吞掉切日期/切范围后的刷新。
+- 已完成：
+  - 修正 query stats 的 freshness gate：仅在“同一筛选签名”且 5 秒内才跳过刷新；切日期/切范围必须触发请求；同时把 1 秒刷新节流改为只对“同一筛选签名”的连续点击生效，避免测试与真实快速操作被误伤。
+  - 修正 renderer 测试环境下的 fetch 取值：HTTP client 优先使用 `window.fetch`（jsdom/Node 下避免意外走真实网络导致页面长期 loading）。
+  - 调整两份 stats 测试的等待点：默认进入页面后改为等待首行数据出现（`findByText`）再做断言，避免只等 table 挂载导致的竞态。
+- 已做验证：
+  - `npm test -- tests/renderer/query_stats_page.test.jsx tests/renderer/account_capability_stats_page.test.jsx`（`app_desktop_web/`）-> `7 passed`
+
+## 2026-04-25 14:52 (Asia/Shanghai)
+- 背景：按 handoff 直接收口本轮发布阻塞，不重做已完成审查；主目标是补 packaged resources / builder 白名单、修 readiness gate、补回未保存保护、收掉 backend fixture 漂移与 stats 红测，并拿到新鲜总验证证据。
+- 已完成：
+  - 打包闭环：`electron-builder.config.cjs` 已补入 `test.wasm` extra resource，并把 `python_runtime_bootstrap.js`、`python_runtime_config.cjs` 纳入 `files` 白名单；对应 packaging 回归已补齐。
+  - readiness gate：`python_backend.js` 已移除“HTTP 200 + 非 JSON 也算 ready”的旧回退，现只认 `/health` 明确 `ready=true`；对应 Electron focused regression 已补/改到新契约。
+  - 行为/测试收口：`query-system` 的 save error 不再关闭未保存确认；`test_query_config_routes.py` 的夹具已补齐 `browser_proxy_id/api_proxy_id`；stats 页刷新逻辑与相关 renderer tests 已收口。
+  - README 已核对：本轮不涉及用户操作说明与入口口径，README 无需改动。
+- 已做验证：
+  - `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest -q` -> `670 passed`
+  - `npm --prefix app_desktop_web test` -> `36 passed files`, `265 passed`
+  - `npm --prefix app_desktop_web run pack:win` -> `0` 退出，`release/win-unpacked` 已重建
+  - 产物验尸：
+    - `app_desktop_web/release/win-unpacked/resources/test.wasm` 存在，大小 `119853`
+    - `app_desktop_web/release/win-unpacked/resources/app.asar` 内可列出 `python_runtime_bootstrap.js`
+    - `app_desktop_web/release/win-unpacked/resources/app.asar` 内可列出 `python_runtime_config.cjs`
+- 当前进度：
+  - 本轮既定 blocker 已全部收口并有新鲜回归证据；下会话不应再把 `14:25` 那轮审查当成“未修现场”重做。
+  - 若后续要扩大到 installer 级发行或 `program_admin_console` 现网链，再另起验证主线，不与本轮 app/backend blocker 收口混写。
+
+## 2026-04-25 15:02 (Asia/Shanghai)
+- 背景：魔尊选择继续开 `installer` 链验证；目标从 `win-unpacked` 验尸升级为真实 NSIS 安装包构建与安装态 smoke。
+- 已完成：
+  - 已执行 `npm --prefix app_desktop_web run build:win`，成功生成 `app_desktop_web/release/C5 交易助手 Setup 0.1.0.exe` 与对应 `.blockmap`。
+  - 已对安装包做静默安装 smoke：安装到临时目录 `C:/Users/18220/Desktop/C5InstallerSmoke` 后，确认安装态 `resources/test.wasm` 存在，且安装态 `resources/app.asar` 内可列出 `python_runtime_bootstrap.js`、`python_runtime_config.cjs`。
+  - 已做最小安装态入口 smoke：从临时安装目录直接启动 `C5 交易助手.exe`，8 秒内进程未立即崩溃；随后已停止该进程。
+  - 已做 silent uninstall smoke：执行 `Uninstall C5 交易助手.exe /S` 后，临时安装目录已删除，桌面快捷方式未残留。
+- 已做验证：
+  - `npm --prefix app_desktop_web run build:win` -> 成功生成 installer
+  - 安装包签名验尸：`Get-AuthenticodeSignature app_desktop_web/release/C5 交易助手 Setup 0.1.0.exe` -> `NotSigned`
+- 当前进度：
+  - 安装包构建、安装、卸载链路都已拿到本机新鲜证据；当前剩余主要发行风险已从“物料缺失/启动闭包”收敛为“安装包未做数字签名”。
+
+## 2026-04-25 15:11 (Asia/Shanghai)
+- 背景：魔尊要求直接改善当前前后端“进入程序慢、卡”的体感，并允许多 agent 并行；本轮优先做低风险启动体验优化，不改 `/health ready=true` 语义与业务主链。
+- 已完成：
+  - 并行对照当前仓库、`C:/Users/18220/Desktop/cs2_alchemy` 与 GitHub/Electron 官方资料后，确认当前主要痛点更偏“首窗露面慢 + renderer 首包偏重”，而非单纯 backend 不可用。
+  - 主进程显窗策略收口：`app_desktop_web/electron-main.cjs` 的 `createWindow()` 现在保留 `ready-to-show` 监听，但不再把它当作唯一显窗条件；`loadFile()/loadURL()` 后会立即 `show()`，利用既有深色 `backgroundColor` 先把窗口亮出来，减少黑等感。
+  - renderer 首包继续减重：`app_desktop_web/src/App.jsx` 把 `AccountCenterPage` 从根包中拆成 lazy chunk，仅在真正需要展示账号中心时再装载。
+  - README 已核对：现有启动说明仍成立，本轮无需改动；`docs/agent/memory.md` 也无需新增稳定约束。
+- 已做验证：
+  - `npm --prefix app_desktop_web test -- tests/electron/electron_remote_mode.test.js --run` -> `21 passed`
+  - `npm --prefix app_desktop_web test -- tests/renderer/app_remote_bootstrap.test.jsx tests/renderer/account_center_page.test.jsx --run` -> `13 passed`
+  - `npm --prefix app_desktop_web test -- tests/electron/python_backend.test.js tests/electron/electron_remote_mode.test.js tests/renderer/app_remote_bootstrap.test.jsx --run` -> `40 passed`
+  - `.\\.venv\\Scripts\\python.exe -m pytest tests/backend/test_backend_health.py -q` -> `4 passed`
+  - `npm --prefix app_desktop_web run build` -> 成功；产物显示根入口包降到 `dist/assets/index-C7yqzNQS.js 266.02 kB`，账号中心拆成独立 `dist/assets/account_center_page-wFX3Qvkh.js 61.00 kB`
+- 当前进度：
+  - 本轮已完成“窗口更早可见 + 首包减重”两刀，改善的是进入程序的感受层，不是 backend 冷启动定义本身。
+  - 若下轮继续深挖，优先看 `electron-main.cjs` 顶层 session 迁移、`main_ui_node_desktop.js` 启动前同步扫描/构建，以及 `app_backend/main.py` 中 ready 前的 service/scheduler 装配是否还能进一步后置。
+
+## 2026-04-25 15:21 (Asia/Shanghai)
+- 背景：魔尊在上一轮优化后明确选择继续做第 `1` 刀，即把 Electron 启动链里的 desktop session 迁移进一步移出窗口前关键路径。
+- 已完成：
+  - `app_desktop_web/electron-main.cjs` 现在把 `configureDesktopStoragePaths()` 的启动调用改成 `deferSessionDataMigrationUntilShutdown: true` 模式：若专用 `session-data` 目录还没有迁移标记，本次启动继续沿用 legacy `sessionData`，不再在窗口前同步执行 `cpSync/rmSync` 迁移。
+  - 新增 `flushPendingSessionMigration()`：把首次升级所需的旧 session 迁移排队到退出阶段执行；`window-all-closed` 与 `before-quit` 都会 best-effort flush，避免同一轮里重复遗漏。
+  - 保留 `configureDesktopStoragePaths()` 的默认同步语义不变，因此既有细粒度迁移单测与非启动场景调用口径没有被整体打碎。
+  - `app_desktop_web/tests/electron/electron_remote_mode.test.js` 已补两条 focused 契约：一条锁“模块加载时不再立刻改写 storage path”，另一条锁“deferred migration 模式下启动继续走 legacy path，退出时再 flush 真迁移”。
+  - README 已核对：本轮不改变用户可见启动命令与调试说明，无需改动；`docs/agent/memory.md` 也无需新增长期约束。
+- 已做验证：
+  - `npm --prefix app_desktop_web test -- tests/electron/electron_remote_mode.test.js --run` -> `22 passed`
+  - `npm --prefix app_desktop_web test -- tests/electron/electron_remote_mode.test.js tests/electron/program_access_packaging.test.js tests/electron/python_backend.test.js tests/renderer/app_remote_bootstrap.test.jsx --run` -> `54 passed`
+  - `.\\.venv\\Scripts\\python.exe -m pytest tests/backend/test_backend_health.py -q` -> `4 passed`
+- 当前进度：
+  - 本轮第 `1` 刀已从“只调整调用时机”收口到“首次升级不再把 session 迁移同步卡在窗口前”；换句话说，启动阶段优先可见与可进壳，迁移成本改为退出时支付。
+  - 仍未处理的更深层热点包括：`main_ui_node_desktop.js` 的源码树扫描/必要时同步 build，以及 backend ready 前的 Phase 2 service/scheduler 装配。
+
+## 2026-04-25 15:26 (Asia/Shanghai) HANDOFF
+- 当前目标：
+  - 主线仍是“改善 C5 桌面进入程序的启动体感”，当前采用的方案是分层切热点：先做低风险感知优化，再逐步把同步大锤移出关键路径。
+  - 已完成的两刀是：`1)` 主窗立即可见 + renderer 首包减重；`2)` desktop session 首次迁移改为退出期支付。
+- 进度断点：
+  - 当前 chunk：Electron 启动关键路径削峰。
+  - 当前 task：已完成第 `1` 刀（desktop session 迁移脱离窗口前关键路径），尚未进入下一刀。
+  - 已完成内容：
+    - `app_desktop_web/electron-main.cjs`：首次未迁移现场启动继续走 legacy `sessionData`，退出时 `flushPendingSessionMigration()` 再搬迁。
+    - `app_desktop_web/src/App.jsx`：`AccountCenterPage` lazy 化，首包减重。
+    - `app_desktop_web/tests/electron/electron_remote_mode.test.js`：新增“模块加载时不立刻改 storage path”与“deferred migration 启动走 legacy、退出再 flush”回归。
+  - 正在进行内容：无进行中的半改文件；本轮已收口到可续状态。
+- 现场状态：
+  - 工作目录：`C:/Users/18220/Desktop/C5autobug更新接口 - 副本 (2)`
+  - 分支：`master`
+  - 当前 worktree：根工作树
+  - 当前仍有未提交改动，且不全是本轮新增；本轮直接相关文件至少包括：
+    - `app_desktop_web/electron-main.cjs`
+    - `app_desktop_web/src/App.jsx`
+    - `app_desktop_web/tests/electron/electron_remote_mode.test.js`
+    - `docs/agent/session-log.md`
+    - `docs/agent/memory.md`
+  - 现场还有其它既存脏改动：
+    - `app_desktop_web/electron-builder.config.cjs`
+    - `app_desktop_web/python_backend.js`
+    - `app_desktop_web/src/api/http.js`
+    - `app_desktop_web/src/features/query-stats/hooks/use_query_stats_page.js`
+    - `app_desktop_web/src/features/query-system/query_system_page.jsx`
+    - `app_desktop_web/tests/electron/program_access_packaging.test.js`
+    - `app_desktop_web/tests/electron/python_backend.test.js`
+    - `app_desktop_web/tests/renderer/account_capability_stats_page.test.jsx`
+    - `app_desktop_web/tests/renderer/query_stats_page.test.jsx`
+    - `app_desktop_web/tests/renderer/query_system_editing.test.jsx`
+    - `tests/backend/test_query_config_routes.py`
+    - 未跟踪目录：`.playwright-mcp/`、`node_modules/`、`program_admin_console/node_modules/`
+- 错误与约束：
+  - 已尝试但放弃的路径：只把 `configureDesktopStoragePaths()` 从模块顶层挪到 `whenReady()` 不足以解决窗口前卡顿，因为一进 `whenReady` 仍会同步执行迁移；后来已改成真正 deferred migration。
+  - 后续不要再犯：
+    - 不要把 `cpSync/rmSync` 的 legacy session 迁移重新塞回窗口出现前。
+    - 不要放宽 `/health ready=true` 的桌面放行语义；这轮没改那条保护线。
+    - 不要误清理现场其它脏改，尤其用户已有改动与 `node_modules/` 目录。
+  - 必须保持不变的关键行为：
+    - embedded backend 仍只有 `/health` 明确 `ready:true` 才可放行业务页。
+    - desktop session 迁移默认语义仍可通过 `configureDesktopStoragePaths()` 的非 deferred 调用保留，避免打碎既有迁移单测和非启动场景。
+- 验证状态：
+  - 已执行：
+    - `npm --prefix app_desktop_web test -- tests/electron/electron_remote_mode.test.js --run` -> `22 passed`
+    - `npm --prefix app_desktop_web test -- tests/electron/electron_remote_mode.test.js tests/electron/program_access_packaging.test.js tests/electron/python_backend.test.js tests/renderer/app_remote_bootstrap.test.jsx --run` -> `54 passed`
+    - `.\\.venv\\Scripts\\python.exe -m pytest tests/backend/test_backend_health.py -q` -> `4 passed`
+  - 尚未覆盖：
+    - 未重跑 `main_ui_node_desktop.js` 启动器相关 focused tests / 实机打点
+    - 未做新的 pack/install 验证；本轮不需要，也不该默认扩大到 installer 主线
+    - deferred migration 目前是单测收口，尚未做真人“旧 session 首次升级 -> 启动 -> 退出 -> 下次启动”链路验尸
+- 下一步第一刀：
+  - 下个会话优先砍 `main_ui_node_desktop.js` 的启动前同步源码树扫描 / 必要时同步 build 判定，目标是让源码态打开程序时不再因为 `getLatestModifiedTimeMs()` 递归扫树与 `spawnSync(build)` 卡在窗口前。
+  - 做完后立刻验证：
+    - `npm --prefix app_desktop_web test -- tests/electron/desktop_launcher.test.js --run`
+    - 视实现是否触及 desktop main，再补 `tests/electron/electron_remote_mode.test.js --run`
+
+## 2026-04-25 15:32 (Asia/Shanghai)
+- 背景：按最新 HANDOFF 继续做 `main_ui_node_desktop.js` 启动前同步扫描/build 优化；本轮明确不重做已完成的“主窗早显 + AccountCenterPage lazy + deferred session migration”，也不触碰 `/health` 必须 `ready=true` 才放行的保护线。
+- 文档与现场对齐：
+  - `git status` 与 HANDOFF 基本一致：`electron-main.cjs / App.jsx / electron_remote_mode.test.js / session-log.md / memory.md` 仍在已改集合内，其它既存脏改也都还在；未发现需要先停下收敛的硬冲突。
+  - README 已按魔尊提醒核对，本轮无需改动。
+- 已完成：
+  - 先按 TDD 在 `app_desktop_web/tests/electron/desktop_launcher.test.js` 补两条红灯，锁定 `main_ui_node_desktop.js` 的新契约：
+    - 当 git 已能证明现有 `dist` 覆盖当前 renderer 代码时，不再递归扫描整棵 `src/`。
+    - 当 git 报告 renderer 本地文件比 `dist` 新时，仍必须继续触发同步 build，不能为了提速放松 freshness。
+  - `main_ui_node_desktop.js` 已新增 git 快路 freshness probe：优先用 renderer 相关路径的 `git status` + 最近提交时间 + 已变更文件 mtime 做判定；只有 git 不可用或探测失败时，才回退到原来的 `getLatestModifiedTimeMs()` 递归扫树逻辑。
+  - 打包前置校验口径保持不变：`electron-builder-preflight.cjs` 仍走同一个 `ensureRendererBuild()`，只是现在先尝试更轻的 freshness 判定；没有改成“无脑跳过 build”。
+- 已做验证：
+  - 红灯阶段：`npm --prefix app_desktop_web test -- tests/electron/desktop_launcher.test.js --run` -> `2 failed, 8 passed`
+  - 绿灯阶段：`npm --prefix app_desktop_web test -- tests/electron/desktop_launcher.test.js --run` -> `10 passed`
+  - 回归 packaging 侧：`npm --prefix app_desktop_web test -- tests/electron/desktop_launcher.test.js tests/electron/program_access_packaging.test.js --run` -> `23 passed`
+- 当前进度：
+  - 正式源码入口的启动前 renderer freshness 判定已从“全树递归 stat”收口到“git 快路优先，失败再回退”；这刀主要削的是窗口前同步扫描成本，不改 Electron 主进程显窗策略，也不改 embedded backend ready gate。
+  - `docs/agent/memory.md` 本轮未更新：尚未形成新的跨会话稳定约束，只是对既有启动器契约做内部优化。
+- 下一步：
+  - 若魔尊继续追更深一层的启动体感，下一刀再看 `app_backend/main.py` 在 ready 前的 service/scheduler 装配是否还能继续后置；若要做真机验感，可直接从 `node main_ui_node_desktop.js` 再量一次窗口前耗时。
+
+## 2026-04-25 16:02 (Asia/Shanghai)
+- 背景：魔尊明确授权本轮并鼓励多 agent 并行；目标从“只定位启动慢点”升级为“直接收口正式桌面启动等待”，同时不放宽 `/health ready=true`，也不重做已完成的主窗早显、`AccountCenterPage` lazy 与 deferred session migration。
+- 并行执行与收口：
+  - backend worker 负责 `app_backend/main.py` 热路径拆解：把 packaged release 的 program access 启动 refresh 从 `_ready=true` 前移走，改成 post-ready background init，并补生命周期锁避免 shutdown 与后台启动交错。
+  - electron worker 负责 `app_desktop_web/electron-main.cjs` prewarm/reuse：把 embedded backend 启动 promise 提前拉起并缓存，`bootstrapApplication()` 直接接管同一 promise，避免窗口出来后还串行等一遍 backend 启动准备。
+  - 主线程补了 renderer 首帧静态壳：`app_desktop_web/index.html` 现在自带静态启动面板，避免 `loadFile()` 后 React 首次 commit 前只露出空 `#root` + 深色底，看起来像“黑屏”。
+- 已完成：
+  - `app_backend/main.py`
+    - 新增 program access post-ready init 调度：`program_access_refresh_scheduler.start()` 不再阻塞 `_ready=true`。
+    - shutdown 统一通过 lifecycle lock 收口，避免后台 start 与 stop/close 交错。
+  - `tests/backend/test_backend_health.py`
+    - 新增回归：即便 packaged release 的 startup refresh 被故意卡住，`/health` 仍能在 backend 真 ready 后返回 `ready=true`，证明 refresh 已脱离关键路径而不是放宽 gate。
+  - `app_desktop_web/electron-main.cjs`
+    - 新增 `ensureEmbeddedBackendStartup()` 与 `embeddedBackendStartupPromise`，在 window-state 依赖完成前就先把 embedded backend 启动 promise 拉起来；窗口依旧先显，再接管同一 promise。
+    - 保留 `/health ready=true` 才切 `backendStatus=ready` 的口径不变。
+  - `app_desktop_web/tests/electron/program_access_packaging.test.js`
+    - 新增两条 focused 契约：一条锁“prewarm 早于 window-state 完成就启动”，一条锁“并发 bootstrap 共用同一个 backend startup promise”。
+  - `app_desktop_web/index.html`
+    - 新增静态启动壳与内联样式，Electron 主窗一旦 `show()`，至少先看到“主界面启动中 / 正在准备界面与本地服务”，不再是纯暗底。
+  - `app_desktop_web/tests/renderer/index_startup_shell.test.js`
+    - 新增静态首帧回归，锁住 `#root` 默认必须带启动壳。
+- 已做验证：
+  - 红灯：
+    - `npm --prefix app_desktop_web test -- tests/renderer/index_startup_shell.test.js --run` -> `1 failed`
+  - 绿灯 / focused：
+    - `npm --prefix app_desktop_web test -- tests/renderer/index_startup_shell.test.js --run` -> `1 passed`
+    - `npm --prefix app_desktop_web test -- tests/electron/program_access_packaging.test.js tests/electron/electron_remote_mode.test.js tests/electron/python_backend.test.js tests/renderer/index_startup_shell.test.js --run` -> `51 passed`
+    - `& 'C:/Users/18220/Desktop/C5autobug更新接口 - 副本 (2)/.venv/Scripts/python.exe' -m pytest tests/backend/test_backend_health.py tests/backend/test_backend_main_entry.py -q` -> `11 passed`
+  - 启动耗时验尸：
+    - 改前基线（本轮前主线程实测）：
+      - `create_app(packaged_release, deferred_init=False)` ≈ `3827.95ms`
+      - `startPythonBackend(packaged_release)` ready ≈ `5625.11ms`
+    - 改后本轮复测：
+      - `create_app(packaged_release, deferred_init=False)` ≈ `2056.48ms`
+      - `startPythonBackend(packaged_release)` ready ≈ `3654.90ms`
+    - 结论：正式口径 backend ready 时间本机实测缩短约 `1.97s`。
+- 当前进度：
+  - 启动等待的两大热点已分别收口：
+    - backend `_ready=true` 前的 program access refresh 不再阻塞。
+    - Electron 侧 embedded backend 准备不再完全串行卡在窗口后。
+  - 视觉层也补了静态启动壳，能减少“窗口已 show 但首帧还没 commit 时像黑屏”的感知。
+  - README 已按魔尊此前说明维持无需改动。
+- 余险：
+  - 还没做一次真实 `main_ui_node_desktop.js` GUI 体感复验；当前收益证据主要来自 focused tests 与本机 ready 时长测量。
+  - `embeddedBackendStartupPromise` 当前仍按单实例启动模型设计；若未来同一进程真要切多套 backend 参数，再做 key 化。
+- 下一步：
+  - 若魔尊继续追现场体验，下一刀优先做真机启动埋点/手测，对比“窗口出现时间、静态启动壳出现时间、backend ready 时间、首页可操作时间”四个节点；若仍慢，再下探 `program_access_gateway.get_summary()` 在 `/app/bootstrap` 路径上的同步远端探测成本。
+
+## 2026-04-25 16:21 (Asia/Shanghai)
+- 背景：按魔尊指令收口 program_access summary 与 post-ready warm 行为，限定修改 `app_backend/infrastructure/program_access/remote_entitlement_gateway.py`、`app_backend/main.py` 与 backend focused tests，不触碰 `app_desktop_web/*` 与 `get_app_bootstrap.py`。
+- TDD 执行：
+  - 先改红灯测试：
+    - `tests/backend/test_remote_entitlement_gateway.py`：把既有 registration readiness 断言改为“`get_summary()` 不触发同步 readiness 探测，`registration_flow_version` 保持缓存值 2”。
+    - `tests/backend/test_backend_health.py`：新增 post-ready warm 回归，锁定“warm 在后台运行时 `/health ready=true` 不受阻塞，warm 完成后 `/app/bootstrap` 中 `registration_flow_version` 从 2 升到 3”。
+  - 红灯验证：
+    - `pytest tests/backend/test_remote_entitlement_gateway.py::test_remote_gateway_summary_does_not_probe_registration_readiness_synchronously tests/backend/test_backend_health.py::test_deferred_packaged_release_post_ready_warm_updates_registration_flow_version_without_blocking_ready -q` -> `2 failed`（符合预期）。
+- 实现改动：
+  - `app_backend/infrastructure/program_access/remote_entitlement_gateway.py`
+    - 新增显式 warm API：`warm_registration_readiness_cache()`（并保留 `warm_registration_flow_version_cache()` 兼容别名）。
+    - `get_summary()` 路径改为只读 `_registration_flow_version_cache`，不再同步打远端 `get_registration_readiness()`。
+  - `app_backend/main.py`
+    - post-ready init 统一改为：先执行可选 warm，再执行可选 scheduler start，且都在生命周期锁和 shutdown 标记保护下运行。
+    - pending 判定改为“有 warm 能力或需要启动 scheduler”任一成立即进入 post-ready init。
+    - 去掉 `_sync_heavy_init` 末尾的直接调度，避免在非 lifespan 场景创建悬挂任务；由 lifespan / deferred init 统一调度。
+- 绿灯验证：
+  - `pytest tests/backend/test_remote_entitlement_gateway.py::test_remote_gateway_summary_does_not_probe_registration_readiness_synchronously tests/backend/test_backend_health.py::test_deferred_packaged_release_post_ready_warm_updates_registration_flow_version_without_blocking_ready -q` -> `2 passed`
+  - `pytest tests/backend/test_remote_entitlement_gateway.py tests/backend/test_backend_health.py tests/backend/test_app_bootstrap_route.py -q` -> `35 passed`
+- 说明：
+  - 本轮无新的跨会话稳定约束，`docs/agent/memory.md` 无需更新。
+
+## 2026-04-25 16:20 (Asia/Shanghai)
+- 背景：魔尊要求在限定文件内完成 `/app/bootstrap` 分层轻量化；目标是保持现有全量能力兼容，同时让 renderer runtime manager 先做轻量 hydration，再按需补 full。
+- 已完成：
+  - 后端 `/app/bootstrap` 新增 `scope=shell|full`（默认 `full`）：
+    - `scope=shell` 仅返回 `version/generated_at/program_access`。
+    - `scope=full` 保持既有全量结构（`query_system/purchase_system/diagnostics/program_access`）。
+  - `GetAppBootstrapUseCase` 变为按 scope 分层组装，shell 路径不再同步拼装 query/purchase/diagnostics 重切片。
+  - 前端 client 新增 `getAppBootstrapShell()` 与 `getAppBootstrapFull()`；保留 `getAppBootstrap()` 兼容旧调用。
+  - runtime manager 改为 shell-first：
+    - 启动 `bootstrap()` 先拉 shell 并写入 store；
+    - 非阻塞后台补 full；
+    - `force` / resync 路径按需等待 full；
+    - 对仅实现旧 `getAppBootstrap()` 的客户端保持兼容，避免重复 full 拉取。
+  - focused tests 已先红后绿补齐：
+    - backend：`tests/backend/test_app_bootstrap_route.py` 新增 shell scope 断言。
+    - renderer：`runtime_connection_manager.test.js` 新增 shell-first + force-full 断言。
+    - renderer：`account_center_client.test.js` 新增 shell/full API 断言。
+- 已做验证：
+  - `python -m pytest tests/backend/test_app_bootstrap_route.py -q` -> `6 passed`
+  - `npm --prefix app_desktop_web test -- tests/renderer/runtime_connection_manager.test.js --run` -> `22 passed`
+  - `npm --prefix app_desktop_web test -- tests/renderer/account_center_client.test.js --run` -> `7 passed`
+  - `npm --prefix app_desktop_web test -- tests/renderer/app_remote_bootstrap.test.jsx --run` -> `7 passed`
+  - `python -m pytest tests/backend/test_backend_health.py -q` -> `6 passed`
+- 边界与未动点：
+  - 未改 `App.jsx`、`bridge.js`、`electron-preload.cjs`，遵守并行分工边界。
+  - 未触碰查询->命中->购买主链逻辑，仅调整 bootstrap 分层与 hydration 时序。
+
+## 2026-04-25 16:25 (Asia/Shanghai)
+- 背景：继续收口“全部执行”主线的最后两段：renderer 首帧 async bootstrap / RootErrorBoundary，以及 backend post-ready warm 引入的 Windows 文件并发边角。
+- 已完成：
+  - renderer 首帧：
+    - `app_desktop_web/src/App.jsx` 的 bootstrap 初始值已改成 `getDefaultDesktopBootstrapConfig()`，不再在 React render 路径同步读 desktop bootstrap。
+    - `app_desktop_web/src/desktop/bridge.js` / `app_desktop_web/electron-preload.cjs` 现采用“preload 缓存快照 + 异步 request/subscribe 回填”口径；当前仍保留一次 preload 内部延后 `sendSync` 用于首次快照预热，但 renderer 首帧已不依赖它。
+    - `app_desktop_web/src/main.jsx` 已用 `RootErrorBoundary` 包裹 `App`；新增 `app_desktop_web/src/desktop/root_error_boundary.jsx`，首屏异常时会显示 fallback 与“重新加载”按钮，并写 `renderer_root_error_boundary` 诊断。
+  - backend 并发边角：
+    - `app_backend/infrastructure/program_access/file_program_credential_store.py` 新增内部 `RLock`，把 `load/save/clear` 串行化，修掉 post-ready warm 与首个 `/app/bootstrap` 并发命中 `bundle.json` 时在 Windows 上触发的 `os.replace WinError 5`。
+- 已做验证：
+  - renderer / electron focused 总回归：
+    - `npm --prefix app_desktop_web test -- tests/electron/program_access_packaging.test.js tests/electron/electron_remote_mode.test.js tests/electron/python_backend.test.js tests/renderer/index_startup_shell.test.js tests/renderer/account_center_client.test.js tests/renderer/runtime_connection_manager.test.js tests/renderer/app_remote_bootstrap.test.jsx tests/renderer/app_renderer_diagnostics.test.jsx --run` -> `90 passed`
+  - backend focused 总回归：
+    - `& 'C:/Users/18220/Desktop/C5autobug更新接口 - 副本 (2)/.venv/Scripts/python.exe' -m pytest tests/backend/test_remote_entitlement_gateway.py tests/backend/test_backend_health.py tests/backend/test_app_bootstrap_route.py tests/backend/test_backend_main_entry.py -q` -> `41 passed`
+  - 额外时长 spot-check：
+    - `startPythonBackend(packaged_release)` 本轮三次抽样约为 `5054.76ms / 3468.19ms / 3058.65ms`，存在明显波动，不应再把单次最优值写成稳定收益。
+    - `create_app(packaged_release, deferred_init=False)` 本轮两次抽样约为 `2708.66ms / 1702.98ms`。
+- 当前进度：
+  - “全部执行”三条优化线现已落地：
+    - program access summary 改为本地缓存 + post-ready warm；
+    - `/app/bootstrap` 改为 shell/full 分层；
+    - renderer 首帧改为默认 `starting` + 异步回填，并补根级异常兜底。
+  - 当前仓库内对正式启动体感的自动化回归已形成一组较完整的 focused 防线。
+- 余险：
+  - backend ready 时长仍受现场波动影响；当前更可信的结论是“关键等待点已被拆薄，体感明显变快”，不是“稳定缩短固定 X 秒”。
+
+## 2026-04-25 16:35 (Asia/Shanghai)
+- 背景：继续执行魔尊点名的第 `1` 刀，把 preload 里最后残留的 `sendSync` 也移除，避免 Electron preload 为了首包 bootstrap 快照再走同步 IPC。
+- TDD：
+  - 先补红灯：
+    - `app_desktop_web/tests/electron/electron_entrypoints.test.js` 新增断言：`electron-preload.cjs` 不得再包含 `sendSync(`，且必须出现 `invoke(`。
+    - `app_desktop_web/tests/electron/electron_remote_mode.test.js` 新增断言：主进程必须注册 async `desktop:request-bootstrap-config` handler。
+  - 红灯验证：
+    - `npm --prefix app_desktop_web test -- tests/electron/electron_entrypoints.test.js tests/electron/electron_remote_mode.test.js --run` -> `2 failed / 23 passed`
+- 已完成：
+  - `app_desktop_web/electron-main.cjs`
+    - 新增 async bootstrap snapshot 通道：`desktop:request-bootstrap-config`，返回当前 bootstrap snapshot。
+    - 保留旧 `desktop:get-bootstrap-config` 同步 handler 仅作兼容，不再给 preload 使用。
+  - `app_desktop_web/electron-preload.cjs`
+    - 彻底去掉 `ipcRenderer.sendSync(...)`。
+    - 改为 `ipcRenderer.invoke("desktop:request-bootstrap-config")` 异步刷新 preload snapshot；`requestBootstrapConfig()` 现直接返回这条 async refresh promise。
+  - `app_desktop_web/tests/renderer/app_remote_bootstrap.test.jsx`
+    - 把“remote 首帧 async hydration”断言改成显式延迟 `requestBootstrapConfig()` 回填，避免测试与 `setTimeout(0)` 抢跑导致脆弱。
+- 已做验证：
+  - `npm --prefix app_desktop_web test -- tests/electron/electron_entrypoints.test.js tests/electron/electron_remote_mode.test.js tests/renderer/app_remote_bootstrap.test.jsx --run` -> `32 passed`
+  - 合并后的前端 focused 总回归：
+    - `npm --prefix app_desktop_web test -- tests/electron/electron_entrypoints.test.js tests/electron/program_access_packaging.test.js tests/electron/electron_remote_mode.test.js tests/electron/python_backend.test.js tests/renderer/index_startup_shell.test.js tests/renderer/account_center_client.test.js tests/renderer/runtime_connection_manager.test.js tests/renderer/app_remote_bootstrap.test.jsx tests/renderer/app_renderer_diagnostics.test.jsx --run` -> `93 passed`
+  - 合并后的 backend focused 总回归：
+    - `& 'C:/Users/18220/Desktop/C5autobug更新接口 - 副本 (2)/.venv/Scripts/python.exe' -m pytest tests/backend/test_remote_entitlement_gateway.py tests/backend/test_backend_health.py tests/backend/test_app_bootstrap_route.py tests/backend/test_backend_main_entry.py -q` -> `41 passed`
+- 当前进度：
+  - renderer 首帧、preload、主进程 bootstrap snapshot 三层现在都已摆脱同步 bootstrap IPC。
+  - “全部执行”主线的三条优化 + 第 `1` 刀补刀现都已完成，并有 fresh focused 验证证据。
+  - backend ready 时长有明显现场波动；当前更可信的结论是“关键等待点已被拆薄且体感明显变快”，而不是“稳定缩短固定 X 秒”。
+
+## 2026-04-25 16:25 (Asia/Shanghai) HANDOFF
+- 当前目标：
+  - 主线目标仍是“继续压缩 C5 桌面进入程序的启动等待，并把‘黑屏等待’改造成可见、可恢复、可渐进接管的启动链”。
+  - 当前方案已从单点优化收口为四层：`1)` 主窗早显与静态启动壳；`2)` backend `_ready=true` 前重动作后置；`3)` `/app/bootstrap` shell/full 分层；`4)` renderer/bootstrap snapshot 全异步化。
+- 进度断点：
+  - 当前 chunk：桌面启动体验深度收口。
+  - 当前 task：本轮“全部执行 + 第 1 刀 async snapshot 补刀”已完成；未开始下一轮真机埋点/体感手测。
+  - 已完成内容：
+    - `app_backend/main.py` + `remote_entitlement_gateway.py`：program access summary 改为缓存读取，registration readiness 与 scheduler start 后置到 post-ready warm。
+    - `app_backend/infrastructure/program_access/file_program_credential_store.py`：加 `RLock`，修 Windows 下 post-ready warm 与首个 `/app/bootstrap` 并发触发 `bundle.json` 写入冲突。
+    - `app_backend/api/routes/app_bootstrap.py` / `app_backend/application/use_cases/get_app_bootstrap.py` / `app_backend/api/schemas/app_bootstrap.py`：`/app/bootstrap` 支持 `scope=shell|full`，默认 `full` 保持兼容。
+    - `app_desktop_web/src/runtime/runtime_connection_manager.js` + `app_desktop_web/src/api/account_center_client.js`：启动先 shell hydration，再后台补 full；`force/resync` 可等待 full；兼容旧 `getAppBootstrap()` 客户端。
+    - `app_desktop_web/src/App.jsx` / `app_desktop_web/src/desktop/bridge.js` / `app_desktop_web/electron-preload.cjs` / `app_desktop_web/electron-main.cjs`：renderer 首帧与 preload 已彻底摆脱同步 bootstrap IPC；主进程新增 async bootstrap snapshot 通道。
+    - `app_desktop_web/src/main.jsx` + `app_desktop_web/src/desktop/root_error_boundary.jsx` + `app_desktop_web/index.html`：根级 ErrorBoundary 与静态启动壳已落地，避免空白暗底。
+  - 正在进行内容：无半改文件停在中间态；当前已到可续做状态。
+- 现场状态：
+  - 工作目录：`C:/Users/18220/Desktop/C5autobug更新接口 - 副本 (2)`
+  - 分支：`master`
+  - 当前 worktree：根工作树
+  - 当前存在未提交改动，且不全是本轮新增；本轮直接相关文件包括：
+    - `app_backend/api/routes/app_bootstrap.py`
+    - `app_backend/api/schemas/app_bootstrap.py`
+    - `app_backend/application/use_cases/get_app_bootstrap.py`
+    - `app_backend/infrastructure/program_access/file_program_credential_store.py`
+    - `app_backend/infrastructure/program_access/remote_entitlement_gateway.py`
+    - `app_backend/main.py`
+    - `app_desktop_web/electron-main.cjs`
+    - `app_desktop_web/electron-preload.cjs`
+    - `app_desktop_web/index.html`
+    - `app_desktop_web/src/App.jsx`
+    - `app_desktop_web/src/api/account_center_client.js`
+    - `app_desktop_web/src/desktop/bridge.js`
+    - `app_desktop_web/src/main.jsx`
+    - `app_desktop_web/src/runtime/runtime_connection_manager.js`
+    - `app_desktop_web/src/desktop/root_error_boundary.jsx`
+    - `app_desktop_web/tests/electron/electron_entrypoints.test.js`
+    - `app_desktop_web/tests/electron/electron_remote_mode.test.js`
+    - `app_desktop_web/tests/renderer/account_center_client.test.js`
+    - `app_desktop_web/tests/renderer/app_remote_bootstrap.test.jsx`
+    - `app_desktop_web/tests/renderer/app_renderer_diagnostics.test.jsx`
+    - `app_desktop_web/tests/renderer/index_startup_shell.test.js`
+    - `app_desktop_web/tests/renderer/runtime_connection_manager.test.js`
+    - `tests/backend/test_app_bootstrap_route.py`
+    - `tests/backend/test_backend_health.py`
+    - `tests/backend/test_remote_entitlement_gateway.py`
+    - `docs/agent/session-log.md`
+    - `docs/agent/memory.md`
+  - 现场仍有其它既存脏改与未跟踪目录：`electron-builder.config.cjs`、`python_backend.js`、stats/query-system 相关文件、`main_ui_node_desktop.js`、`tests/backend/test_query_config_routes.py`、`.playwright-mcp/`、`node_modules/`、`program_admin_console/node_modules/`。本轮未回退。
+- 错误与约束：
+  - 已尝试但失败/踩坑：
+    - post-ready warm 与首个 `/app/bootstrap` 并发时，`FileProgramCredentialStore` 在 Windows 上会撞 `os.replace WinError 5`；现已通过内部 `RLock` 收口。
+    - “remote 首帧 async hydration” 测试若直接赌 `setTimeout(0)` 时序会脆；现已改成显式延迟 `requestBootstrapConfig()` 回填再断言。
+  - 后续不要再犯：
+    - 不要把 `program_access_refresh_scheduler.start()` 或 registration readiness probe 重新塞回 `_ready=true` 之前。
+    - 不要把 preload 或 React render 路径里的 bootstrap snapshot 读法回退到 `sendSync`。
+    - 不要误回退已完成的主窗早显、静态启动壳、shell/full bootstrap 分层、RootErrorBoundary。
+    - 不要顺手清理当前工作树里与本轮无关的脏改，尤其 `app_desktop_web/python_backend.js`、`electron-builder.config.cjs`、stats/query-system 相关文件。
+  - 必须保持不变的关键行为：
+    - Electron 仍只有 `/health` 明确 `ready:true` 才能把 `backendStatus` 切成 `ready`。
+    - `查询 -> 命中 -> 购买` 主链语义未动，后续也不能因启动优化顺手改坏。
+    - `/app/bootstrap` 默认 `full` 必须保持兼容；`scope=shell` 只是轻量增量能力，不得破坏旧客户端。
+- 验证状态：
+  - 已执行：
+    - `npm --prefix app_desktop_web test -- tests/electron/electron_entrypoints.test.js tests/electron/program_access_packaging.test.js tests/electron/electron_remote_mode.test.js tests/electron/python_backend.test.js tests/renderer/index_startup_shell.test.js tests/renderer/account_center_client.test.js tests/renderer/runtime_connection_manager.test.js tests/renderer/app_remote_bootstrap.test.jsx tests/renderer/app_renderer_diagnostics.test.jsx --run` -> `93 passed`
+    - `& 'C:/Users/18220/Desktop/C5autobug更新接口 - 副本 (2)/.venv/Scripts/python.exe' -m pytest tests/backend/test_remote_entitlement_gateway.py tests/backend/test_backend_health.py tests/backend/test_app_bootstrap_route.py tests/backend/test_backend_main_entry.py -q` -> `41 passed`
+    - `startPythonBackend(packaged_release)` 抽样约：`5054.76ms / 3468.19ms / 3058.65ms`
+    - `create_app(packaged_release, deferred_init=False)` 抽样约：`2708.66ms / 1702.98ms`
+  - 尚未覆盖：
+    - 未做新一轮真实 `main_ui_node_desktop.js` GUI 手测/埋点。
+    - 未量“窗口出现 / 静态启动壳出现 / backend ready / 首页可操作”四个真机节点。
+    - backend ready 时长仍有现场波动，尚未做更系统的统计采样。
+- 下一步第一刀：
+  - 下个会话优先做真机埋点/手测，量四个节点：
+    - 窗口出现时间
+    - 静态启动壳出现时间
+    - backend ready 时间
+    - 首页可操作时间
+  - 做完后立刻验证：
+    - 再跑一次当前 focused 总回归，确认埋点/手测辅助代码没破坏现有启动链：
+      - `npm --prefix app_desktop_web test -- tests/electron/electron_entrypoints.test.js tests/electron/program_access_packaging.test.js tests/electron/electron_remote_mode.test.js tests/electron/python_backend.test.js tests/renderer/index_startup_shell.test.js tests/renderer/account_center_client.test.js tests/renderer/runtime_connection_manager.test.js tests/renderer/app_remote_bootstrap.test.jsx tests/renderer/app_renderer_diagnostics.test.jsx --run`
+      - `& 'C:/Users/18220/Desktop/C5autobug更新接口 - 副本 (2)/.venv/Scripts/python.exe' -m pytest tests/backend/test_remote_entitlement_gateway.py tests/backend/test_backend_health.py tests/backend/test_app_bootstrap_route.py tests/backend/test_backend_main_entry.py -q`
+
+## 2026-04-25 17:02 (Asia/Shanghai)
+- 背景：
+  - 按魔尊指令先读最新 HANDOFF / `memory.md` / 启动链相关文件 / 当前 `git status` 后续做；确认不重做已完成的主窗早显、静态启动壳、program access post-ready warm、`/app/bootstrap` shell/full、renderer/preload async bootstrap snapshot 与 `RootErrorBoundary`。
+  - 文档与现场的差异已先收敛：当前工作树除 HANDOFF 中列出的启动链文件外，还额外有 `app_desktop_web/src/api/http.js`、query stats/query system 相关文件、`app_desktop_web/tests/renderer/account_capability_stats_page.test.jsx`、`tests/backend/test_query_config_routes.py` 等既存脏改；本轮未碰这些旁支。
+- 已完成：
+  - `main_ui_node_desktop.js`
+    - `buildElectronLaunchEnv()` 新增可选 startup trace 起点注入：仅当 `C5_STARTUP_TRACE=1` 且外部未预置 `C5_STARTUP_TRACE_ORIGIN_MS` 时才补齐共享 origin，默认严格 no-op，不影响既有 `ELECTRON_RUN_AS_NODE` 清理逻辑。
+  - `app_desktop_web/electron-main.cjs`
+    - 新增默认关闭的 startup trace logger，输出格式为 `[startup-trace] <json>`。
+    - 真实桌面启动链已接上 4 类量时事件：
+      - `desktop.window.visible`：`BrowserWindow show`
+      - `desktop.static_shell.visible`：`webContents dom-ready`（作为静态壳首次进入 DOM 的稳定代理）
+      - `desktop.backend.ready`：embedded backend `/health ready=true` 后主进程切 `backendStatus=ready`
+      - `renderer.home.interactive`：复用既有 renderer 诊断通道回传
+    - renderer 埋点沿用 `desktop:log-renderer-diagnostic`，没有新增 fetch、文件写入或 sync IPC。
+  - `app_desktop_web/src/App.jsx`
+    - 新增首页可操作埋点：在 backend ready 后轮询 account-center toolbar 进入 DOM，首次命中时回传 `startup_trace_home_interactive`。
+  - `app_desktop_web/src/features/account-center/hooks/use_account_center_page.js`
+    - 撤回先前“等 `isLoading=false` 再记首页可操作”的更保守口径，避免把“首页可点”误量成“首页数据完全收敛”。
+  - focused tests 先红后绿补齐：
+    - `app_desktop_web/tests/electron/desktop_launcher.test.js`
+    - `app_desktop_web/tests/electron/electron_remote_mode.test.js`
+    - `app_desktop_web/tests/renderer/app_remote_bootstrap.test.jsx`
+- 已做验证：
+  - 红灯阶段：
+    - `npm --prefix app_desktop_web test -- tests/electron/desktop_launcher.test.js --run` -> `1 failed / 10 passed`
+    - `npm --prefix app_desktop_web test -- tests/electron/electron_remote_mode.test.js --run` -> `3 failed / 23 passed`
+    - `npm --prefix app_desktop_web test -- tests/renderer/app_remote_bootstrap.test.jsx --run` -> `1 failed / 7 passed`
+  - 绿灯 / focused：
+    - `npm --prefix app_desktop_web test -- tests/electron/desktop_launcher.test.js tests/electron/electron_remote_mode.test.js tests/renderer/app_remote_bootstrap.test.jsx --run` -> `45 passed`
+    - `npm --prefix app_desktop_web test -- tests/renderer/index_startup_shell.test.js --run` -> `1 passed`
+  - focused 总回归：
+    - `npm --prefix app_desktop_web test -- tests/electron/desktop_launcher.test.js tests/electron/electron_entrypoints.test.js tests/electron/program_access_packaging.test.js tests/electron/electron_remote_mode.test.js tests/electron/python_backend.test.js tests/renderer/index_startup_shell.test.js tests/renderer/account_center_client.test.js tests/renderer/runtime_connection_manager.test.js tests/renderer/app_remote_bootstrap.test.jsx tests/renderer/app_renderer_diagnostics.test.jsx --run` -> `108 passed`
+    - `& 'C:/Users/18220/Desktop/C5autobug更新接口 - 副本 (2)/.venv/Scripts/python.exe' -m pytest tests/backend/test_remote_entitlement_gateway.py tests/backend/test_backend_health.py tests/backend/test_app_bootstrap_route.py tests/backend/test_backend_main_entry.py -q` -> `41 passed`
+  - 真实 `main_ui_node_desktop.js` 启动 3 次采样（PowerShell supervisor 预置 `C5_STARTUP_TRACE=1` + 外部 `C5_STARTUP_TRACE_ORIGIN_MS`，拿脚本入口起点做统一 t0；每次在拿到 `renderer.home.interactive` 后强制收口进程树）：
+    - 第 1 次（冷样本，先触发一次 `vite build`）：
+      - `desktop.window.visible` ≈ `3006ms`
+      - `desktop.static_shell.visible` ≈ `3191ms`
+      - `desktop.backend.ready` ≈ `6291ms`
+      - `renderer.home.interactive` ≈ `15342ms`
+    - 第 2 次（warm）：
+      - `desktop.window.visible` ≈ `895ms`
+      - `desktop.static_shell.visible` ≈ `1107ms`
+      - `desktop.backend.ready` ≈ `4062ms`
+      - `renderer.home.interactive` ≈ `13250ms`
+    - 第 3 次（warm）：
+      - `desktop.window.visible` ≈ `933ms`
+      - `desktop.static_shell.visible` ≈ `1106ms`
+      - `desktop.backend.ready` ≈ `4073ms`
+      - `renderer.home.interactive` ≈ `13275ms`
+    - 当前更可信的口径：
+      - 全量样本区间：窗口 `895-3006ms`，静态壳 `1106-3191ms`，backend ready `4062-6291ms`，首页可操作 `13250-15342ms`
+      - warm 样本区间：窗口 `895-933ms`，静态壳 `1106-1107ms`，backend ready `4062-4073ms`，首页可操作 `13250-13275ms`
+- 现场观察：
+  - 第 1 次采样 stdout 明确出现 `vite build`，说明当前 `dist` 在首轮被判定为过期；后两次 warm 样本未再触发 rebuild。
+  - Electron stderr 在采样时持续出现：
+    - `Unable to move the cache: 拒绝访问。 (0x5)`
+    - `Gpu Cache Creation failed: -2`
+    - 当前只作为现象记录，尚未证明它就是首页可操作仍偏慢的主因。
+- 余险：
+  - 即使把“首页可操作”口径收紧到 account-center toolbar 进入 DOM，warm 样本里它仍约比 `desktop.backend.ready` 晚 `~9.2s`；下一刀应优先下探 backend ready 后到 account-center 首次可交互之间的真实瓶颈，而不是再回退已完成的 ready gate / shell-first / async snapshot。
+  - 当前工作树仍很脏；本轮仅新增/续改启动链相关文件，未回退 `electron-builder.config.cjs`、`python_backend.js`、stats/query-system 相关脏改与未跟踪目录。
+- 文档同步：
+  - `docs/agent/session-log.md` 已更新。
+  - `docs/agent/memory.md` 本轮未更新：尚未形成新的跨会话稳定约束，只有启动埋点与现场量时结果。
+  - README 已按魔尊提醒维持无需改动。
+- 下一步：
+  - 若继续深挖，优先把 backend ready 到 `renderer.home.interactive` 之间再拆一层：量 account-center lazy chunk 到位、首页首个 React commit、首个 `/account-center/accounts` 返回各自耗时，确认“慢”究竟卡在 renderer chunk / React commit / backend 首屏数据。

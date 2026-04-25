@@ -56,6 +56,25 @@ describe("desktop launcher", () => {
     expect("ELECTRON_RUN_AS_NODE" in env).toBe(false);
   });
 
+  it("propagates a shared startup trace origin when tracing the real desktop launch", () => {
+    const env = launcher.buildElectronLaunchEnv({
+      C5_STARTUP_TRACE: "1",
+      ELECTRON_RUN_AS_NODE: "1",
+      PATH: "C:/Windows/System32",
+      USERPROFILE: "C:/Users/demo",
+    }, {
+      nowMs: 1735689600123,
+    });
+
+    expect(env).toEqual({
+      C5_STARTUP_TRACE: "1",
+      C5_STARTUP_TRACE_ORIGIN_MS: "1735689600123",
+      PATH: "C:/Windows/System32",
+      USERPROFILE: "C:/Users/demo",
+    });
+    expect("ELECTRON_RUN_AS_NODE" in env).toBe(false);
+  });
+
   it("repairs a broken electron runtime before launch when the package payload is missing", () => {
     const rootDir = "C:/demo/project";
     const electronDir = path.join(rootDir, "app_desktop_web", "node_modules", "electron");
@@ -193,6 +212,102 @@ describe("desktop launcher", () => {
       existsSync,
       readdirSync,
       resolveNpmCliScript: () => npmCliPath,
+      spawnSync,
+      statSync,
+      platform: "win32",
+    });
+
+    expect(spawnSync).toHaveBeenCalledWith(
+      process.execPath,
+      [npmCliPath, "--prefix", "app_desktop_web", "run", "build"],
+      expect.objectContaining({
+        cwd: expect.any(String),
+        stdio: "inherit",
+      }),
+    );
+  });
+
+  it("skips recursive source scanning when git can already prove the existing dist is current", () => {
+    const appDirectory = "C:/demo/project/app_desktop_web";
+    const distEntryPath = path.join(appDirectory, "dist", "index.html");
+    const appPath = path.join(appDirectory, "src", "App.jsx");
+    const existsSync = vi.fn((targetPath) => (
+      targetPath === distEntryPath
+      || targetPath === appPath
+    ));
+    const statSync = vi.fn((targetPath) => {
+      if (targetPath === distEntryPath) {
+        return { isDirectory: () => false, mtimeMs: 400 };
+      }
+      if (targetPath === appPath) {
+        return { isDirectory: () => false, mtimeMs: 350 };
+      }
+      throw new Error(`unexpected path: ${targetPath}`);
+    });
+    const readdirSync = vi.fn(() => {
+      throw new Error("should not scan renderer source tree");
+    });
+    const runGitCommand = vi.fn((args) => {
+      if (args[0] === "status") {
+        return " M app_desktop_web/src/App.jsx\n";
+      }
+      if (args[0] === "log") {
+        return "0\n";
+      }
+      throw new Error(`unexpected git args: ${args.join(" ")}`);
+    });
+    const spawnSync = vi.fn(() => ({ status: 0 }));
+
+    launcher.ensureRendererBuild(appDirectory, {
+      existsSync,
+      readdirSync,
+      runGitCommand,
+      spawnSync,
+      statSync,
+      platform: "win32",
+    });
+
+    expect(runGitCommand).toHaveBeenCalledTimes(2);
+    expect(spawnSync).not.toHaveBeenCalled();
+  });
+
+  it("still rebuilds when git reports a renderer file newer than the current dist", () => {
+    const appDirectory = "C:/demo/project/app_desktop_web";
+    const distEntryPath = path.join(appDirectory, "dist", "index.html");
+    const appPath = path.join(appDirectory, "src", "App.jsx");
+    const npmCliPath = "C:/Program Files/nodejs/node_modules/npm/bin/npm-cli.js";
+    const existsSync = vi.fn((targetPath) => (
+      targetPath === distEntryPath
+      || targetPath === appPath
+    ));
+    const statSync = vi.fn((targetPath) => {
+      if (targetPath === distEntryPath) {
+        return { isDirectory: () => false, mtimeMs: 100 };
+      }
+      if (targetPath === appPath) {
+        return { isDirectory: () => false, mtimeMs: 250 };
+      }
+      throw new Error(`unexpected path: ${targetPath}`);
+    });
+    const readdirSync = vi.fn(() => {
+      throw new Error("should not scan renderer source tree");
+    });
+    const runGitCommand = vi.fn((args) => {
+      if (args[0] === "status") {
+        return " M app_desktop_web/src/App.jsx\n";
+      }
+      if (args[0] === "log") {
+        return "0\n";
+      }
+      throw new Error(`unexpected git args: ${args.join(" ")}`);
+    });
+    const spawnSync = vi.fn(() => ({ status: 0 }));
+
+    launcher.ensureRendererBuild(appDirectory, {
+      existsSync,
+      readdirSync,
+      resolveNpmCliScript: () => npmCliPath,
+      runGitCommand,
       spawnSync,
       statSync,
       platform: "win32",

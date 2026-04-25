@@ -830,4 +830,128 @@ describe("runtime connection manager", () => {
 
     expect(client.getAppBootstrap).toHaveBeenCalledTimes(2);
   });
+
+  it("hydrates shell bootstrap first and backfills full bootstrap asynchronously", async () => {
+    const store = createAppRuntimeStore();
+    let resolveFullBootstrap;
+    const fullBootstrapPromise = new Promise((resolve) => {
+      resolveFullBootstrap = resolve;
+    });
+    const client = {
+      getAppBootstrapShell: vi.fn().mockResolvedValue({
+        version: 9,
+        generated_at: "2026-04-25T10:00:00.000Z",
+        program_access: {
+          mode: "remote_entitlement",
+          stage: "packaged_release",
+          guard_enabled: true,
+          message: "程序会员控制面已接入",
+        },
+      }),
+      getAppBootstrapFull: vi.fn().mockReturnValue(fullBootstrapPromise),
+    };
+    const manager = createRuntimeConnectionManager({
+      client,
+      now: () => "2026-04-25T10:00:01.000Z",
+      store,
+    });
+
+    const shellPayload = await manager.bootstrap();
+
+    expect(shellPayload.version).toBe(9);
+    expect(client.getAppBootstrapShell).toHaveBeenCalledTimes(1);
+    expect(client.getAppBootstrapFull).toHaveBeenCalledTimes(1);
+    expect(store.getSnapshot().bootstrap).toEqual({
+      state: "hydrated",
+      hydratedAt: "2026-04-25T10:00:00.000Z",
+      version: 9,
+    });
+    expect(store.getSnapshot().querySystem.serverHydrated).toBe(false);
+    expect(store.getSnapshot().purchaseSystem.serverHydrated).toBe(false);
+    expect(store.getSnapshot().programAccess).toMatchObject({
+      mode: "remote_entitlement",
+      stage: "packaged_release",
+      guardEnabled: true,
+      message: "程序会员控制面已接入",
+    });
+
+    resolveFullBootstrap({
+      version: 10,
+      generated_at: "2026-04-25T10:00:02.000Z",
+      query_system: {
+        configs: [{ config_id: "cfg-1", name: "白天配置" }],
+        capacitySummary: { modes: {} },
+        runtimeStatus: { running: true, item_rows: [{ query_item_id: "item-1" }] },
+      },
+      purchase_system: {
+        runtimeStatus: { running: false, accounts: [], item_rows: [] },
+        uiPreferences: { selected_config_id: "cfg-1", updated_at: "2026-04-25T10:00:02.000Z" },
+        runtimeSettings: { per_batch_ip_fanout_limit: 1, updated_at: null },
+      },
+    });
+    await Promise.resolve();
+
+    expect(store.getSnapshot().bootstrap).toEqual({
+      state: "hydrated",
+      hydratedAt: "2026-04-25T10:00:02.000Z",
+      version: 10,
+    });
+    expect(store.getSnapshot().querySystem.serverHydrated).toBe(true);
+    expect(store.getSnapshot().purchaseSystem.serverHydrated).toBe(true);
+  });
+
+  it("waits for full bootstrap when force refresh is requested", async () => {
+    const store = createAppRuntimeStore();
+    let resolveFullBootstrap;
+    const fullBootstrapPromise = new Promise((resolve) => {
+      resolveFullBootstrap = resolve;
+    });
+    const client = {
+      getAppBootstrapShell: vi.fn().mockResolvedValue({
+        version: 3,
+        generated_at: "2026-04-25T11:00:00.000Z",
+      }),
+      getAppBootstrapFull: vi.fn().mockReturnValue(fullBootstrapPromise),
+    };
+    const manager = createRuntimeConnectionManager({
+      client,
+      now: () => "2026-04-25T11:00:01.000Z",
+      store,
+    });
+
+    let resolved = false;
+    const forcedBootstrapPromise = manager.bootstrap({ force: true }).then(() => {
+      resolved = true;
+    });
+    await Promise.resolve();
+
+    expect(resolved).toBe(false);
+
+    resolveFullBootstrap({
+      version: 4,
+      generated_at: "2026-04-25T11:00:02.000Z",
+      query_system: {
+        configs: [],
+        capacitySummary: { modes: {} },
+        runtimeStatus: { running: false, item_rows: [] },
+      },
+      purchase_system: {
+        runtimeStatus: { running: false, accounts: [], item_rows: [] },
+        uiPreferences: {},
+        runtimeSettings: {},
+      },
+    });
+    await forcedBootstrapPromise;
+
+    expect(resolved).toBe(true);
+    expect(client.getAppBootstrapShell).toHaveBeenCalledTimes(1);
+    expect(client.getAppBootstrapFull).toHaveBeenCalledTimes(1);
+    expect(store.getSnapshot().bootstrap).toEqual({
+      state: "hydrated",
+      hydratedAt: "2026-04-25T11:00:02.000Z",
+      version: 4,
+    });
+    expect(store.getSnapshot().querySystem.serverHydrated).toBe(true);
+    expect(store.getSnapshot().purchaseSystem.serverHydrated).toBe(true);
+  });
 });

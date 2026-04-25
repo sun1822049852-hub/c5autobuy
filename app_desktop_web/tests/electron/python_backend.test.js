@@ -74,7 +74,10 @@ describe("python backend manager", () => {
     const fetchImpl = vi
       .fn()
       .mockRejectedValueOnce(new Error("connect ECONNREFUSED"))
-      .mockResolvedValueOnce({ ok: true });
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ status: "ok", ready: true }),
+      });
 
     const backend = await startPythonBackend({
       projectRoot: "C:/demo/project",
@@ -140,13 +143,52 @@ describe("python backend manager", () => {
     expect(backend.baseUrl).toBe("http://127.0.0.1:8134");
   });
 
+  it("does not treat a non-json health response as backend ready", async () => {
+    const fakeChild = {
+      once: vi.fn(),
+      kill: vi.fn(),
+    };
+    const spawnProcess = vi.fn(() => fakeChild);
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => {
+          throw new Error("Unexpected token < in JSON");
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ status: "ok", ready: true }),
+      });
+
+    const backend = await startPythonBackend({
+      projectRoot: "C:/demo/project",
+      dbPath: "C:/demo/project/data/app.db",
+      portProvider: () => 8135,
+      pythonExecutable: "C:/demo/project/.venv/Scripts/python.exe",
+      spawnProcess,
+      fetchImpl,
+      pollIntervalMs: 1,
+      timeoutMs: 50,
+    });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(fetchImpl).toHaveBeenNthCalledWith(1, "http://127.0.0.1:8135/health");
+    expect(fetchImpl).toHaveBeenNthCalledWith(2, "http://127.0.0.1:8135/health");
+    expect(backend.baseUrl).toBe("http://127.0.0.1:8135");
+  });
+
   it("passes the app-private directory to the python child environment", async () => {
     const fakeChild = {
       once: vi.fn(),
       kill: vi.fn(),
     };
     const spawnProcess = vi.fn(() => fakeChild);
-    const fetchImpl = vi.fn().mockResolvedValue({ ok: true });
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: "ok", ready: true }),
+    });
 
     await startPythonBackend({
       projectRoot: "C:/demo/project",
@@ -240,7 +282,10 @@ describe("python backend manager", () => {
       kill: vi.fn(),
     };
     const spawnProcess = vi.fn(() => fakeChild);
-    const fetchImpl = vi.fn().mockResolvedValue({ ok: true });
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ status: "ok", ready: true }),
+    });
 
     await startPythonBackend({
       projectRoot: "C:/demo/project",
