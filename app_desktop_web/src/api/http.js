@@ -36,7 +36,9 @@ export function createHttpClient({
   fetchImpl,
   requestTimeoutMs = 10000,
 } = {}) {
-  const resolvedFetch = fetchImpl ?? globalThis.fetch;
+  // In renderer-like environments (jsdom/electron), `window.fetch` is the expected override point.
+  // Node 18+ provides a native `globalThis.fetch`; prefer `window.fetch` when present so tests can stub safely.
+  const resolvedFetch = fetchImpl ?? globalThis.window?.fetch ?? globalThis.fetch;
 
   if (typeof resolvedFetch !== "function") {
     throw new Error("Fetch API 不可用，无法初始化 HTTP 客户端");

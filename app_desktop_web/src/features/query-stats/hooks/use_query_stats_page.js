@@ -16,6 +16,17 @@ const DATA_FRESHNESS_MS = 5_000;
 const REFRESH_THROTTLE_MS = 1_000;
 
 
+function buildFiltersSignature(filters) {
+  const params = buildStatsRequestParams(filters);
+  return [
+    params.rangeMode || "",
+    params.date || "",
+    params.startDate || "",
+    params.endDate || "",
+  ].join("|");
+}
+
+
 function normalizeQueryStatsResponse(response) {
   return {
     items: Array.isArray(response?.items)
@@ -46,8 +57,12 @@ export function useQueryStatsPage({ client }) {
 
   /** 上次成功拉取数据的时间戳 */
   const lastFetchTimestampRef = useRef(0);
+  /** 上次成功拉取数据对应的筛选签名（用于 freshness gate 去重） */
+  const lastFetchSignatureRef = useRef("");
   /** 上次触发刷新的时间戳（节流用） */
   const lastRefreshClickRef = useRef(0);
+  /** 上次触发刷新时的筛选签名（节流只针对同一筛选） */
+  const lastRefreshSignatureRef = useRef("");
 
   function updateFilters(nextValue) {
     const nextFilters = typeof nextValue === "function"
@@ -69,11 +84,13 @@ export function useQueryStatsPage({ client }) {
     }
 
     setIsLoading(true);
+    const signature = buildFiltersSignature(nextFilters);
     try {
       const response = await client.getQueryItemStats(buildStatsRequestParams(nextFilters));
       setRows(normalizeQueryStatsResponse(response).items);
       setLoadError(null);
       lastFetchTimestampRef.current = Date.now();
+      lastFetchSignatureRef.current = signature;
     } catch (error) {
       setLoadError(buildErrorDisplay(error));
     } finally {
@@ -109,18 +126,29 @@ export function useQueryStatsPage({ client }) {
     },
     onRefresh() {
       const now = Date.now();
+      const signature = buildFiltersSignature(filtersRef.current);
 
-      // 5 秒新鲜度窗口：数据尚新，不打接口
-      if (now - lastFetchTimestampRef.current < DATA_FRESHNESS_MS) {
+      // 5 秒新鲜度窗口：同一筛选参数的数据尚新，不重复打接口。
+      // 切日期/切范围后需要拉新数据，因此签名变化时必须允许刷新。
+      if (
+        signature
+        && signature === lastFetchSignatureRef.current
+        && now - lastFetchTimestampRef.current < DATA_FRESHNESS_MS
+      ) {
         return Promise.resolve();
       }
 
       // 1 秒硬节流：防止连续点击
-      if (now - lastRefreshClickRef.current < REFRESH_THROTTLE_MS) {
+      if (
+        signature
+        && signature === lastRefreshSignatureRef.current
+        && now - lastRefreshClickRef.current < REFRESH_THROTTLE_MS
+      ) {
         return Promise.resolve();
       }
 
       lastRefreshClickRef.current = now;
+      lastRefreshSignatureRef.current = signature;
       return loadStats(filtersRef.current);
     },
     onStartDateChange(nextValue) {

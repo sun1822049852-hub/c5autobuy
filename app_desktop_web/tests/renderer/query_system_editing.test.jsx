@@ -1073,6 +1073,65 @@ describe("query system editing", () => {
     ).toBe(false);
   });
 
+  it("keeps the unsaved confirm when switching configs after a save validation error", async () => {
+    const harness = createFetchHarness({
+      capacityModes: {
+        new_api: { mode_type: "new_api", available_account_count: 1 },
+        fast_api: { mode_type: "fast_api", available_account_count: 1 },
+        token: { mode_type: "token", available_account_count: 3 },
+      },
+      secondaryDetail: buildSecondaryConfigDetail(),
+    });
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    await openQuerySystem(user);
+    await setAllocationDraft(user, "AWP | Asiimov", "new_api", "1");
+    await user.click(screen.getByRole("button", { name: "保存到当前配置" }));
+
+    expect(screen.getByText("校验失败，无法保存")).toBeInTheDocument();
+
+    const nav = screen.getByRole("navigation", { name: "配置管理导航" });
+    await user.click(within(nav).getByRole("button", { name: /^夜刀配置/ }));
+
+    const confirmDialog = await screen.findByRole("dialog", { name: "未保存修改" });
+    expect(screen.getByRole("heading", { name: "白天配置" })).toBeInTheDocument();
+
+    await user.click(within(confirmDialog).getByRole("button", { name: "不保存" }));
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "夜刀配置" })).toBeInTheDocument();
+    });
+  });
+
+  it("keeps the unsaved confirm when leaving the page after a save validation error", async () => {
+    const harness = createFetchHarness({
+      capacityModes: {
+        new_api: { mode_type: "new_api", available_account_count: 1 },
+        fast_api: { mode_type: "fast_api", available_account_count: 1 },
+        token: { mode_type: "token", available_account_count: 3 },
+      },
+    });
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    await openQuerySystem(user);
+    await setAllocationDraft(user, "AWP | Asiimov", "new_api", "1");
+    await user.click(screen.getByRole("button", { name: "保存到当前配置" }));
+
+    expect(screen.getByText("校验失败，无法保存")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "账号中心" }));
+
+    const leaveDialog = await screen.findByRole("dialog", { name: "未保存修改" });
+    expect(within(leaveDialog).getByText("当前修改尚未保存，离开前选择保存或直接丢弃。")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "白天配置" })).toBeInTheDocument();
+
+    await user.click(within(leaveDialog).getByRole("button", { name: "不保存" }));
+    await waitFor(() => {
+      expect(screen.getByText("C5 交易助手")).toBeInTheDocument();
+    });
+  });
+
   it("removes an item from the draft list and persists the deletion on save", async () => {
     const harness = createFetchHarness();
     installDesktopApp(harness.fetchImpl);

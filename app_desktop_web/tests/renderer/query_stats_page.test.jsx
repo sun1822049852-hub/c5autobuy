@@ -147,7 +147,7 @@ describe("query stats page", () => {
 
     const table = await screen.findByRole("table", { name: "查询统计表" });
     expect(within(table).getByText("下单失败件数")).toBeInTheDocument();
-    expect(within(table).getByText("AK-47 | Redline")).toBeInTheDocument();
+    await within(table).findByText("AK-47 | Redline");
     expect(within(table).getByText("4")).toBeInTheDocument();
     expect(within(table).getByText("2")).toBeInTheDocument();
     expect(within(table).getAllByText("1")).toHaveLength(2);

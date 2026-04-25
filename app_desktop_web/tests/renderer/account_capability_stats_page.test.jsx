@@ -119,7 +119,7 @@ describe("account capability stats page", () => {
     await user.click(await screen.findByRole("button", { name: "账号能力统计" }));
 
     const table = await screen.findByRole("table", { name: "账号能力统计表" });
-    expect(within(table).getByText("购买账号-A")).toBeInTheDocument();
+    await within(table).findByText("购买账号-A");
     expect(within(table).getByText("182ms · 12次")).toBeInTheDocument();
     expect(within(table).getByText("--")).toBeInTheDocument();
     expect(within(table).getByText("340ms · 4次")).toBeInTheDocument();

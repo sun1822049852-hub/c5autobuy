@@ -1620,3 +1620,36 @@
   - README 已按魔尊提醒维持无需改动。
 - 下一步：
   - 若继续深挖，优先把 backend ready 到 `renderer.home.interactive` 之间再拆一层：量 account-center lazy chunk 到位、首页首个 React commit、首个 `/account-center/accounts` 返回各自耗时，确认“慢”究竟卡在 renderer chunk / React commit / backend 首屏数据。
+
+## 2026-04-25 17:26 (Asia/Shanghai)
+- 背景：
+  - 魔尊要求把“此次 UI 修改”单独收口提交，不把构建链 / backend 旁支脏改混进去。
+  - 当前剩余脏改里，经现场 diff 收敛，属于这轮 UI 的文件为：
+    - `app_desktop_web/src/api/http.js`
+    - `app_desktop_web/src/features/query-stats/hooks/use_query_stats_page.js`
+    - `app_desktop_web/src/features/query-system/query_system_page.jsx`
+    - `app_desktop_web/tests/renderer/account_capability_stats_page.test.jsx`
+    - `app_desktop_web/tests/renderer/query_stats_page.test.jsx`
+    - `app_desktop_web/tests/renderer/query_system_editing.test.jsx`
+  - 明确排除出本次 UI 提交的旁支脏改：
+    - `app_desktop_web/electron-builder.config.cjs`
+    - `app_desktop_web/python_backend.js`
+    - `tests/backend/test_query_config_routes.py`
+- 已完成：
+  - `app_desktop_web/src/api/http.js`
+    - renderer/jsdom 场景下的 fetch 解析顺序改为优先 `window.fetch` 再回退 `globalThis.fetch`，让前端测试与 Electron renderer stub 更稳定。
+  - `app_desktop_web/src/features/query-stats/hooks/use_query_stats_page.js`
+    - query stats 页面对“手动刷新”和“5 秒 freshness”都补了按筛选条件区分的 signature；切日期/切范围后不再被旧 freshness gate 错拦。
+  - `app_desktop_web/src/features/query-system/query_system_page.jsx`
+    - query system 页面对“未保存修改”的拦截条件收口为只看 `hasUnsavedChanges`，不再因为 `saveBarError` 存在就错误放过配置切换 / 离页确认。
+  - renderer tests：
+    - `account_capability_stats_page.test.jsx` / `query_stats_page.test.jsx` 把脆弱的同步查找改成等待真实异步渲染结果。
+    - `query_system_editing.test.jsx` 新增两条回归：保存校验失败后，切配置与离页都仍必须弹未保存确认。
+- 已做验证：
+  - `npm --prefix app_desktop_web test -- tests/renderer/account_capability_stats_page.test.jsx tests/renderer/query_stats_page.test.jsx tests/renderer/query_system_editing.test.jsx --run` -> `22 passed`
+- 文档同步：
+  - `docs/agent/session-log.md` 已更新。
+  - `docs/agent/memory.md` 本轮无需更新：没有形成新的跨会话稳定约束。
+  - README 仍无需改动。
+- 下一步：
+  - 把上述 UI 文件单独 staged + commit，继续保留构建链与 backend 旁支脏改在工作树。

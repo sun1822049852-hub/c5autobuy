@@ -82,7 +82,7 @@ export function QuerySystemPage({ bootstrapConfig, client, isActive, onLeaveStat
   discardDraftChangesRef.current = discardDraftChanges;
   selectConfigRef.current = selectConfig;
 
-  const canPromptOnConfigSwitch = Boolean(currentConfig) && hasUnsavedChanges && !saveBarError;
+  const canPromptOnConfigSwitch = Boolean(currentConfig) && hasUnsavedChanges;
 
   const resetConfigSwitchPrompt = useCallback(() => {
     setConfigSwitchPrompt(EMPTY_CONFIG_SWITCH_PROMPT);
@@ -149,7 +149,7 @@ export function QuerySystemPage({ bootstrapConfig, client, isActive, onLeaveStat
 
   useEffect(() => {
     onLeaveStateChange?.({
-      canPromptOnLeave: Boolean(currentConfig) && hasUnsavedChanges && !saveBarError,
+      canPromptOnLeave: Boolean(currentConfig) && hasUnsavedChanges,
       requestDiscard() {
         return discardDraftChangesRef.current();
       },
@@ -161,7 +161,7 @@ export function QuerySystemPage({ bootstrapConfig, client, isActive, onLeaveStat
     return () => {
       onLeaveStateChange?.(null);
     };
-  }, [currentConfig, hasUnsavedChanges, onLeaveStateChange, saveBarError]);
+  }, [currentConfig, hasUnsavedChanges, onLeaveStateChange]);
 
   return (
     <section className="query-system-page">
