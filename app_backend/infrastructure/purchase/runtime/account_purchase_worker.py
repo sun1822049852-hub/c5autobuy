@@ -132,5 +132,9 @@ class AccountPurchaseWorker:
             return resolved
         return len(list(getattr(batch, "product_list", []) or []))
 
+    def refresh_account(self, account: object) -> None:
+        self._account = account
+        self._runtime_account.bind_account(account)
+
     async def cleanup(self) -> None:
         await self._runtime_account.close_global_session()

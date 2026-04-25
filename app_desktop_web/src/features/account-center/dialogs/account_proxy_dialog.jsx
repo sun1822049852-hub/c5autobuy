@@ -5,7 +5,9 @@ const CUSTOM_VALUE = "__custom__";
 
 
 function formatProxyLabel(proxy) {
-  const auth = proxy.username ? `${proxy.username}:***@` : "";
+  const auth = proxy.username
+    ? `${proxy.username}${proxy.password ? `:${proxy.password}` : ""}@`
+    : "";
   return `${proxy.name} — ${proxy.scheme}://${auth}${proxy.host}:${proxy.port}`;
 }
 

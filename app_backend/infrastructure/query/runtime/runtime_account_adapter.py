@@ -85,10 +85,14 @@ class RuntimeAccountAdapter:
     async def get_global_session(self, force_new: bool = False):
         if not self.login_status:
             return None
-        if force_new or self._session_requires_refresh(self._global_session):
+        expected_proxy_url = self._browser_proxy_url_or_none
+        if force_new or self._session_requires_refresh(
+            self._global_session,
+            expected_proxy_url=expected_proxy_url,
+        ):
             await self.close_global_session()
             self._global_session = self._create_session(
-                proxy_url=self._browser_proxy_url_or_none,
+                proxy_url=expected_proxy_url,
                 limit=30,
                 limit_per_host=5,
                 timeout_total=30,
@@ -99,10 +103,14 @@ class RuntimeAccountAdapter:
     async def get_api_session(self, force_new: bool = False):
         if not self.has_api_key():
             return None
-        if force_new or self._session_requires_refresh(self._api_session):
+        expected_proxy_url = self._api_proxy_url_or_none
+        if force_new or self._session_requires_refresh(
+            self._api_session,
+            expected_proxy_url=expected_proxy_url,
+        ):
             await self.close_api_session()
             self._api_session = self._create_session(
-                proxy_url=self._api_proxy_url_or_none,
+                proxy_url=expected_proxy_url,
                 limit=15,
                 limit_per_host=3,
                 timeout_total=20,
@@ -141,12 +149,14 @@ class RuntimeAccountAdapter:
         )
         timeout = aiohttp.ClientTimeout(total=timeout_total)
         try:
-            return aiohttp.ClientSession(
+            session = aiohttp.ClientSession(
                 connector=connector,
                 proxy=proxy_url,
                 timeout=timeout,
                 cookie_jar=None,
             )
+            setattr(session, "_runtime_account_proxy_url", proxy_url)
+            return session
         except TypeError:
             session = aiohttp.ClientSession(
                 connector=connector,
@@ -154,6 +164,7 @@ class RuntimeAccountAdapter:
                 cookie_jar=None,
             )
             setattr(session, "_default_proxy", proxy_url)
+            setattr(session, "_runtime_account_proxy_url", proxy_url)
             return session
 
     def _get_cookie_value(self, key: str) -> str | None:
@@ -163,10 +174,12 @@ class RuntimeAccountAdapter:
         return None
 
     @classmethod
-    def _session_requires_refresh(cls, session) -> bool:
+    def _session_requires_refresh(cls, session, *, expected_proxy_url: str | None) -> bool:
         if session is None:
             return True
         if getattr(session, "closed", False):
+            return True
+        if cls._session_proxy_url(session) != (expected_proxy_url or None):
             return True
         try:
             current_loop = asyncio.get_running_loop()
@@ -221,6 +234,14 @@ class RuntimeAccountAdapter:
             return bool(is_closed())
         except Exception:
             return False
+
+    @staticmethod
+    def _session_proxy_url(session) -> str | None:
+        proxy_url = getattr(session, "_runtime_account_proxy_url", None)
+        if proxy_url is not None:
+            return proxy_url or None
+        proxy_url = getattr(session, "_default_proxy", None)
+        return proxy_url or None
 
     def _parse_cookie_parts(self) -> list[_CookiePart]:
         cookie_raw = getattr(self._account, "cookie_raw", None) or ""

@@ -159,7 +159,7 @@ export function ProxyEditDialog({ open, proxy, onClose, onSubmit, onTest }) {
             <input
               className="form-input"
               placeholder="留空则无认证"
-              type="password"
+              type="text"
               value={form.password}
               onChange={(e) => updateField("password", e.target.value)}
             />

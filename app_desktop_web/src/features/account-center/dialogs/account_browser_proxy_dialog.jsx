@@ -5,7 +5,9 @@ const CUSTOM_VALUE = "__custom__";
 
 
 function formatProxyLabel(proxy) {
-  const auth = proxy.username ? `${proxy.username}:***@` : "";
+  const auth = proxy.username
+    ? `${proxy.username}${proxy.password ? `:${proxy.password}` : ""}@`
+    : "";
   return `${proxy.name} — ${proxy.scheme}://${auth}${proxy.host}:${proxy.port}`;
 }
 
@@ -128,6 +130,9 @@ export function AccountBrowserProxyDialog({
             )}
             <span className="form-hint">
               这里只影响浏览器登录与浏览器查询的代理出口，不会同步改动 API 代理。
+            </span>
+            <span className="form-hint">
+              已打开的浏览器窗口不会立即切到新代理；保存后需关闭旧窗口并重新打开，或重新登录后才会生效。
             </span>
           </div>
         </div>

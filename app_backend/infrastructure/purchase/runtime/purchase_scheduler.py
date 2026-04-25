@@ -248,6 +248,14 @@ class PurchaseScheduler:
             status["busy"] = bool(status.get("available")) and inflight_count >= inflight_limit
             self._add_idle_account_locked(account_id)
 
+    def update_account_bucket(self, account_id: str, *, bucket_key: str) -> None:
+        with self._lock:
+            status = self._account_status.get(account_id)
+            if status is None:
+                return
+            status["bucket_key"] = self._normalize_bucket_key(bucket_key)
+            self._add_idle_account_locked(account_id)
+
     def total_inflight_count(self) -> int:
         with self._lock:
             return sum(max(int(status.get("inflight_count", 0) or 0), 0) for status in self._account_status.values())

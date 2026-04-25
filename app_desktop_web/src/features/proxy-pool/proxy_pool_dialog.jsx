@@ -5,7 +5,9 @@ import { ProxyEditDialog } from "./proxy_edit_dialog.jsx";
 
 
 function formatProxyUrl(proxy) {
-  const auth = proxy.username ? `${proxy.username}:***@` : "";
+  const auth = proxy.username
+    ? `${proxy.username}${proxy.password ? `:${proxy.password}` : ""}@`
+    : "";
   return `${proxy.scheme}://${auth}${proxy.host}:${proxy.port}`;
 }
 

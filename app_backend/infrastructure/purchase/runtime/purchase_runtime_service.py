@@ -348,6 +348,7 @@ class PurchaseRuntimeService:
         max_inflight_per_account: int | None = None,
         queued_hit_timeout_seconds: float = 2.0,
         stats_sink=None,
+        stats_flush_callback=None,
         runtime_update_hub=None,
         query_runtime_service=None,
     ) -> None:
@@ -368,6 +369,7 @@ class PurchaseRuntimeService:
         )
         self._queued_hit_timeout_seconds = max(float(queued_hit_timeout_seconds), 0.0)
         self._stats_sink = stats_sink
+        self._stats_flush_callback = stats_flush_callback if callable(stats_flush_callback) else None
         self._runtime_update_hub = runtime_update_hub
         self._query_runtime_service = query_runtime_service
         self._runtime = None
@@ -577,6 +579,16 @@ class PurchaseRuntimeService:
         runtime_account = self._runtime_account_map().get(str(getattr(account, "account_id", "") or ""))
         return self._build_account_center_row(account, runtime_account=runtime_account)
 
+    def refresh_runtime_accounts(self) -> None:
+        runtime = self._runtime
+        if runtime is None:
+            return
+        latest_accounts = list(self._account_repository.list_accounts())
+        refresh_accounts = getattr(runtime, "refresh_accounts", None)
+        if callable(refresh_accounts):
+            refresh_accounts(latest_accounts)
+        self._publish_runtime_update()
+
     def update_account_purchase_config(
         self,
         *,
@@ -723,6 +735,7 @@ class PurchaseRuntimeService:
             query_config_repository=self._query_config_repository,
             purchase_ui_preferences_repository=self._purchase_ui_preferences_repository,
             stats_repository=self._stats_repository,
+            stats_flush_callback=self._stats_flush_callback,
             include_recent_events=False,
         ).execute()
         return PurchaseRuntimeStatusResponse.model_validate(snapshot).model_dump(mode="json")
@@ -1179,9 +1192,11 @@ class PurchaseRuntimeService:
             "api_key": api_key,
             "browser_proxy_mode": str(getattr(account, "browser_proxy_mode", "") or "direct"),
             "browser_proxy_url": browser_proxy_url,
+            "browser_proxy_id": getattr(account, "browser_proxy_id", None),
             "browser_proxy_display": browser_proxy_url or browser_public_ip or "未获取IP",
             "api_proxy_mode": str(getattr(account, "api_proxy_mode", "") or "direct"),
             "api_proxy_url": api_proxy_url,
+            "api_proxy_id": getattr(account, "api_proxy_id", None),
             "api_proxy_display": api_proxy_url or api_public_ip or "未获取IP",
             "proxy_mode": str(getattr(account, "api_proxy_mode", "") or "direct"),
             "proxy_url": api_proxy_url,
@@ -1784,6 +1799,38 @@ class _DefaultPurchaseRuntime:
         self._tracked_dispatch_batches = {}
         self._stats_aggregator.stop()
         self._stopped_at = datetime.now().isoformat(timespec="seconds")
+
+    def refresh_accounts(self, accounts: list[object]) -> None:
+        latest_accounts = list(accounts or [])
+        latest_by_account_id = {
+            str(getattr(account, "account_id", "") or ""): account
+            for account in latest_accounts
+            if str(getattr(account, "account_id", "") or "")
+        }
+        with self._state_lock:
+            self._accounts = latest_accounts
+            for account_id, state in self._account_states.items():
+                latest_account = latest_by_account_id.get(account_id)
+                if latest_account is None:
+                    continue
+                state.account = latest_account
+                setattr(state.account, "purchase_capability_state", state.capability_state)
+                setattr(state.account, "purchase_pool_state", state.pool_state)
+                setattr(state.account, "purchase_disabled", state.purchase_disabled)
+                setattr(state.account, "last_error", state.last_error)
+                setattr(
+                    state.account,
+                    "purchase_recovery_due_at",
+                    self._format_recovery_due_at(state.recovery_due_at),
+                )
+                refresh_account = getattr(state.worker, "refresh_account", None)
+                if callable(refresh_account):
+                    refresh_account(latest_account)
+                self._scheduler.update_account_bucket(
+                    account_id,
+                    bucket_key=self._account_bucket_key(latest_account),
+                )
+        self._notify_state_change()
 
     def bind_query_runtime_session(
         self,

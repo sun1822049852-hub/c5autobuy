@@ -24,10 +24,12 @@ function buildRows() {
       token_enabled: true,
       browser_proxy_mode: "direct",
       browser_proxy_url: null,
+      browser_proxy_id: null,
       browser_proxy_display: "39.71.213.149",
       browser_public_ip: "39.71.213.149",
       api_proxy_mode: "direct",
       api_proxy_url: null,
+      api_proxy_id: null,
       api_proxy_display: "39.71.213.149",
       api_ip_allow_list: "39.71.213.149",
       api_public_ip: "39.71.213.149",
@@ -50,9 +52,11 @@ function buildRows() {
       token_enabled: true,
       browser_proxy_mode: "custom",
       browser_proxy_url: "http://127.0.0.1:9000",
+      browser_proxy_id: null,
       browser_proxy_display: "http://127.0.0.1:9000",
       api_proxy_mode: "custom",
       api_proxy_url: "http://127.0.0.1:9000",
+      api_proxy_id: null,
       api_proxy_display: "http://127.0.0.1:9000",
       api_ip_allow_list: null,
       api_public_ip: "127.0.0.1",
@@ -75,9 +79,11 @@ function buildRows() {
       token_enabled: false,
       browser_proxy_mode: "custom",
       browser_proxy_url: "socks5://127.0.0.1:9900",
+      browser_proxy_id: null,
       browser_proxy_display: "socks5://127.0.0.1:9900",
       api_proxy_mode: "custom",
       api_proxy_url: "socks5://127.0.0.1:9900",
+      api_proxy_id: null,
       api_proxy_display: "socks5://127.0.0.1:9900",
       api_ip_allow_list: "39.71.213.149",
       api_public_ip: "39.71.213.149",
@@ -153,6 +159,29 @@ function buildInventoryMap() {
 }
 
 
+function buildProxyPoolRows() {
+  return [
+    {
+      proxy_id: "pool-1",
+      name: "香港节点",
+      scheme: "http",
+      host: "10.0.0.11",
+      port: 8001,
+      username: null,
+    },
+    {
+      proxy_id: "pool-2",
+      name: "东京节点",
+      scheme: "socks5",
+      host: "10.0.0.22",
+      port: 1080,
+      username: "agent",
+      password: "secret-22",
+    },
+  ];
+}
+
+
 function jsonResponse(payload, status = 200) {
   return Promise.resolve({
     ok: status >= 200 && status < 300,
@@ -179,6 +208,7 @@ function installDesktopApp(fetchImpl) {
 function createFetchHarness() {
   let rows = buildRows();
   const inventoryMap = buildInventoryMap();
+  let proxyPoolRows = [];
   const calls = [];
   const taskPollCounts = new Map();
 
@@ -219,10 +249,12 @@ function createFetchHarness() {
         token_enabled: true,
         browser_proxy_mode: body.browser_proxy_mode,
         browser_proxy_url: body.browser_proxy_url,
+        browser_proxy_id: body.browser_proxy_id ?? null,
         browser_public_ip: null,
         browser_proxy_display: body.browser_proxy_mode === "direct" ? "未获取IP" : body.browser_proxy_url,
         api_proxy_mode: body.api_proxy_mode,
         api_proxy_url: body.api_proxy_url,
+        api_proxy_id: body.api_proxy_id ?? null,
         api_proxy_display: body.api_proxy_mode === "direct" ? "未获取IP" : body.api_proxy_url,
         api_public_ip: null,
         purchase_status_code: "not_logged_in",
@@ -412,8 +444,10 @@ function createFetchHarness() {
         const nextApiKey = Object.prototype.hasOwnProperty.call(body, "api_key") ? body.api_key : row.api_key;
         const nextBrowserProxyMode = body.browser_proxy_mode ?? row.browser_proxy_mode;
         const nextBrowserProxyUrl = Object.prototype.hasOwnProperty.call(body, "browser_proxy_url") ? body.browser_proxy_url : row.browser_proxy_url;
+        const nextBrowserProxyId = Object.prototype.hasOwnProperty.call(body, "browser_proxy_id") ? body.browser_proxy_id : row.browser_proxy_id;
         const nextApiProxyMode = body.api_proxy_mode ?? row.api_proxy_mode;
         const nextApiProxyUrl = Object.prototype.hasOwnProperty.call(body, "api_proxy_url") ? body.api_proxy_url : row.api_proxy_url;
+        const nextApiProxyId = Object.prototype.hasOwnProperty.call(body, "api_proxy_id") ? body.api_proxy_id : row.api_proxy_id;
 
         return {
           ...row,
@@ -423,9 +457,11 @@ function createFetchHarness() {
           api_key_present: Boolean(nextApiKey),
           browser_proxy_mode: nextBrowserProxyMode,
           browser_proxy_url: nextBrowserProxyUrl,
+          browser_proxy_id: nextBrowserProxyId,
           browser_proxy_display: nextBrowserProxyMode === "direct" ? (row.browser_public_ip || "未获取IP") : nextBrowserProxyUrl,
           api_proxy_mode: nextApiProxyMode,
           api_proxy_url: nextApiProxyUrl,
+          api_proxy_id: nextApiProxyId,
           api_proxy_display: nextApiProxyMode === "direct" ? (row.api_public_ip || "未获取IP") : nextApiProxyUrl,
         };
       });
@@ -509,7 +545,7 @@ function createFetchHarness() {
     }
 
     if (url.pathname === "/proxy-pool" && method === "GET") {
-      return jsonResponse([]);
+      return jsonResponse(proxyPoolRows);
     }
 
     throw new Error(`Unhandled request: ${method} ${url.pathname}`);
@@ -520,6 +556,9 @@ function createFetchHarness() {
     fetchImpl,
     setRows(updater) {
       rows = typeof updater === "function" ? updater(rows) : updater;
+    },
+    setProxyPoolRows(updater) {
+      proxyPoolRows = typeof updater === "function" ? updater(proxyPoolRows) : updater;
     },
   };
 }
@@ -996,6 +1035,42 @@ describe("account center editing flows", () => {
     expect(within(dialog).getByPlaceholderText(/127\.0\.0\.1:9000/)).toHaveValue("10.20.30.40:9101");
   });
 
+  it("keeps api proxy pool selection when reopening the api ip dialog", async () => {
+    const harness = createFetchHarness();
+    harness.setProxyPoolRows(buildProxyPoolRows());
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await screen.findByText("账号 A");
+
+    await user.click(screen.getByRole("button", { name: "编辑API IP 账号 A" }));
+    const firstDialog = await screen.findByRole("dialog", { name: "API IP 设置" });
+    await user.selectOptions(within(firstDialog).getByLabelText("API代理"), "pool-2");
+    await user.click(within(firstDialog).getByRole("button", { name: "保存" }));
+
+    await waitFor(() => {
+      expect(harness.calls).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            method: "PATCH",
+            pathname: "/accounts/a-1",
+            body: expect.objectContaining({
+              api_proxy_mode: "pool",
+              api_proxy_url: null,
+              api_proxy_id: "pool-2",
+            }),
+          }),
+        ]),
+      );
+    });
+
+    await user.click(screen.getByRole("button", { name: "编辑API IP 账号 A" }));
+    const secondDialog = await screen.findByRole("dialog", { name: "API IP 设置" });
+    expect(within(secondDialog).getByLabelText("API代理")).toHaveValue("pool-2");
+  });
+
   it("opens the binding page from api ip dialog", async () => {
     const harness = createFetchHarness();
     installDesktopApp(harness.fetchImpl);
@@ -1129,6 +1204,82 @@ describe("account center editing flows", () => {
         }),
       ]),
     );
+  });
+
+  it("shows a browser-proxy hint that opened browsers need to be reopened after switching", async () => {
+    const harness = createFetchHarness();
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await screen.findByText("账号 A");
+
+    await user.click(screen.getByRole("button", { name: "编辑浏览器 IP 账号 A" }));
+    const dialog = await screen.findByRole("dialog", { name: "浏览器代理设置" });
+    expect(within(dialog).getByText(/已打开的浏览器窗口不会立即切到新代理/)).toBeInTheDocument();
+  });
+
+  it("keeps browser proxy pool selection when reopening the browser ip dialog", async () => {
+    const harness = createFetchHarness();
+    harness.setProxyPoolRows(buildProxyPoolRows());
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await screen.findByText("账号 A");
+
+    await user.click(screen.getByRole("button", { name: "编辑浏览器 IP 账号 A" }));
+    const firstDialog = await screen.findByRole("dialog", { name: "浏览器代理设置" });
+    await user.selectOptions(within(firstDialog).getByLabelText("浏览器代理"), "pool-1");
+    await user.click(within(firstDialog).getByRole("button", { name: "保存" }));
+
+    await waitFor(() => {
+      expect(harness.calls).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            method: "PATCH",
+            pathname: "/accounts/a-1",
+            body: expect.objectContaining({
+              browser_proxy_mode: "pool",
+              browser_proxy_url: null,
+              browser_proxy_id: "pool-1",
+            }),
+          }),
+        ]),
+      );
+    });
+
+    await user.click(screen.getByRole("button", { name: "编辑浏览器 IP 账号 A" }));
+    const secondDialog = await screen.findByRole("dialog", { name: "浏览器代理设置" });
+    expect(within(secondDialog).getByLabelText("浏览器代理")).toHaveValue("pool-1");
+  });
+
+  it("shows proxy-pool passwords in clear text across selectors and the proxy editor", async () => {
+    const harness = createFetchHarness();
+    harness.setProxyPoolRows(buildProxyPoolRows());
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App />);
+
+    await screen.findByText("账号 A");
+
+    await user.click(screen.getByRole("button", { name: "编辑API IP 账号 A" }));
+    const apiDialog = await screen.findByRole("dialog", { name: "API IP 设置" });
+    expect(within(apiDialog).getByRole("option", { name: /agent:secret-22@10\.0\.0\.22:1080/ })).toBeInTheDocument();
+    await user.click(within(apiDialog).getByRole("button", { name: "取消" }));
+
+    await user.click(screen.getByRole("button", { name: "代理管理" }));
+    const proxyDialog = await screen.findByRole("dialog", { name: "代理管理" });
+    expect(within(proxyDialog).getByText("socks5://agent:secret-22@10.0.0.22:1080")).toBeInTheDocument();
+
+    await user.click(within(proxyDialog).getAllByRole("button", { name: "编辑" })[1]);
+    const editDialog = await screen.findByRole("dialog", { name: "编辑代理" });
+    const passwordInput = within(editDialog).getByLabelText("密码（选填）");
+    expect(passwordInput).toHaveAttribute("type", "text");
+    expect(passwordInput).toHaveValue("secret-22");
   });
 
   it("treats direct in the browser ip dialog as a direct connection", async () => {

@@ -32,20 +32,96 @@ from app_backend.application.use_cases.resolve_login_conflict import ResolveLogi
 router = APIRouter(prefix="/accounts", tags=["accounts"])
 
 
+def _ensure_runtime_full_ready(request: Request) -> None:
+    ensure = getattr(request.app.state, "ensure_runtime_full_ready", None)
+    if callable(ensure):
+        ensure()
+
+
+def _ensure_browser_actions_ready(request: Request) -> None:
+    ensure = getattr(request.app.state, "ensure_browser_actions_ready", None)
+    if callable(ensure):
+        ensure()
+
+
+def _state_attr(request: Request, name: str):
+    return getattr(request.app.state, name)
+
+
+def _runtime_state_attr(request: Request, name: str):
+    if not hasattr(request.app.state, name):
+        _ensure_runtime_full_ready(request)
+    return getattr(request.app.state, name)
+
+
+def _browser_action_state_attr(request: Request, name: str):
+    if not hasattr(request.app.state, name):
+        _ensure_browser_actions_ready(request)
+    return getattr(request.app.state, name)
+
+
 def _repository(request: Request):
-    return request.app.state.account_repository
+    return _state_attr(request, "account_repository")
 
 
 def _task_manager(request: Request):
-    return request.app.state.task_manager
+    return _runtime_state_attr(request, "task_manager")
 
 
 def _bundle_repository(request: Request):
-    return request.app.state.account_session_bundle_repository
+    return _state_attr(request, "account_session_bundle_repository")
 
 
 def _login_adapter(request: Request):
-    return request.app.state.login_adapter
+    return _browser_action_state_attr(request, "login_adapter")
+
+
+def _purchase_runtime_service(request: Request):
+    return _runtime_state_attr(request, "purchase_runtime_service")
+
+
+def _open_api_binding_sync_service(request: Request):
+    return _browser_action_state_attr(request, "open_api_binding_sync_service")
+
+
+def _open_api_binding_page_launcher(request: Request):
+    return _browser_action_state_attr(request, "open_api_binding_page_launcher")
+
+
+def _account_balance_service(request: Request):
+    return _state_attr(request, "account_balance_service")
+
+
+def _account_update_hub(request: Request):
+    return _state_attr(request, "account_update_hub")
+
+
+def _refresh_runtime_accounts(request: Request) -> None:
+    for resolver in (
+        lambda current_request: getattr(current_request.app.state, "query_runtime_service", None),
+        _purchase_runtime_service,
+    ):
+        try:
+            runtime_service = resolver(request)
+        except Exception:
+            continue
+        refresh_runtime_accounts = getattr(runtime_service, "refresh_runtime_accounts", None)
+        if callable(refresh_runtime_accounts):
+            try:
+                refresh_runtime_accounts()
+            except Exception:
+                pass
+
+
+def _publish_account_update(request: Request, *, account_id: str, payload: dict[str, object]) -> None:
+    hub = _account_update_hub(request)
+    publish = getattr(hub, "publish", None)
+    if not callable(publish):
+        return
+    try:
+        publish(account_id=account_id, event="update_account", payload=payload)
+    except Exception:
+        pass
 
 
 @router.get("", response_model=list[AccountResponse])
@@ -110,6 +186,19 @@ async def update_account(
     except KeyError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found") from exc
 
+    _refresh_runtime_accounts(request)
+    _publish_account_update(
+        request,
+        account_id=account.account_id,
+        payload={
+            "browser_proxy_mode": account.browser_proxy_mode,
+            "browser_proxy_url": account.browser_proxy_url,
+            "api_proxy_mode": account.api_proxy_mode,
+            "api_proxy_url": account.api_proxy_url,
+            "browser_proxy_id": account.browser_proxy_id,
+            "api_proxy_id": account.api_proxy_id,
+        },
+    )
     return AccountResponse.model_validate(account)
 
 
@@ -152,7 +241,7 @@ async def update_account_purchase_config(
     payload: AccountPurchaseConfigUpdateRequest,
     request: Request,
 ) -> AccountCenterAccountResponse:
-    use_case = UpdateAccountPurchaseConfigUseCase(request.app.state.purchase_runtime_service)
+    use_case = UpdateAccountPurchaseConfigUseCase(_purchase_runtime_service(request))
     try:
         row = use_case.execute(
             account_id=account_id,
@@ -187,9 +276,9 @@ async def start_login_task(account_id: str, request: Request) -> TaskResponse:
         _task_manager(request),
         _login_adapter(request),
         _bundle_repository(request),
-        request.app.state.purchase_runtime_service,
-        request.app.state.open_api_binding_sync_service,
-        request.app.state.account_balance_service,
+        _purchase_runtime_service(request),
+        _open_api_binding_sync_service(request),
+        _account_balance_service(request),
     )
     try:
         task = use_case.execute(account_id)
@@ -205,7 +294,7 @@ async def sync_open_api_binding(account_id: str, request: Request) -> AccountRes
     if account is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
 
-    service = request.app.state.open_api_binding_sync_service
+    service = _open_api_binding_sync_service(request)
     outcome = service.sync_account_now(account_id, final=True)
     account = repository.get_account(account_id)
     if account is None:
@@ -233,7 +322,7 @@ async def open_open_api_binding_page(account_id: str, request: Request) -> dict[
             status_code=status.HTTP_409_CONFLICT,
             detail="当前账号缺少可复用登录会话，请重新登录后再添加白名单",
         )
-    launcher = request.app.state.open_api_binding_page_launcher
+    launcher = _open_api_binding_page_launcher(request)
     result = launcher.launch(
         account_id=account_id,
         profile_root=profile_root or None,
@@ -241,7 +330,7 @@ async def open_open_api_binding_page(account_id: str, request: Request) -> dict[
         login_session_root=login_session_root,
         debugger_address=debugger_address,
         proxy_url=getattr(account, "browser_proxy_url", None),
-        sync_service=request.app.state.open_api_binding_sync_service,
+        sync_service=_open_api_binding_sync_service(request),
     )
     return {
         "launched": True,
@@ -259,7 +348,7 @@ async def resolve_login_conflict(
         _repository(request),
         _task_manager(request),
         _bundle_repository(request),
-        request.app.state.purchase_runtime_service,
+        _purchase_runtime_service(request),
     )
     try:
         task = use_case.execute(
@@ -279,7 +368,7 @@ async def delete_account(account_id: str, request: Request) -> Response:
     use_case = DeleteAccountUseCase(
         _repository(request),
         _bundle_repository(request),
-        request.app.state.account_update_hub,
+        _account_update_hub(request),
     )
     use_case.execute(account_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

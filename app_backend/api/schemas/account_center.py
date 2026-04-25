@@ -23,9 +23,11 @@ class AccountCenterAccountResponse(BaseModel):
     api_key: str | None = None
     browser_proxy_mode: str
     browser_proxy_url: str | None = None
+    browser_proxy_id: str | None = None
     browser_proxy_display: str
     api_proxy_mode: str
     api_proxy_url: str | None = None
+    api_proxy_id: str | None = None
     api_proxy_display: str
     proxy_mode: str | None = None
     proxy_url: str | None = None
