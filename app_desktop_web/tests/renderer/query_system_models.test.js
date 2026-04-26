@@ -188,5 +188,18 @@ describe("query system models", () => {
       },
       saveError: "",
     })).toBe("等待账号");
+
+    expect(getConfigStatusText({
+      configId: "cfg-1",
+      hasUnsavedChanges: false,
+      isCurrentConfig: false,
+      runtimeStatus: {
+        running: false,
+        config_id: "cfg-1",
+        state: "waiting",
+        message: "购买账号恢复中",
+      },
+      saveError: "",
+    })).toBe("等待账号");
   });
 });

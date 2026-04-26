@@ -1156,6 +1156,53 @@ describe("purchase system page", () => {
     expect(screen.getByRole("button", { name: "停止扫货" })).toBeInTheDocument();
   });
 
+  it("treats a waiting active config as active even when the purchase running flag is false", async () => {
+    const harness = createFetchHarness({
+      initialStatus: buildPurchaseRuntimeStatus({
+        running: false,
+        message: "未运行",
+        active_query_config: {
+          config_id: "cfg-1",
+          config_name: "白天配置",
+          state: "waiting",
+          message: "等待购买账号恢复",
+        },
+      }),
+    });
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "扫货系统" }));
+
+    const commandDeck = await screen.findByRole("region", { name: "扫货运行控制台" });
+    const actionRegion = await screen.findByRole("region", { name: "扫货运行动作" });
+    expect(within(commandDeck).getByText("白天配置")).toBeInTheDocument();
+    expect(within(commandDeck).getByText("等待购买账号恢复")).toBeInTheDocument();
+    expect(within(commandDeck).getByRole("button", { name: "切换配置" })).toBeInTheDocument();
+    expect(within(actionRegion).getByRole("button", { name: "停止扫货" })).toBeInTheDocument();
+
+    await user.click(within(commandDeck).getByRole("button", { name: "切换配置" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "选择查询配置" });
+    await user.click(within(dialog).getByRole("button", { name: /^夜刀配置/ }));
+    await user.click(within(dialog).getByRole("button", { name: "切换到该配置" }));
+
+    await waitFor(() => {
+      expect(harness.calls).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            body: { config_id: "cfg-2" },
+            method: "POST",
+            pathname: "/purchase-runtime/start",
+          }),
+        ]),
+      );
+    });
+    expect(within(commandDeck).getByText("夜刀配置")).toBeInTheDocument();
+    expect(within(actionRegion).getByRole("button", { name: "停止扫货" })).toBeInTheDocument();
+  });
+
   it("renders flat item monitor rows and moves diagnostics behind floating actions", async () => {
     const harness = createFetchHarness();
     installDesktopApp(harness.fetchImpl);

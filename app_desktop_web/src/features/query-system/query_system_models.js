@@ -215,19 +215,35 @@ export function buildViewItem(item, _items, runtimeItemMap) {
   };
 }
 
+function getRuntimePhaseForConfig(runtimeStatus, configId) {
+  if (!Boolean(configId) || runtimeStatus.config_id !== configId) {
+    return "idle";
+  }
+
+  const explicitState = String(runtimeStatus.state || "").trim();
+  if (explicitState === "running" || explicitState === "waiting" || explicitState === "idle") {
+    return explicitState;
+  }
+
+  if (Boolean(runtimeStatus.running)) {
+    return "running";
+  }
+
+  if (String(runtimeStatus.message || "") === "等待购买账号恢复") {
+    return "waiting";
+  }
+
+  return "idle";
+}
+
 
 export function isRuntimeWaitingForConfig(runtimeStatus, configId) {
-  return Boolean(configId)
-    && runtimeStatus.config_id === configId
-    && !runtimeStatus.running
-    && String(runtimeStatus.message || "") === "等待购买账号恢复";
+  return getRuntimePhaseForConfig(runtimeStatus, configId) === "waiting";
 }
 
 
 export function isRuntimeRunningForConfig(runtimeStatus, configId) {
-  return Boolean(configId)
-    && runtimeStatus.config_id === configId
-    && Boolean(runtimeStatus.running);
+  return getRuntimePhaseForConfig(runtimeStatus, configId) === "running";
 }
 
 

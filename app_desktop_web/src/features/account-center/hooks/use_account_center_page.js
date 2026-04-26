@@ -5,7 +5,10 @@ import {
   useProgramAccessGuard,
 } from "../../../program_access/program_access_provider.jsx";
 import { isProgramReadonlyLocked } from "../../../program_access/program_access_readonly.js";
-import { useProgramAccess } from "../../../runtime/use_app_runtime.js";
+import {
+  useProgramAccess,
+  usePurchaseSystemServerHydrated,
+} from "../../../runtime/use_app_runtime.js";
 import { logRendererDiagnostic } from "../../../desktop/renderer_diagnostics.js";
 import { useFloatingRuntimeModalState } from "../../purchase-system/hooks/use_floating_runtime_modal_state.js";
 import { getLoginTaskStateLabel } from "../login_task_state_labels.js";
@@ -453,6 +456,7 @@ export function useAccountCenterPage({ client }) {
   if (startupInitTrace.afterProgramAccessSelectorMs == null) {
     startupInitTrace.afterProgramAccessSelectorMs = readPerformanceNow();
   }
+  const purchaseServerHydrated = usePurchaseSystemServerHydrated();
   const isReadonlyLocked = isProgramReadonlyLocked(programAccess);
   const [rows, setRows] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -496,6 +500,7 @@ export function useAccountCenterPage({ client }) {
     startupInitTrace.afterLogsModalStateMs = readPerformanceNow();
   }
   const hasLoggedInitialAccountsLoadedRef = useRef(false);
+  const stalePurchaseStatusResyncKeyRef = useRef("");
 
   function appendLogEntry(entry) {
     setAccountLogs((current) => [createLogEntry(entry), ...current]);
@@ -645,6 +650,53 @@ export function useAccountCenterPage({ client }) {
   if (startupInitTrace.afterDerivedStateMs == null) {
     startupInitTrace.afterDerivedStateMs = readPerformanceNow();
   }
+
+  useEffect(() => {
+    if (!purchaseServerHydrated) {
+      stalePurchaseStatusResyncKeyRef.current = "";
+      return;
+    }
+
+    const staleAccountIds = rows
+      .filter((row) => row.purchase_status_code === "runtime_unavailable")
+      .map((row) => String(row.account_id || ""))
+      .filter(Boolean)
+      .sort();
+
+    if (!staleAccountIds.length) {
+      stalePurchaseStatusResyncKeyRef.current = "";
+      return;
+    }
+
+    const nextResyncKey = staleAccountIds.join(",");
+    if (stalePurchaseStatusResyncKeyRef.current === nextResyncKey) {
+      return;
+    }
+    stalePurchaseStatusResyncKeyRef.current = nextResyncKey;
+
+    let cancelled = false;
+
+    async function resyncStalePurchaseStatuses() {
+      if (typeof client.listAccountCenterAccounts !== "function") {
+        return;
+      }
+      try {
+        const nextRows = await client.listAccountCenterAccounts();
+        if (cancelled) {
+          return;
+        }
+        setRows(normalizeAccountRows(nextRows));
+      } catch {
+        // Ignore silent resync failures. Manual refresh and later runtime events can recover.
+      }
+    }
+
+    void resyncStalePurchaseStatuses();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [client, purchaseServerHydrated, rows]);
 
   useEffect(() => {
     let cancelled = false;

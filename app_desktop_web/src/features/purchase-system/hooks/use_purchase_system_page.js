@@ -385,6 +385,24 @@ function normalizeStatus(status) {
   };
 }
 
+function getPurchaseRuntimePhase(status) {
+  const explicitState = String(status?.active_query_config?.state || "").trim();
+  if (explicitState === "running" || explicitState === "waiting" || explicitState === "idle") {
+    return explicitState;
+  }
+
+  if (Boolean(status?.running)) {
+    return "running";
+  }
+
+  const message = String(status?.active_query_config?.message || status?.message || "");
+  if (message === "等待购买账号恢复") {
+    return "waiting";
+  }
+
+  return "idle";
+}
+
 function toQuerySystemRuntimeStatus(status) {
   const activeQueryConfig = status?.active_query_config || null;
   const itemRows = Array.isArray(status?.item_rows)
@@ -401,13 +419,15 @@ function toQuerySystemRuntimeStatus(status) {
       modes: row?.modes && typeof row.modes === "object" ? row.modes : {},
     })).filter((row) => row.query_item_id)
     : [];
-  const isRunning = activeQueryConfig?.state === "running";
-  const isWaiting = activeQueryConfig?.state === "waiting";
+  const runtimePhase = getPurchaseRuntimePhase(status);
+  const isRunning = runtimePhase === "running";
+  const isWaiting = runtimePhase === "waiting";
 
   return {
     running: isRunning,
     config_id: activeQueryConfig?.config_id ?? null,
     config_name: activeQueryConfig?.config_name ?? null,
+    state: runtimePhase,
     message: activeQueryConfig?.message || (isWaiting ? "等待购买账号恢复" : (isRunning ? "运行中" : "未运行")),
     account_count: isRunning ? status.active_account_count : 0,
     started_at: isRunning ? (status?.started_at ?? null) : null,
@@ -1208,20 +1228,24 @@ export function usePurchaseSystemPage({ client, isActive = true, warmupEnabled =
   const configDisplayName = selectedConfigDetail?.name
     || selectedConfigSummary?.name
     || "未选择配置";
-  const runtimeMessage = activeConfig?.message || status.message || "未运行";
-  const isRuntimeRunning = Boolean(status.running);
-  const runtimeDrainNotice = isRuntimeRunning
+  const runtimePhase = getPurchaseRuntimePhase(status);
+  const isRuntimeRunning = runtimePhase === "running";
+  const isRuntimeWaiting = runtimePhase === "waiting";
+  const isRuntimeActive = isRuntimeRunning || isRuntimeWaiting;
+  const runtimeMessage = activeConfig?.message
+    || (isRuntimeWaiting ? "等待购买账号恢复" : (isRuntimeRunning ? "运行中" : (status.message || "未运行")));
+  const runtimeDrainNotice = isRuntimeActive
     && (Number(status.queue_size) > 0 || Number(status.active_account_count) > 0)
     ? PURCHASE_QUEUE_DRAIN_NOTICE
     : "";
   const isSelectedConfigRunning = Boolean(selectedConfigDetail?.config_id)
     && isConfigActive(status, selectedConfigDetail.config_id);
-  const actionLabel = isRuntimeRunning ? "停止扫货" : "开始扫货";
-  const configActionLabel = isRuntimeRunning ? "切换配置" : "选择配置";
+  const actionLabel = isRuntimeActive ? "停止扫货" : "开始扫货";
+  const configActionLabel = isRuntimeActive ? "切换配置" : "选择配置";
   const isActionDisabled = isActionPending
-    || (isReadonlyLocked && !isRuntimeRunning)
-    || (!isRuntimeRunning && !selectedConfigId);
-  const dialogActionLabel = isRuntimeRunning ? "切换到该配置" : "使用该配置";
+    || (isReadonlyLocked && !isRuntimeActive)
+    || (!isRuntimeActive && !selectedConfigId);
+  const dialogActionLabel = isRuntimeActive ? "切换到该配置" : "使用该配置";
   const runtimeItemMap = useMemo(
     () => buildRuntimeItemMap(status, selectedConfigDetail?.config_id || null),
     [selectedConfigDetail?.config_id, status],
@@ -1368,7 +1392,7 @@ export function usePurchaseSystemPage({ client, isActive = true, warmupEnabled =
       patchPurchaseUi({ selectedConfigId: nextConfigId });
       await loadSelectedConfigDetail(nextConfigId);
 
-      if (!isRuntimeRunning || nextConfigId === activeConfig?.config_id) {
+      if (!isRuntimeActive || nextConfigId === activeConfig?.config_id) {
         setIsConfigDialogOpen(false);
         setSelectorDraftId(null);
         setLoadError("");
@@ -1390,17 +1414,17 @@ export function usePurchaseSystemPage({ client, isActive = true, warmupEnabled =
   }
 
   async function onRuntimeAction() {
-    if (!isRuntimeRunning && !selectedConfigId) {
+    if (!isRuntimeActive && !selectedConfigId) {
       return;
     }
 
-    if (isReadonlyLocked && !isRuntimeRunning) {
+    if (isReadonlyLocked && !isRuntimeActive) {
       return;
     }
 
     setIsActionPending(true);
     try {
-      const nextStatus = isRuntimeRunning
+      const nextStatus = isRuntimeActive
         ? await client.stopPurchaseRuntime()
         : await runProgramAccessAction(() => client.startPurchaseRuntime(selectedConfigId));
       syncRuntimeStatus(nextStatus);

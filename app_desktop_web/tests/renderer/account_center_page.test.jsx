@@ -591,6 +591,92 @@ describe("account center page", () => {
     window.WebSocket = originalWebSocket;
   });
 
+  it("resyncs stale purchase status after runtime bootstrap hydrates", async () => {
+    const runtimeStore = createAppRuntimeStore();
+    const staleRows = accountRows().map((row) => (
+      row.account_id === "a-1"
+        ? {
+            ...row,
+            purchase_status_code: "runtime_unavailable",
+            purchase_status_text: "运行时未就绪",
+            selected_steam_id: null,
+            selected_warehouse_text: null,
+          }
+        : row
+    ));
+    const syncedRows = accountRows().map((row) => (
+      row.account_id === "a-1"
+        ? {
+            ...row,
+            purchase_status_code: "selected_warehouse",
+            purchase_status_text: "主仓一号",
+            selected_steam_id: "steam-1",
+            selected_warehouse_text: "主仓一号",
+          }
+        : row
+    ));
+    let accountListCallCount = 0;
+    const fetchImpl = vi.fn(async (input, options = {}) => {
+      const url = new URL(input);
+      const method = String(options.method ?? "GET").toUpperCase();
+
+      if (url.pathname === "/app/bootstrap" && method === "GET" && url.search === "?scope=shell") {
+        return {
+          ok: true,
+          json: async () => ({
+            version: 1,
+            generated_at: "2026-04-26T12:00:00.000Z",
+            program_access: {
+              mode: "local_pass_through",
+              stage: "prepackaging",
+              guard_enabled: false,
+              message: "local",
+              username: null,
+              auth_state: null,
+              runtime_state: null,
+              grace_expires_at: null,
+              last_error_code: null,
+              registration_flow_version: 2,
+            },
+          }),
+        };
+      }
+
+      if (url.pathname === "/account-center/accounts" && method === "GET") {
+        accountListCallCount += 1;
+        return {
+          ok: true,
+          json: async () => (accountListCallCount === 1 ? staleRows : syncedRows),
+        };
+      }
+
+      throw new Error(`Unhandled request: ${method} ${url.pathname}${url.search}`);
+    });
+
+    installDesktopApp(fetchImpl);
+    render(<App runtimeStore={runtimeStore} />);
+
+    const purchaseButton = await screen.findByRole("button", { name: "配置购买状态 账号 A" });
+    expect(purchaseButton).toHaveTextContent("运行时未就绪");
+    expect(accountListCallCount).toBe(1);
+
+    act(() => {
+      runtimeStore.applyPurchaseSystemServer({
+        runtimeStatus: {
+          running: false,
+          message: "未运行",
+          accounts: [],
+          item_rows: [],
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(purchaseButton).toHaveTextContent("主仓一号");
+    });
+    expect(accountListCallCount).toBe(2);
+  });
+
   it("removes the pushed account row after delete_account websocket updates without refetching detail", async () => {
     class FakeWebSocket {
       static instances = [];

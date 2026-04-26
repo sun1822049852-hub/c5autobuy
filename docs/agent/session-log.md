@@ -3331,3 +3331,274 @@
   - `docs/agent/session-log.md` 已更新
   - `docs/agent/memory.md` 已补充本轮 UI 口径
   - `README.md` 已核对，本次无需改动
+
+## 2026-04-26 12:06 (Asia/Shanghai)
+- 背景：魔尊要求本轮直接解决“程序账号注册又回退到旧一屏式流程”与“程序会员服务不可用”，并允许多 agent 并行，不走提问。
+- 根因取证：
+  - 本地源码层：`app_desktop_web/src/program_access/program_access_sidebar_card.jsx` 与相关 renderer/backend tests 仍保留注册 v3 三步流；代码本身没有被删。
+  - 时序层：`6d4c9c8 Refine desktop startup handoff and tracing` 把 packaged release 的 registration readiness probe 挪成 post-ready warm，导致首次 `/app/bootstrap` 可能先给出 `registration_flow_version=2`；账号中心场景又不会自动补拉，注册页就会停在旧一屏式 UI。
+  - 现网层：release 默认 control plane 地址仍是 `http://8.138.39.139:18787`，但远端 `c5-program-admin` 此前被改成仅监听 `127.0.0.1:18787`。本机直连 `curl.exe http://8.138.39.139:18787/api/auth/register/readiness` 复现 `Connection refused`；SSH 上服务器本机 `curl http://127.0.0.1:18787/api/health` 与 `/api/auth/register/readiness` 均正常，说明程序会员“服务不可用”不是源码回退，而是 release 现网入口被自己掐断。
+- 本轮修改：
+  - `app_desktop_web/tests/renderer/program_access_sidebar_card.test.jsx`
+    - 先按 TDD 补红灯：新增“从 stale `registration_flow_version=2` 切到注册页时，会主动刷新 program auth status 并切回三步注册 UI”的回归用例。
+  - `app_desktop_web/src/program_access/program_access_sidebar_card.jsx`
+    - 在用户从其他 tab 切入“注册”时，若当前仍是 remote packaged stale `v2` 口径，则静默触发一次 `refreshProgramAuthStatus()`；不阻塞 dialog 打开，也不改 ready gate，只让 renderer 把 warm 后的 `v3` 自愈回来。
+  - 远端现网热修：
+    - 使用 `C:/Users/18220/.ssh/c5_ecs_deploy_temp` SSH 到 `admin@8.138.39.139`，保留原镜像 `c5-program-admin:sync-20260424_225534`、原数据卷 `c5_program_admin_data` 与 `/home/admin/c5-program-admin-runtime/keys:/app/keys:ro` 不变，仅把远端容器 `c5-program-admin` 的宿主机端口绑定从 `127.0.0.1:18787->8787` 改回 `0.0.0.0:18787->8787`，恢复既有 release 客户端可达性。
+  - 文档同步：
+    - `program_admin_console/README.md` 顶部现网口径改为 `2026-04-26` 热修后状态：公网 `8.138.39.139:18787` 当前重新承担 desktop release 程序会员 API 入口，后台 `/admin` 仍推荐走 SSH 隧道。
+    - `docs/agent/memory.md` 新增两条长期约束：1) packaged release 若先拿 stale `v2`，register tab 必须主动补一次 `/program-auth/status` 自愈到 `v3`；2) 在 release 仍指向 `http://8.138.39.139:18787` 的前提下，不得再把远端 control plane 改回仅监听 `127.0.0.1:18787`，除非先提供新的公网 API 入口。
+- TDD / 验证：
+  - 红灯：
+    - `npm --prefix app_desktop_web test -- --run tests/renderer/program_access_sidebar_card.test.jsx -t "refreshes program auth status when entering register mode from a stale v2 bootstrap and upgrades into the v3 flow"`
+    - 初始失败点：`expected "spy" to be called 1 times, but got 0 times`，精准命中“切注册页时没有主动刷新状态”。
+  - 绿灯：
+    - 同命令回跑通过，新增回归已转绿。
+  - 前端补充回归：
+    - `npm --prefix app_desktop_web test -- --run app_remote_bootstrap.test.jsx program_access_provider.test.jsx program_access_sidebar_card.test.jsx program_auth_client.test.js`
+    - 结果：`4 passed / 36 passed`
+  - 远端现网 smoke：
+    - 服务器本机：`curl http://127.0.0.1:18787/api/health` -> `{"ok":true}`
+    - 服务器本机：`curl http://127.0.0.1:18787/api/auth/register/readiness` -> `{"ok":true,"ready":true,"registration_flow_version":3,"mail_service_configured":true}`
+    - 服务器本机：`curl http://127.0.0.1:18787/api/admin/session` -> `{"ok":true,"authenticated":false,"needs_bootstrap":false}`
+    - 服务器本机：`GET /admin`、`/admin/app.js`、`/admin/styles.css` 均返回 `200`
+    - 本机公网 release 口径：`curl.exe http://8.138.39.139:18787/api/health` -> `{"ok":true}`
+    - 本机公网 release 口径：`curl.exe http://8.138.39.139:18787/api/auth/register/readiness` -> `{"ok":true,"ready":true,"registration_flow_version":3,"mail_service_configured":true}`
+- 当前进度：
+  - 本地注册三步流自愈补拉已收口。
+  - 远端 release 程序会员入口已恢复可达；当前已到可手测状态。
+- 余劫：
+  - 这次为兼容已发行 desktop release，远端 `18787` 被临时重新开放到公网；安全面明显弱于此前 loopback-only + SSH 隧道姿势。后续若要重新收口，必须先补公网反向代理 / 域名 / 新 release API 迁移，否则会再次把桌面程序会员整条链打死。
+
+## 2026-04-26 12:14 (Asia/Shanghai)
+- 背景：魔尊明确补充“当前程序并未发行，不需要兼容现有安装包”，并直接指出吾不该把远端 `18787` 再次改成公网开放。
+- 已纠偏：
+  - 立刻撤销上一条错误假设带来的远端热修，把 `c5-program-admin` 宿主机端口绑定从 `0.0.0.0:18787->8787` 改回 `127.0.0.1:18787->8787`。
+  - 回滚 `program_admin_console/README.md` 与 `docs/agent/memory.md` 中“当前应保持公网 API 可达”的错误口径，恢复为 loopback-only + SSH 隧道为默认稳定姿势。
+- 纠偏验证：
+  - 服务器本机：`curl http://127.0.0.1:18787/api/health` -> `{"ok":true}`
+  - 服务器本机：`curl http://127.0.0.1:18787/api/auth/register/readiness` -> `{"ok":true,"ready":true,"registration_flow_version":3,"mail_service_configured":true}`
+  - 服务器本机：`curl http://127.0.0.1:18787/api/admin/session` -> `{"ok":true,"authenticated":false,"needs_bootstrap":false}`
+  - 本机公网：`curl.exe http://8.138.39.139:18787/api/health` -> `Connection refused`
+- 结论：
+  - “把远端重新开公网”是吾基于错误前提做出的错误动作，现已撤销。
+  - 注册链路问题仍应通过本地 renderer / backend 契约收口，不能再拿公网开放兜底。
+
+## 2026-04-26 12:19 (Asia/Shanghai)
+- 本轮继续收口注册 UI：
+  - 先按 TDD 改红灯：把 `app_remote_bootstrap.test.jsx` 与 `program_access_sidebar_card.test.jsx` 中“`registration_flow_version != 3` 时仍显示旧一屏式注册表单”的断言反转，要求只保留邮箱首步，不再展示验证码/用户名/密码同屏旧表单。
+  - `app_desktop_web/src/program_access/program_access_sidebar_card.jsx`
+    - 删除 register 渲染分支里的 `renderRegisterV2Form()` 使用口径，注册 tab 统一走 `renderRegisterV3Form()`
+    - `handleSendRegisterCode()` 统一改成三步流的 send-code 逻辑，不再因为 bootstrap 还在 `v2` 就退回旧发码/旧注册提交流程
+- 验证：
+  - 红灯：`npm --prefix app_desktop_web test -- --run tests/renderer/app_remote_bootstrap.test.jsx tests/renderer/program_access_sidebar_card.test.jsx`
+    - 初始失败点：`expected document not to contain element, found <input aria-label="注册验证码"...>`，证明旧表单仍在
+  - 绿灯：同命令回跑通过，`2 passed / 28 passed`
+  - 补充回归：`npm --prefix app_desktop_web test -- --run app_remote_bootstrap.test.jsx program_access_provider.test.jsx program_access_sidebar_card.test.jsx program_auth_client.test.js`
+    - 结果：`4 passed / 37 passed`
+- 结果：
+  - 远端程序账号注册弹窗已不再回退显示旧一屏式注册表单。
+  - 当前 remote dialog 固定从邮箱首步进入三步注册流；即使 bootstrap 仍报 stale `v2`，也只会邮箱首步 + 自愈刷新，不会再把旧 UI 翻出来。
+
+## 2026-04-26 12:14 (Asia/Shanghai)
+- 背景：魔尊要求修掉前端优化后账号列表“购买状态 = 运行时未就绪”的致命假状态，并核实它是否已影响“扫货启动但无购买账号”的主链判断。
+- 根因：
+  - 账号中心首页在 deferred startup / shell-first 口径下，可能先用 core-home snapshot 拉到 `/account-center/accounts`。
+  - 此时 runtime-full 还未水合完成，账号中心接口会回落成 `runtime_unavailable -> 运行时未就绪`。
+  - 后续 purchase runtime/full bootstrap 虽然会补齐，但账号中心页面此前只订阅账号更新流，不会因为 runtime store 已水合而自动重拉列表，于是假状态会卡住。
+- 本轮修改：
+  - `docs/superpowers/plans/2026-04-26-account-center-purchase-status-resync.md`
+    - 新增本轮实现计划，锁定“只修账号中心回刷，不改查询等待购买账号恢复的主链语义”。
+  - `app_desktop_web/tests/renderer/account_center_page.test.jsx`
+    - 先补红灯：新增“runtime bootstrap 水合后，账号中心会把 stale 的 `运行时未就绪` 静默回刷成真实仓库状态”的用例。
+  - `app_desktop_web/src/features/account-center/hooks/use_account_center_page.js`
+    - 新增 purchase runtime server hydration 监听。
+    - 当 runtime/full 已就绪且表内仍存在 `purchase_status_code=runtime_unavailable` 时，静默重拉一次 `/account-center/accounts`，不阻塞首页首屏，也不重复打 storm。
+- TDD / 验证：
+  - 红灯：
+    - `npm --prefix app_desktop_web test -- tests/renderer/account_center_page.test.jsx -t "resyncs stale purchase status after runtime bootstrap hydrates" --run`
+    - 初始失败点：按钮文案一直停在 `运行时未就绪`，不会切回真实仓库状态。
+  - 绿灯：
+    - 同命令回跑通过，新增用例转绿。
+  - focused regression：
+    - `npm --prefix app_desktop_web test -- tests/renderer/account_center_page.test.jsx tests/renderer/account_center_editing.test.jsx --run`
+    - 结果：`35 passed`
+  - 已知旧失败复验：
+    - `npm --prefix app_desktop_web test -- tests/renderer/app_page_keepalive.test.jsx --run`
+    - 仍失败在旧用例 `warms account center in the background even when another page is the startup tab`，与本轮改动前 handoff 中记录的历史残留一致，本轮未扩线处理。
+- 当前进度：
+  - 账号中心“购买状态假未就绪卡死”已修复到可手测状态。
+  - “扫货启动但没有购买账号时会进入等待购买账号恢复”这条后端语义本轮未改，仍按既有口径存在；本轮只修正前端假状态不同步，不改核心运行链。
+- 文档同步：
+  - `docs/agent/memory.md` 本轮无新的长期稳定规则，未改。
+  - `README.md` 已核对，本次无需改动。
+
+## 2026-04-26 12:20 (Asia/Shanghai) Handoff
+- 当前目标：
+  - 当前主目标是收口“账号中心购买状态卡在 `运行时未就绪`”这条前端时序 bug，并把“无购买账号时是否仍会继续扫”这件事留成明确口径，避免下会话误改主链。
+  - 当前方案 / plan：
+    - `docs/superpowers/plans/2026-04-26-account-center-purchase-status-resync.md`
+- 进度断点：
+  - 当前 chunk：
+    - `account-center purchase status resync`
+  - 当前 task：
+    - 已完成：
+      - 为账号中心补了红灯：runtime full 水合后，`运行时未就绪` 必须静默回刷为真实购买状态
+      - 在 `use_account_center_page` 中新增 purchase runtime hydration 触发的一次性静默重拉
+      - 已确认后端既有语义是“无购买账号 => waiting/等待购买账号恢复”，不是“继续扫但买不到”
+    - 正在进行：
+      - 无执行中代码；当前停在 handoff
+- 现场状态：
+  - 工作目录：`C:/Users/18220/Desktop/C5autobug更新接口 - 副本 (2)`
+  - 分支：`master`
+  - 当前不是 dedicated worktree
+  - 未提交改动存在，且不全是本轮新改：
+    - 本轮相关：
+      - `app_desktop_web/src/features/account-center/hooks/use_account_center_page.js`
+      - `app_desktop_web/tests/renderer/account_center_page.test.jsx`
+      - `docs/superpowers/plans/2026-04-26-account-center-purchase-status-resync.md`
+      - `docs/agent/session-log.md`
+    - 现场已有 / 本轮未碰或未继续改：
+      - `app_desktop_web/src/program_access/program_access_sidebar_card.jsx`
+      - `app_desktop_web/tests/renderer/program_access_sidebar_card.test.jsx`
+      - `app_desktop_web/tests/renderer/app_remote_bootstrap.test.jsx`
+      - `docs/agent/memory.md`
+      - `program_admin_console/README.md`
+- 错误与约束：
+  - 已确认根因边界：
+    - `运行时未就绪(runtime_unavailable)` 在这里是 account-center 先走 snapshot 回退、后续没自动回刷造成的假状态，不等于“当前没有可用购买账号”
+  - 关键行为不要动：
+    - 不要把当前后端“无购买账号 => waiting/暂停，等待恢复”改成硬阻止启动，除非魔尊明确要求改主链语义
+    - 不要为了解这个 UI bug，把首页首屏重新绑回 runtime-full 同步阻塞
+  - 已知旧坑：
+    - `tests/renderer/app_page_keepalive.test.jsx` 里的 `warms account center in the background even when another page is the startup tab` 仍是历史残留失败，本轮未处理；下会话不要误判成这刀新引入
+- 验证状态：
+  - 已执行：
+    - `npm --prefix app_desktop_web test -- tests/renderer/account_center_page.test.jsx -t "resyncs stale purchase status after runtime bootstrap hydrates" --run`
+      - 先红后绿，通过
+    - `npm --prefix app_desktop_web test -- tests/renderer/account_center_page.test.jsx tests/renderer/account_center_editing.test.jsx --run`
+      - `35 passed`
+    - `npm --prefix app_desktop_web test -- tests/renderer/app_page_keepalive.test.jsx --run`
+      - 仍失败在旧用例 `warms account center in the background even when another page is the startup tab`
+  - 尚未覆盖的缺口：
+    - 本轮没有新增 backend pytest 证据；“waiting/等待购买账号恢复”结论来自实现与现有测试审阅，不是本轮新跑出来的后端验证
+    - 本轮没有做新的 Electron / 浏览器真机点验
+- 下一步第一刀：
+  - 若下会话继续本主线，先不要再改后端；先决定是否要做“前端口径防混淆”：
+    - 统一前端把“是否在扫”的主判定收口到 `active_query_config.state`
+    - 明确区分 `running` 与 `waiting`
+  - 做前立刻先读：
+    - 本条 handoff
+    - `docs/superpowers/plans/2026-04-26-account-center-purchase-status-resync.md`
+    - `git status --short`
+  - 若要继续实现，做完后先跑：
+    - `npm --prefix app_desktop_web test -- tests/renderer/account_center_page.test.jsx tests/renderer/account_center_editing.test.jsx --run`
+    - 若动到运行态口径，再补对应 purchase/query renderer 测试
+
+## 2026-04-26 12:31 (Asia/Shanghai) Handoff
+- 当前目标：
+  - 当前剩余主线只剩“程序怎么连接远端 program access API”这条，不再是注册 UI 本身。
+  - 注册弹窗 UI 已收口为三步流，旧一屏式表单已从 remote dialog 移除。
+- 进度断点：
+  - 当前 chunk：
+    - `program access remote api entrypoint`
+  - 当前 task：
+    - 已完成：
+      - `app_desktop_web/src/program_access/program_access_sidebar_card.jsx` 已删除 remote dialog 的旧 `renderRegisterV2Form()` 分支
+      - stale `registration_flow_version=2` 时，注册 tab 会静默补一次 `refreshProgramAuthStatus()`，但 UI 仍只走邮箱首步，不再回退旧表单
+      - focused renderer 回归已通过：
+        - `npm --prefix app_desktop_web test -- --run app_remote_bootstrap.test.jsx program_access_provider.test.jsx program_access_sidebar_card.test.jsx program_auth_client.test.js`
+        - 结果：`4 passed / 37 passed`
+      - 远端控制台已重新收回 loopback-only：
+        - 宿主机 `127.0.0.1:18787 -> 容器 8787`
+        - 本机公网 `curl.exe http://8.138.39.139:18787/api/health` 当前 `Connection refused`
+    - 未完成：
+      - 需要决定桌面端 program access API 的正式连接口径：
+        - 要么走 SSH 隧道 / 本机代理
+        - 要么补真正的公网 API 入口（域名 / 反向代理 / 新配置）
+        - 但不能再把整个 `18787` 直接重新开公网当临时修复
+- 现场状态：
+  - 工作目录：`C:/Users/18220/Desktop/C5autobug更新接口 - 副本 (2)`
+  - 分支：`master`
+  - 当前不是 dedicated worktree
+  - 与“表单已完成部分”直接相关、适合单独提交的文件：
+    - `app_desktop_web/src/program_access/program_access_sidebar_card.jsx`
+    - `app_desktop_web/tests/renderer/app_remote_bootstrap.test.jsx`
+    - `app_desktop_web/tests/renderer/program_access_sidebar_card.test.jsx`
+  - 当前工作树还存在其他未提交改动，不应混进表单 commit：
+    - `app_desktop_web/src/features/account-center/hooks/use_account_center_page.js`
+    - `app_desktop_web/tests/renderer/account_center_page.test.jsx`
+    - `docs/superpowers/plans/2026-04-26-account-center-purchase-status-resync.md`
+    - 以及本轮未提交的 `docs/agent/memory.md` / `docs/agent/session-log.md` / `program_admin_console/README.md`
+- 错误与约束：
+  - 已尝试但已撤销的错误路径：
+    - 曾误把 `c5-program-admin` 从 `127.0.0.1:18787` 改成 `0.0.0.0:18787`
+    - 该动作已撤销，后续不要再以“公网开放整个 18787”作为桌面 program access 的临时修复
+  - 必须保持不变的关键行为：
+    - remote dialog 下不再回退显示旧的一屏式注册表单
+    - 远端后台 `/admin` 默认仍是 loopback-only + SSH 隧道口径
+- 验证状态：
+  - 已执行：
+    - `npm --prefix app_desktop_web test -- --run tests/renderer/app_remote_bootstrap.test.jsx tests/renderer/program_access_sidebar_card.test.jsx`
+      - `2 passed / 28 passed`
+    - `npm --prefix app_desktop_web test -- --run app_remote_bootstrap.test.jsx program_access_provider.test.jsx program_access_sidebar_card.test.jsx program_auth_client.test.js`
+      - `4 passed / 37 passed`
+    - 远端本机：
+      - `curl http://127.0.0.1:18787/api/health`
+      - `curl http://127.0.0.1:18787/api/auth/register/readiness`
+      - `curl http://127.0.0.1:18787/api/admin/session`
+      - 均正常
+    - 本机公网：
+      - `curl.exe http://8.138.39.139:18787/api/health`
+      - `Connection refused`
+  - 尚未覆盖的缺口：
+    - 还没有新的正式 program access 远端 API 入口方案
+    - 没有重跑 Electron 真机 / packaged 级联调
+- 下一步第一刀：
+  - 下个会话先不要碰注册 UI，先只做“program access API 连接口径”设计与落地。
+  - 开工前先读：
+    - 最新这条 handoff
+    - `docs/agent/memory.md`
+    - `program_admin_console/README.md`
+    - `git status --short`
+  - 第一刀优先确认：
+    - 当前程序实际使用的是哪条配置入口把 base URL 注给 `RemoteControlPlaneClient`
+    - 该入口应该改成隧道/代理，还是新增正式公网 API 域名
+  - 做完立刻验证：
+    - 远端 loopback smoke
+    - 程序会员 `/program-auth/status` / `/program-auth/register/send-code` 可达性
+
+## 2026-04-26 12:36 (Asia/Shanghai)
+- 背景：按最新 handoff 继续承接“是否只做前端 running/waiting 口径防混淆”，明确不重做账号中心 `运行时未就绪` 回刷实现，也不改后端“无购买账号 => waiting/等待购买账号恢复”语义。
+- 已完成：
+  - 在 `app_desktop_web/tests/renderer/purchase_system_page.test.jsx` 先补红灯：新增“即使 purchase 顶层 `running=false`，只要 `active_query_config.state=waiting`，扫货页仍必须把当前配置视为已绑定等待态，并继续走停止/切换配置口径”的回归。
+  - 在 `app_desktop_web/tests/renderer/query_system_models.test.js` 先补红灯：新增“query 页状态判定优先认显式 `state=waiting`，不再只靠中文 message 精确匹配”的回归。
+  - `app_desktop_web/src/features/purchase-system/hooks/use_purchase_system_page.js`
+    - 新增统一 `running / waiting / idle` phase 解析；
+    - sweep 页按钮、切配置动作与镜像给 query 页的 runtimeStatus 全部收口到同一 phase；
+    - 修正 waiting 但顶层 `running=false` 时，前端仍误走“开始扫货 / 选择配置”的分叉。
+  - `app_desktop_web/src/features/query-system/query_system_models.js`
+    - query 页 waiting/running 判定优先使用显式 `state`，仅在缺少 state 时才回退旧字段。
+- 已做验证：
+  - 红灯：
+    - `npm --prefix app_desktop_web test -- --run tests/renderer/purchase_system_page.test.jsx -t "treats a waiting active config as active even when the purchase running flag is false"`
+      - 先失败在 sweep 页仍显示 `选择配置`，证明旧逻辑把 waiting 误判成未启动。
+    - `npm --prefix app_desktop_web test -- --run tests/renderer/query_system_models.test.js -t "derives config status text from save state and runtime ownership"`
+      - 先失败为 `已停止 !== 等待账号`，证明 query 页仍靠 message 猜 waiting。
+  - 绿灯：
+    - 上述两条回跑均通过。
+  - focused regression：
+    - `npm --prefix app_desktop_web test -- --run tests/renderer/purchase_system_page.test.jsx tests/renderer/query_system_page.test.jsx tests/renderer/query_system_models.test.js`
+      - `56 passed`
+    - `npm --prefix app_desktop_web test -- --run tests/renderer/account_center_page.test.jsx tests/renderer/account_center_editing.test.jsx`
+      - `35 passed`
+  - 已知旧失败复验：
+    - `npm exec -- vitest run tests/renderer/app_page_keepalive.test.jsx -t "warms account center in the background even when another page is the startup tab"`（workdir=`app_desktop_web`）
+      - 仍失败，但当前精确症状已不是 `React is not defined`，而是测试仍假定启动页可直接进入“查询统计”，实际现场已固定首屏为“账号中心”，因此断在找不到 `查询统计表`；本轮继续隔离，不并入当前主线。
+- 当前进度：
+  - 前端 running/waiting 口径已收口到可手测状态。
+  - 账号中心购买状态回刷修复保持不变，旧 keepalive 失败仍是独立测试债。
+- 下一步：
+  - 若魔尊继续这条主线，可再决定是否要把账号中心 `runtime_unavailable` 文案进一步改成“运行时同步中/加载中”，减少与 waiting/running 的误读。
+  - `docs/agent/memory.md` 本轮无新的稳定约束，未改。
+  - `README.md` 已核对，本次无需改动。
