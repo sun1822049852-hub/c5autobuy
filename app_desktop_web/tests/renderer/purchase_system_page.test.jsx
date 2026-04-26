@@ -1410,6 +1410,52 @@ describe("purchase system page", () => {
     expect(within(actionRegion).getByRole("button", { name: "停止扫货" })).toBeInTheDocument();
   });
 
+  it("shows a centered dialog without internal error codes when starting runtime is rejected by program access", async () => {
+    const baseHarness = createFetchHarness({
+      initialUiPreferences: {
+        selected_config_id: "cfg-2",
+        updated_at: "2026-03-22T10:00:00",
+      },
+    });
+    const fetchImpl = vi.fn(async (input, options = {}) => {
+      const url = new URL(input);
+      const method = String(options.method ?? "GET").toUpperCase();
+
+      if (url.pathname === "/purchase-runtime/start" && method === "POST") {
+        return {
+          ok: false,
+          status: 401,
+          text: async () => JSON.stringify({
+            detail: {
+              code: "program_auth_required",
+              message: "请先登录程序会员",
+              action: "runtime.start",
+            },
+          }),
+        };
+      }
+
+      return baseHarness.fetchImpl(input, options);
+    });
+    installDesktopApp(fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "扫货系统" }));
+
+    const actionRegion = screen.getByRole("region", { name: "扫货运行动作" });
+    expect(within(actionRegion).getByRole("button", { name: "开始扫货" })).not.toBeDisabled();
+
+    await user.click(within(actionRegion).getByRole("button", { name: "开始扫货" }));
+
+    const errorDialog = await screen.findByRole("dialog", { name: "操作提示" });
+    expect(within(errorDialog).getByText("请先登录")).toBeInTheDocument();
+    expect(within(errorDialog).queryByText("请先登录程序会员")).not.toBeInTheDocument();
+    expect(within(errorDialog).queryByText("program_auth_required")).not.toBeInTheDocument();
+    expect(within(errorDialog).queryByText("HTTP 401")).not.toBeInTheDocument();
+    expect(within(errorDialog).queryByText("runtime.start")).not.toBeInTheDocument();
+  });
+
   it("uses the same dialog as a switch-config entry while runtime is running", async () => {
     const harness = createFetchHarness({
       initialStatus: buildPurchaseRuntimeStatus({

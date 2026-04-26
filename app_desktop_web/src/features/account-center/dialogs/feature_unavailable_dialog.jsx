@@ -1,6 +1,6 @@
 export function FeatureUnavailableDialog({
   isOpen = false,
-  message = "当前此功能未开放",
+  message = "尚无会员",
   onClose,
 }) {
   if (!isOpen) {

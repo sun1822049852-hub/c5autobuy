@@ -187,8 +187,9 @@ describe("program access provider", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "trigger guard" }));
 
-    expect(await screen.findByText("需要先登录程序会员")).toBeInTheDocument();
-    expect(screen.getByText("program_auth_required")).toBeInTheDocument();
+    expect(await screen.findByText("请先登录")).toBeInTheDocument();
+    expect(screen.queryByText("需要先登录程序会员")).not.toBeInTheDocument();
+    expect(screen.queryByText("program_auth_required")).not.toBeInTheDocument();
     expect(screen.getByText("rejected")).toBeInTheDocument();
   });
 
@@ -215,8 +216,9 @@ describe("program access provider", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "trigger guard" }));
 
-    expect(await screen.findByText("当前程序会员已在另一台设备登录")).toBeInTheDocument();
-    expect(screen.getByText("program_device_conflict")).toBeInTheDocument();
+    expect(await screen.findByText("当前会员已在另一台设备登录")).toBeInTheDocument();
+    expect(screen.queryByText("当前程序会员已在另一台设备登录")).not.toBeInTheDocument();
+    expect(screen.queryByText("program_device_conflict")).not.toBeInTheDocument();
   });
 
   it("syncs program-auth status into the runtime store through the provider bridge", async () => {

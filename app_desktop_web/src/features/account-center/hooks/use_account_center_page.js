@@ -10,6 +10,7 @@ import {
   usePurchaseSystemServerHydrated,
 } from "../../../runtime/use_app_runtime.js";
 import { logRendererDiagnostic } from "../../../desktop/renderer_diagnostics.js";
+import { getUserFacingErrorMessage } from "../../../shared/feedback_details.js";
 import { useFloatingRuntimeModalState } from "../../purchase-system/hooks/use_floating_runtime_modal_state.js";
 import { getLoginTaskStateLabel } from "../login_task_state_labels.js";
 import { useLoginTaskStream } from "./use_login_task_stream.js";
@@ -78,7 +79,7 @@ function getDisplayName(row) {
 
 
 function toErrorMessage(error) {
-  return error instanceof Error ? error.message : String(error);
+  return getUserFacingErrorMessage(error);
 }
 
 
@@ -929,7 +930,7 @@ export function useAccountCenterPage({ client }) {
         ) {
           setFeatureUnavailableDialog({
             isOpen: true,
-            message: programAccessError.message || "当前此功能未开放",
+            message: programAccessError.message || "尚无会员",
           });
           return null;
         }

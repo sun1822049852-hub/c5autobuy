@@ -7,6 +7,7 @@ import { QueryItemCreatePanel } from "./components/query_item_create_panel.jsx";
 import { QueryItemEditDialog } from "./components/query_item_edit_dialog.jsx";
 import { QueryItemTable } from "./components/query_item_table.jsx";
 import { QueryWorkbenchHeader } from "./components/query_workbench_header.jsx";
+import { ErrorNotice } from "../../shared/error_notice.jsx";
 import { UnsavedChangesDialog } from "../shell/unsaved_changes_dialog.jsx";
 import { RuntimePageGuard } from "../shell/runtime_page_guard.jsx";
 import { useQuerySystemPage } from "./hooks/use_query_system_page.js";
@@ -53,6 +54,7 @@ function QuerySystemPageContent({ client, isActive, onLeaveStateChange, warmupEn
     isSaving,
     itemViewModels,
     loadError,
+    dismissLoadError,
     lookupCreateItemDetail,
     openCreateConfigDialog,
     openCreateItemDialog,
@@ -167,9 +169,7 @@ function QuerySystemPageContent({ client, isActive, onLeaveStateChange, warmupEn
 
   return (
     <section className="query-system-page">
-      {loadError ? (
-        <section className="query-system-page__error">{loadError}</section>
-      ) : null}
+      <ErrorNotice message={loadError} onClose={dismissLoadError} />
 
       <div className="query-system-page__layout">
         <QueryConfigNav

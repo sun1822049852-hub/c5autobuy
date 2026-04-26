@@ -1,3 +1,6 @@
+import { resolveProgramAccessMessage } from "./program_access_messages.js";
+
+
 export const PROGRAM_ACCESS_LOGIN_PLACEHOLDER = "程序会员登录后续接入";
 
 
@@ -38,21 +41,35 @@ export function normalizeProgramAccess(payload) {
     return EMPTY_PROGRAM_ACCESS;
   }
 
-  return {
-    mode: String(payload.mode || ""),
-    stage: String(payload.stage || ""),
-    guardEnabled: Boolean(payload.guardEnabled ?? payload.guard_enabled),
+  const mode = String(payload.mode || "");
+  const guardEnabled = Boolean(payload.guardEnabled ?? payload.guard_enabled);
+  const username = String(payload.username || "");
+  const authState = String(payload.authState || payload.auth_state || "");
+  const lastErrorCode = payload.lastErrorCode ?? payload.last_error_code ?? null;
+  const message = resolveProgramAccessMessage({
+    authState,
+    code: lastErrorCode,
+    guardEnabled,
     message: String(payload.message || ""),
+    mode,
+    username,
+  });
+
+  return {
+    mode,
+    stage: String(payload.stage || ""),
+    guardEnabled,
+    message,
     registrationFlowVersion: Number(
       payload.registrationFlowVersion
       ?? payload.registration_flow_version
       ?? 2,
     ),
-    username: String(payload.username || ""),
-    authState: String(payload.authState || payload.auth_state || ""),
+    username,
+    authState,
     runtimeState: String(payload.runtimeState || payload.runtime_state || ""),
     graceExpiresAt: String(payload.graceExpiresAt || payload.grace_expires_at || ""),
-    lastErrorCode: payload.lastErrorCode ?? payload.last_error_code ?? null,
+    lastErrorCode,
     loginPlaceholderLabel: String(
       payload.loginPlaceholderLabel
       || payload.login_placeholder_label

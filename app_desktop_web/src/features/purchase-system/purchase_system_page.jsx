@@ -8,6 +8,7 @@ import { QuerySettingsModal } from "./components/query_settings_modal.jsx";
 import { PurchaseRuntimeActions } from "./components/purchase_runtime_actions.jsx";
 import { PurchaseRuntimeHeader } from "./components/purchase_runtime_header.jsx";
 import { usePurchaseSystemPage } from "./hooks/use_purchase_system_page.js";
+import { ErrorNotice } from "../../shared/error_notice.jsx";
 import { UnsavedChangesDialog } from "../shell/unsaved_changes_dialog.jsx";
 import { RuntimePageGuard } from "../shell/runtime_page_guard.jsx";
 import { usePurchaseSystemServerHydrated } from "../../runtime/use_app_runtime.js";
@@ -74,6 +75,7 @@ function PurchaseSystemPageContent({ client, isActive, onLeaveStateChange, warmu
     isSubmittingDrafts,
     itemRows,
     loadError,
+    dismissLoadError,
     onCloseAccountMonitor,
     onCloseConfigDialog,
     onClosePurchaseSettings,
@@ -133,9 +135,7 @@ function PurchaseSystemPageContent({ client, isActive, onLeaveStateChange, warmu
 
   return (
     <section className="purchase-system-page">
-      {loadError ? (
-        <section className="query-system-page__error">{loadError}</section>
-      ) : null}
+      <ErrorNotice message={loadError} onClose={dismissLoadError} />
 
       <div className="purchase-system-page__layout">
         <section className="purchase-system-page__items-panel" aria-label="配置商品列表">

@@ -181,6 +181,33 @@ describe("program access sidebar card", () => {
     expect(screen.getByRole("button", { name: "找回密码" })).toBeInTheDocument();
   });
 
+  it("shows 尚无会员 when the account is logged in but does not have membership", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ProgramAccessSidebarCard
+        access={{
+          mode: "remote_entitlement",
+          stage: "packaged_release",
+          guardEnabled: true,
+          message: "当前套餐暂未开放该功能",
+          username: "alice",
+          authState: "revoked",
+          runtimeState: "stopped",
+          graceExpiresAt: "",
+          lastErrorCode: "program_feature_not_enabled",
+        }}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "打开程序账号窗口" }));
+
+    const dialog = await findProgramAccessDialog();
+    expect(within(dialog).getByText("尚无会员")).toBeInTheDocument();
+    expect(within(dialog).queryByText("程序会员")).not.toBeInTheDocument();
+    expect(within(dialog).queryByText("当前套餐暂未开放该功能")).not.toBeInTheDocument();
+  });
+
   it("does not close the auth dialog when clicking the backdrop; only the X button closes it", async () => {
     const user = userEvent.setup();
 
@@ -225,7 +252,7 @@ describe("program access sidebar card", () => {
     });
   });
 
-  it("shows provider auth errors in remote mode", () => {
+  it("shows provider auth errors in remote mode without exposing internal codes", () => {
     render(
       <ProgramAccessSidebarCard
         access={REMOTE_PROGRAM_ACCESS_LOGGED_OUT_FIXTURE}
@@ -237,8 +264,9 @@ describe("program access sidebar card", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "打开程序账号窗口" }));
-    expect(screen.getByText("program_auth_not_ready")).toBeInTheDocument();
-    expect(screen.getByText("当前为本地放行模式，远端程序会员控制面尚未接入正式链路")).toBeInTheDocument();
+    expect(screen.getByText("会员服务暂未就绪")).toBeInTheDocument();
+    expect(screen.queryByText("当前为本地放行模式，远端程序会员控制面尚未接入正式链路")).not.toBeInTheDocument();
+    expect(screen.queryByText("program_auth_not_ready")).not.toBeInTheDocument();
   });
 
   it("hides the default program_auth_required prompt while still allowing other flows", async () => {
@@ -263,6 +291,34 @@ describe("program access sidebar card", () => {
     expect(screen.queryByText("program_auth_required")).not.toBeInTheDocument();
     expect(screen.queryByText("请先登录程序会员")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "注册" })).toBeInTheDocument();
+  });
+
+  it("keeps the auth dialog sizing stable and hides guard-level program_auth_required prompts", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ProgramAccessSidebarCard
+        access={REMOTE_PROGRAM_ACCESS_LOGGED_OUT_FIXTURE}
+        guardError={{
+          code: "program_auth_required",
+          message: "请先登录程序会员",
+        }}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "打开程序账号窗口" }));
+
+    const dialog = await findProgramAccessDialog();
+    const loginSignature = getDialogSizingSignature(dialog);
+    expect(screen.queryByText("请先登录程序会员")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "注册" }));
+    expect(getDialogSizingSignature(getProgramAccessDialog())).toBe(loginSignature);
+    expect(screen.queryByText("请先登录程序会员")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "找回密码" }));
+    expect(getDialogSizingSignature(getProgramAccessDialog())).toBe(loginSignature);
+    expect(screen.queryByText("请先登录程序会员")).not.toBeInTheDocument();
   });
 
   it("routes registration through a three-step state machine when registration_flow_version=3 is enabled", async () => {

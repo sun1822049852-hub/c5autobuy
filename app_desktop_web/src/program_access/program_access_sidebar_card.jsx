@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 
+import { resolveProgramAccessMessage } from "./program_access_messages.js";
 import { hasRemoteProgramSession } from "./program_access_readonly.js";
 
 
@@ -68,14 +69,28 @@ function resolveProgramAuthError(access, lastProgramAuthError) {
   if (lastProgramAuthError?.code) {
     return {
       code: lastProgramAuthError.code,
-      message: lastProgramAuthError.message || "程序会员接口暂不可用",
+      message: resolveProgramAccessMessage({
+        authState: access?.authState,
+        code: lastProgramAuthError.code,
+        guardEnabled: access?.guardEnabled,
+        message: lastProgramAuthError.message || "程序会员接口暂不可用",
+        mode: access?.mode,
+        username: access?.username,
+      }),
     };
   }
 
   if (access?.lastErrorCode) {
     return {
       code: String(access.lastErrorCode),
-      message: String(access.message || "程序会员状态异常"),
+      message: resolveProgramAccessMessage({
+        authState: access?.authState,
+        code: String(access.lastErrorCode),
+        guardEnabled: access?.guardEnabled,
+        message: String(access.message || "程序会员状态异常"),
+        mode: access?.mode,
+        username: access?.username,
+      }),
     };
   }
 
@@ -688,18 +703,18 @@ export function ProgramAccessSidebarCard({
   }
 
   function renderDialogAlerts() {
+    const visibleGuardError = shouldSuppressProgramAuthError(guardError) ? null : guardError;
+
     return (
       <>
         {visibleProgramAuthError ? (
           <div className="program-access-sidebar-card__guard-error" role="alert">
-            <span className="program-access-sidebar-card__guard-code">{visibleProgramAuthError.code}</span>
             <span>{visibleProgramAuthError.message}</span>
           </div>
         ) : null}
-        {guardError ? (
+        {visibleGuardError ? (
           <div className="program-access-sidebar-card__guard-error" role="alert">
-            <span className="program-access-sidebar-card__guard-code">{guardError.code}</span>
-            <span>{guardError.message}</span>
+            <span>{visibleGuardError.message}</span>
           </div>
         ) : null}
       </>

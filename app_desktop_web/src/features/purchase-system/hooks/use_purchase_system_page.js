@@ -13,6 +13,7 @@ import {
   useQuerySystemServer,
   useQuerySystemServerHydrated,
 } from "../../../runtime/use_app_runtime.js";
+import { getUserFacingErrorMessage } from "../../../shared/feedback_details.js";
 import { useFloatingRuntimeModalState } from "./use_floating_runtime_modal_state.js";
 
 
@@ -68,7 +69,7 @@ const PURCHASE_QUEUE_DRAIN_NOTICE = "若刚修改了当前配置，新配置只�
 
 
 function toErrorMessage(error) {
-  return error instanceof Error ? error.message : String(error);
+  return getUserFacingErrorMessage(error);
 }
 
 
@@ -1565,6 +1566,9 @@ export function usePurchaseSystemPage({ client, isActive = true, warmupEnabled =
     isSubmittingDrafts,
     itemRows,
     loadError,
+    dismissLoadError() {
+      setLoadError("");
+    },
     configLeavePromptError: configLeavePrompt.error,
     discardRuntimeDrafts,
     onCloseAccountMonitor: accountMonitorModal.onClose,

@@ -1463,6 +1463,45 @@ textarea,
   border-radius: 24px;
 }
 
+.feedback-dialog {
+  width: min(420px, 100%);
+  padding: 22px;
+}
+
+.feedback-dialog__header {
+  justify-content: center;
+}
+
+.feedback-dialog__eyebrow {
+  color: var(--accent-strong);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.feedback-dialog__header .surface-title {
+  text-align: center;
+}
+
+.feedback-dialog__message {
+  margin: 16px 0 0;
+  color: var(--text-main);
+  font-size: 15px;
+  line-height: 1.75;
+  text-align: center;
+}
+
+.feedback-dialog__actions {
+  justify-content: center;
+  margin-top: 20px;
+}
+
+.feedback-dialog__actions .accent-button,
+.feedback-dialog__actions .ghost-button {
+  min-width: 120px;
+}
+
 .drawer-surface {
   position: fixed;
   top: 0;

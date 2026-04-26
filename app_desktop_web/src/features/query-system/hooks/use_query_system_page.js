@@ -12,6 +12,7 @@ import {
   useQuerySystemServerHydrated,
   useQuerySystemUi,
 } from "../../../runtime/use_app_runtime.js";
+import { getUserFacingErrorMessage } from "../../../shared/feedback_details.js";
 import {
   ALL_MODES,
   applyDraftToItem,
@@ -54,7 +55,7 @@ const ACTIVE_SAVE_NOTICE = "新配置已生效，仅影响后续新命中；已�
 
 
 function toErrorMessage(error) {
-  return error instanceof Error ? error.message : String(error);
+  return getUserFacingErrorMessage(error);
 }
 
 
@@ -983,6 +984,9 @@ export function useQuerySystemPage({ client, isActive = true, warmupEnabled = fa
     isSaving,
     itemViewModels,
     loadError,
+    dismissLoadError() {
+      setLoadError("");
+    },
     openCreateConfigDialog,
     closeCreateConfigDialog,
     updateCreateConfigField,

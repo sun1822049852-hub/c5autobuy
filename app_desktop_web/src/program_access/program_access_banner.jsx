@@ -32,7 +32,6 @@ export function ProgramAccessBanner({ access, guardError = null }) {
       ) : null}
       {guardError ? (
         <div className="program-access-banner__guard-error" role="alert">
-          <span className="program-access-banner__guard-code">{guardError.code}</span>
           <span>{guardError.message}</span>
         </div>
       ) : null}

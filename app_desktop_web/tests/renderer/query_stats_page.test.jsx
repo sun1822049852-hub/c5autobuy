@@ -23,6 +23,20 @@ function jsonResponse(payload, status = 200) {
   });
 }
 
+function buildShellBootstrapPayload() {
+  return {
+    version: 1,
+    generated_at: "2026-04-25T12:00:00.000Z",
+  };
+}
+
+function buildFullBootstrapPayload() {
+  return {
+    version: 2,
+    generated_at: "2026-04-25T12:00:01.000Z",
+  };
+}
+
 
 function installDesktopApp(fetchImpl) {
   window.fetch = fetchImpl;
@@ -47,6 +61,14 @@ function createFetchHarness() {
       pathname: url.pathname,
       search: url.search,
     });
+
+    if (url.pathname === "/app/bootstrap" && url.searchParams.get("scope") === "shell") {
+      return jsonResponse(buildShellBootstrapPayload());
+    }
+
+    if (url.pathname === "/app/bootstrap") {
+      return jsonResponse(buildFullBootstrapPayload());
+    }
 
     if (url.pathname === "/account-center/accounts" && method === "GET") {
       return jsonResponse([]);
@@ -254,6 +276,14 @@ describe("query stats page", () => {
         search: url.search,
       });
 
+      if (url.pathname === "/app/bootstrap" && url.searchParams.get("scope") === "shell") {
+        return jsonResponse(buildShellBootstrapPayload());
+      }
+
+      if (url.pathname === "/app/bootstrap") {
+        return jsonResponse(buildFullBootstrapPayload());
+      }
+
       if (url.pathname === "/account-center/accounts" && method === "GET") {
         return jsonResponse([]);
       }
@@ -319,11 +349,18 @@ describe("query stats page", () => {
     expect(within(table).getByText("查询账号A / api查询器 6")).toBeInTheDocument();
   });
 
-  it("shows raw http details when query stats loading fails with an unhandled backend string", async () => {
-    const today = createTodayDateString();
+  it("shows a centered dialog with only the user-facing message when query stats loading fails", async () => {
     installDesktopApp(vi.fn(async (input, options = {}) => {
       const url = new URL(input);
       const method = String(options.method ?? "GET").toUpperCase();
+
+      if (url.pathname === "/app/bootstrap" && url.searchParams.get("scope") === "shell") {
+        return jsonResponse(buildShellBootstrapPayload());
+      }
+
+      if (url.pathname === "/app/bootstrap") {
+        return jsonResponse(buildFullBootstrapPayload());
+      }
 
       if (url.pathname === "/account-center/accounts" && method === "GET") {
         return jsonResponse([]);
@@ -333,7 +370,13 @@ describe("query stats page", () => {
         return {
           ok: false,
           status: 401,
-          text: async () => "not login",
+          text: async () => JSON.stringify({
+            detail: {
+              code: "program_auth_required",
+              message: "请先登录程序会员",
+              action: "runtime.start",
+            },
+          }),
         };
       }
 
@@ -344,10 +387,11 @@ describe("query stats page", () => {
     render(<App />);
     await user.click(await screen.findByRole("button", { name: "查询统计" }));
 
-    const errorPanel = await screen.findByRole("alert");
-    expect(within(errorPanel).getByText("not login")).toBeInTheDocument();
-    expect(within(errorPanel).getByText("HTTP 401")).toBeInTheDocument();
-    expect(within(errorPanel).getByText(`GET /stats/query-items?range_mode=day&date=${today}`)).toBeInTheDocument();
-    expect(within(errorPanel).getByText("原始返回：not login")).toBeInTheDocument();
+    const errorDialog = await screen.findByRole("dialog", { name: "操作提示" });
+    expect(within(errorDialog).getByText("请先登录")).toBeInTheDocument();
+    expect(within(errorDialog).queryByText("请先登录程序会员")).not.toBeInTheDocument();
+    expect(within(errorDialog).queryByText("program_auth_required")).not.toBeInTheDocument();
+    expect(within(errorDialog).queryByText("HTTP 401")).not.toBeInTheDocument();
+    expect(within(errorDialog).queryByText("runtime.start")).not.toBeInTheDocument();
   });
 });

@@ -3981,3 +3981,52 @@
   - 当前口径仍是“renderer 自动化通过，浏览器预览已到可手测状态”。
 - 下一步：
   - 若魔尊继续反馈有视觉偏差，下一刀优先看 `--query-item-tools-width`、`--query-item-grid-columns` 的具体数值，而不是再回到 border/padding 表层补丁。
+
+## 2026-04-26 16:27 (Asia/Shanghai)
+- 背景：魔尊继续要求“登录 / 注册 / 找回密码”三态窗口保持一致，且 auth dialog 内不需要再显示默认 `请先登录程序会员` 提示；当前工作树里页面级错误提示已在半施工切到中部弹窗，这轮只补程序账号弹窗自己的默认 guard 提示收口，不扩大到其它业务逻辑。
+- 已完成：
+  - `app_desktop_web/tests/renderer/program_access_sidebar_card.test.jsx` 已新增红灯，锁定“即使 guardError 命中 `program_auth_required`，auth dialog 三态尺寸签名仍保持一致，且窗口内不显示 `请先登录程序会员`”。
+  - `app_desktop_web/src/program_access/program_access_sidebar_card.jsx` 已把 `guardError.code === program_auth_required` 也纳入 suppress 口径，不再在登录 / 注册 / 找回密码窗口顶部渲染默认锁门提示；其它 guard error 仍照常显示。
+- 已做验证：
+  - 红灯：`npm --prefix app_desktop_web test -- --run tests/renderer/program_access_sidebar_card.test.jsx -t "keeps the auth dialog sizing stable and hides guard-level program_auth_required prompts"` -> 因窗口内仍出现 `请先登录程序会员` 而失败。
+  - 绿灯：`npm --prefix app_desktop_web test -- --run tests/renderer/program_access_sidebar_card.test.jsx -t "keeps the auth dialog sizing stable and hides guard-level program_auth_required prompts|keeps a stable sizing contract when switching between login/register/reset flows|hides the default program_auth_required prompt while still allowing other flows"` -> `3 passed`
+  - 邻近回归：`npm --prefix app_desktop_web test -- --run tests/renderer/program_access_sidebar_card.test.jsx tests/renderer/program_access_provider.test.jsx tests/renderer/purchase_system_page.test.jsx tests/renderer/query_stats_page.test.jsx tests/renderer/account_capability_stats_page.test.jsx` -> `72 passed`
+- 当前进度：
+  - 程序账号弹窗这轮“默认锁门提示不再占窗口高度”的需求已落地，并与现有 fixed-size contract 共存。
+  - 页面级中部弹窗链路相关改动仍在当前工作树中，尚未单独提交。
+- 下一步：
+  - 若魔尊继续推进“这种提示都做成中部弹窗”，下一刀优先把当前已半施工的 `ErrorNotice -> FeedbackDialog` 链路收口、验收，再视需要提交。
+
+## 2026-04-26 16:10 (Asia/Shanghai)
+- 背景：魔尊要求把前端提示统一改成中部弹窗，并且不再向用户暴露错误码；现场截图显示扫货系统把后端 `program_auth_required` 原始 JSON 直接铺到了页面顶部。
+- 已完成：
+  - 新增通用中部提示层 `app_desktop_web/src/shared/feedback_dialog.jsx`，并让 `app_desktop_web/src/shared/error_notice.jsx` 改为统一复用该弹窗，而不再以内联红条展示。
+  - `app_desktop_web/src/shared/feedback_details.js` 已补齐“从后端 JSON / detail.message 中抽取用户文案”的清洗逻辑；默认对普通提示隐藏 `program_*`、`HTTP status`、`action`、原始 JSON。
+  - `app_desktop_web/src/features/purchase-system/purchase_system_page.jsx`、`app_desktop_web/src/features/query-system/query_system_page.jsx`、`app_desktop_web/src/features/query-stats/query_stats_page.jsx`、`app_desktop_web/src/features/account-capability-stats/account_capability_stats_page.jsx` 已接入统一中部提示弹窗。
+  - `app_desktop_web/src/program_access/program_access_sidebar_card.jsx` 与 `app_desktop_web/src/program_access/program_access_banner.jsx` 已移除用户可见错误码展示，只保留人话文案。
+  - renderer 护栏已补齐：`query_stats_page.test.jsx`、`purchase_system_page.test.jsx`、`program_access_sidebar_card.test.jsx`、`program_access_provider.test.jsx` 更新为“弹窗展示 + 不暴露错误码”口径；统计页测试还顺手补全了 runtime bootstrap mock。
+- 已做验证：
+  - `npm --prefix app_desktop_web test -- --run tests/renderer/query_stats_page.test.jsx tests/renderer/purchase_system_page.test.jsx tests/renderer/program_access_sidebar_card.test.jsx tests/renderer/program_access_provider.test.jsx` -> `68 passed`
+  - `npm --prefix app_desktop_web test -- --run tests/renderer/query_system_page.test.jsx tests/renderer/account_capability_stats_page.test.jsx tests/renderer/account_center_page.test.jsx tests/renderer/account_center_editing.test.jsx` -> `54 passed`
+- 当前进度：
+  - 这轮“普通业务提示统一中部弹窗化 + 隐藏错误码”已落代码并有 focused renderer 回归护栏。
+  - 当前口径是“renderer 自动化通过；浏览器预览已到可手测状态；程序壳未额外人工复验”。
+- 下一步：
+  - 若魔尊还要继续收口其它特殊提示（例如 runtime bootstrap guard 也改成同类弹窗），下一刀优先沿用 `feedback_dialog` 扩，而不是再各页散写一套错误 UI。
+
+## 2026-04-26 16:42 (Asia/Shanghai)
+- 背景：魔尊追加要求把 `请先登录程序会员` 全部改口径；未登录统一显示 `请先登录`，已登录但无会员统一显示 `尚无会员`，且提示框里不再用“程序会员”去强调会员类型。
+- 已完成：
+  - 新增前端口径收口 `app_desktop_web/src/program_access/program_access_messages.js`，把 `program_auth_required / program_feature_not_enabled / program_device_conflict / program_auth_not_ready` 等 program access 文案统一翻译成新的用户态提示。
+  - `app_desktop_web/src/program_access/program_access_runtime.js`、`app_desktop_web/src/program_access/program_access_provider.jsx`、`app_desktop_web/src/program_access/program_access_sidebar_card.jsx` 已接入这层口径，因此 bootstrap 摘要、guard error、登录态弹窗现在会自动区分“未登录 / 已登录无会员”。
+  - `app_desktop_web/src/shared/feedback_details.js` 已复用同一套 program access 文案解析，所以扫货系统 / 查询统计等页面级中部弹窗也会把 `program_auth_required` 显示成 `请先登录`，而不会再露出 `请先登录程序会员`。
+  - `app_desktop_web/src/features/account-center/dialogs/feature_unavailable_dialog.jsx` 与 `app_desktop_web/src/features/account-center/hooks/use_account_center_page.js` 的无会员兜底文案已统一改成 `尚无会员`。
+  - renderer 护栏已同步更新：`program_access_provider.test.jsx`、`program_access_sidebar_card.test.jsx`、`purchase_system_page.test.jsx`、`query_stats_page.test.jsx`、`account_center_editing.test.jsx`。
+- 已做验证：
+  - `npm --prefix app_desktop_web test -- --run tests/renderer/query_stats_page.test.jsx tests/renderer/purchase_system_page.test.jsx tests/renderer/program_access_provider.test.jsx tests/renderer/program_access_sidebar_card.test.jsx` -> `70 passed`
+  - `npm --prefix app_desktop_web test -- --run tests/renderer/app_remote_bootstrap.test.jsx tests/renderer/account_center_page.test.jsx tests/renderer/query_system_page.test.jsx tests/renderer/account_center_editing.test.jsx` -> `64 passed`
+- 当前进度：
+  - 这轮“未登录 = 请先登录 / 已登录无会员 = 尚无会员”的前端口径已落地，并覆盖到业务页提示、程序账号弹窗、功能未开放弹窗。
+  - 当前口径仍是“renderer 自动化通过；浏览器预览已到可手测状态；程序壳未额外人工复验”。
+- 下一步：
+  - 若魔尊还要把 backend API 返回文本本身也统一改掉，下一刀再沿 `app_backend/application/program_access.py` 和 remote/cached gateway 常量继续收口；本轮先保证用户前端看到的文案已经统一。

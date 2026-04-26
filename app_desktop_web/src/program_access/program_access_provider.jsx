@@ -1,5 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 
+import { resolveProgramAccessMessage } from "./program_access_messages.js";
+
 
 const PROGRAM_ACCESS_CODES = new Set([
   "program_auth_required",
@@ -81,7 +83,10 @@ export function extractProgramAccessError(error) {
   return {
     action: detail.action ? String(detail.action) : "",
     code: String(detail.code),
-    message: String(detail.message || "程序会员校验未通过"),
+    message: resolveProgramAccessMessage({
+      code: String(detail.code),
+      message: String(detail.message || "程序会员校验未通过"),
+    }),
   };
 }
 
@@ -95,7 +100,10 @@ export function extractProgramAuthActionError(error) {
 
   return {
     code: String(detail.code),
-    message: String(detail.message || "程序会员接口暂不可用"),
+    message: resolveProgramAccessMessage({
+      code: String(detail.code),
+      message: String(detail.message || "程序会员接口暂不可用"),
+    }),
     mode: detail.mode ? String(detail.mode) : "",
     stage: detail.stage ? String(detail.stage) : "",
   };

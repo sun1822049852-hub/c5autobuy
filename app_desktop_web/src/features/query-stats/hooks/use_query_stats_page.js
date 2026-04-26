@@ -109,6 +109,9 @@ export function useQueryStatsPage({ client }) {
     filters,
     isLoading,
     loadError,
+    onDismissError() {
+      setLoadError(null);
+    },
     onDateChange(nextValue) {
       updateFilters((current) => ({
         ...current,

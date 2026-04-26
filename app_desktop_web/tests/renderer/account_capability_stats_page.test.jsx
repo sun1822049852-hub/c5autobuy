@@ -23,6 +23,20 @@ function jsonResponse(payload, status = 200) {
   });
 }
 
+function buildShellBootstrapPayload() {
+  return {
+    version: 1,
+    generated_at: "2026-04-25T12:00:00.000Z",
+  };
+}
+
+function buildFullBootstrapPayload() {
+  return {
+    version: 2,
+    generated_at: "2026-04-25T12:00:01.000Z",
+  };
+}
+
 
 function installDesktopApp(fetchImpl) {
   window.fetch = fetchImpl;
@@ -47,6 +61,14 @@ function createFetchHarness() {
       pathname: url.pathname,
       search: url.search,
     });
+
+    if (url.pathname === "/app/bootstrap" && url.searchParams.get("scope") === "shell") {
+      return jsonResponse(buildShellBootstrapPayload());
+    }
+
+    if (url.pathname === "/app/bootstrap") {
+      return jsonResponse(buildFullBootstrapPayload());
+    }
 
     if (url.pathname === "/account-center/accounts" && method === "GET") {
       return jsonResponse([]);
@@ -193,6 +215,14 @@ describe("account capability stats page", () => {
         pathname: url.pathname,
         search: url.search,
       });
+
+      if (url.pathname === "/app/bootstrap" && url.searchParams.get("scope") === "shell") {
+        return jsonResponse(buildShellBootstrapPayload());
+      }
+
+      if (url.pathname === "/app/bootstrap") {
+        return jsonResponse(buildFullBootstrapPayload());
+      }
 
       if (url.pathname === "/account-center/accounts" && method === "GET") {
         return jsonResponse([]);

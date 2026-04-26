@@ -809,7 +809,8 @@ describe("account center editing flows", () => {
     await user.click(screen.getByRole("button", { name: "切换浏览器查询 账号 C" }));
 
     const dialog = await screen.findByRole("dialog", { name: "功能未开放" });
-    expect(within(dialog).getByText("当前此功能未开放")).toBeInTheDocument();
+    expect(within(dialog).getByText("尚无会员")).toBeInTheDocument();
+    expect(within(dialog).queryByText("当前此功能未开放")).not.toBeInTheDocument();
     expect(fetchImpl.mock.calls.filter(([input, options = {}]) => (
       new URL(input).pathname === "/accounts/a-3/query-modes"
       && String(options.method ?? "GET").toUpperCase() === "PATCH"

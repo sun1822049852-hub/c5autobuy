@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
+import { getUserFacingErrorMessage } from "../../../shared/feedback_details.js";
 import {
   applyRangeModeDefaults,
   buildStatsRequestParams,
@@ -9,7 +10,7 @@ import {
 
 
 function toErrorMessage(error) {
-  return error instanceof Error ? error.message : String(error);
+  return getUserFacingErrorMessage(error);
 }
 
 
@@ -89,6 +90,9 @@ export function useAccountCapabilityStatsPage({ client }) {
     filters,
     isLoading,
     loadError,
+    onDismissError() {
+      setLoadError("");
+    },
     onDateChange(nextValue) {
       updateFilters((current) => ({
         ...current,

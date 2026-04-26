@@ -13,6 +13,7 @@ function QueryStatsPageContent({ client }) {
     filters,
     isLoading,
     loadError,
+    onDismissError,
     onDateChange,
     onEndDateChange,
     onRangeModeChange,
@@ -42,7 +43,11 @@ function QueryStatsPageContent({ client }) {
         </div>
       </section>
 
-      <ErrorNotice details={loadError?.details || []} message={loadError?.message || ""} />
+      <ErrorNotice
+        details={loadError?.details || []}
+        message={loadError?.message || ""}
+        onClose={onDismissError}
+      />
 
       <section className="stats-table-panel">
         <table aria-label="查询统计表" className="stats-table">

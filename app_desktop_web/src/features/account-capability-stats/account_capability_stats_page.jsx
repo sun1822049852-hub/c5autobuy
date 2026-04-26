@@ -1,4 +1,5 @@
 import { NO_SELECT_STYLE } from "../../shared/no_select_style.js";
+import { ErrorNotice } from "../../shared/error_notice.jsx";
 import { RuntimePageGuard } from "../shell/runtime_page_guard.jsx";
 import { StatsRangeControls } from "../stats/stats_range_controls.jsx";
 import { useAccountCapabilityStatsPage } from "./hooks/use_account_capability_stats_page.js";
@@ -9,6 +10,7 @@ function AccountCapabilityStatsPageContent({ client }) {
     filters,
     isLoading,
     loadError,
+    onDismissError,
     onDateChange,
     onEndDateChange,
     onRangeModeChange,
@@ -38,9 +40,7 @@ function AccountCapabilityStatsPageContent({ client }) {
         </div>
       </section>
 
-      {loadError ? (
-        <section className="query-system-page__error">{loadError}</section>
-      ) : null}
+      <ErrorNotice message={loadError} onClose={onDismissError} />
 
       <section className="stats-table-panel">
         <table aria-label="账号能力统计表" className="stats-table stats-table--compact-head">
