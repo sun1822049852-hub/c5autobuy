@@ -3867,3 +3867,117 @@
   - README 已再次核对，本轮仍无需改动
 - 下一步：
   - 若魔尊继续看按钮不顺眼，下一刀应先明确“是要完全回到最初样式，还是只以最初样式为基准微调 1-2 个值”，不能再凭主观继续漂移
+
+## 2026-04-26 15:11 (Asia/Shanghai)
+- 背景：魔尊要求定位“点完成注册后报 `program_snapshot_invalid / 程序会员授权已失效，请重新登录`”的真实原因，并按最优方案直接修复；本轮允许多 agent 并行。
+- 已完成：
+  - 锁定根因在 control plane 签名 `kid` 配置漂移：程序会员注册最后一步 `/api/auth/register/complete` 返回新的 `auth_session.access_bundle` 后，本地会立刻按 `kid + signature + snapshot` 验签；若服务端显式 `PROGRAM_ADMIN_SIGNING_KID` 与私钥真实派生值不一致，就会在本地被判成 `program_snapshot_invalid`。
+  - `program_admin_console/src/mailConfig.js` 去掉 `PROGRAM_ADMIN_SIGNING_KID` 的固定默认值，不再静默写死 `ed25519-2026-04`。
+  - `program_admin_console/src/entitlementSigner.js` 新增 fail-fast：显式配置了 `keyId` 时，必须与私钥派生 `kid` 一致，否则启动期直接报错，避免继续签出坏 bundle。
+  - 同步更新 control plane 测试口径：`program_admin_console/tests/mail_config.test.js`、`program_admin_console/tests/control-plane-store.test.js`、`program_admin_console/tests/control-plane-server.test.js`、`program_admin_console/tests/control-plane-ui.test.js` 已收敛到“默认自动派生 / 同进程内 kid 一致”语义。
+  - 并行子 agent 在 `tests/backend/test_remote_entitlement_gateway.py` 补了 `complete_register` 护栏，覆盖“匹配时可通过、错配时落到 `program_snapshot_invalid`”两条回归。
+- 当前进度：
+  - control plane 侧 `kid` 漂移已被根治为“无默认硬编码 + 显式错配直接失败”。
+  - README 已核对：`program_admin_console/README.md` 只列环境变量名，未写死默认 `kid`，本轮无需改动。
+- 下一步：
+  - 若要把这条修复真正作用到远端现网，还需在下一轮把远端 `PROGRAM_ADMIN_SIGNING_KID` / 私钥配置与容器重建一起对齐，并对 `/api/auth/public-key`、`/api/auth/register/complete` 做 smoke 验证。
+
+## 2026-04-26 15:25 (Asia/Shanghai)
+- 背景：魔尊要求把本地已修复的 signing `kid` 逻辑正式回写到远端运行中的 `c5-program-admin`，并同轮完成容器替换与公网/loopback smoke。
+- 已完成：
+  - 远端现网验尸确认：旧容器 `c5-program-admin:auth-gateway-20260426_130452` 仍携带 `PROGRAM_ADMIN_SIGNING_KID=ed25519-2026-04`，与当前挂载私钥 `/home/admin/c5-program-admin-runtime/keys/entitlement-private.pem` 的真实派生值不一致。
+  - 先通过 SSH 把完整 `program_admin_console` 闭包打包上传，再以整目录方式覆盖远端源码 `/home/admin/c5-program-admin-src`；保留了一份源码备份目录 `/home/admin/c5-program-admin-src_sync_backup_20260426_151919`。
+  - 基于新源码在远端重建镜像 `c5-program-admin:kidfix-20260426_152001`，随后替换现网容器 `c5-program-admin`。
+  - 新容器继续沿用既有运行口径：
+    - `127.0.0.1:18787 -> 8787`
+    - 卷：`c5_program_admin_data:/app/data`
+    - 密钥挂载：`/home/admin/c5-program-admin-runtime/keys:/app/keys:ro`
+    - `PROGRAM_ADMIN_PRIVATE_KEY_FILE=/app/keys/entitlement-private.pem`
+    - `PROGRAM_ADMIN_SIGNING_KID` 已显式对齐为私钥真实派生值 `ed25519:M_bnr_KmvBsQLcu9qOojn9NeB1bmCOpe`
+  - 443 auth gateway 容器 `c5-program-auth-gateway` 未重建；因其仍反代到宿主机 `127.0.0.1:18787`，在源站容器替换后自动吃到新版本。
+- 已做验证：
+  - 远端 loopback：
+    - `curl http://127.0.0.1:18787/api/health` -> `{"ok":true}`
+    - `curl http://127.0.0.1:18787/api/admin/session` -> `{"ok":true,"authenticated":false,"needs_bootstrap":false}`
+    - `GET http://127.0.0.1:18787/admin` -> `200`
+    - `GET http://127.0.0.1:18787/admin/app.js` / `styles.css` -> `200`，且内容 hash 与 `/home/admin/c5-program-admin-src/ui/app.js`、`styles.css` 一致
+  - 桌面端实际 HTTPS 入口（使用 `app_desktop_web/build/control_plane_ca.pem`）：
+    - `GET https://8.138.39.139/api/health` -> `200 {"ok":true}`
+    - `GET https://8.138.39.139/api/auth/public-key` -> `200`，返回 `kid=ed25519:M_bnr_KmvBsQLcu9qOojn9NeB1bmCOpe`
+    - `GET https://8.138.39.139/admin` -> `404`
+  - 注册完成链路 smoke：
+    - 先在现网 DB 中造一张合法 `verification_ticket`
+    - 再通过 `POST https://8.138.39.139/api/auth/register/complete` 真打最后一步，状态 `200`
+    - 回包 `auth_session.access_bundle.kid` 与 `/api/auth/public-key` 返回的 `kid` 一致
+    - 本地使用 `public_key_pem` 对 `access_bundle.signature + snapshot` 再验一遍，签名通过
+    - smoke 结束后已把测试邮箱、测试 user、register session 与 ticket 痕迹从现网 DB 清理干净，并复查确认无残留
+- 当前进度：
+  - 本地仓库、远端源码、远端运行容器、443 auth gateway 入口，现已一起收口到新的 signing `kid` 口径。
+  - README 已核对，本轮无需改动。
+- 下一步：
+  - 若后续还要轮换私钥，必须把 `PROGRAM_ADMIN_SIGNING_KID` 与新私钥派生值一起改，不能只换 key 文件。
+
+## 2026-04-26 15:44 (Asia/Shanghai)
+- 背景：魔尊明确说自己不看代码、主要由 AI 维护，因此要求把“远端怎么部署 program admin”整理成可复用脚本，并补一份非技术说明。
+- 已完成：
+  - 新增标准化远端部署入口 `program_admin_console/tools/deployProgramAdminRemote.ps1`。
+  - 该脚本会先 inspect 远端现网容器，再读取远端私钥自动派生正确的 signing `kid`；`-DryRun` 只输出计划，不改远端；正式执行时会同步源码、重建镜像、替换容器，并跑 loopback/HTTPS 基础 smoke。
+  - 新增 focused test `program_admin_console/tests/deploy-program-admin-remote.test.js`，采用与 `connectProgramAdminConsole.ps1` 同风格的 PowerShell 黑盒测试；通过 fake ssh wrapper 验证 `-DryRun` 输出能包含远端容器、源码目录、当前/派生 `kid` 等关键字段。
+  - `program_admin_console/package.json` 与 `program_admin_console/tests/control-plane-store.test.js` 已同步纳入新脚本测试。
+  - `program_admin_console/README.md` 顶部新增“给不懂代码的说明”和“远端部署脚本”两段：明确告诉非技术使用者，AI 每次改控制面时必须同步远端源码、重建远端容器并给出 smoke 证据，而不是只说“本地代码改好了”。
+- 已做验证：
+  - `npm --prefix program_admin_console test` -> 全部通过
+  - `powershell -ExecutionPolicy Bypass -File program_admin_console/tools/deployProgramAdminRemote.ps1 -DryRun` -> 已成功对真实远端输出当前 image、当前 `kid`、派生 `kid`、目标 tarball 与计划 image tag
+- 当前进度：
+  - 这条“program admin 远端更新”链已经不再只靠会话记忆和临时命令；仓库里已有可复用脚本与人话说明
+- 下一步：
+  - 若以后 AI 真要复用这条入口做正式发布，优先先跑 `-DryRun` 看远端现状，再决定是否执行正式替换
+
+## 2026-04-26 15:15 (Asia/Shanghai)
+- 背景：魔尊在浏览器预览里直接批注程序账号弹窗，要求继续收口登录/注册/找回密码模式按钮尺寸、登录/重置提交按钮位置，以及找回密码页的二次确认密码与明文查看交互；边界冻结为只改 renderer 组件、样式与 renderer 测试，不动后端接口与主业务链。
+- 已完成：
+  - `app_desktop_web/src/program_access/program_access_sidebar_card.jsx` 已把登录按钮与“提交新密码”按钮收进右对齐 action row；找回密码页新增 `再次输入新密码`、两次密码一致性校验，以及右侧明文切换按钮，且 `resetProgramAuthPassword(...)` 仍只传 `{ email, code, newPassword }`。
+  - `app_desktop_web/src/styles/app.css` 已新增并接入 `program-access-sidebar-card__tab--dense`、`program-access-dialog__actions--submit-end`、`program-access-sidebar-card__inline--password`、`program-access-sidebar-card__password-field`、`program-access-sidebar-card__password-toggle`，让三颗模式 tab 再缩一档，同时保留三等分 tab 结构与 compact dialog 口径。
+  - `app_desktop_web/tests/renderer/program_access_sidebar_card.test.jsx` 已补护栏：锁定右对齐提交、tab dense modifier、找回密码双输确认、密码明文切换与“按钮在密码输入右侧”的 DOM 契约。
+- 已做验证：
+  - 红灯：`npm --prefix app_desktop_web test -- --run tests/renderer/program_access_sidebar_card.test.jsx -t "keeps auth tabs dense and right-aligns the login and reset submit actions"` -> 因缺少 `program-access-sidebar-card__password-toggle` / inline password row 契约而失败。
+  - 绿灯：`npm --prefix app_desktop_web test -- --run tests/renderer/program_access_sidebar_card.test.jsx` -> `22 passed`
+- 当前进度：
+  - 程序账号弹窗这轮批注已落到代码与 renderer 护栏。
+  - 当前口径是“自动化 renderer 测试通过，浏览器预览已到可手测状态”；吾未额外做程序壳人工点验。
+- 下一步：
+  - 若魔尊继续在浏览器里点批注，下一刀优先看真实视觉是否还需要再缩 tab 间距/高度，而不是回退成 pill 或放大 dialog。
+
+## 2026-04-26 15:25 (Asia/Shanghai)
+- 背景：魔尊继续在浏览器预览里指出“配置管理”页商品表的物品行与表头列没有对齐；边界冻结为只修这张表的 renderer 结构和样式，不动数据接口、页面行为与其它模块。
+- 已完成：
+  - `app_desktop_web/src/features/query-system/components/query_item_table.jsx` 与 `app_desktop_web/src/features/query-system/components/query_item_row.jsx` 已让表头列网格和物品行内容显式共用 `query-item-table__grid-track` 对齐轨道类。
+  - `app_desktop_web/src/styles/app.css` 已把横向内边距与左右边框宽度统一收口到这条 shared track 上；表头继续走透明左右边框，物品行继续走可见卡片边框，从而让列宽计算基线一致，不再各算各的。
+  - 新增 focused renderer 护栏 `app_desktop_web/tests/renderer/query_item_table.test.jsx`，锁定“表头与物品行都必须挂同一条显式对齐轨道”这条 DOM 契约。
+- 已做验证：
+  - 红灯：`npm --prefix app_desktop_web test -- --run tests/renderer/query_item_table.test.jsx` -> 因缺少 `query-item-table__grid-track` 契约而失败。
+  - 绿灯：同命令重跑 -> `1 passed`
+  - 邻近回归：`npm --prefix app_desktop_web test -- --run tests/renderer/query_system_page.test.jsx` -> `16 passed`
+- 当前进度：
+  - 配置管理页这轮“表头/物品行错位”修复已落代码并有 focused 护栏。
+  - 当前口径是“renderer 自动化通过，浏览器预览已到可手测状态”。
+- 下一步：
+  - 若魔尊继续看见列线视觉仍有细微偏差，下一刀优先做列宽数值微调或 toolbar 预留宽度校正，不再把 header 和 row 分成两套 padding / border 口径。
+
+## 2026-04-26 15:45 (Asia/Shanghai)
+- 背景：魔尊在浏览器里继续反馈“商品配置列表修改后还是没对齐”。上一刀把问题先归因到 shared track / padding，但现场继续复现，需二次锁根因。
+- 根因复证：
+  - 本轮并行只读检查后确认：不是 media query 覆盖冲突；当前大屏口径只命中基础样式。
+  - 真正错位点在于 `query-item-table__header` 是两列壳：左侧 `column-grid` + 右侧固定 `toolbar` 预留宽度；而 `query-item-row` 之前只是单列 block，导致虽然 header 与 row 共用同一套 `grid-track`，但 header 的 grid 可用宽度少了 `toolbar + gap`，row 的第一列 `fr` 却会把这块额外空间吃掉，列线整体右移。
+- 已完成：
+  - `app_desktop_web/src/features/query-system/components/query_item_row.jsx` 为每个物品行新增不可见 `query-item-row__toolbar-spacer`。
+  - `app_desktop_web/src/styles/app.css` 已把桌面态 `.query-item-row` 改成与 header 同构的双列壳：`minmax(0,1fr) + var(--query-item-tools-width)`，并在小屏 media query 下隐藏 spacer，保持原一列收口。
+  - `app_desktop_web/tests/renderer/query_item_table.test.jsx` 已把 focused 护栏从“共用 inner track”进一步升级到“row 必须显式保留 toolbar spacer”。
+- 已做验证：
+  - 红灯：`npm --prefix app_desktop_web test -- --run tests/renderer/query_item_table.test.jsx` -> 因缺少 `query-item-row__toolbar-spacer` 而失败。
+  - 绿灯：`npm --prefix app_desktop_web test -- --run tests/renderer/query_system_page.test.jsx tests/renderer/query_item_table.test.jsx` -> `17 passed`
+- 当前进度：
+  - 这次已把“header 少一截、row 多吃一截”的结构型错位收掉，不再只是在 shared track 上补 padding。
+  - 当前口径仍是“renderer 自动化通过，浏览器预览已到可手测状态”。
+- 下一步：
+  - 若魔尊继续反馈有视觉偏差，下一刀优先看 `--query-item-tools-width`、`--query-item-grid-columns` 的具体数值，而不是再回到 border/padding 表层补丁。

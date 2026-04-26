@@ -28,7 +28,7 @@ export function QueryItemRow({
 
   return (
     <section className="query-item-row" role="region" aria-label={`商品 ${displayName}`}>
-      <div className="query-item-row__content">
+      <div className="query-item-row__content query-item-table__grid-track">
         <div className="query-item-row__name">{displayName}</div>
         <div className="query-item-row__value query-item-row__value--market-price query-item-row__value--readonly">
           {formatValue(item.last_market_price)}
@@ -89,6 +89,7 @@ export function QueryItemRow({
           </button>
         )}
       </div>
+      <div aria-hidden="true" className="query-item-row__toolbar-spacer" />
     </section>
   );
 }

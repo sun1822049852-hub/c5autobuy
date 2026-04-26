@@ -39,6 +39,14 @@ function getDialogFeedbackToast() {
   return document.querySelector(".program-access-dialog__feedback-toast");
 }
 
+function expectRightAlignedSubmitAction(button) {
+  const actionRow = button.closest(".program-access-dialog__actions--submit-end");
+  if (!actionRow) {
+    throw new Error("Expected submit button to be wrapped by a right-aligned action row");
+  }
+  expect(actionRow).toHaveClass("program-access-dialog__actions");
+}
+
 function expectDialogHasFixedSizingContract(dialog) {
   const hasFixedSizeData =
     dialog.getAttribute("data-fixed-size") === "true"
@@ -723,8 +731,17 @@ describe("program access sidebar card", () => {
     await user.click(screen.getByRole("button", { name: "发送找回密码验证码" }));
     expect(sendResetPasswordCode).toHaveBeenCalledWith({ email: "alice@example.com" });
 
+    const visibilityToggle = screen.getByRole("button", { name: "显示密码明文" });
+    expect(screen.getByLabelText("新密码")).toHaveAttribute("type", "password");
+    expect(screen.getByLabelText("再次输入新密码")).toHaveAttribute("type", "password");
+    await user.click(visibilityToggle);
+    expect(screen.getByLabelText("新密码")).toHaveAttribute("type", "text");
+    expect(screen.getByLabelText("再次输入新密码")).toHaveAttribute("type", "text");
+    expect(screen.getByRole("button", { name: "隐藏密码明文" })).toBeInTheDocument();
+
     await user.type(screen.getByLabelText("找回密码验证码"), "654321");
     await user.type(screen.getByLabelText("新密码"), "NewSecret456!");
+    await user.type(screen.getByLabelText("再次输入新密码"), "NewSecret456!");
     await user.click(screen.getByRole("button", { name: "提交新密码" }));
 
     expect(resetProgramAuthPassword).toHaveBeenCalledWith({
@@ -734,6 +751,31 @@ describe("program access sidebar card", () => {
     });
     expect(await screen.findByText("密码已重置")).toBeInTheDocument();
     expect(screen.queryByText("只读锁定")).not.toBeInTheDocument();
+  });
+
+  it("blocks reset submit when the confirmation password does not match", async () => {
+    const user = userEvent.setup();
+    const resetProgramAuthPassword = vi.fn();
+
+    render(
+      <ProgramAccessSidebarCard
+        access={REMOTE_PROGRAM_ACCESS_LOGGED_OUT_FIXTURE}
+        resetProgramAuthPassword={resetProgramAuthPassword}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "打开程序账号窗口" }));
+    await user.click(screen.getByRole("button", { name: "找回密码" }));
+    await user.type(screen.getByLabelText("找回密码邮箱"), "alice@example.com");
+    await user.type(screen.getByLabelText("找回密码验证码"), "654321");
+    await user.type(screen.getByLabelText("新密码"), "NewSecret456!");
+    await user.type(screen.getByLabelText("再次输入新密码"), "Mismatch456!");
+    await user.click(screen.getByRole("button", { name: "提交新密码" }));
+
+    expect(resetProgramAuthPassword).not.toHaveBeenCalled();
+    const toast = screen.getByRole("alert");
+    expect(toast).toHaveTextContent("两次输入的新密码不一致。");
+    expect(getDialogFeedbackToast()).toBe(toast);
   });
 
   it("shows reset validation errors as a centered dialog toast instead of a bottom block", async () => {
@@ -806,7 +848,7 @@ describe("program access sidebar card", () => {
     expect(getDialogFeedbackToast()).toBe(toast);
   });
 
-  it("keeps action controls compact while leaving auth mode tabs on the original tab style", async () => {
+  it("keeps auth tabs dense and right-aligns the login and reset submit actions", async () => {
     const user = userEvent.setup();
 
     render(<ProgramAccessSidebarCard access={REMOTE_PROGRAM_ACCESS_LOGGED_OUT_FIXTURE} />);
@@ -816,19 +858,27 @@ describe("program access sidebar card", () => {
     expect(getProgramAccessDialog()).toHaveClass("program-access-dialog--compact-shell");
     expect(getProgramAccessDialog()).toHaveClass("program-access-dialog--dense-controls");
     const authModeTabs = screen.getByLabelText("程序会员模式");
-    expect(within(authModeTabs).getByRole("button", { name: "登录" })).not.toHaveClass("program-access-sidebar-card__tab--compact");
-    expect(within(authModeTabs).getByRole("button", { name: "注册" })).not.toHaveClass("program-access-sidebar-card__tab--compact");
-    expect(within(authModeTabs).getByRole("button", { name: "找回密码" })).not.toHaveClass("program-access-sidebar-card__tab--compact");
+    expect(within(authModeTabs).getByRole("button", { name: "登录" })).toHaveClass("program-access-sidebar-card__tab--dense");
+    expect(within(authModeTabs).getByRole("button", { name: "注册" })).toHaveClass("program-access-sidebar-card__tab--dense");
+    expect(within(authModeTabs).getByRole("button", { name: "找回密码" })).toHaveClass("program-access-sidebar-card__tab--dense");
     expect(screen.getByPlaceholderText("请输入账号")).toHaveClass("program-access-sidebar-card__input--compact");
     expect(screen.getByPlaceholderText("请输入密码")).toHaveClass("program-access-sidebar-card__input--compact");
     expect(getLoginSubmitButton()).toHaveClass("program-access-sidebar-card__button--compact");
+    expectRightAlignedSubmitAction(getLoginSubmitButton());
     expect(screen.queryByRole("button", { name: "刷新状态" })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "找回密码" }));
     expect(screen.getByLabelText("找回密码邮箱")).toHaveClass("program-access-sidebar-card__input--compact");
     expect(screen.getByLabelText("找回密码验证码")).toHaveClass("program-access-sidebar-card__input--compact");
     expect(screen.getByLabelText("新密码")).toHaveClass("program-access-sidebar-card__input--compact");
+    expect(screen.getByLabelText("再次输入新密码")).toHaveClass("program-access-sidebar-card__input--compact");
     expect(screen.getByRole("button", { name: "发送找回密码验证码" })).toHaveClass("program-access-sidebar-card__button--compact");
     expect(screen.getByRole("button", { name: "提交新密码" })).toHaveClass("program-access-sidebar-card__button--compact");
+    const passwordToggle = screen.getByRole("button", { name: "显示密码明文" });
+    expect(passwordToggle).toHaveClass("program-access-sidebar-card__button--compact");
+    expect(passwordToggle).toHaveClass("program-access-sidebar-card__password-toggle");
+    expect(passwordToggle.closest(".program-access-sidebar-card__inline--password")).not.toBeNull();
+    expect(screen.getByLabelText("新密码").closest(".program-access-sidebar-card__password-field")).not.toBeNull();
+    expectRightAlignedSubmitAction(screen.getByRole("button", { name: "提交新密码" }));
   });
 });

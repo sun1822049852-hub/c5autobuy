@@ -34,6 +34,7 @@
 - 仓库级 `AGENTS.md` 已明确把“既有数据获取链路、既有数据保存/回写/持久化链路”提升为关键行为；后续只要改动数据来源、字段映射、保存时机、写入目标、浏览器 session/profile/cookie 复用与持久化逻辑，默认都要先说明改动边界、验证方式与回退路径，不能再静默修改。
 - 本项目 backend 测试若在导入阶段因缺少 `xsign` 失败，后续默认先检查测试入口兜底（如 `tests/backend/conftest.py`）、统一测试脚本或现有 stub/fallback，不再优先采用单次命令临时注入；同类环境坑重复出现时应沉淀为仓库规则或自动兜底。
 - 程序会员 / 程序账号的产品语义已冻结：本地桌面主线只有一份共享业务数据；程序账号只承载远端鉴权与会员权限，不拥有本地数据；切换程序账号只改变权限态，不切换本地工作区；登出或会员失效后本地数据仍可只读查看，但关键动作必须统一锁死；切到有会员的账号后在原工作区上直接恢复可用。
+- 程序会员 control plane 的签名 `kid` 新增一条稳定实现约束：`PROGRAM_ADMIN_SIGNING_KID` 不得再依赖固定默认值；未显式配置时必须按当前私钥自动派生，显式配置时必须与私钥真实派生值一致，否则在 signer 初始化阶段直接 fail-fast，不能继续签出会让桌面端在 `register/complete`、`login` 或 `refresh` 后落到 `program_snapshot_invalid` 的坏 `access_bundle`。
 - 程序账号入口 UI 也已冻结一条稳定约束：左侧侧栏只允许显示最小登录状态摘要，即 `未登录` 或当前 `username`，不得再把权限说明、注册/找回密码、到期时间等细节重新塞回侧栏；具体账号操作统一在屏幕中央弹窗中完成，且已登录时弹窗只显示当前账号状态与 `刷新状态` / `退出`，不再显示登录表单。
 - 沟通上又冻结一条仓库级协作约束：只要现场证据已经足够把问题直接归因到单一现象（如看错窗口、未切换页面/筛选、旧窗口保留旧状态），后续默认先直接指出问题本身，再补证据；不要在证据已充分时先展开多种可能性或先给方案树。
 - C5 账号登录任务的用户可见状态文案已冻结为“集中映射、统一复用”模式：唯一维护点是 `app_desktop_web/src/features/account-center/login_task_state_labels.js`；账号中心登录抽屉、诊断页登录任务标签页、账号中心日志中的状态显示都必须走这份映射，后续若用户要求改某个状态文案，应优先改这里而不是在各组件内散改。
@@ -67,7 +68,9 @@
 - 程序账号弹窗的表单提示又冻结一条稳定 UI 约束：`formError / formNotice` 统一以弹窗中央 toast 方式提示，不再把“请先填写完整的找回密码信息”这类校验文案贴在底部；注册发码与找回密码发码遇到无效邮箱时必须显式提示 `请输入有效邮箱地址。`，不能通过禁用按钮或静默透传请求把错误吞掉；主要动作按钮统一走紧凑样式，不再默认整行拉满。
 - 程序账号弹窗尺寸口径又新增一条稳定约束：登录/注册/找回密码 dialog root 必须继续带 `program-access-dialog--compact-shell`，桌面端保持更紧凑的固定壳尺寸；用户可见的 `刷新状态` 按钮已从登录页与已登录状态页移除，不得在后续 UI 回退中静默加回。
 - 程序账号弹窗控件密度又新增一条稳定约束：dialog root 继续带 `program-access-dialog--dense-controls`；登录 / 注册 / 找回密码输入框统一带 `program-access-sidebar-card__input--compact`；tabs、输入框、compact 按钮与 close button 都维持当前更紧凑的高度 / padding 口径，后续不得无说明放大回退。
-- 程序账号弹窗的模式切换按钮已纠偏回最初样式来源 `7138d87`：`登录 / 注册 / 找回密码` 三颗 tab 继续沿用 `program-access-sidebar-card__tab` 的三等分 tab 口径，容器保持 `grid-template-columns: repeat(3, minmax(0, 1fr))` + `gap: 8px`，不得再无依据改成 compact pill 或其他临时风格。
+- 程序账号弹窗的模式切换按钮已纠偏回最初样式来源 `7138d87`：`登录 / 注册 / 找回密码` 三颗 tab 继续沿用三等分 tab 口径，容器保持 `grid-template-columns: repeat(3, minmax(0, 1fr))` + `gap: 8px`；允许在 `program-access-sidebar-card__tab` 之上叠加 `program-access-sidebar-card__tab--dense` 做小一档收口，但不得再无依据改成 compact pill 或其他临时风格。
+- 程序账号弹窗的找回密码交互已新增一条稳定约束：重置密码必须要求二次输入一致后才可提交；明文切换按钮默认位于“新密码”输入右侧，并同时作用于“新密码 / 再次输入新密码”；提交动作继续只向后端发送 `{ email, code, newPassword }`，确认密码只在前端校验使用。
+- 配置管理页商品表的列对齐已新增一条稳定 UI 约束：表头列网格与物品行内容除了要显式共用同一条对齐轨道（当前口径为 `query-item-table__grid-track`），桌面态下物品行外层还必须保留与 header 同构的右侧 toolbar 预留宽度（当前通过 `query-item-row__toolbar-spacer` + 双列 row shell 实现）。否则第一列 `fr` 会把 toolbar 那截剩余宽度吞掉，再次出现“物品栏与标头数据错位”。
 - 账号中心首页与侧栏状态卡又新增一条稳定 UI 口径：左侧程序账号收起卡固定显示 `登录状态：`，不再保留 `账号登录` 次标题；副文案按权限态二分，有效远端权限显示 `已授权，可编辑`，其余显示 `无权限，仅只读`。账号中心 hero 固定为小字 `C5 交易助手` + 主标题 `账号中心`，账号表第三列表头固定为 `浏览器查询（待实现）`。
 - 当前桌面发行瘦身主线已冻结：packaged release 不再允许整包内置开发 `.venv`；首刀方案固定为“首次启动从 Python 官方下载固定版本 Windows embeddable runtime，失败则阻断进入程序并允许重试”。开发态仍保留 `.venv/Scripts/python.exe` 解析；实现时不得回到“复制整套开发环境发行”的旧路径。
 - 前端 / UI 调整任务的默认预览口径已冻结：只要页面能以 `localhost`、独立 dev server 或 file-backed preview 方式打开，就优先使用 Codex app in-app browser；若当前是 CLI 或桌面 app 没有 Annotating，也先走 `web-only dev server + URL/截图`，不默认拉 Electron 壳。只有涉及桌面壳交互、embedded backend / program access、真实登录态 / cookie / profile、或问题仅在程序壳复现时，才切回程序自带前端。
@@ -104,3 +107,4 @@
 - 当前又补齐一条无域名收口能力：桌面端 release 已支持通过 `controlPlaneCaCertPath` / `C5_PROGRAM_CONTROL_PLANE_CA_CERT_PATH` pin 一张自带 CA 证书，因此即使没有域名，也可以走“`https://服务器IP` + 自签/私有 CA + 客户端证书 pinning”这条安全链；此时 `app_desktop_web/build/control_plane_ca.pem` 若存在，会随打包自动进入 resources 根目录。
 - 程序会员控制台的本机连接脚本也新增一条稳定操作约束：`program_admin_console/tools/connectProgramAdminConsole.{ps1,cmd}` 默认不再把 URL 交给已运行的默认浏览器，而是启动一个专用 Chromium 窗口（独立临时 profile）来访问 `/admin`；关闭这个专用窗口后，脚本会自动断开它自己创建的 SSH 隧道。后续若继续调整该脚本，默认不要回退到“复用已有浏览器窗口/标签页”的不可靠模式。
 - 程序会员控制台又新增一条稳定发布约束：`connectProgramAdminConsole` 命中的永远是远端运行中的 `c5-program-admin`，不是本地工作树。因此凡是 `program_admin_console/src/` 或 `program_admin_console/ui/` 的用户可见/接口行为改动，默认都必须在同一轮同步远端源码 `/home/admin/c5-program-admin-src`、重建/替换远端容器，并至少验 `http://127.0.0.1:18787/api/health`、`/api/admin/session`、`/admin`、`/admin/app.js`、`/admin/styles.css`；未完成这组对齐前，不得宣称 connect 入口已生效。同步时还要覆盖新代码依赖到的文件闭包，不能只拷“看起来改过”的单文件，否则会出现 `server.js` 已更新但 `validation.js` 缺失、容器启动失败的漂移事故。
+- 程序会员控制台的标准化远端更新入口现已固定为 `program_admin_console/tools/deployProgramAdminRemote.ps1`：后续 AI 若要同步 `program_admin_console` 到远端，默认先跑该脚本的 `-DryRun` 读取现网 image / env / signing kid，再按同一脚本完成源码同步、镜像重建、容器替换与基础 smoke，而不是重新手拼一套命令。该脚本的稳定语义是“复用远端现有 secret/env/bind/port 口径，但强制用远端私钥真实派生值覆盖 `PROGRAM_ADMIN_SIGNING_KID`”。

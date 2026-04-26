@@ -15,7 +15,7 @@ export function QueryItemTable({
   return (
     <section className="query-item-table" role="region" aria-label="商品配置列表">
       <div className="query-item-table__header">
-        <div className="query-item-table__column-grid">
+        <div className="query-item-table__column-grid query-item-table__grid-track">
           <div className="query-item-table__column query-item-table__column--name">商品名</div>
           <div className="query-item-table__column">市场价</div>
           <div className="query-item-table__column">扫货价</div>

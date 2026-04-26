@@ -19,6 +19,7 @@ const RESET_FORM_TEMPLATE = Object.freeze({
   email: "",
   code: "",
   newPassword: "",
+  confirmPassword: "",
 });
 
 const REGISTER_STEP_EMAIL = "register_email";
@@ -283,6 +284,7 @@ export function ProgramAccessSidebarCard({
   const [isRegisterEditingEmail, setIsRegisterEditingEmail] = useState(false);
   const [registerResendCooldownSeconds, setRegisterResendCooldownSeconds] = useState(0);
   const [resetForm, setResetForm] = useState(RESET_FORM_TEMPLATE);
+  const [isResetPasswordVisible, setIsResetPasswordVisible] = useState(false);
   const [busyAction, setBusyAction] = useState("");
   const [formError, setFormError] = useState("");
   const [formNotice, setFormNotice] = useState("");
@@ -338,6 +340,9 @@ export function ProgramAccessSidebarCard({
 
   function switchAuthMode(nextMode) {
     clearLocalFeedback();
+    if (nextMode !== "reset") {
+      setIsResetPasswordVisible(false);
+    }
     if (authMode === "register" && nextMode !== "register" && registerStep === REGISTER_STEP_SUCCESS) {
       resetRegisterFlow({ preserveEmail: true });
     }
@@ -359,6 +364,7 @@ export function ProgramAccessSidebarCard({
 
   function closeDialog() {
     clearLocalFeedback();
+    setIsResetPasswordVisible(false);
     if (!(authMode === "register" && registerStep === REGISTER_STEP_CODE)) {
       if (authMode === "register") {
         resetRegisterFlow({ preserveEmail: true, preserveCooldown: true });
@@ -653,9 +659,14 @@ export function ProgramAccessSidebarCard({
       code: resetForm.code.trim(),
       newPassword: resetForm.newPassword,
     };
+    const confirmPassword = resetForm.confirmPassword;
 
-    if (!payload.email || !payload.code || !payload.newPassword) {
+    if (!payload.email || !payload.code || !payload.newPassword || !confirmPassword) {
       setFormError("请先填写完整的找回密码信息。");
+      return;
+    }
+    if (payload.newPassword !== confirmPassword) {
+      setFormError("两次输入的新密码不一致。");
       return;
     }
 
@@ -666,7 +677,9 @@ export function ProgramAccessSidebarCard({
             ...current,
             code: "",
             newPassword: "",
+            confirmPassword: "",
           }));
+          setIsResetPasswordVisible(false);
         },
       });
     } catch {
@@ -992,7 +1005,7 @@ export function ProgramAccessSidebarCard({
               <button
                 key={item.id}
                 aria-pressed={authMode === item.id}
-                className={`program-access-sidebar-card__tab${authMode === item.id ? " is-active" : ""}`}
+                className={`program-access-sidebar-card__tab program-access-sidebar-card__tab--dense${authMode === item.id ? " is-active" : ""}`}
                 type="button"
                 onClick={() => switchAuthMode(item.id)}
               >
@@ -1035,14 +1048,16 @@ export function ProgramAccessSidebarCard({
                   }}
                 />
               </label>
-              <button
-                className="accent-button program-access-sidebar-card__button program-access-sidebar-card__button--compact"
-                type="button"
-                disabled={Boolean(busyAction)}
-                onClick={() => void handleRemoteLogin()}
-              >
-                {resolveBusyLabel("login", "登录", "登录中...", busyAction)}
-              </button>
+              <div className="surface-actions program-access-dialog__actions program-access-dialog__actions--submit-end">
+                <button
+                  className="accent-button program-access-sidebar-card__button program-access-sidebar-card__button--compact"
+                  type="button"
+                  disabled={Boolean(busyAction)}
+                  onClick={() => void handleRemoteLogin()}
+                >
+                  {resolveBusyLabel("login", "登录", "登录中...", busyAction)}
+                </button>
+              </div>
             </div>
           ) : null}
 
@@ -1094,30 +1109,59 @@ export function ProgramAccessSidebarCard({
                   {resolveBusyLabel("send-reset-password-code", "发送找回密码验证码", "发送中...", busyAction)}
                 </button>
               </div>
+              <div className="program-access-sidebar-card__inline program-access-sidebar-card__inline--password">
+                <label className="program-access-sidebar-card__field program-access-sidebar-card__password-field">
+                  <span className="program-access-sidebar-card__field-label">新密码</span>
+                  <input
+                    aria-label="新密码"
+                    className="program-access-sidebar-card__input program-access-sidebar-card__input--compact"
+                    placeholder="请输入新密码"
+                    type={isResetPasswordVisible ? "text" : "password"}
+                    value={resetForm.newPassword}
+                    onChange={(event) => {
+                      setResetForm((current) => ({
+                        ...current,
+                        newPassword: event.target.value,
+                      }));
+                    }}
+                  />
+                </label>
+                <button
+                  aria-label={isResetPasswordVisible ? "隐藏密码明文" : "显示密码明文"}
+                  className="ghost-button program-access-sidebar-card__button program-access-sidebar-card__button--compact program-access-sidebar-card__password-toggle"
+                  type="button"
+                  disabled={Boolean(busyAction)}
+                  onClick={() => setIsResetPasswordVisible((current) => !current)}
+                >
+                  {isResetPasswordVisible ? "隐藏密码明文" : "显示密码明文"}
+                </button>
+              </div>
               <label className="program-access-sidebar-card__field">
-                <span className="program-access-sidebar-card__field-label">新密码</span>
+                <span className="program-access-sidebar-card__field-label">再次输入新密码</span>
                 <input
-                  aria-label="新密码"
+                  aria-label="再次输入新密码"
                   className="program-access-sidebar-card__input program-access-sidebar-card__input--compact"
-                  placeholder="请输入新密码"
-                  type="password"
-                  value={resetForm.newPassword}
+                  placeholder="请再次输入新密码"
+                  type={isResetPasswordVisible ? "text" : "password"}
+                  value={resetForm.confirmPassword}
                   onChange={(event) => {
                     setResetForm((current) => ({
                       ...current,
-                      newPassword: event.target.value,
+                      confirmPassword: event.target.value,
                     }));
                   }}
                 />
               </label>
-              <button
-                className="accent-button program-access-sidebar-card__button program-access-sidebar-card__button--compact"
-                type="button"
-                disabled={Boolean(busyAction)}
-                onClick={() => void handleResetPasswordSubmit()}
-              >
-                {resolveBusyLabel("reset-password", "提交新密码", "提交中...", busyAction)}
-              </button>
+              <div className="surface-actions program-access-dialog__actions program-access-dialog__actions--submit-end">
+                <button
+                  className="accent-button program-access-sidebar-card__button program-access-sidebar-card__button--compact"
+                  type="button"
+                  disabled={Boolean(busyAction)}
+                  onClick={() => void handleResetPasswordSubmit()}
+                >
+                  {resolveBusyLabel("reset-password", "提交新密码", "提交中...", busyAction)}
+                </button>
+              </div>
             </div>
           ) : null}
         </div>
