@@ -314,7 +314,7 @@ describe("app remote bootstrap", () => {
     });
   });
 
-  it("keeps the legacy one-screen registration UI when registration_flow_version is not 3", async () => {
+  it("does not fall back to the legacy one-screen registration UI when registration_flow_version is not 3", async () => {
     const user = userEvent.setup();
     const fetchImpl = vi.fn(async (input) => {
       const url = new URL(input);
@@ -372,9 +372,9 @@ describe("app remote bootstrap", () => {
     await user.click(registerEntry);
 
     expect(await screen.findByLabelText("注册邮箱")).toBeInTheDocument();
-    expect(screen.getByLabelText("注册验证码")).toBeInTheDocument();
-    expect(screen.getByLabelText("注册用户名")).toBeInTheDocument();
-    expect(screen.getByLabelText("注册密码")).toBeInTheDocument();
+    expect(screen.queryByLabelText("注册验证码")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("注册用户名")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("注册密码")).not.toBeInTheDocument();
   });
 
   it("enables the three-step registration UI only when registration_flow_version=3", async () => {

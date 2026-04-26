@@ -317,6 +317,15 @@ export function ProgramAccessSidebarCard({
       resetRegisterFlow();
     }
     setAuthMode(nextMode);
+    if (
+      nextMode === "register"
+      && authMode !== "register"
+      && !isLocalPassThrough
+      && !hasRemoteSession
+      && !isRegistrationFlowV3
+    ) {
+      Promise.resolve(refreshProgramAuthStatus()).catch(() => {});
+    }
   }
 
   function openDialog() {
@@ -406,49 +415,34 @@ export function ProgramAccessSidebarCard({
   }
 
   async function handleSendRegisterCode() {
-    if (isRegistrationFlowV3) {
-      const email = registerForm.email.trim();
-      if (!hasValidRegisterEmail(email)) {
-        setFormError("请输入有效邮箱地址。");
-        return;
-      }
-
-      clearLocalFeedback();
-      setBusyAction("send-register-code");
-      try {
-        const result = await sendRegisterCode({ email });
-        setRegisterStep(REGISTER_STEP_CODE);
-        setRegisterSessionId(String(result?.register_session_id || ""));
-        setMaskedRegisterEmail(String(result?.masked_email || ""));
-        setVerificationTicket("");
-        setRegisterResendCooldownSeconds(Math.max(0, Number(result?.resend_after_seconds || 0)));
-        setRegisterForm({
-          ...REGISTER_FORM_TEMPLATE,
-          email,
-        });
-        setFormNotice(String(result?.message || ""));
-      } catch (error) {
-        const detail = extractProgramAuthActionErrorDetail(error);
-        if (detail?.retryAfterSeconds != null) {
-          setRegisterResendCooldownSeconds(detail.retryAfterSeconds);
-        }
-        setFormError(resolveRegisterErrorMessage(detail?.code, "注册验证码发送失败，请稍后再试。"));
-      } finally {
-        setBusyAction("");
-      }
-      return;
-    }
-
     const email = registerForm.email.trim();
-    if (!email) {
-      setFormError("请先填写注册邮箱。");
+    if (!hasValidRegisterEmail(email)) {
+      setFormError("请输入有效邮箱地址。");
       return;
     }
 
+    clearLocalFeedback();
+    setBusyAction("send-register-code");
     try {
-      await runFormAction("send-register-code", () => sendRegisterCode({ email }));
-    } catch {
-      setFormError("注册验证码发送失败，请稍后再试。");
+      const result = await sendRegisterCode({ email });
+      setRegisterStep(REGISTER_STEP_CODE);
+      setRegisterSessionId(String(result?.register_session_id || ""));
+      setMaskedRegisterEmail(String(result?.masked_email || ""));
+      setVerificationTicket("");
+      setRegisterResendCooldownSeconds(Math.max(0, Number(result?.resend_after_seconds || 0)));
+      setRegisterForm({
+        ...REGISTER_FORM_TEMPLATE,
+        email,
+      });
+      setFormNotice(String(result?.message || ""));
+    } catch (error) {
+      const detail = extractProgramAuthActionErrorDetail(error);
+      if (detail?.retryAfterSeconds != null) {
+        setRegisterResendCooldownSeconds(detail.retryAfterSeconds);
+      }
+      setFormError(resolveRegisterErrorMessage(detail?.code, "注册验证码发送失败，请稍后再试。"));
+    } finally {
+      setBusyAction("");
     }
   }
 
@@ -733,95 +727,6 @@ export function ProgramAccessSidebarCard({
   function renderLoggedOutDialog() {
     const registerEmail = registerForm.email.trim();
 
-    function renderRegisterV2Form() {
-      return (
-        <div className="program-access-sidebar-card__form">
-          <label className="program-access-sidebar-card__field">
-            <span className="program-access-sidebar-card__field-label">注册邮箱</span>
-            <input
-              aria-label="注册邮箱"
-              className="program-access-sidebar-card__input"
-              placeholder="请输入注册邮箱"
-              type="email"
-              value={registerForm.email}
-              onChange={(event) => {
-                setRegisterForm((current) => ({
-                  ...current,
-                  email: event.target.value,
-                }));
-              }}
-            />
-          </label>
-          <div className="program-access-sidebar-card__inline">
-            <label className="program-access-sidebar-card__field">
-              <span className="program-access-sidebar-card__field-label">注册验证码</span>
-              <input
-                aria-label="注册验证码"
-                className="program-access-sidebar-card__input"
-                placeholder="请输入验证码"
-                type="text"
-                value={registerForm.code}
-                onChange={(event) => {
-                  setRegisterForm((current) => ({
-                    ...current,
-                    code: event.target.value,
-                  }));
-                }}
-              />
-            </label>
-            <button
-              className="ghost-button program-access-sidebar-card__button"
-              type="button"
-              disabled={Boolean(busyAction)}
-              onClick={() => void handleSendRegisterCode()}
-            >
-              {resolveBusyLabel("send-register-code", "发送注册验证码", "发送中...", busyAction)}
-            </button>
-          </div>
-          <label className="program-access-sidebar-card__field">
-            <span className="program-access-sidebar-card__field-label">注册用户名</span>
-            <input
-              aria-label="注册用户名"
-              className="program-access-sidebar-card__input"
-              placeholder="请输入注册用户名"
-              type="text"
-              value={registerForm.username}
-              onChange={(event) => {
-                setRegisterForm((current) => ({
-                  ...current,
-                  username: event.target.value,
-                }));
-              }}
-            />
-          </label>
-          <label className="program-access-sidebar-card__field">
-            <span className="program-access-sidebar-card__field-label">注册密码</span>
-            <input
-              aria-label="注册密码"
-              className="program-access-sidebar-card__input"
-              placeholder="请输入注册密码"
-              type="password"
-              value={registerForm.password}
-              onChange={(event) => {
-                setRegisterForm((current) => ({
-                  ...current,
-                  password: event.target.value,
-                }));
-              }}
-            />
-          </label>
-          <button
-            className="accent-button program-access-sidebar-card__button"
-            type="button"
-            disabled={Boolean(busyAction)}
-            onClick={() => void handleRegisterSubmit()}
-          >
-            {resolveBusyLabel("register", "提交注册", "提交中...", busyAction)}
-          </button>
-        </div>
-      );
-    }
-
     function renderRegisterV3Form() {
       if (registerStep === REGISTER_STEP_CODE) {
         return (
@@ -1094,7 +999,7 @@ export function ProgramAccessSidebarCard({
           ) : null}
 
           {authMode === "register" ? (
-            isRegistrationFlowV3 ? renderRegisterV3Form() : renderRegisterV2Form()
+            renderRegisterV3Form()
           ) : null}
 
           {authMode === "reset" ? (
