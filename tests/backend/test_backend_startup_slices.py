@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -155,6 +156,26 @@ def test_deferred_create_app_registers_runtime_and_browser_routes_before_slice_e
         "/ws/tasks/{task_id}",
         "/ws/accounts/updates",
     }.issubset(route_paths)
+
+
+def test_deferred_create_app_lifespan_eventually_binds_runtime_full_services(tmp_path: Path):
+    app = create_app(
+        db_path=tmp_path / "startup-slices-lifespan.db",
+        deferred_init=True,
+        program_access_start_refresh_scheduler=False,
+    )
+
+    assert not hasattr(app.state, "purchase_runtime_service")
+
+    with TestClient(app) as client:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not hasattr(app.state, "purchase_runtime_service"):
+            response = client.get("/health")
+            assert response.status_code == 200
+            time.sleep(0.05)
+
+    assert hasattr(app.state, "purchase_runtime_service")
+    assert hasattr(app.state, "query_runtime_service")
 
 
 def test_slice_ensure_only_binds_state_and_does_not_mutate_route_table(tmp_path: Path):

@@ -204,6 +204,17 @@ def _resolve_program_access_control_plane_base_url(explicit_base_url: str | None
     ).strip()
 
 
+def _resolve_program_access_control_plane_ca_cert_path(explicit_path: Path | None) -> Path | None:
+    if explicit_path is not None:
+        return Path(explicit_path)
+
+    env_path = os.getenv("C5_PROGRAM_CONTROL_PLANE_CA_CERT_PATH")
+    if env_path:
+        return Path(env_path)
+
+    return None
+
+
 def _resolve_program_access_key_cache_path(
     explicit_key_cache_path: Path | None,
     *,
@@ -255,6 +266,7 @@ def _build_program_access_services(
     explicit_secret_stage: str | None,
     explicit_secret_platform: str | None,
     explicit_control_plane_base_url: str | None,
+    explicit_control_plane_ca_cert_path: Path | None,
     explicit_key_cache_path: Path | None,
     explicit_refresh_interval_seconds: float | None,
     explicit_probe_registration_readiness: bool | None,
@@ -298,8 +310,14 @@ def _build_program_access_services(
         explicit_key_cache_path,
         app_data_root=app_data_root,
     )
+    control_plane_ca_cert_path = _resolve_program_access_control_plane_ca_cert_path(
+        explicit_control_plane_ca_cert_path
+    )
     verifier = EntitlementVerifier(key_cache_path=key_cache_path)
-    remote_client = RemoteControlPlaneClient(base_url=control_plane_base_url)
+    remote_client = RemoteControlPlaneClient(
+        base_url=control_plane_base_url,
+        verify=str(control_plane_ca_cert_path) if control_plane_ca_cert_path else True,
+    )
     gateway = RemoteEntitlementGateway(
         remote_client=remote_client,
         verifier=verifier,
@@ -410,6 +428,7 @@ def _build_startup_slice_registry(
     program_access_secret_stage: str | None,
     program_access_secret_platform: str | None,
     program_access_control_plane_base_url: str | None,
+    program_access_control_plane_ca_cert_path: Path | None,
     program_access_key_cache_path: Path | None,
     program_access_refresh_interval_seconds: float | None,
     program_access_probe_registration_readiness: bool | None,
@@ -439,6 +458,7 @@ def _build_startup_slice_registry(
                 secret_stage=program_access_secret_stage,
                 secret_platform=program_access_secret_platform,
                 control_plane_base_url=program_access_control_plane_base_url,
+                control_plane_ca_cert_path=program_access_control_plane_ca_cert_path,
                 key_cache_path=program_access_key_cache_path,
                 refresh_interval_seconds=program_access_refresh_interval_seconds,
                 probe_registration_readiness=program_access_probe_registration_readiness,
@@ -452,6 +472,7 @@ def _build_startup_slice_registry(
             explicit_secret_stage=options.secret_stage,
             explicit_secret_platform=options.secret_platform,
             explicit_control_plane_base_url=options.control_plane_base_url,
+            explicit_control_plane_ca_cert_path=options.control_plane_ca_cert_path,
             explicit_key_cache_path=options.key_cache_path,
             explicit_refresh_interval_seconds=options.refresh_interval_seconds,
             explicit_probe_registration_readiness=options.probe_registration_readiness,
@@ -497,6 +518,7 @@ def create_app(
     program_access_secret_stage: str | None = None,
     program_access_secret_platform: str | None = None,
     program_access_control_plane_base_url: str | None = None,
+    program_access_control_plane_ca_cert_path: Path | None = None,
     program_access_key_cache_path: Path | None = None,
     program_access_refresh_interval_seconds: float | None = None,
     program_access_probe_registration_readiness: bool | None = None,
@@ -567,6 +589,7 @@ def create_app(
         "program_access_secret_stage": program_access_secret_stage,
         "program_access_secret_platform": program_access_secret_platform,
         "program_access_control_plane_base_url": program_access_control_plane_base_url,
+        "program_access_control_plane_ca_cert_path": program_access_control_plane_ca_cert_path,
         "program_access_key_cache_path": program_access_key_cache_path,
         "program_access_refresh_interval_seconds": program_access_refresh_interval_seconds,
         "program_access_probe_registration_readiness": program_access_probe_registration_readiness,
@@ -582,6 +605,7 @@ def create_app(
         program_access_secret_stage=program_access_secret_stage,
         program_access_secret_platform=program_access_secret_platform,
         program_access_control_plane_base_url=program_access_control_plane_base_url,
+        program_access_control_plane_ca_cert_path=program_access_control_plane_ca_cert_path,
         program_access_key_cache_path=program_access_key_cache_path,
         program_access_refresh_interval_seconds=program_access_refresh_interval_seconds,
         program_access_probe_registration_readiness=program_access_probe_registration_readiness,
@@ -613,11 +637,12 @@ def create_app(
         _supports_program_access_post_ready_warm(app.state.program_access_gateway)
         or (app.state.program_access_refresh_scheduler is not None and program_access_start_refresh_scheduler)
     )
-    app.state._deferred_init_enabled = False
     app.state._ready = True
 
     if deferred_init:
         return app
+
+    app.state._deferred_init_enabled = False
 
     # ------------------------------------------------------------------
     # Phase 2 (synchronous) — full init, used by tests & non-deferred mode

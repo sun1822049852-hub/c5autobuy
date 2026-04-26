@@ -3568,6 +3568,68 @@
     - 远端 loopback smoke
     - 程序会员 `/program-auth/status` / `/program-auth/register/send-code` 可达性
 
+## 2026-04-26 12:41 (Asia/Shanghai)
+- 背景：魔尊把目标重新压成一句人话：“用户端能够连接服务器端且数据安全”。本轮据此重新收敛 program access 主线，不再讨论注册 UI。
+- 现场核对：
+  - 本地源码确认：桌面正式入口的 control plane 地址仍来自 `app_desktop_web/build/client_config.release.json -> controlPlaneBaseUrl -> C5_PROGRAM_CONTROL_PLANE_BASE_URL -> RemoteControlPlaneClient`，当前默认值仍写死 `http://8.138.39.139:18787`。
+  - 远端真实运行态经 SSH 验证：
+    - `c5-program-admin` 仍为 `127.0.0.1:18787 -> 8787`
+    - 宿主机仅监听 `80` 与 `127.0.0.1:18787`，当前没有 `443` / nginx / 现成 HTTPS 入口
+    - `80` 现由另一容器 `cs2-admin` 占用，不可把“给桌面端一个安全公网入口”误解成“直接占用现有 80 并把整个 control plane 暴露出去”
+  - 结论收敛：
+    - 当前“客户端要能连上”和“数据要安全”之间缺的不是注册代码，而是单独的安全公网 auth gateway
+    - 正确口径必须是：control plane 继续 loopback-only，另开独立 `HTTPS` 入口只转发 `/api/health` 与 `/api/auth/*`，`/admin` 与 `/api/admin/*` 继续不对公网暴露
+- 本轮修改：
+  - `program_admin_console/src/server.js`
+    - 新增 `readServerRuntimeOptions()`，让运行进程可通过 `PROGRAM_ADMIN_TRUST_PROXY` / `TRUST_PROXY` 显式启用可信代理识别
+    - `main()` 启动 `createServer()` 时已真正把 `trustProxy` 配进去，不再只存在测试注入能力
+  - `program_admin_console/tests/control-plane-server-runtime.test.js`
+    - 新增 focused 断言，锁定 `PROGRAM_ADMIN_TRUST_PROXY` / `TRUST_PROXY` 的布尔解析口径
+  - `program_admin_console/package.json`
+    - 把上述 focused runtime 测试纳入 `npm --prefix program_admin_console test`
+  - `program_admin_console/Dockerfile`
+    - 显式补 `PROGRAM_ADMIN_TRUST_PROXY=false` 默认值，避免容器运行口径含糊
+  - `program_admin_console/deploy/nginx-program-access-auth-gateway.example.conf`
+    - 新增安全公网入口示例，只放行 `GET /api/health` 与 `/api/auth/*`，显式拒绝 `/admin` 与 `/api/admin/*`
+  - `program_admin_console/README.md`
+    - 新增“桌面端安全公网接入口径”章节与 `PROGRAM_ADMIN_TRUST_PROXY` 说明，明确 future desktop release 必须切到独立 `HTTPS` auth gateway
+- 验证：
+  - 远端现场取证：
+    - `sudo docker ps --format '{{.Names}} {{.Image}} {{.Ports}}'`
+    - `ss -tlnp | grep -E '(:80|:443|:18787)'`
+    - `test -d /etc/nginx`
+    - 结果已证实：当前无现成 HTTPS gateway，可复用的是 loopback-only control plane，本轮结论基于新鲜现场而非旧文档
+- 当前阻塞：
+  - 若要真正闭环“用户端能安全直连”，还缺一个外部落点：可用域名 / 子域名（或等价的受信 HTTPS 入口）指向 `8.138.39.139`
+  - 在这个外部条件到位前，仓库内可以先把口径和运行时支持补齐，但不能诚实宣称“已完成安全公网接入”
+
+## 2026-04-26 12:59 (Asia/Shanghai)
+- 背景：魔尊进一步明确“没有域名，只有服务器，而且用户侧程序本身看不到接口”。据此将方案从“等域名”收缩为“无域名也能安全直连”的实现口径。
+- 本轮修改：
+  - `app_backend/infrastructure/program_access/remote_control_plane_client.py`
+    - 远端 control plane 客户端新增 `verify` 支持；当传入 CA 文件路径时，现改为显式构造 `ssl.create_default_context(cafile=...)`，避免 `httpx verify=<str>` 的弃用口径
+  - `app_backend/main.py`
+  - `app_backend/startup/build_core_home_services.py`
+    - packaged release 的 program access 组装链新增 `program_access_control_plane_ca_cert_path` / `C5_PROGRAM_CONTROL_PLANE_CA_CERT_PATH` 解析与透传
+  - `app_desktop_web/program_access_config.cjs`
+    - release 配置现可读取 `controlPlaneCaCertPath`
+    - 若 JSON 中写相对路径，会按 `client_config.release.json` 所在目录解析
+  - `app_desktop_web/python_backend.js`
+    - Electron 拉起本地 Python backend 时，现会把 `controlPlaneCaCertPath` 注入 `C5_PROGRAM_CONTROL_PLANE_CA_CERT_PATH`
+  - `app_desktop_web/electron-builder.config.cjs`
+    - 若 `app_desktop_web/build/control_plane_ca.pem` 存在，打包时会自动带入 resources 根目录
+  - `program_admin_console/README.md`
+  - `program_admin_console/deploy/nginx-program-access-auth-gateway-ip.example.conf`
+    - 新增“无域名时走 `https://服务器IP + 自签/私有 CA + 客户端 pin 证书`”的明确部署口径
+- 验证：
+  - `npm --prefix app_desktop_web test -- --run tests/electron/python_backend.test.js tests/electron/program_access_packaging.test.js`
+    - `28 passed`
+  - `python -m pytest tests/backend/test_desktop_web_backend_bootstrap.py -q`
+    - `9 passed`
+- 结论：
+  - 当前已不再依赖“必须先有域名”才能安全接入
+  - 下一步若要真落地到远端，只需在服务器上起 `443` TLS gateway，并把对应 CA 证书放入 `app_desktop_web/build/control_plane_ca.pem`，再把 release 配置改到 `https://8.138.39.139`
+
 ## 2026-04-26 12:36 (Asia/Shanghai)
 - 背景：按最新 handoff 继续承接“是否只做前端 running/waiting 口径防混淆”，明确不重做账号中心 `运行时未就绪` 回刷实现，也不改后端“无购买账号 => waiting/等待购买账号恢复”语义。
 - 已完成：
@@ -3602,3 +3664,88 @@
   - 若魔尊继续这条主线，可再决定是否要把账号中心 `runtime_unavailable` 文案进一步改成“运行时同步中/加载中”，减少与 waiting/running 的误读。
   - `docs/agent/memory.md` 本轮无新的稳定约束，未改。
   - `README.md` 已核对，本次无需改动。
+
+## 2026-04-26 12:41 (Asia/Shanghai)
+- 背景：魔尊确认要把“新版默认删旧版、例外必须显式说明”的规则补进全局 `AGENTS.md`，避免再次出现旧路径被 stale 状态或兼容分支意外命中的回退事故。
+- 本轮修改：
+  - `AGENTS.md`
+    - 新增 `新旧版本替换纪律（强制）` 章节，明确：
+      - 默认实现新版时删除旧版路径，不保留静默 fallback
+      - 兼容 / 灰度 / 迁移 / 回滚 / debug 隔离属于显式例外
+      - 若必须保留旧版，必须写清保留原因、命中入口、删除时机与防回退验证
+  - `docs/agent/memory.md`
+    - 将该规则提炼为跨会话稳定约束，避免只停留在单次会话口头约定
+- 验证：
+  - 已回读 `AGENTS.md`、`docs/agent/memory.md` 与当前工作树，确认规则已真实落盘
+  - 本轮仅修改规则文档，不涉及运行时代码与测试
+- 当前进度：
+  - 该规则现已升级为项目级铁律；后续实现若继续保留旧版路径，需要把它视为显式例外而非默认做法
+
+## 2026-04-26 12:49 (Asia/Shanghai)
+- 背景：魔尊继续反馈“账号中心还是显示 `运行时未就绪`，明明是本地仓库数量判断”，要求查清为什么这个本地状态反复修不对。
+- 根因收敛：
+  - 账号中心后端其实有两条出数路径：
+    - `PurchaseRuntimeService.list_account_center_accounts()` 会基于 runtime inventory 或本地 `inventory_snapshot_repository` 产出 `selected_warehouse / inventory_full`
+    - `AccountCenterSnapshotService.list_account_center_accounts()` 不看仓库快照，对已绑定账号固定回 `runtime_unavailable / 运行时未就绪`
+  - 本地桌面主入口 `main()` 使用 `create_app(..., deferred_init=True)`，但 `create_app()` 在 `if deferred_init: return app` 之前把 `app.state._deferred_init_enabled` 错误清成了 `False`
+  - 结果：lifespan 根本不会启动 `_deferred_init()`，`purchase_runtime_service` / `query_runtime_service` 不会被绑定进 `app.state`，账号中心只能退回 snapshot 路径，所以无论本地仓库快照里有什么，前端都会持续看到 `运行时未就绪`
+- 本轮修改：
+  - `tests/backend/test_backend_startup_slices.py`
+    - 先补红灯：新增 deferred app 进入 lifespan 后，必须最终绑定 `purchase_runtime_service / query_runtime_service` 的回归
+  - `app_backend/main.py`
+    - 只做最小修复：deferred 模式下保留 `_deferred_init_enabled=True`，不再在返回 app 前提前清零；非 deferred 路径仍显式清零
+- 验证：
+  - 红灯：
+    - `python -m pytest tests/backend/test_backend_startup_slices.py -k "deferred_create_app_lifespan_eventually_binds_runtime_full_services"`
+      - 初始失败点：lifespan 结束后 `purchase_runtime_service` 仍未绑定
+  - 绿灯：
+    - 同命令回跑通过
+  - focused regression：
+    - `python -m pytest tests/backend/test_backend_health.py tests/backend/test_backend_startup_slices.py tests/backend/test_desktop_web_backend_bootstrap.py`
+      - `22 passed`
+    - `python -m pytest tests/backend/test_account_center_routes.py -k "purchase_status_priority or falls_back_to_repo_when_runtime_service_missing or single_account_route_returns_computed_purchase_status"`
+      - `4 passed`
+- 结论：
+  - 前几轮之所以一直像“只差一次刷新”，是因为前端回刷修的是“拿到 runtime service 后，如何从 stale 值切回真实值”；而这次本地现场的真正根因是 deferred phase 2 根本没启动，负责做仓库数量判断的后端服务压根没挂起来
+  - 这不是“本地仓库数量判断写不好”，而是“负责做这个判断的服务根本没被启动”
+
+## 2026-04-26 13:09 (Asia/Shanghai)
+- 背景：魔尊确认“没有域名，只有服务器”，并允许继续把用户端 program access 安全接入口径直接落到远端与可运行产物，不停留在方案层。
+- 远端部署：
+  - 已将本地 `program_admin_console/src/`、`program_admin_console/package.json`、`program_admin_console/Dockerfile` 同步到远端源码 `/home/admin/c5-program-admin-src`
+  - 已在远端重建并替换 `c5-program-admin` 容器为 `c5-program-admin:auth-gateway-20260426_130452`
+  - 运行口径保持：
+    - 宿主机 `127.0.0.1:18787 -> 容器 8787`
+    - 数据卷 `c5_program_admin_data:/app/data`
+    - 密钥挂载 `/home/admin/c5-program-admin-runtime/keys:/app/keys:ro`
+    - 新增 `PROGRAM_ADMIN_TRUST_PROXY=true`
+  - 已在远端新增独立 `443` 网关容器 `c5-program-auth-gateway`
+    - 镜像：`nginx:1.27-alpine`
+    - 网络：`--network host`
+    - 只放行 `GET /api/health` 与 `/api/auth/*`
+    - `/admin` 与 `/api/admin/*` 显式返回 `404`
+  - 已在远端生成一套仅供桌面端使用的私有 CA + `8.138.39.139` IP SAN 证书，根证书保存在 `/home/admin/c5-program-auth-gateway/tls/ca.crt`
+- 本地/产物同步：
+  - 已将远端 CA 公钥回收为 `app_desktop_web/build/control_plane_ca.pem`
+  - 已把 `app_desktop_web/build/client_config.release.json` 改为：
+    - `controlPlaneBaseUrl=https://8.138.39.139`
+    - `controlPlaneCaCertPath=control_plane_ca.pem`
+  - 已执行 `npm --prefix app_desktop_web run pack:win`，刷新 `release/win-unpacked`
+  - 已确认 `release/win-unpacked/resources/client_config.release.json` 与 `release/win-unpacked/resources/control_plane_ca.pem` 都已就位
+- 验证：
+  - 远端源站 loopback：
+    - `curl http://127.0.0.1:18787/api/health` -> `{"ok":true}`
+    - `curl http://127.0.0.1:18787/api/admin/session` -> `{"ok":true,"authenticated":false,"needs_bootstrap":false}`
+  - 远端网关本机：
+    - `curl -sk https://127.0.0.1/api/health` -> `{"ok":true}`
+    - `https://127.0.0.1/admin` -> `404`
+  - 本机按桌面端真实 TLS 栈复验：
+    - Python `ssl.create_default_context(cafile=app_desktop_web/build/control_plane_ca.pem)` 访问 `https://8.138.39.139/api/health` -> `200`
+    - 同口径访问 `https://8.138.39.139/api/auth/register/readiness` -> `200`
+    - 同口径访问 `https://8.138.39.139/admin` 与 `/api/admin/session` -> `404`
+  - focused 回归：
+    - `npm --prefix app_desktop_web test -- --run tests/electron/program_access_packaging.test.js tests/electron/python_backend.test.js` -> `28 passed`
+    - `python -m pytest tests/backend/test_desktop_web_backend_bootstrap.py -q` -> `9 passed`
+- 当前进度：
+  - “无域名也能让用户端安全直连服务器”这条主线已落到远端与 `win-unpacked` 产物
+  - 本轮未重建 installer；只刷新了 `win-unpacked`
