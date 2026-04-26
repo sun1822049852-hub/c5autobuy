@@ -3768,3 +3768,102 @@
   - sweep page 已不再把“缺账号名的日统计来源摘要”误当成精确命中来源返回给前端
   - 回归原因已锁定为 `1c1dd9e`（active fallback）叠加更早的 `6d7e085`（stopped daily stats fallback）与 `stats_repository` 的 mode-only 数据结构不匹配
   - 另已在用户级目录新增可跨项目复用的全局 skill：`C:/Users/18220/.agents/skills/local/semantic-regression-guard/SKILL.md`，用于约束 fallback / 聚合 / 数据源切换时的“语义降级型回归”
+
+## 2026-04-26 14:10 (Asia/Shanghai)
+- 背景：魔尊要求对当前程序账号登录 / 注册 / 找回密码弹窗做一轮 UI 优化；边界冻结为“只改 renderer 弹窗壳层、文案、样式与注册状态机，不改后端接口、不改程序会员主语义、不改查询 -> 命中 -> 购买主链”，并允许多 agent 并行。
+- 已完成：
+  - 新增计划文档 `docs/superpowers/plans/2026-04-26-program-access-auth-dialog-ui-polish.md`，并按 plan 实际完成态勾选收口。
+  - `app_desktop_web/src/program_access/program_access_sidebar_card.jsx` 已完成三类最小修正：
+    - 去掉 backdrop 点击关闭，弹窗只保留右上角 `X` 作为显式关闭入口。
+    - 弹窗头部改为眉标 `c5交易助手`，标题按当前状态显示 `登录 / 注册 / 找回密码 / 账号状态 / 本地调试模式`；登录主按钮文案改为 `登录`，placeholder 改为 `请输入账号 / 请输入密码`。
+    - 注册流“修改邮箱”改为进入可返回的邮箱编辑页；该页在“发送注册验证码”右侧新增 `取消`，点击后回到原验证码页；注册 tab 切到登录/找回密码再切回时，不再清空已填邮箱；同时为验证码页引入 `registerSessionEmail` 保持已发码邮箱与编辑中邮箱分离，避免取消返回后串值。
+  - `app_desktop_web/src/styles/app.css` 已把程序账号弹窗收口为固定尺寸 shell：桌面端固定高度、内部滚动承载表单，避免 login/register/reset 内容切换时窗口反复跳动；同时强化了关闭 `X` 的 hover / focus-visible 可见性。
+  - `app_desktop_web/tests/renderer/program_access_sidebar_card.test.jsx` 已把本轮 6 条 UI/状态契约固化进 renderer 测试：仅 X 关闭、文案/placeholder 变更、修改邮箱页带取消并能回验证码页、register/login/reset 切换保留邮箱、固定尺寸契约、旧断言同步更新。
+- 验证：
+  - 聚焦 renderer 回归：`npm --prefix app_desktop_web test -- program_access_sidebar_card.test.jsx` -> `17 passed`
+  - 说明：本轮未做 in-app browser / 程序壳人工点验，因此当前口径是“自动化 renderer 测试通过，程序壳 UI 已到可手测状态”。
+- 当前进度：
+  - 程序账号弹窗这轮 UI 收口已落地，核心交互约束已有自动化护栏
+  - README 已核对，本轮无需改动
+- 下一步：
+  - 若魔尊继续点验真实桌面窗口，优先手测 4 点：1. 点弹窗外层不关闭；2. 只有点 `X` 才关闭；3. 注册验证码页点“修改邮箱”后，邮箱页右侧能 `取消` 返回；4. login/register/reset 来回切换时窗口尺寸不再跳动
+
+## 2026-04-26 14:22 (Asia/Shanghai)
+- 背景：魔尊继续要求细化程序账号弹窗交互，重点是“找回密码缺字段提示改为中间弹出”“发送验证码遇到无效邮箱不能静默”“按钮不要再整行太宽”；边界继续冻结为只改 renderer 组件、样式与 renderer 测试，不动后端接口与主业务主链。
+- 已完成：
+  - `app_desktop_web/src/program_access/program_access_sidebar_card.jsx` 已把表单反馈从底部块改为弹窗中央 toast：`formError / formNotice` 现在统一走 `program-access-dialog__feedback-toast`，`请先填写完整的找回密码信息。` 这类校验提示不再贴在底部。
+  - 注册发码链路已取消“无效邮箱直接禁用按钮”的静默口径：注册邮箱页即使输入 `abc@@` 之类无效值，点击“发送注册验证码”也会明确给出 `请输入有效邮箱地址。` 的中央错误提示；找回密码发码链路同样新增前端邮箱格式校验，不再把无效邮箱直接透传到 `sendResetPasswordCode(...)`。
+  - 主要操作按钮已统一加上紧凑样式类 `program-access-sidebar-card__button--compact`，登录 / 刷新 / 发码 / 提交新密码 / 注册流动作按钮不再默认整行拉满。
+  - `app_desktop_web/tests/renderer/program_access_sidebar_card.test.jsx` 已新增并跑通 4 条 focused 契约：找回密码缺字段时中央 toast、注册无效邮箱发码不再静默、找回密码无效邮箱发码不再静默、主要动作按钮具备 compact class。
+- 验证：
+  - 红灯：`npm --prefix app_desktop_web test -- program_access_sidebar_card.test.jsx` -> `21 tests | 4 failed`
+  - 绿灯：同命令重跑 -> `21 passed`
+- 当前进度：
+  - 程序账号弹窗这轮第二刀的提示与按钮样式已收口完毕，renderer 自动化护栏同步更新
+  - README 已再次核对，本轮仍无需改动
+- 下一步：
+  - 若魔尊继续手测，优先确认三点：1. 找回密码空提交时是否为中央提示；2. 注册 / 找回密码发码输无效邮箱时是否有明确提示；3. 主要按钮视觉宽度是否已正常
+
+## 2026-04-26 14:27 (Asia/Shanghai)
+- 背景：魔尊继续要求把程序账号弹窗“窗口和按键做得太大”的问题再收一刀，并明确要求剔除 `刷新状态` 按钮；边界继续冻结为只改 renderer JSX / CSS / renderer 测试，不动后端接口、主业务主链与既有注册状态机。
+- 已完成：
+  - `app_desktop_web/src/program_access/program_access_sidebar_card.jsx` 已把 `刷新状态` 从两处用户可见视图彻底移除：未登录登录表单只保留 `登录`，已登录状态页只保留 `退出`；内部 `refreshProgramAuthStatus` 仍保留给 stale bootstrap 自愈链，不再给用户手点。
+  - 同文件的 dialog root 新增 `program-access-dialog--compact-shell`，作为“本轮收瘦口径”的可观测契约。
+  - `app_desktop_web/src/styles/app.css` 已进一步收瘦程序账号弹窗：dialog 宽度 / padding / gap / close button 体积一起下调，桌面固定高度从 `640px` 收到 `520px`；`program-access-sidebar-card__button--compact` 的最小宽度与内边距也同步缩小，按钮不再显得臃肿。
+  - `app_desktop_web/tests/renderer/program_access_sidebar_card.test.jsx` 已同步改成新契约：已登录与未登录登录页都不再出现 `刷新状态`，compact 按钮测试要求弹窗根节点带 `program-access-dialog--compact-shell`。
+- 验证：
+  - 红灯：`npm --prefix app_desktop_web test -- program_access_sidebar_card.test.jsx` -> `21 tests | 3 failed`
+  - 绿灯：同命令重跑 -> `21 passed`
+- 当前进度：
+  - 程序账号弹窗这轮第三刀的尺寸收瘦与按钮删减已落地
+  - README 已再次核对，本轮仍无需改动
+- 下一步：
+  - 若魔尊继续手测，优先确认两点：1. 窗口体积与按钮密度是否已舒服；2. 已登录与未登录登录页里是否都不再出现 `刷新状态`
+
+## 2026-04-26 14:33 (Asia/Shanghai)
+- 背景：魔尊继续指出“登录注册找回密码的按键还是又宽又大，输入框也大”，要求按这个问题继续收口；边界继续冻结为只改程序账号弹窗的控件密度与 renderer 护栏，不动后端接口、状态机与主业务主链。
+- 已完成：
+  - `app_desktop_web/src/program_access/program_access_sidebar_card.jsx` 已把所有登录 / 注册 / 找回密码输入框统一挂上 `program-access-sidebar-card__input--compact`，并把 dialog root 补上 `program-access-dialog--dense-controls`，作为这一刀“控件再收紧一档”的可观测契约。
+  - `app_desktop_web/src/styles/app.css` 已继续压缩控件密度：tabs 高度 / padding / 圆角进一步下调；所有 auth 输入框高度、内边距、圆角缩小；compact button 的最小宽度与字体继续收瘦；dialog 壳宽度 / padding / close button / stack gap 继续压小，桌面固定高度进一步收窄到 `446px`。
+  - `app_desktop_web/tests/renderer/program_access_sidebar_card.test.jsx` 已同步把新契约锁死：弹窗根节点必须带 `program-access-dialog--dense-controls`，登录与找回密码输入框都必须带 `program-access-sidebar-card__input--compact`。
+- 验证：
+  - 红灯：`npm --prefix app_desktop_web test -- program_access_sidebar_card.test.jsx` -> `21 tests | 1 failed`
+  - 绿灯：同命令重跑 -> `21 passed`
+- 当前进度：
+  - 程序账号弹窗这轮第四刀的输入框 / tab / 按钮密度已继续收紧
+  - README 已再次核对，本轮仍无需改动
+- 下一步：
+  - 若魔尊继续手测，优先确认三点：1. 输入框高度是否已顺眼；2. tab 和按钮是否还显大；3. 更紧凑壳体下是否仍不挤内容
+
+## 2026-04-26 14:38 (Asia/Shanghai)
+- 背景：魔尊继续强调本轮重点只看 `登录 / 注册 / 找回密码` 这三颗模式按钮的大小，要求直接改成紧凑；边界继续冻结为只改 renderer 样式、模式按钮 class 与 renderer 测试，不动后端接口、状态机与其它业务链。
+- 已完成：
+  - `app_desktop_web/src/program_access/program_access_sidebar_card.jsx` 已给模式切换按钮统一挂上 `program-access-sidebar-card__tab--compact`，不再只靠通用 tab 样式。
+  - `app_desktop_web/src/styles/app.css` 已把模式按钮容器从三等分 grid 改成 `flex + wrap`，同时把 compact tab 收口成更小的 pill：更矮的高度、更窄的左右 padding、更小的字号、`width:auto`，不再把 `登录 / 注册 / 找回密码` 撑成整排大按钮。
+  - `app_desktop_web/tests/renderer/program_access_sidebar_card.test.jsx` 已同步补齐 focused 护栏：只在 `程序会员模式` 容器内断言这三颗模式按钮都必须带 `program-access-sidebar-card__tab--compact`。
+- 验证：
+  - 红灯：`npm --prefix app_desktop_web test -- program_access_sidebar_card.test.jsx` -> `21 tests | 1 failed`
+  - 绿灯：同命令重跑 -> `21 passed`
+- 当前进度：
+  - 模式切换按钮已进一步收成紧凑口径，且有 renderer 自动化护栏锁住
+  - README 已再次核对，本轮仍无需改动
+- 下一步：
+  - 若魔尊继续手测，优先确认两点：1. `登录 / 注册 / 找回密码` 三颗模式按钮体积是否终于顺眼；2. 改成 flex pill 后在窄窗口下是否仍排布正常
+
+## 2026-04-26 14:43 (Asia/Shanghai)
+- 背景：魔尊明确叫停“瞎改”，要求回到仓库里找到程序账号弹窗最初的 `登录 / 注册 / 找回密码` 按钮样式并参考它，而不是继续凭感觉压成 pill。边界冻结为只纠偏这三颗模式按钮，不动输入框、动作按钮、状态机与后端接口。
+- 根因复证：
+  - 通过 `git log -S "program-access-sidebar-card__tabs"` 锁定最初样式来源为 `7138d87 feat: restore program access control plane flow`。
+  - 该提交里的模式按钮样式明确是三等分 tab：`.program-access-sidebar-card__tabs { display:grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }`，`.program-access-sidebar-card__tab { min-height: 38px; padding: 0 10px; border-radius: 12px; }`，并不是上一轮误改出来的 compact pill。
+- 已完成：
+  - `app_desktop_web/src/program_access/program_access_sidebar_card.jsx` 已移除模式按钮上的 `program-access-sidebar-card__tab--compact`，恢复为原本 `program-access-sidebar-card__tab` 口径。
+  - `app_desktop_web/src/styles/app.css` 已把模式按钮容器从 `flex + wrap` 纠回原始 `3-column grid`，并恢复对应 `gap / min-height / padding / border-radius`。
+  - `app_desktop_web/tests/renderer/program_access_sidebar_card.test.jsx` 已同步纠偏：不再要求模式按钮带 compact class，改为在 `程序会员模式` 容器内验证三颗按钮维持原 tab 口径；动作按钮与输入框的 compact 护栏保留不动。
+  - `docs/agent/memory.md` 已修正上一轮错误沉淀的“compact tab”长期约束，避免后续 agent 再沿错方向继续压。
+- 验证：
+  - 聚焦回归：`npm --prefix app_desktop_web test -- program_access_sidebar_card.test.jsx` -> `21 passed`
+- 当前进度：
+  - `登录 / 注册 / 找回密码` 三颗模式按钮已纠偏回仓库最初样式来源
+  - README 已再次核对，本轮仍无需改动
+- 下一步：
+  - 若魔尊继续看按钮不顺眼，下一刀应先明确“是要完全回到最初样式，还是只以最初样式为基准微调 1-2 个值”，不能再凭主观继续漂移

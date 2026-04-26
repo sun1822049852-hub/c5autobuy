@@ -3,11 +3,75 @@
 import "@testing-library/jest-dom/vitest";
 
 import * as React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { ProgramAccessSidebarCard } from "../../src/program_access/program_access_sidebar_card.jsx";
+
+function getProgramAccessDialog() {
+  return screen.getByRole("dialog");
+}
+
+async function findProgramAccessDialog() {
+  return await screen.findByRole("dialog");
+}
+
+function getProgramAccessBackdrop() {
+  const dialog = getProgramAccessDialog();
+  const backdrop = dialog.closest(".surface-backdrop");
+  if (!backdrop) {
+    throw new Error("Expected dialog to be wrapped by .surface-backdrop");
+  }
+  return backdrop;
+}
+
+function getLoginSubmitButton() {
+  const passwordInput = screen.getByPlaceholderText("请输入密码");
+  const form = passwordInput.closest(".program-access-sidebar-card__form");
+  if (!form) {
+    throw new Error("Expected login input to be wrapped by .program-access-sidebar-card__form");
+  }
+  return within(form).getByRole("button", { name: "登录" });
+}
+
+function getDialogFeedbackToast() {
+  return document.querySelector(".program-access-dialog__feedback-toast");
+}
+
+function expectDialogHasFixedSizingContract(dialog) {
+  const hasFixedSizeData =
+    dialog.getAttribute("data-fixed-size") === "true"
+    || dialog.getAttribute("data-dialog-size") === "fixed";
+  const hasFixedSizeClass =
+    dialog.classList.contains("is-fixed-size")
+    || dialog.classList.contains("program-access-dialog--fixed-size");
+  const hasInlineWidthConstraint = Boolean(dialog.style.width || dialog.style.minWidth || dialog.style.maxWidth);
+  const hasInlineHeightConstraint = Boolean(dialog.style.height || dialog.style.minHeight || dialog.style.maxHeight);
+  const hasFixedSizeInline = hasInlineWidthConstraint && hasInlineHeightConstraint;
+
+  // JSDOM does not apply stylesheet layout. This test enforces an observable contract:
+  // data-* marker, class marker, or inline sizing constraints.
+  expect(hasFixedSizeData || hasFixedSizeClass || hasFixedSizeInline).toBe(true);
+}
+
+function getDialogSizingSignature(dialog) {
+  return JSON.stringify({
+    dataFixedSize: dialog.getAttribute("data-fixed-size"),
+    dataDialogSize: dialog.getAttribute("data-dialog-size"),
+    fixedSizeClasses: Array.from(dialog.classList)
+      .filter((token) => token.includes("fixed-size") || token.includes("fixed_size"))
+      .sort(),
+    style: {
+      width: dialog.style.width,
+      minWidth: dialog.style.minWidth,
+      maxWidth: dialog.style.maxWidth,
+      height: dialog.style.height,
+      minHeight: dialog.style.minHeight,
+      maxHeight: dialog.style.maxHeight,
+    },
+  });
+}
 
 
 const LOCAL_PROGRAM_ACCESS_FIXTURE = {
@@ -52,7 +116,7 @@ describe("program access sidebar card", () => {
     expect(screen.queryByText("PROGRAM ACCESS")).not.toBeInTheDocument();
     expect(screen.getByText("未登录")).toBeInTheDocument();
     expect(screen.getByText("无权限，仅只读")).toBeInTheDocument();
-    expect(screen.queryByRole("dialog", { name: "程序账号" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("程序会员登录账号")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("程序会员登录密码")).not.toBeInTheDocument();
   });
@@ -71,15 +135,14 @@ describe("program access sidebar card", () => {
 
     await user.click(screen.getByRole("button", { name: "打开程序账号窗口" }));
 
-    expect(screen.getByRole("dialog", { name: "程序账号" })).toBeInTheDocument();
-    expect(screen.getAllByText("程序账号").length).toBeGreaterThan(0);
+    expect(getProgramAccessDialog()).toBeInTheDocument();
     expect(screen.queryByText("PROGRAM ACCESS")).not.toBeInTheDocument();
     expect(screen.getByText("当前账号状态")).toBeInTheDocument();
     expect(screen.getByText("已生效")).toBeInTheDocument();
     expect(screen.getByText("运行中")).toBeInTheDocument();
     expect(screen.getByText("2026-04-17T08:00:00Z")).toBeInTheDocument();
     expect(screen.queryByText("程序账号只是当前权限钥匙，本地始终只保留一份共享数据。")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "刷新状态" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "刷新状态" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "退出" })).toBeInTheDocument();
     expect(screen.queryByLabelText("程序会员登录账号")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "注册" })).not.toBeInTheDocument();
@@ -99,16 +162,30 @@ describe("program access sidebar card", () => {
 
     await user.click(screen.getByRole("button", { name: "打开程序账号窗口" }));
 
-    expect(screen.getByRole("dialog", { name: "程序账号" })).toBeInTheDocument();
-    expect(screen.getAllByText("程序账号").length).toBeGreaterThan(0);
+    expect(getProgramAccessDialog()).toBeInTheDocument();
     expect(screen.queryByText("PROGRAM ACCESS")).not.toBeInTheDocument();
     expect(screen.queryByText("只读锁定")).not.toBeInTheDocument();
     expect(screen.queryByText("切换程序账号只会改变当前权限，不会切换本地数据。")).not.toBeInTheDocument();
     expect(screen.queryByText("当前本地数据继续保留，只能查看，关键功能已锁定。")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "登录程序会员" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "刷新状态" })).toBeInTheDocument();
+    expect(getLoginSubmitButton()).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "刷新状态" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "注册" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "找回密码" })).toBeInTheDocument();
+  });
+
+  it("does not close the auth dialog when clicking the backdrop; only the X button closes it", async () => {
+    const user = userEvent.setup();
+
+    render(<ProgramAccessSidebarCard access={REMOTE_PROGRAM_ACCESS_LOGGED_OUT_FIXTURE} />);
+
+    await user.click(screen.getByRole("button", { name: "打开程序账号窗口" }));
+    expect(getProgramAccessDialog()).toBeInTheDocument();
+
+    fireEvent.click(getProgramAccessBackdrop());
+    expect(getProgramAccessDialog()).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "关闭" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("submits remote login credentials through the provider bridge", async () => {
@@ -124,13 +201,13 @@ describe("program access sidebar card", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "打开程序账号窗口" }));
-    fireEvent.change(screen.getByLabelText("程序会员登录账号"), {
+    fireEvent.change(screen.getByPlaceholderText("请输入账号"), {
       target: { value: "member_remote" },
     });
-    fireEvent.change(screen.getByLabelText("程序会员登录密码"), {
+    fireEvent.change(screen.getByPlaceholderText("请输入密码"), {
       target: { value: "pw-remote" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "登录程序会员" }));
+    fireEvent.click(getLoginSubmitButton());
 
     await waitFor(() => {
       expect(loginProgramAuth).toHaveBeenCalledWith({
@@ -232,11 +309,11 @@ describe("program access sidebar card", () => {
     expect(screen.queryByLabelText("注册密码")).not.toBeInTheDocument();
 
     await user.type(screen.getByLabelText("注册邮箱"), "alice@");
-    expect(screen.getByRole("button", { name: "发送注册验证码" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "发送注册验证码" })).toBeEnabled();
 
     await user.clear(screen.getByLabelText("注册邮箱"));
     await user.type(screen.getByLabelText("注册邮箱"), "1822049852@qq.CO");
-    expect(screen.getByRole("button", { name: "发送注册验证码" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "发送注册验证码" })).toBeEnabled();
 
     await user.clear(screen.getByLabelText("注册邮箱"));
     await user.type(screen.getByLabelText("注册邮箱"), "alice@example.com");
@@ -358,7 +435,7 @@ describe("program access sidebar card", () => {
     expect(screen.getByRole("button", { name: "重新发送验证码 (60s)" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "关闭" }));
-    expect(screen.queryByRole("dialog", { name: "程序账号" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "打开程序账号窗口" }));
 
@@ -405,6 +482,15 @@ describe("program access sidebar card", () => {
 
     expect(screen.getByLabelText("注册邮箱")).toHaveValue("alice@example.com");
     expect(screen.getByRole("button", { name: "发送注册验证码 (60s)" })).toBeDisabled();
+
+    const sendButton = screen.getByRole("button", { name: "发送注册验证码 (60s)" });
+    const cancelButton = screen.getByRole("button", { name: "取消" });
+    expect(
+      sendButton.compareDocumentPosition(cancelButton) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+
+    await user.click(cancelButton);
+    expect(await screen.findByLabelText("注册验证码")).toBeInTheDocument();
   });
 
   it("uses retry_after_seconds from send-code failures to continue the cooldown", async () => {
@@ -458,7 +544,7 @@ describe("program access sidebar card", () => {
     expect(await screen.findByRole("button", { name: "重新发送验证码 (42s)" })).toBeDisabled();
   });
 
-  it("clears the preserved registration draft when the user explicitly switches back to login", async () => {
+  it("keeps the register email draft when switching between register/login/reset and back", async () => {
     const user = userEvent.setup();
     const sendRegisterCode = vi.fn().mockResolvedValue({
       ok: true,
@@ -487,17 +573,16 @@ describe("program access sidebar card", () => {
     await user.click(screen.getByRole("button", { name: "打开程序账号窗口" }));
     await user.click(screen.getByRole("button", { name: "注册" }));
     await user.type(screen.getByLabelText("注册邮箱"), "alice@example.com");
-    await user.click(screen.getByRole("button", { name: "发送注册验证码" }));
-
-    expect(await screen.findByLabelText("注册验证码")).toBeInTheDocument();
+    expect(screen.getByLabelText("注册邮箱")).toHaveValue("alice@example.com");
 
     await user.click(screen.getByRole("button", { name: "登录" }));
-    expect(screen.getByLabelText("程序会员登录账号")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("请输入账号")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "找回密码" }));
+    expect(screen.getByLabelText("找回密码邮箱")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "注册" }));
-    expect(screen.getByLabelText("注册邮箱")).toBeInTheDocument();
-    expect(screen.queryByLabelText("注册验证码")).not.toBeInTheDocument();
-    expect(screen.queryByText("a***e@example.com")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("注册邮箱")).toHaveValue("alice@example.com");
   });
 
   it("moves the visible prompts into placeholders and renders the close button as X", async () => {
@@ -528,11 +613,16 @@ describe("program access sidebar card", () => {
 
     await user.click(screen.getByRole("button", { name: "打开程序账号窗口" }));
 
+    const dialog = await findProgramAccessDialog();
+    expect(within(dialog).getByText("c5交易助手")).toBeInTheDocument();
+    expect(within(dialog).getByRole("heading", { name: "登录" })).toBeInTheDocument();
+
     const closeButton = screen.getByRole("button", { name: "关闭" });
     expect(closeButton).toHaveTextContent("X");
 
-    expect(screen.getByLabelText("程序会员登录账号")).toHaveAttribute("placeholder", "请输入程序会员账号");
-    expect(screen.getByLabelText("程序会员登录密码")).toHaveAttribute("placeholder", "请输入程序会员密码");
+    expect(screen.getByPlaceholderText("请输入账号")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("请输入密码")).toBeInTheDocument();
+    expectDialogHasFixedSizingContract(dialog);
 
     await user.click(screen.getByRole("button", { name: "注册" }));
     expect(screen.getByLabelText("注册邮箱")).toHaveAttribute("placeholder", "请输入注册邮箱");
@@ -541,6 +631,24 @@ describe("program access sidebar card", () => {
     await user.click(screen.getByRole("button", { name: "发送注册验证码" }));
 
     expect(await screen.findByLabelText("注册验证码")).toHaveAttribute("placeholder", "请输入验证码");
+  });
+
+  it("keeps a stable sizing contract when switching between login/register/reset flows", async () => {
+    const user = userEvent.setup();
+
+    render(<ProgramAccessSidebarCard access={REMOTE_PROGRAM_ACCESS_LOGGED_OUT_FIXTURE} />);
+
+    await user.click(screen.getByRole("button", { name: "打开程序账号窗口" }));
+
+    const dialog = await findProgramAccessDialog();
+    expectDialogHasFixedSizingContract(dialog);
+    const loginSignature = getDialogSizingSignature(dialog);
+
+    await user.click(screen.getByRole("button", { name: "注册" }));
+    expect(getDialogSizingSignature(getProgramAccessDialog())).toBe(loginSignature);
+
+    await user.click(screen.getByRole("button", { name: "找回密码" }));
+    expect(getDialogSizingSignature(getProgramAccessDialog())).toBe(loginSignature);
   });
 
   it("keeps the register entry on the email-first flow even when the bootstrap version is still 2", async () => {
@@ -626,5 +734,101 @@ describe("program access sidebar card", () => {
     });
     expect(await screen.findByText("密码已重置")).toBeInTheDocument();
     expect(screen.queryByText("只读锁定")).not.toBeInTheDocument();
+  });
+
+  it("shows reset validation errors as a centered dialog toast instead of a bottom block", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ProgramAccessSidebarCard
+        access={REMOTE_PROGRAM_ACCESS_LOGGED_OUT_FIXTURE}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "打开程序账号窗口" }));
+    await user.click(screen.getByRole("button", { name: "找回密码" }));
+    await user.click(screen.getByRole("button", { name: "提交新密码" }));
+
+    const toast = screen.getByRole("alert");
+    expect(toast).toHaveTextContent("请先填写完整的找回密码信息。");
+    expect(getDialogFeedbackToast()).toBe(toast);
+    expect(screen.queryByText("请先填写完整的找回密码信息。", {
+      selector: ".program-access-sidebar-card__error",
+    })).not.toBeInTheDocument();
+  });
+
+  it("does not silently swallow invalid register email when sending verification code", async () => {
+    const user = userEvent.setup();
+    const sendRegisterCode = vi.fn();
+
+    render(
+      <ProgramAccessSidebarCard
+        access={{
+          ...REMOTE_PROGRAM_ACCESS_LOGGED_OUT_FIXTURE,
+          registration_flow_version: 3,
+        }}
+        sendRegisterCode={sendRegisterCode}
+        verifyRegisterCode={vi.fn()}
+        completeRegisterProgramAuth={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "打开程序账号窗口" }));
+    await user.click(screen.getByRole("button", { name: "注册" }));
+    await user.type(screen.getByLabelText("注册邮箱"), "abc@@");
+    await user.click(screen.getByRole("button", { name: "发送注册验证码" }));
+
+    expect(sendRegisterCode).not.toHaveBeenCalled();
+    const toast = screen.getByRole("alert");
+    expect(toast).toHaveTextContent("请输入有效邮箱地址。");
+    expect(getDialogFeedbackToast()).toBe(toast);
+  });
+
+  it("shows an explicit reset send-code error for invalid email instead of silently trying", async () => {
+    const user = userEvent.setup();
+    const sendResetPasswordCode = vi.fn();
+
+    render(
+      <ProgramAccessSidebarCard
+        access={REMOTE_PROGRAM_ACCESS_LOGGED_OUT_FIXTURE}
+        sendResetPasswordCode={sendResetPasswordCode}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "打开程序账号窗口" }));
+    await user.click(screen.getByRole("button", { name: "找回密码" }));
+    await user.type(screen.getByLabelText("找回密码邮箱"), "abc@@");
+    await user.click(screen.getByRole("button", { name: "发送找回密码验证码" }));
+
+    expect(sendResetPasswordCode).not.toHaveBeenCalled();
+    const toast = screen.getByRole("alert");
+    expect(toast).toHaveTextContent("请输入有效邮箱地址。");
+    expect(getDialogFeedbackToast()).toBe(toast);
+  });
+
+  it("keeps action controls compact while leaving auth mode tabs on the original tab style", async () => {
+    const user = userEvent.setup();
+
+    render(<ProgramAccessSidebarCard access={REMOTE_PROGRAM_ACCESS_LOGGED_OUT_FIXTURE} />);
+
+    await user.click(screen.getByRole("button", { name: "打开程序账号窗口" }));
+
+    expect(getProgramAccessDialog()).toHaveClass("program-access-dialog--compact-shell");
+    expect(getProgramAccessDialog()).toHaveClass("program-access-dialog--dense-controls");
+    const authModeTabs = screen.getByLabelText("程序会员模式");
+    expect(within(authModeTabs).getByRole("button", { name: "登录" })).not.toHaveClass("program-access-sidebar-card__tab--compact");
+    expect(within(authModeTabs).getByRole("button", { name: "注册" })).not.toHaveClass("program-access-sidebar-card__tab--compact");
+    expect(within(authModeTabs).getByRole("button", { name: "找回密码" })).not.toHaveClass("program-access-sidebar-card__tab--compact");
+    expect(screen.getByPlaceholderText("请输入账号")).toHaveClass("program-access-sidebar-card__input--compact");
+    expect(screen.getByPlaceholderText("请输入密码")).toHaveClass("program-access-sidebar-card__input--compact");
+    expect(getLoginSubmitButton()).toHaveClass("program-access-sidebar-card__button--compact");
+    expect(screen.queryByRole("button", { name: "刷新状态" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "找回密码" }));
+    expect(screen.getByLabelText("找回密码邮箱")).toHaveClass("program-access-sidebar-card__input--compact");
+    expect(screen.getByLabelText("找回密码验证码")).toHaveClass("program-access-sidebar-card__input--compact");
+    expect(screen.getByLabelText("新密码")).toHaveClass("program-access-sidebar-card__input--compact");
+    expect(screen.getByRole("button", { name: "发送找回密码验证码" })).toHaveClass("program-access-sidebar-card__button--compact");
+    expect(screen.getByRole("button", { name: "提交新密码" })).toHaveClass("program-access-sidebar-card__button--compact");
   });
 });

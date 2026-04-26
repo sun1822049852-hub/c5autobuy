@@ -229,12 +229,12 @@ textarea,
 .program-access-sidebar-card__form,
 .program-access-sidebar-card__summary {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .program-access-sidebar-card__auth {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .program-access-sidebar-card__tabs {
@@ -250,6 +250,7 @@ textarea,
   border-radius: 12px;
   color: var(--text-soft);
   background: rgba(255, 255, 255, 0.03);
+  font-size: 12px;
 }
 
 .program-access-sidebar-card__tab.is-active {
@@ -267,7 +268,7 @@ textarea,
 .program-access-sidebar-card__inline {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 10px;
+  gap: 8px;
 }
 
 .program-access-sidebar-card__field-label {
@@ -276,12 +277,19 @@ textarea,
 }
 
 .program-access-sidebar-card__input {
-  min-height: 40px;
-  padding: 0 12px;
+  min-height: 36px;
+  padding: 0 10px;
   border: 1px solid var(--line-soft);
-  border-radius: 14px;
+  border-radius: 12px;
   color: #1f2937;
   background: rgba(255, 248, 240, 0.92);
+}
+
+.program-access-sidebar-card__input--compact {
+  min-height: 32px;
+  padding: 0 9px;
+  border-radius: 10px;
+  font-size: 13px;
 }
 
 .program-access-sidebar-card__input::placeholder {
@@ -295,7 +303,7 @@ textarea,
 }
 
 .program-access-sidebar-card__summary-row {
-  padding: 12px;
+  padding: 10px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.03);
@@ -309,7 +317,19 @@ textarea,
 
 .program-access-sidebar-card__button {
   width: 100%;
-  min-height: 42px;
+  min-height: 34px;
+}
+
+.program-access-sidebar-card__button--compact {
+  width: auto;
+  min-width: 82px;
+  padding-inline: 11px;
+  font-size: 12px;
+}
+
+.program-access-sidebar-card__form > .program-access-sidebar-card__button--compact,
+.program-access-sidebar-card__inline > .program-access-sidebar-card__button--compact {
+  justify-self: start;
 }
 
 .program-access-sidebar-card__notice,
@@ -344,9 +364,23 @@ textarea,
 }
 
 .program-access-dialog {
-  width: min(620px, 100%);
-  display: grid;
-  gap: 18px;
+  position: relative;
+  width: min(560px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow: hidden;
+  max-height: calc(100vh - 48px);
+}
+
+.program-access-dialog--compact-shell {
+  width: min(476px, 100%);
+  padding: 14px;
+  border-radius: 18px;
+}
+
+.program-access-dialog--dense-controls .surface-title {
+  font-size: 20px;
 }
 
 .program-access-dialog__eyebrow {
@@ -357,31 +391,102 @@ textarea,
 }
 
 .program-access-dialog__close {
-  width: 40px;
-  height: 40px;
-  min-width: 40px;
-  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
   padding: 0;
   border: 1px solid rgba(255, 124, 124, 0.46);
-  border-radius: 10px;
+  border-radius: 8px;
   color: #fff5f5;
   background: #c73a3a;
-  font-size: 18px;
+  font-size: 14px;
   font-weight: 700;
   line-height: 1;
+  cursor: pointer;
+  transition: background-color 140ms ease, border-color 140ms ease, transform 140ms ease, box-shadow 140ms ease;
 }
 
 .program-access-dialog__close:hover {
   background: #b92d2d;
+  transform: translateY(-1px);
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.32);
+}
+
+.program-access-dialog__close:active {
+  transform: translateY(0);
+}
+
+.program-access-dialog__close:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px rgba(0, 0, 0, 0.38),
+    0 0 0 4px rgba(255, 122, 122, 0.55);
 }
 
 .program-access-dialog__stack {
   display: grid;
-  gap: 14px;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.program-access-dialog__feedback-toast {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 3;
+  width: min(360px, calc(100% - 40px));
+  padding: 14px 16px;
+  border-radius: 16px;
+  text-align: center;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.34);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.program-access-dialog__feedback-toast.is-notice {
+  border: 1px solid rgba(220, 164, 76, 0.28);
+  color: #fff3dc;
+  background: rgba(92, 62, 14, 0.94);
+}
+
+.program-access-dialog__feedback-toast.is-error {
+  border: 1px solid rgba(255, 122, 122, 0.3);
+  color: #ffe0e0;
+  background: rgba(101, 20, 20, 0.94);
 }
 
 .program-access-dialog__actions {
   margin-top: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+@media (min-width: 720px) {
+  /* 桌面口径：固定高度 + 内部滚动，切换登录/注册/找回密码时不抖动 */
+  .program-access-dialog {
+    height: 446px;
+  }
+}
+
+@media (max-width: 520px) {
+  /* 移动端口径：让出空间给小屏，保持可用性 */
+  .program-access-dialog {
+    width: min(520px, calc(100vw - 16px));
+    max-height: calc(100vh - 32px);
+  }
+
+  .program-access-dialog--compact-shell {
+    padding: 12px;
+    border-radius: 16px;
+  }
 }
 
 @media (min-width: 480px) {

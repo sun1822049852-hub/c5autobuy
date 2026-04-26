@@ -104,6 +104,22 @@ function resolveBusyLabel(action, idleText, busyText, busyAction) {
   return busyAction === action ? busyText : idleText;
 }
 
+function resolveDialogTitle({ isLocalPassThrough, hasRemoteSession, authMode }) {
+  if (isLocalPassThrough) {
+    return "本地调试模式";
+  }
+  if (hasRemoteSession) {
+    return "账号状态";
+  }
+  if (authMode === "register") {
+    return "注册";
+  }
+  if (authMode === "reset") {
+    return "找回密码";
+  }
+  return "登录";
+}
+
 
 function tryParseJsonPayload(rawValue) {
   if (typeof rawValue !== "string" || !rawValue.trim()) {
@@ -261,8 +277,10 @@ export function ProgramAccessSidebarCard({
   const [registerForm, setRegisterForm] = useState(REGISTER_FORM_TEMPLATE);
   const [registerStep, setRegisterStep] = useState(REGISTER_STEP_EMAIL);
   const [registerSessionId, setRegisterSessionId] = useState("");
+  const [registerSessionEmail, setRegisterSessionEmail] = useState("");
   const [maskedRegisterEmail, setMaskedRegisterEmail] = useState("");
   const [verificationTicket, setVerificationTicket] = useState("");
+  const [isRegisterEditingEmail, setIsRegisterEditingEmail] = useState(false);
   const [registerResendCooldownSeconds, setRegisterResendCooldownSeconds] = useState(0);
   const [resetForm, setResetForm] = useState(RESET_FORM_TEMPLATE);
   const [busyAction, setBusyAction] = useState("");
@@ -279,6 +297,11 @@ export function ProgramAccessSidebarCard({
     ? resolveProgramAuthError(access, lastProgramAuthError)
     : null;
   const visibleProgramAuthError = shouldSuppressProgramAuthError(programAuthError) ? null : programAuthError;
+  const dialogTitle = resolveDialogTitle({
+    isLocalPassThrough,
+    hasRemoteSession,
+    authMode,
+  });
 
   useEffect(() => {
     if (authMode !== "register" || registerResendCooldownSeconds <= 0) {
@@ -302,8 +325,10 @@ export function ProgramAccessSidebarCard({
   function resetRegisterFlow({ preserveEmail = false, preserveCooldown = false } = {}) {
     setRegisterStep(REGISTER_STEP_EMAIL);
     setRegisterSessionId("");
+    setRegisterSessionEmail("");
     setMaskedRegisterEmail("");
     setVerificationTicket("");
+    setIsRegisterEditingEmail(false);
     setRegisterResendCooldownSeconds((current) => (preserveCooldown ? current : 0));
     setRegisterForm((current) => ({
       ...REGISTER_FORM_TEMPLATE,
@@ -313,8 +338,8 @@ export function ProgramAccessSidebarCard({
 
   function switchAuthMode(nextMode) {
     clearLocalFeedback();
-    if (authMode === "register" && nextMode !== "register") {
-      resetRegisterFlow();
+    if (authMode === "register" && nextMode !== "register" && registerStep === REGISTER_STEP_SUCCESS) {
+      resetRegisterFlow({ preserveEmail: true });
     }
     setAuthMode(nextMode);
     if (
@@ -336,7 +361,7 @@ export function ProgramAccessSidebarCard({
     clearLocalFeedback();
     if (!(authMode === "register" && registerStep === REGISTER_STEP_CODE)) {
       if (authMode === "register") {
-        resetRegisterFlow();
+        resetRegisterFlow({ preserveEmail: true, preserveCooldown: true });
       }
       setAuthMode("login");
     }
@@ -427,8 +452,10 @@ export function ProgramAccessSidebarCard({
       const result = await sendRegisterCode({ email });
       setRegisterStep(REGISTER_STEP_CODE);
       setRegisterSessionId(String(result?.register_session_id || ""));
+      setRegisterSessionEmail(email);
       setMaskedRegisterEmail(String(result?.masked_email || ""));
       setVerificationTicket("");
+      setIsRegisterEditingEmail(false);
       setRegisterResendCooldownSeconds(Math.max(0, Number(result?.resend_after_seconds || 0)));
       setRegisterForm({
         ...REGISTER_FORM_TEMPLATE,
@@ -447,7 +474,7 @@ export function ProgramAccessSidebarCard({
   }
 
   async function handleVerifyRegisterCode() {
-    const email = registerForm.email.trim();
+    const email = registerSessionEmail || registerForm.email.trim();
     const code = registerForm.code.trim();
 
     if (!code) {
@@ -481,6 +508,7 @@ export function ProgramAccessSidebarCard({
         || errorCode === "REGISTER_CODE_ATTEMPTS_EXCEEDED"
       ) {
         setRegisterSessionId("");
+        setRegisterSessionEmail("");
         setVerificationTicket("");
       }
       setRegisterForm((current) => ({
@@ -502,12 +530,27 @@ export function ProgramAccessSidebarCard({
 
   function handleReturnToRegisterEmailStep() {
     clearLocalFeedback();
-    resetRegisterFlow({ preserveEmail: true, preserveCooldown: true });
+    setIsRegisterEditingEmail(true);
+    setRegisterStep(REGISTER_STEP_EMAIL);
+    setRegisterForm((current) => ({
+      ...current,
+      email: registerSessionEmail || current.email,
+    }));
+  }
+
+  function handleCancelRegisterEmailEdit() {
+    clearLocalFeedback();
+    setIsRegisterEditingEmail(false);
+    setRegisterStep(REGISTER_STEP_CODE);
+    setRegisterForm((current) => ({
+      ...current,
+      email: registerSessionEmail || current.email,
+    }));
   }
 
   async function handleRegisterSubmit() {
     if (isRegistrationFlowV3) {
-      const email = registerForm.email.trim();
+      const email = registerSessionEmail || registerForm.email.trim();
       const username = registerForm.username.trim();
       const password = registerForm.password;
 
@@ -529,6 +572,7 @@ export function ProgramAccessSidebarCard({
         setVerificationTicket("");
         setRegisterForm((current) => ({
           ...current,
+          email,
           username: "",
           password: "",
         }));
@@ -591,8 +635,8 @@ export function ProgramAccessSidebarCard({
 
   async function handleSendResetPasswordCode() {
     const email = resetForm.email.trim();
-    if (!email) {
-      setFormError("请先填写找回密码邮箱。");
+    if (!hasValidRegisterEmail(email)) {
+      setFormError("请输入有效邮箱地址。");
       return;
     }
 
@@ -650,19 +694,20 @@ export function ProgramAccessSidebarCard({
   }
 
   function renderDialogFeedback() {
+    const feedbackText = formError || formNotice;
+    if (!feedbackText) {
+      return null;
+    }
+
+    const isError = Boolean(formError);
     return (
-      <>
-        {formNotice ? (
-          <div className="program-access-sidebar-card__notice" role="status">
-            {formNotice}
-          </div>
-        ) : null}
-        {formError ? (
-          <div className="program-access-sidebar-card__error" role="alert">
-            {formError}
-          </div>
-        ) : null}
-      </>
+      <div
+        aria-live={isError ? "assertive" : "polite"}
+        className={`program-access-dialog__feedback-toast${isError ? " is-error" : " is-notice"}`}
+        role={isError ? "alert" : "status"}
+      >
+        {feedbackText}
+      </div>
     );
   }
 
@@ -696,15 +741,7 @@ export function ProgramAccessSidebarCard({
         {renderDialogFeedback()}
         <div className="surface-actions program-access-dialog__actions">
           <button
-            className="ghost-button"
-            type="button"
-            disabled={Boolean(busyAction)}
-            onClick={() => void handleRemoteRefresh()}
-          >
-            {resolveBusyLabel("refresh", "刷新状态", "刷新中...", busyAction)}
-          </button>
-          <button
-            className="ghost-button"
+            className="ghost-button program-access-sidebar-card__button program-access-sidebar-card__button--compact"
             type="button"
             disabled={Boolean(busyAction)}
             onClick={() => void handleRemoteLogout()}
@@ -728,6 +765,8 @@ export function ProgramAccessSidebarCard({
     const registerEmail = registerForm.email.trim();
 
     function renderRegisterV3Form() {
+      const registerDisplayEmail = maskedRegisterEmail || registerSessionEmail || registerEmail;
+
       if (registerStep === REGISTER_STEP_CODE) {
         return (
           <div className="program-access-sidebar-card__form">
@@ -735,7 +774,7 @@ export function ProgramAccessSidebarCard({
               <div className="program-access-sidebar-card__summary-row">
                 <span className="program-access-sidebar-card__summary-label">注册邮箱</span>
                 <strong className="program-access-sidebar-card__summary-value">
-                  {maskedRegisterEmail || registerEmail}
+                  {registerDisplayEmail}
                 </strong>
               </div>
             </div>
@@ -743,7 +782,7 @@ export function ProgramAccessSidebarCard({
               <span className="program-access-sidebar-card__field-label">注册验证码</span>
               <input
                 aria-label="注册验证码"
-                className="program-access-sidebar-card__input"
+                className="program-access-sidebar-card__input program-access-sidebar-card__input--compact"
                 placeholder="请输入验证码"
                 type="text"
                 value={registerForm.code}
@@ -757,7 +796,7 @@ export function ProgramAccessSidebarCard({
             </label>
             <div className="surface-actions program-access-dialog__actions">
               <button
-                className="accent-button program-access-sidebar-card__button"
+                className="accent-button program-access-sidebar-card__button program-access-sidebar-card__button--compact"
                 type="button"
                 disabled={Boolean(busyAction) || !registerForm.code.trim()}
                 onClick={() => void handleVerifyRegisterCode()}
@@ -765,7 +804,7 @@ export function ProgramAccessSidebarCard({
                 {resolveBusyLabel("verify-register-code", "验证注册验证码", "验证中...", busyAction)}
               </button>
               <button
-                className="ghost-button program-access-sidebar-card__button"
+                className="ghost-button program-access-sidebar-card__button program-access-sidebar-card__button--compact"
                 type="button"
                 disabled={Boolean(busyAction) || registerResendCooldownSeconds > 0}
                 onClick={() => void handleResendRegisterCode()}
@@ -777,7 +816,7 @@ export function ProgramAccessSidebarCard({
                     : "重新发送验证码"}
               </button>
               <button
-                className="ghost-button program-access-sidebar-card__button"
+                className="ghost-button program-access-sidebar-card__button program-access-sidebar-card__button--compact"
                 type="button"
                 disabled={Boolean(busyAction)}
                 onClick={handleReturnToRegisterEmailStep}
@@ -796,7 +835,7 @@ export function ProgramAccessSidebarCard({
               <div className="program-access-sidebar-card__summary-row">
                 <span className="program-access-sidebar-card__summary-label">已验证邮箱</span>
                 <strong className="program-access-sidebar-card__summary-value">
-                  {maskedRegisterEmail || registerEmail}
+                  {registerDisplayEmail}
                 </strong>
               </div>
             </div>
@@ -804,7 +843,7 @@ export function ProgramAccessSidebarCard({
               <span className="program-access-sidebar-card__field-label">注册用户名</span>
               <input
                 aria-label="注册用户名"
-                className="program-access-sidebar-card__input"
+                className="program-access-sidebar-card__input program-access-sidebar-card__input--compact"
                 placeholder="请输入注册用户名"
                 type="text"
                 value={registerForm.username}
@@ -820,7 +859,7 @@ export function ProgramAccessSidebarCard({
               <span className="program-access-sidebar-card__field-label">注册密码</span>
               <input
                 aria-label="注册密码"
-                className="program-access-sidebar-card__input"
+                className="program-access-sidebar-card__input program-access-sidebar-card__input--compact"
                 placeholder="请输入注册密码"
                 type="password"
                 value={registerForm.password}
@@ -834,7 +873,7 @@ export function ProgramAccessSidebarCard({
             </label>
             <div className="surface-actions program-access-dialog__actions">
               <button
-                className="accent-button program-access-sidebar-card__button"
+                className="accent-button program-access-sidebar-card__button program-access-sidebar-card__button--compact"
                 type="button"
                 disabled={Boolean(busyAction) || !registerForm.username.trim() || !registerForm.password}
                 onClick={() => void handleRegisterSubmit()}
@@ -842,7 +881,7 @@ export function ProgramAccessSidebarCard({
                 {resolveBusyLabel("complete-register", "完成注册", "提交中...", busyAction)}
               </button>
               <button
-                className="ghost-button program-access-sidebar-card__button"
+                className="ghost-button program-access-sidebar-card__button program-access-sidebar-card__button--compact"
                 type="button"
                 disabled={Boolean(busyAction)}
                 onClick={() => {
@@ -871,7 +910,7 @@ export function ProgramAccessSidebarCard({
             </div>
             <div className="surface-actions program-access-dialog__actions">
               <button
-                className="accent-button"
+                className="accent-button program-access-sidebar-card__button program-access-sidebar-card__button--compact"
                 type="button"
                 disabled={Boolean(busyAction)}
                 onClick={() => {
@@ -882,7 +921,12 @@ export function ProgramAccessSidebarCard({
               >
                 返回登录
               </button>
-              <button className="ghost-button" type="button" disabled={Boolean(busyAction)} onClick={closeDialog}>
+              <button
+                className="ghost-button program-access-sidebar-card__button program-access-sidebar-card__button--compact"
+                type="button"
+                disabled={Boolean(busyAction)}
+                onClick={closeDialog}
+              >
                 关闭
               </button>
             </div>
@@ -896,7 +940,7 @@ export function ProgramAccessSidebarCard({
             <span className="program-access-sidebar-card__field-label">注册邮箱</span>
             <input
               aria-label="注册邮箱"
-              className="program-access-sidebar-card__input"
+              className="program-access-sidebar-card__input program-access-sidebar-card__input--compact"
               placeholder="请输入注册邮箱"
               type="email"
               value={registerForm.email}
@@ -908,18 +952,30 @@ export function ProgramAccessSidebarCard({
               }}
             />
           </label>
-          <button
-            className="accent-button program-access-sidebar-card__button"
-            type="button"
-            disabled={Boolean(busyAction) || registerResendCooldownSeconds > 0 || !hasValidRegisterEmail(registerEmail)}
-            onClick={() => void handleSendRegisterCode()}
-          >
-            {busyAction === "send-register-code"
-              ? "发送中..."
-              : registerResendCooldownSeconds > 0
-                ? `发送注册验证码 (${registerResendCooldownSeconds}s)`
-                : "发送注册验证码"}
-          </button>
+          <div className="surface-actions program-access-dialog__actions">
+            <button
+              className="accent-button program-access-sidebar-card__button program-access-sidebar-card__button--compact"
+              type="button"
+              disabled={Boolean(busyAction) || registerResendCooldownSeconds > 0}
+              onClick={() => void handleSendRegisterCode()}
+            >
+              {busyAction === "send-register-code"
+                ? "发送中..."
+                : registerResendCooldownSeconds > 0
+                  ? `发送注册验证码 (${registerResendCooldownSeconds}s)`
+                  : "发送注册验证码"}
+            </button>
+            {isRegisterEditingEmail ? (
+              <button
+                className="ghost-button program-access-sidebar-card__button program-access-sidebar-card__button--compact"
+                type="button"
+                disabled={Boolean(busyAction)}
+                onClick={handleCancelRegisterEmailEdit}
+              >
+                取消
+              </button>
+            ) : null}
+          </div>
         </div>
       );
     }
@@ -951,8 +1007,8 @@ export function ProgramAccessSidebarCard({
                 <span className="program-access-sidebar-card__field-label">登录账号</span>
                 <input
                   aria-label="程序会员登录账号"
-                  className="program-access-sidebar-card__input"
-                  placeholder="请输入程序会员账号"
+                  className="program-access-sidebar-card__input program-access-sidebar-card__input--compact"
+                  placeholder="请输入账号"
                   type="text"
                   value={loginForm.username}
                   onChange={(event) => {
@@ -967,8 +1023,8 @@ export function ProgramAccessSidebarCard({
                 <span className="program-access-sidebar-card__field-label">登录密码</span>
                 <input
                   aria-label="程序会员登录密码"
-                  className="program-access-sidebar-card__input"
-                  placeholder="请输入程序会员密码"
+                  className="program-access-sidebar-card__input program-access-sidebar-card__input--compact"
+                  placeholder="请输入密码"
                   type="password"
                   value={loginForm.password}
                   onChange={(event) => {
@@ -980,20 +1036,12 @@ export function ProgramAccessSidebarCard({
                 />
               </label>
               <button
-                className="accent-button program-access-sidebar-card__button"
+                className="accent-button program-access-sidebar-card__button program-access-sidebar-card__button--compact"
                 type="button"
                 disabled={Boolean(busyAction)}
                 onClick={() => void handleRemoteLogin()}
               >
-                {resolveBusyLabel("login", "登录程序会员", "登录中...", busyAction)}
-              </button>
-              <button
-                className="ghost-button program-access-sidebar-card__button"
-                type="button"
-                disabled={Boolean(busyAction)}
-                onClick={() => void handleRemoteRefresh()}
-              >
-                {resolveBusyLabel("refresh", "刷新状态", "刷新中...", busyAction)}
+                {resolveBusyLabel("login", "登录", "登录中...", busyAction)}
               </button>
             </div>
           ) : null}
@@ -1008,7 +1056,7 @@ export function ProgramAccessSidebarCard({
                 <span className="program-access-sidebar-card__field-label">找回密码邮箱</span>
                 <input
                   aria-label="找回密码邮箱"
-                  className="program-access-sidebar-card__input"
+                  className="program-access-sidebar-card__input program-access-sidebar-card__input--compact"
                   placeholder="请输入找回邮箱"
                   type="email"
                   value={resetForm.email}
@@ -1025,7 +1073,7 @@ export function ProgramAccessSidebarCard({
                   <span className="program-access-sidebar-card__field-label">找回密码验证码</span>
                   <input
                     aria-label="找回密码验证码"
-                    className="program-access-sidebar-card__input"
+                    className="program-access-sidebar-card__input program-access-sidebar-card__input--compact"
                     placeholder="请输入验证码"
                     type="text"
                     value={resetForm.code}
@@ -1038,7 +1086,7 @@ export function ProgramAccessSidebarCard({
                   />
                 </label>
                 <button
-                  className="ghost-button program-access-sidebar-card__button"
+                  className="ghost-button program-access-sidebar-card__button program-access-sidebar-card__button--compact"
                   type="button"
                   disabled={Boolean(busyAction)}
                   onClick={() => void handleSendResetPasswordCode()}
@@ -1050,7 +1098,7 @@ export function ProgramAccessSidebarCard({
                 <span className="program-access-sidebar-card__field-label">新密码</span>
                 <input
                   aria-label="新密码"
-                  className="program-access-sidebar-card__input"
+                  className="program-access-sidebar-card__input program-access-sidebar-card__input--compact"
                   placeholder="请输入新密码"
                   type="password"
                   value={resetForm.newPassword}
@@ -1063,7 +1111,7 @@ export function ProgramAccessSidebarCard({
                 />
               </label>
               <button
-                className="accent-button program-access-sidebar-card__button"
+                className="accent-button program-access-sidebar-card__button program-access-sidebar-card__button--compact"
                 type="button"
                 disabled={Boolean(busyAction)}
                 onClick={() => void handleResetPasswordSubmit()}
@@ -1095,20 +1143,17 @@ export function ProgramAccessSidebarCard({
       </section>
 
       {isDialogOpen ? (
-        <div
-          className="surface-backdrop"
-          role="presentation"
-          onClick={(event) => {
-            if (event.target === event.currentTarget) {
-              closeDialog();
-            }
-          }}
-        >
-          <section aria-label="程序账号" className="dialog-surface program-access-dialog" role="dialog">
+        <div className="surface-backdrop" role="presentation">
+          <section
+            aria-label="程序账号"
+            className="dialog-surface program-access-dialog program-access-dialog--fixed-size program-access-dialog--compact-shell program-access-dialog--dense-controls"
+            data-dialog-size="fixed"
+            role="dialog"
+          >
             <div className="surface-header">
               <div>
-                <div className="program-access-dialog__eyebrow">程序账号</div>
-                <h2 className="surface-title">程序账号</h2>
+                <div className="program-access-dialog__eyebrow">c5交易助手</div>
+                <h2 className="surface-title">{dialogTitle}</h2>
               </div>
               <button
                 aria-label="关闭"
