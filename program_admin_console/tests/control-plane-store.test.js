@@ -34,7 +34,7 @@ function run() {
   assert.equal(packageJson.scripts["test:connect-script"], "node tests/connect-program-admin-console.test.js");
   assert.equal(
     packageJson.scripts.test,
-    "npm run test:mail-config && npm run test:mail-service && npm run test:store && npm run test:server && npm run test:ui && npm run test:connect-script"
+    "npm run test:mail-config && npm run test:mail-service && npm run test:server-runtime && npm run test:store && npm run test:server && npm run test:ui && npm run test:connect-script"
   );
   assert.equal(packageJson.scripts.start, "node src/server.js");
   assert.equal(packageJson.scripts["admin:init"], "node tools/initProgramControlPlaneAdmin.js");

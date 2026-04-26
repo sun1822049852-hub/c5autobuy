@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
+import certifi
 
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import inspect
@@ -103,12 +105,15 @@ def test_create_app_exposes_startup_slice_registry_entries(tmp_path: Path):
 
 
 def test_create_app_packaged_release_wires_remote_program_access_services(tmp_path: Path):
+    control_plane_ca_cert_path = tmp_path / "control_plane_ca.pem"
+    shutil.copyfile(certifi.where(), control_plane_ca_cert_path)
     app = create_app(
         db_path=tmp_path / "desktop-web.db",
         program_access_stage="packaged_release",
         program_access_app_data_root=tmp_path / "program-access-data",
         program_access_secret_stage="local_dev",
         program_access_control_plane_base_url="http://8.138.39.139:18787",
+        program_access_control_plane_ca_cert_path=control_plane_ca_cert_path,
         program_access_start_refresh_scheduler=False,
     )
 
@@ -122,6 +127,7 @@ def test_create_app_packaged_release_wires_remote_program_access_services(tmp_pa
     assert app.state.program_access_secret_store is not None
     assert app.state.program_access_device_id_store is not None
     assert app.state.program_access_refresh_scheduler is not None
+    assert app.state.program_access_gateway._remote_client._verify == str(control_plane_ca_cert_path)
 
 
 def test_create_app_can_enable_registration_readiness_probe_for_packaged_release(tmp_path: Path):

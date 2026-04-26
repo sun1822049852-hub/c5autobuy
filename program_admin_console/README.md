@@ -2,9 +2,9 @@
 
 `program_admin_console` 提供控制面 API 与后台页面（`/admin`），用于管理员初始化、用户权限管理和会话管控。
 
-## 当前现网口径（2026-04-24）
+## 当前现网口径（2026-04-26）
 
-当前远端开发机 `8.138.39.139` 上的控制台已经不再对公网直接开放。现网访问方式已固定为：
+当前远端开发机 `8.138.39.139` 上的控制台默认仍保持“不直接对公网开放”的姿势。现网访问方式固定为：
 
 - 宿主机端口绑定：`127.0.0.1:18787 -> 容器 8787`
 - 外部访问路径：`本机 SSH 隧道 -> 服务器 127.0.0.1:18787 -> /admin`
@@ -12,9 +12,54 @@
 
 这意味着：
 
-- `http://8.138.39.139:18787/admin` 不再应作为日常访问入口
+- `http://8.138.39.139:18787/admin` 不应作为日常访问入口
 - 下文保留的公网 IP / `0.0.0.0` 示例主要用于历史 rollout 或一般性部署说明，不代表当前现网推荐姿势
-- 后续若有 AI/维护者要调整控制台部署，默认应保持“仅服务器本机可达 + SSH 隧道访问”，不要无说明地重新开放公网端口
+- 后续若要让桌面端程序会员链路直连远端 API，必须先单独提供新的公网 API 入口（域名 / 反向代理 / 新配置迁移），不能再靠“临时重新开放 `18787` 公网监听”硬顶
+
+## 桌面端安全公网接入口径
+
+若目标是“用户端可直连 program access 服务，同时不把后台管理面暴露出去”，推荐口径固定为：
+
+- `c5-program-admin` 容器继续只绑定宿主机 `127.0.0.1:18787`
+- 单独提供一个 `HTTPS` 公网入口（推荐独立域名或子域名）
+- 公网入口只转发 `GET /api/health` 与 `/api/auth/*`
+- 公网入口必须显式拒绝 `/admin` 与 `/api/admin/*`
+- 桌面端 `controlPlaneBaseUrl` 最终切到这个 `HTTPS` 入口，不再继续使用裸 `http://8.138.39.139:18787`
+
+仓库内已提供示例反代配置：
+
+- `program_admin_console/deploy/nginx-program-access-auth-gateway.example.conf`
+- `program_admin_console/deploy/nginx-program-access-auth-gateway-ip.example.conf`
+
+如果 control plane 运行在反向代理之后，记得同时设置：
+
+- `PROGRAM_ADMIN_TRUST_PROXY=true`
+
+否则注册风控与登录来源识别拿到的只会是代理层 IP，而不是用户真实来源。
+
+### 无域名时的推荐走法
+
+如果暂时没有域名，但又需要让桌面端安全直连服务器，推荐走：
+
+1. 服务器继续保持 `c5-program-admin` 为 `127.0.0.1:18787 -> 8787`
+2. 在服务器本机额外部署一个 `443` 反向代理，只放行 `/api/health` 与 `/api/auth/*`
+3. 使用带 `IP SAN` 的自签 / 私有 CA 证书给这个 `443` 入口做 TLS
+4. 把客户端信任的 CA 证书放到：
+   - `app_desktop_web/build/control_plane_ca.pem`
+5. 把桌面端 release 配置改成类似：
+
+```json
+{
+  "controlPlaneBaseUrl": "https://8.138.39.139",
+  "controlPlaneCaCertPath": "control_plane_ca.pem"
+}
+```
+
+说明：
+
+- `controlPlaneCaCertPath` 支持相对 `client_config.release.json` 的路径；打包时若 `app_desktop_web/build/control_plane_ca.pem` 存在，会自动随包带入 resources 根目录
+- 这条链只影响桌面端 program access 认证入口，不会把 `/admin` 与 `/api/admin/*` 暴露给公网
+- 因为用户只使用桌面程序，不直接在浏览器打开这个接口，所以使用“私有 CA + 客户端 pin 证书”是可接受的
 
 ## 远端对齐纪律
 
@@ -86,6 +131,7 @@ npm --prefix program_admin_console start
 
 - `PROGRAM_ADMIN_HOST`（默认 `127.0.0.1`）
 - `PROGRAM_ADMIN_PORT`（默认 `3030`）
+- `PROGRAM_ADMIN_TRUST_PROXY`（默认 `false`；仅在可信反向代理后置为 `true`）
 - `PROGRAM_ADMIN_AUTH_CODE_TTL_MINUTES`
 - `PROGRAM_ADMIN_REFRESH_SESSION_DAYS`
 - `PROGRAM_ADMIN_ADMIN_SESSION_HOURS`
@@ -173,19 +219,24 @@ curl http://<ECS_PUBLIC_IP>:<CONTROL_PLANE_PORT>/api/admin/session
 
 示例控制面地址：
 
-- `http://8.138.39.139:18787`
+- `https://8.138.39.139`
 
-注意：上面的公网地址是桌面端 release 配置所指向的控制面地址，不等于后台 `/admin` 页面必须重新暴露给公网。当前自用后台访问仍应优先遵循本 README 顶部的“当前现网口径”。
+配套 CA 证书文件：
 
-若 ECS 上使用该端口部署容器，可按下列命令联调：
+- `app_desktop_web/build/control_plane_ca.pem`
+
+注意：上面的公网地址是桌面端 release 配置所指向的认证入口，不等于后台 `/admin` 页面必须重新暴露给公网。当前自用后台访问仍应优先遵循本 README 顶部的“当前现网口径”。
+
+当前更推荐的发行联调方式，是保持源站容器仅监听宿主机 `127.0.0.1:18787`，再由 `443` auth gateway 对外暴露：
 
 ```powershell
 docker build -t c5-program-admin ./program_admin_console
 docker volume create c5_program_admin_data
 docker run -d --name c5-program-admin `
-  -p 18787:8787 `
+  -p 127.0.0.1:18787:8787 `
   -e PROGRAM_ADMIN_HOST=0.0.0.0 `
   -e PROGRAM_ADMIN_PORT=8787 `
+  -e PROGRAM_ADMIN_TRUST_PROXY=true `
   -e MAIL_FROM=bot@example.com `
   -e MAIL_FROM_NAME="C5 交易助手" `
   -e QQ_SMTP_USER=bot@example.com `
@@ -193,13 +244,13 @@ docker run -d --name c5-program-admin `
   -v c5_program_admin_data:/app/data `
   c5-program-admin
 
-curl http://8.138.39.139:18787/api/health
-curl http://8.138.39.139:18787/api/admin/session
+curl --cacert app_desktop_web/build/control_plane_ca.pem https://8.138.39.139/api/health
+curl --cacert app_desktop_web/build/control_plane_ca.pem https://8.138.39.139/api/auth/register/readiness
 ```
 
-浏览器后台入口：
+后台 `/admin` 入口不应再经公网暴露，继续只走：
 
-- `http://8.138.39.139:18787/admin`
+- `http://127.0.0.1:18787/admin` + SSH 隧道
 
 ## 自用后台的更安全访问方式
 

@@ -1,3 +1,4 @@
 {
-  "controlPlaneBaseUrl": "http://8.138.39.139:18787"
+  "controlPlaneBaseUrl": "https://8.138.39.139",
+  "controlPlaneCaCertPath": "control_plane_ca.pem"
 }

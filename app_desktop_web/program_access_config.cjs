@@ -10,6 +10,10 @@ function normalizeUrl(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function normalizeFilePath(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
 function readJsonObject(targetPath, { existsSync = fs.existsSync, readFileSync = fs.readFileSync } = {}) {
   const normalizedPath = typeof targetPath === "string" ? targetPath.trim() : "";
   if (!normalizedPath || !existsSync(normalizedPath)) {
@@ -56,29 +60,63 @@ function resolveConfigCandidates({
   return [...new Set(candidates)];
 }
 
+function readFirstConfigCandidate(candidatePaths, fsApi) {
+  for (const candidatePath of candidatePaths) {
+    const payload = readJsonObject(candidatePath, fsApi);
+    if (Object.keys(payload).length > 0) {
+      return {
+        config: payload,
+        sourcePath: candidatePath,
+      };
+    }
+  }
+
+  return {
+    config: {},
+    sourcePath: "",
+  };
+}
+
+function resolveConfigFilePath(value, { baseDir = "", pathApi = path } = {}) {
+  const normalizedPath = normalizeFilePath(value);
+  if (!normalizedPath) {
+    return "";
+  }
+  if (!baseDir || pathApi.isAbsolute(normalizedPath)) {
+    return normalizedPath;
+  }
+  return pathApi.join(baseDir, normalizedPath);
+}
+
 function readProgramAccessConfig({
   appApi = null,
   env = process.env,
   fileConfig = null,
+  fileConfigPath = "",
   fsApi = fs,
   moduleDir = __dirname,
   pathApi = path,
   resourcesPath = process.resourcesPath,
 } = {}) {
-  const resolvedFileConfig = isPlainObject(fileConfig)
-    ? fileConfig
-      : resolveConfigCandidates({
+  const resolvedFileCandidate = isPlainObject(fileConfig)
+    ? {
+        config: fileConfig,
+        sourcePath: fileConfigPath,
+      }
+    : readFirstConfigCandidate(
+      resolveConfigCandidates({
         appApi,
         env,
         moduleDir,
         pathApi,
         resourcesPath,
-      }).reduce((matchedConfig, candidatePath) => {
-        if (Object.keys(matchedConfig).length > 0) {
-          return matchedConfig;
-        }
-        return readJsonObject(candidatePath, fsApi);
-      }, {});
+      }),
+      fsApi,
+    );
+  const resolvedFileConfig = resolvedFileCandidate.config;
+  const resolvedFileConfigBaseDir = resolvedFileCandidate.sourcePath
+    ? pathApi.dirname(resolvedFileCandidate.sourcePath)
+    : "";
 
   return {
     controlPlaneBaseUrl: normalizeUrl(
@@ -86,6 +124,16 @@ function readProgramAccessConfig({
         || env.CONTROL_PLANE_BASE_URL
         || resolvedFileConfig.controlPlaneBaseUrl
         || resolvedFileConfig.control_plane_base_url,
+    ),
+    controlPlaneCaCertPath: resolveConfigFilePath(
+      env.C5_PROGRAM_CONTROL_PLANE_CA_CERT_PATH
+        || env.CONTROL_PLANE_CA_CERT_PATH
+        || resolvedFileConfig.controlPlaneCaCertPath
+        || resolvedFileConfig.control_plane_ca_cert_path,
+      {
+        baseDir: resolvedFileConfigBaseDir,
+        pathApi,
+      },
     ),
   };
 }

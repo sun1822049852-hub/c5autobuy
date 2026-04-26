@@ -5,6 +5,7 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PROGRAM_ADMIN_HOST=0.0.0.0
 ENV PROGRAM_ADMIN_PORT=8787
+ENV PROGRAM_ADMIN_TRUST_PROXY=false
 
 COPY package.json ./
 RUN npm install --omit=dev

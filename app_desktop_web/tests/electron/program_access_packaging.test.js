@@ -94,10 +94,12 @@ describe("program access packaging config", () => {
     const config = readProgramAccessConfig({
       fileConfig: {
         controlPlaneBaseUrl: "http://8.138.39.139:18787",
+        controlPlaneCaCertPath: "C:/certs/control-plane-ca.pem",
       },
     });
 
     expect(config.controlPlaneBaseUrl).toBe("http://8.138.39.139:18787");
+    expect(config.controlPlaneCaCertPath).toBe("C:/certs/control-plane-ca.pem");
   });
 
   it("reads the source control-plane base url from build/client_config.release.json when unpackaged", () => {
@@ -124,6 +126,7 @@ describe("program access packaging config", () => {
           }
           return JSON.stringify({
             controlPlaneBaseUrl: "http://8.138.39.139:18787",
+            controlPlaneCaCertPath: "control_plane_ca.pem",
           });
         },
       },
@@ -133,6 +136,7 @@ describe("program access packaging config", () => {
     });
 
     expect(config.controlPlaneBaseUrl).toBe("http://8.138.39.139:18787");
+    expect(config.controlPlaneCaCertPath).toBe("C:\\demo\\project\\app_desktop_web\\build\\control_plane_ca.pem");
   });
 
   it("passes packaged program access config into the embedded backend startup path", async () => {
@@ -164,6 +168,7 @@ describe("program access packaging config", () => {
       resolvePythonExecutableImpl,
       readProgramAccessConfigImpl: vi.fn(() => ({
         controlPlaneBaseUrl: "http://8.138.39.139:18787",
+        controlPlaneCaCertPath: "C:/Users/tester/AppData/Roaming/C5AccountCenter/control_plane_ca.pem",
       })),
       startPythonBackendImpl,
       createWindowImpl: vi.fn(),
@@ -182,6 +187,7 @@ describe("program access packaging config", () => {
       programAccessConfig: {
         appPrivateDir: "C:\\Users\\tester\\AppData\\Roaming\\C5AccountCenter\\app-private",
         controlPlaneBaseUrl: "http://8.138.39.139:18787",
+        controlPlaneCaCertPath: "C:/Users/tester/AppData/Roaming/C5AccountCenter/control_plane_ca.pem",
         probeRegistrationReadiness: true,
         stage: "packaged_release",
       },
@@ -463,7 +469,10 @@ describe("program access packaging config", () => {
       createStartMenuShortcut: true,
       perMachine: false,
     }));
-    expect(JSON.parse(fs.readFileSync(releaseConfigPath, "utf8")).controlPlaneBaseUrl).toMatch(/^http:\/\//);
+    expect(JSON.parse(fs.readFileSync(releaseConfigPath, "utf8"))).toEqual(expect.objectContaining({
+      controlPlaneBaseUrl: expect.stringMatching(/^https:\/\//),
+      controlPlaneCaCertPath: "control_plane_ca.pem",
+    }));
   });
 
   it("ships an explicit local debug client config file that keeps control plane auth disabled", () => {

@@ -1271,10 +1271,22 @@ function createServer({
   return server;
 }
 
+function isTruthyEnvFlag(value) {
+  return ["1", "true", "yes", "on"].includes(toText(value).toLowerCase());
+}
+
+function readServerRuntimeOptions(env = process.env) {
+  return {
+    trustProxy: isTruthyEnvFlag(env.PROGRAM_ADMIN_TRUST_PROXY || env.TRUST_PROXY)
+  };
+}
+
 async function main() {
   const config = getMailConfig();
+  const runtimeOptions = readServerRuntimeOptions();
   const server = createServer({
-    mailConfigFactory: () => config
+    mailConfigFactory: () => config,
+    trustProxy: runtimeOptions.trustProxy
   });
   await new Promise((resolve) => server.listen(config.port, config.host, resolve));
   console.log(`[program_admin_console] listening on http://${config.host}:${config.port}`);
@@ -1288,5 +1300,6 @@ if (require.main === module) {
 }
 
 module.exports = {
-  createServer
+  createServer,
+  readServerRuntimeOptions
 };

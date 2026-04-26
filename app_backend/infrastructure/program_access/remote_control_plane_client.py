@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
+import ssl
 from typing import Mapping
 
 import httpx
@@ -96,11 +98,17 @@ class RemoteControlPlaneClient:
         base_url: str,
         client: httpx.Client | None = None,
         timeout: float = 10.0,
+        verify: str | bool = True,
     ) -> None:
         self._owns_client = client is None
+        self._verify = str(verify) if isinstance(verify, Path) else verify
+        httpx_verify = self._verify
+        if isinstance(self._verify, str) and self._verify.strip():
+            httpx_verify = ssl.create_default_context(cafile=self._verify)
         self._client = client or httpx.Client(
             base_url=base_url.rstrip("/"),
             timeout=timeout,
+            verify=httpx_verify,
         )
 
     def close(self) -> None:

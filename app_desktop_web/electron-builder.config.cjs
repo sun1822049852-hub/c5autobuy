@@ -8,6 +8,65 @@ function buildElectronBuilderConfig({
   existsSync = fs.existsSync,
 } = {}) {
   const { appDir: normalizedAppDir } = resolveProjectRoots(appDir);
+  const controlPlaneCaSourcePath = path.join(normalizedAppDir, "build", "control_plane_ca.pem");
+  const extraResources = [
+    {
+      from: path.join(normalizedAppDir, "build", "client_config.release.json"),
+      to: "client_config.release.json",
+    },
+    {
+      from: resolveBundledResourcePath({
+        appDir: normalizedAppDir,
+        existsSync,
+        resourcePath: "app_backend",
+      }),
+      to: "app_backend",
+      filter: [
+        "**/*",
+        "!**/__pycache__/**",
+        "!**/.pytest_cache/**",
+        "!**/*.pyc",
+        "!**/tests/**",
+        "!**/test_*",
+      ],
+    },
+    {
+      from: resolveBundledResourcePath({
+        appDir: normalizedAppDir,
+        existsSync,
+        resourcePath: "xsign.py",
+      }),
+      to: "xsign.py",
+    },
+    {
+      from: resolveBundledResourcePath({
+        appDir: normalizedAppDir,
+        existsSync,
+        resourcePath: "test.wasm",
+      }),
+      to: "test.wasm",
+    },
+    {
+      from: path.join(normalizedAppDir, "build", "python_deps"),
+      to: "python_deps",
+      filter: [
+        "**/*",
+        "!**/__pycache__/**",
+        "!**/.pytest_cache/**",
+        "!**/*.pyc",
+        "!**/*.dist-info/**",
+        "!**/tests/**",
+        "!**/test_*",
+      ],
+    },
+  ];
+
+  if (existsSync(controlPlaneCaSourcePath)) {
+    extraResources.push({
+      from: controlPlaneCaSourcePath,
+      to: "control_plane_ca.pem",
+    });
+  }
 
   return {
     appId: "com.c5.trading-assistant",
@@ -32,57 +91,7 @@ function buildElectronBuilderConfig({
       "window_state.js",
       "package.json",
     ],
-    extraResources: [
-      {
-        from: path.join(normalizedAppDir, "build", "client_config.release.json"),
-        to: "client_config.release.json",
-      },
-      {
-        from: resolveBundledResourcePath({
-          appDir: normalizedAppDir,
-          existsSync,
-          resourcePath: "app_backend",
-        }),
-        to: "app_backend",
-        filter: [
-          "**/*",
-          "!**/__pycache__/**",
-          "!**/.pytest_cache/**",
-          "!**/*.pyc",
-          "!**/tests/**",
-          "!**/test_*",
-        ],
-      },
-      {
-        from: resolveBundledResourcePath({
-          appDir: normalizedAppDir,
-          existsSync,
-          resourcePath: "xsign.py",
-        }),
-        to: "xsign.py",
-      },
-      {
-        from: resolveBundledResourcePath({
-          appDir: normalizedAppDir,
-          existsSync,
-          resourcePath: "test.wasm",
-        }),
-        to: "test.wasm",
-      },
-      {
-        from: path.join(normalizedAppDir, "build", "python_deps"),
-        to: "python_deps",
-        filter: [
-          "**/*",
-          "!**/__pycache__/**",
-          "!**/.pytest_cache/**",
-          "!**/*.pyc",
-          "!**/*.dist-info/**",
-          "!**/tests/**",
-          "!**/test_*",
-        ],
-      },
-    ],
+    extraResources,
     win: {
       target: [
         "nsis",

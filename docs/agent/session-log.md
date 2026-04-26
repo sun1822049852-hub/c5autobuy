@@ -3749,3 +3749,22 @@
 - 当前进度：
   - “无域名也能让用户端安全直连服务器”这条主线已落到远端与 `win-unpacked` 产物
   - 本轮未重建 installer；只刷新了 `win-unpacked`
+
+## 2026-04-26 13:33 (Asia/Shanghai)
+- 背景：魔尊要求排查“扫货系统里的查询器显示从具体账号名回退成笼统查询器”并给出回归原因；本轮允许多 agent 并行调查。
+- 根因定位：
+  - 前端 `purchase_item_panel.jsx` 与 `stats_shared.js` 仍保留“`account_display_name / 查询器类型`”拼接格式，显示层未被删。
+  - 真正回归点在 backend `GetPurchaseRuntimeStatusUseCase`：`1c1dd9e fix: lock daily sweep stats across running and stopped states` 新增 active/stopped fallback，把扫货页 `item_rows[].source_mode_stats` / `recent_hit_sources` 在缺 runtime overlay 时回退到 stats repository 的日统计。
+  - 但 `stats_repository` 的 `source_mode_stats` 天生只保留 `mode_type + hit_count`，不保留 `account_display_name`，因此一旦命中这条 fallback，前端只能退回显示 `api查询器 / api高速查询器 / 浏览器查询器` 这类 generic 标签。
+- 实施：
+  - 在 `app_backend/application/use_cases/get_purchase_runtime_status.py` 收窄 sweep page 的来源口径：商品卡片的 `source_mode_stats` / `recent_hit_sources` 只允许来自 purchase runtime 自己的 runtime overlay；不再从日统计 generic `source_mode_stats` 借壳回填。
+  - 对应调整 `tests/backend/test_purchase_runtime_routes.py`，把三条 recently-added 回归断言从“日统计 generic 来源摘要仍会出现在 sweep page”改为“无精确来源时返回空列表”。
+- 验证：
+  - 红灯：`C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_purchase_runtime_routes.py -k "keeps_selected_config_daily_item_stats_when_stopped or keeps_daily_item_stats_without_pre_saved_ui_preferences or keeps_daily_item_stats_while_running" -q` -> `3 failed`
+  - 绿灯：同命令重跑 -> `3 passed`
+  - 邻近回归：`C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_purchase_runtime_routes.py -q` -> `20 passed`
+  - 前端回归：`npm --prefix app_desktop_web test -- tests/renderer/purchase_system_page.test.jsx --run` -> `34 passed`
+- 当前进度：
+  - sweep page 已不再把“缺账号名的日统计来源摘要”误当成精确命中来源返回给前端
+  - 回归原因已锁定为 `1c1dd9e`（active fallback）叠加更早的 `6d7e085`（stopped daily stats fallback）与 `stats_repository` 的 mode-only 数据结构不匹配
+  - 另已在用户级目录新增可跨项目复用的全局 skill：`C:/Users/18220/.agents/skills/local/semantic-regression-guard/SKILL.md`，用于约束 fallback / 聚合 / 数据源切换时的“语义降级型回归”

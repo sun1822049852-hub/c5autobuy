@@ -20,6 +20,7 @@ class ProgramAccessBuildOptions:
     secret_stage: str | None = None
     secret_platform: str | None = None
     control_plane_base_url: str | None = None
+    control_plane_ca_cert_path: Path | None = None
     key_cache_path: Path | None = None
     refresh_interval_seconds: float | None = None
     probe_registration_readiness: bool | None = None
@@ -166,6 +167,17 @@ def _resolve_program_access_control_plane_base_url(explicit_base_url: str | None
     ).strip()
 
 
+def _resolve_program_access_control_plane_ca_cert_path(explicit_path: Path | None) -> Path | None:
+    if explicit_path is not None:
+        return Path(explicit_path)
+
+    env_path = os.getenv("C5_PROGRAM_CONTROL_PLANE_CA_CERT_PATH")
+    if env_path:
+        return Path(env_path)
+
+    return None
+
+
 def _resolve_program_access_key_cache_path(
     explicit_key_cache_path: Path | None,
     *,
@@ -254,8 +266,14 @@ def _build_program_access_services(
         options.key_cache_path,
         app_data_root=app_data_root,
     )
+    control_plane_ca_cert_path = _resolve_program_access_control_plane_ca_cert_path(
+        options.control_plane_ca_cert_path
+    )
     verifier = EntitlementVerifier(key_cache_path=key_cache_path)
-    remote_client = RemoteControlPlaneClient(base_url=control_plane_base_url)
+    remote_client = RemoteControlPlaneClient(
+        base_url=control_plane_base_url,
+        verify=str(control_plane_ca_cert_path) if control_plane_ca_cert_path else True,
+    )
     gateway = RemoteEntitlementGateway(
         remote_client=remote_client,
         verifier=verifier,

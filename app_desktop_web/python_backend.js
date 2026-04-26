@@ -110,6 +110,9 @@ export function buildPythonBackendEnv(projectRoot, baseEnv = process.env, progra
   const controlPlaneBaseUrl = typeof programAccessConfig?.controlPlaneBaseUrl === "string"
     ? programAccessConfig.controlPlaneBaseUrl.trim()
     : "";
+  const controlPlaneCaCertPath = typeof programAccessConfig?.controlPlaneCaCertPath === "string"
+    ? programAccessConfig.controlPlaneCaCertPath.trim()
+    : "";
   const probeRegistrationReadiness = programAccessConfig?.probeRegistrationReadiness === true;
   if (stage) {
     env.C5_PROGRAM_ACCESS_STAGE = stage;
@@ -119,6 +122,9 @@ export function buildPythonBackendEnv(projectRoot, baseEnv = process.env, progra
     if (!stage) {
       env.C5_PROGRAM_ACCESS_STAGE = "packaged_release";
     }
+  }
+  if (controlPlaneCaCertPath) {
+    env.C5_PROGRAM_CONTROL_PLANE_CA_CERT_PATH = controlPlaneCaCertPath;
   }
   if (probeRegistrationReadiness) {
     env.C5_PROGRAM_ACCESS_PROBE_REGISTRATION_READINESS = "1";
