@@ -46,9 +46,11 @@ describe("program access sidebar card", () => {
     render(<ProgramAccessSidebarCard access={LOCAL_PROGRAM_ACCESS_FIXTURE} />);
 
     expect(screen.getByRole("button", { name: "打开程序账号窗口" })).toBeInTheDocument();
-    expect(screen.getByText("程序账号")).toBeInTheDocument();
+    expect(screen.getByText("登录状态：")).toBeInTheDocument();
+    expect(screen.queryByText("账号登录")).not.toBeInTheDocument();
     expect(screen.queryByText("PROGRAM ACCESS")).not.toBeInTheDocument();
     expect(screen.getByText("未登录")).toBeInTheDocument();
+    expect(screen.getByText("无权限，仅只读")).toBeInTheDocument();
     expect(screen.queryByRole("dialog", { name: "程序账号" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("程序会员登录账号")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("程序会员登录密码")).not.toBeInTheDocument();
@@ -60,6 +62,8 @@ describe("program access sidebar card", () => {
     render(<ProgramAccessSidebarCard access={REMOTE_PROGRAM_ACCESS_ACTIVE_FIXTURE} />);
 
     expect(screen.getByText("alice")).toBeInTheDocument();
+    expect(screen.getByText("已授权，可编辑")).toBeInTheDocument();
+    expect(screen.queryByText("账号登录")).not.toBeInTheDocument();
     expect(screen.queryByText("已生效")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "刷新状态" })).not.toBeInTheDocument();
     expect(screen.queryByLabelText("程序会员登录账号")).not.toBeInTheDocument();
@@ -87,6 +91,8 @@ describe("program access sidebar card", () => {
     render(<ProgramAccessSidebarCard access={REMOTE_PROGRAM_ACCESS_LOGGED_OUT_FIXTURE} />);
 
     expect(screen.getByText("未登录")).toBeInTheDocument();
+    expect(screen.getByText("无权限，仅只读")).toBeInTheDocument();
+    expect(screen.queryByText("账号登录")).not.toBeInTheDocument();
     expect(screen.queryByText("只读锁定")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("程序会员登录账号")).not.toBeInTheDocument();
 

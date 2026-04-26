@@ -89,10 +89,9 @@ function resolveSidebarAccountLabel(access) {
 
 
 function resolveSidebarHint(access) {
-  if (hasRemoteProgramSession(access)) {
-    return "点击查看当前账号状态";
-  }
-  return "点击登录或管理程序账号";
+  return hasRemoteProgramSession(access)
+    ? "已授权，可编辑"
+    : "无权限，仅只读";
 }
 
 
@@ -1184,8 +1183,7 @@ export function ProgramAccessSidebarCard({
           type="button"
           onClick={openDialog}
         >
-          <span className="program-access-sidebar-card__eyebrow">程序账号</span>
-          <span className="program-access-sidebar-card__entry-title">账号登录</span>
+          <span className="program-access-sidebar-card__eyebrow">登录状态：</span>
           <strong className="program-access-sidebar-card__entry-identity">{sidebarAccountLabel}</strong>
           <span className="program-access-sidebar-card__entry-hint">{sidebarHint}</span>
         </button>

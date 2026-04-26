@@ -148,9 +148,9 @@ export function AccountCenterPage({ client }) {
       <header className="account-page__hero">
         <div className="account-page__hero-main">
           <div className="account-page__hero-copy" style={NO_SELECT_STYLE}>
-            <div className="account-page__eyebrow">账号中心</div>
+            <div className="account-page__eyebrow">C5 交易助手</div>
             <h1 className="account-page__title">
-              {isLoading ? "账号中心加载中" : "C5 交易助手"}
+              {isLoading ? "账号中心加载中" : "账号中心"}
             </h1>
           </div>
         </div>

@@ -120,6 +120,18 @@
   - `tests/backend/test_backend_health.py`
   - `app_desktop_web/tests/renderer/app_remote_bootstrap.test.jsx`
 
+## 前端预览默认口径
+
+- 只要当前任务的目标是“看页面 / 改 UI / 调布局 / 按页面结果改前端”，且页面可通过 `localhost`、独立 dev server 或 file-backed preview 打开，默认优先使用 Codex app 的 in-app browser 预览页面，再推进评论、截图、验收与改动；不得先入为主默认拉起 Electron 壳或程序自带前端。
+- 若当前环境是 CLI、或桌面 app 当下没有 in-app browser / Annotating 能力，也应先走 `web-only dev server + 页面 URL/截图` 这条轻量链路；在未证明必须依赖桌面壳之前，不得直接升级为启动完整程序壳。
+- 只有命中以下任一条件时，才默认切回程序自带前端、Electron 主入口或 embedded 桌面链路：
+  - 任务直接涉及窗口、托盘、菜单、原生 API、桌面壳交互。
+  - 任务直接涉及 embedded backend 接管、program access、桌面 bootstrap、packaged release 或桌面启动链。
+  - 任务必须复用真实登录态、cookie、profile、浏览器扩展或系统浏览器环境。
+  - 问题已确认只在程序壳内复现，浏览器预览口径无法覆盖。
+- 若用户只说“打开前端”而未额外限定，默认先理解为“打开可供 Codex 预览与修改的浏览器页面”，优先提供可被内置浏览器使用的页面口径。
+- 交付时必须明确写清本轮验证口径：若只在 in-app browser / web 预览里验过，就标注“浏览器预览已验证，程序壳未验证”；若只验了程序壳，也要显式写明“程序壳已验证，浏览器预览未复验”，避免把两个口径混写。
+
 ## 已确认的产品约束（当前会话）
 
 - 在“配置管理”页：`market_price` 不可手动修改，值来自自动查询。

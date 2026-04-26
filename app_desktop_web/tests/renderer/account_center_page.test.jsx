@@ -675,10 +675,13 @@ describe("account center page", () => {
     await waitFor(() => {
       expect(screen.getByText("C5 交易助手")).toBeInTheDocument();
     });
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "账号中心" })).toBeInTheDocument();
+    });
 
     const heroCopy = screen.getByText("C5 交易助手").closest(".account-page__hero-copy");
     expect(heroCopy).not.toBeNull();
-    expect(within(heroCopy).getByText("账号中心")).toBeInTheDocument();
+    expect(within(heroCopy).getByRole("heading", { name: "账号中心" })).toBeInTheDocument();
     expect(screen.queryByText("ACCOUNT CENTER")).not.toBeInTheDocument();
     expect(screen.queryByText("Live")).not.toBeInTheDocument();
     expect(screen.queryByText(/统一管理账号备注/)).not.toBeInTheDocument();
@@ -692,7 +695,7 @@ describe("account center page", () => {
 
     expect(screen.getByRole("columnheader", { name: "C5昵称" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "API 状态" })).toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: "浏览器查询" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "浏览器查询（待实现）" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "购买状态" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "账号代理" })).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "API代理" })).toBeInTheDocument();
@@ -770,7 +773,7 @@ describe("account center page", () => {
     });
 
     expect(screen.getByRole("columnheader", { name: "API 状态" })).toBeInTheDocument();
-    expect(screen.getByRole("columnheader", { name: "浏览器查询" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "浏览器查询（待实现）" })).toBeInTheDocument();
 
     const enabledRow = screen.getByText("账号 A").closest("tr");
     expect(enabledRow).not.toBeNull();
@@ -847,7 +850,7 @@ describe("account center page", () => {
     });
 
     const navButton = screen.getByRole("button", { name: "账号中心" });
-    const pageTitle = screen.getByText("C5 交易助手");
+    const pageTitle = screen.getByRole("heading", { name: /账号中心/ });
     const tableHeader = screen.getByRole("columnheader", { name: "C5昵称" });
     const searchbox = screen.getByRole("searchbox", { name: "搜索账号" });
 

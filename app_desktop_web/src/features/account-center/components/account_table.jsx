@@ -245,7 +245,7 @@ export function AccountTable({
         <tr>
           <th scope="col" style={NO_SELECT_STYLE}>C5昵称</th>
           <th scope="col" style={NO_SELECT_STYLE}>API 状态</th>
-          <th scope="col" style={NO_SELECT_STYLE}>浏览器查询</th>
+          <th scope="col" style={NO_SELECT_STYLE}>浏览器查询（待实现）</th>
           <th scope="col" style={NO_SELECT_STYLE}>购买状态</th>
           <th scope="col" style={NO_SELECT_STYLE}>账号代理</th>
           <th scope="col" style={NO_SELECT_STYLE}>API代理</th>

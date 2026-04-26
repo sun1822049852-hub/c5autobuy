@@ -564,6 +564,75 @@ describe("app remote bootstrap", () => {
     expect(screen.getByRole("button", { name: "代理管理" })).toBeInTheDocument();
   });
 
+  it("probes the local backend in browser mode and unlocks the embedded home when /health reports ready", async () => {
+    const fetchImpl = vi.fn(async (input) => {
+      const url = new URL(input);
+
+      if (url.pathname === "/health") {
+        return jsonResponse({
+          ready: true,
+          status: "ok",
+        });
+      }
+      if (url.pathname === "/app/bootstrap") {
+        return jsonResponse({
+          version: 1,
+          generated_at: "2026-04-26T03:00:00.000Z",
+          program_access: {
+            mode: "local_pass_through",
+            stage: "prepackaging",
+            guard_enabled: false,
+            message: "当前为本地放行模式，远端程序会员控制面尚未接入正式链路",
+            username: null,
+            auth_state: null,
+            runtime_state: null,
+            grace_expires_at: null,
+            last_error_code: null,
+            registration_flow_version: 2,
+          },
+          query_system: {
+            configs: [],
+            capacitySummary: { modes: {} },
+            runtimeStatus: { running: false, item_rows: [] },
+          },
+          purchase_system: {
+            runtimeStatus: { running: false, accounts: [], item_rows: [] },
+            uiPreferences: { selected_config_id: null, updated_at: null },
+            runtimeSettings: { per_batch_ip_fanout_limit: 1, updated_at: null },
+          },
+        });
+      }
+      if (url.pathname === "/account-center/accounts") {
+        return jsonResponse([]);
+      }
+      if (url.pathname === "/proxy-pool") {
+        return jsonResponse([]);
+      }
+
+      throw new Error(`Unhandled request: ${url.pathname}`);
+    });
+
+    delete window.desktopApp;
+    window.fetch = fetchImpl;
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(hasRequestedUrl(fetchImpl, {
+        origin: "http://127.0.0.1:8000",
+        pathname: "/health",
+      })).toBe(true);
+    });
+    await waitFor(() => {
+      expect(hasRequestedUrl(fetchImpl, {
+        origin: "http://127.0.0.1:8000",
+        pathname: "/app/bootstrap",
+      })).toBe(true);
+    });
+    expect(await screen.findByRole("searchbox", { name: "搜索账号" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "代理管理" })).toBeInTheDocument();
+  });
+
   it("reports home interactive only after the embedded home load settles", async () => {
     const fetchImpl = vi.fn(async (input) => {
       const url = new URL(input);

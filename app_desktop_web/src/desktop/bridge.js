@@ -5,10 +5,27 @@ const DEFAULT_BOOTSTRAP_CONFIG = {
   runtimeWebSocketUrl: "",
   pageWarmupEnabled: false,
 };
+const BROWSER_BOOTSTRAP_HEALTH_POLL_MS = 1000;
 
 
 function getDesktopApp() {
   return globalThis.window?.desktopApp ?? null;
+}
+
+function resolveBootstrapFetch() {
+  return globalThis.window?.fetch ?? globalThis.fetch;
+}
+
+function buildEmbeddedHealthUrl(apiBaseUrl) {
+  try {
+    const url = new URL(String(apiBaseUrl || DEFAULT_BOOTSTRAP_CONFIG.apiBaseUrl));
+    url.pathname = "/health";
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return "";
+  }
 }
 
 function normalizeBootstrapConfig(payload) {
@@ -43,6 +60,86 @@ export function getDesktopBootstrapConfig() {
   return normalizeBootstrapConfig(desktopApp.getBootstrapConfig());
 }
 
+async function probeBrowserEmbeddedBootstrapConfig(baseConfig) {
+  const fetchImpl = resolveBootstrapFetch();
+  const healthUrl = buildEmbeddedHealthUrl(baseConfig.apiBaseUrl);
+
+  if (typeof fetchImpl !== "function" || !healthUrl) {
+    return baseConfig;
+  }
+
+  try {
+    const response = await fetchImpl(healthUrl, {
+      headers: {
+        Accept: "application/json",
+      },
+      method: "GET",
+    });
+
+    if (!response?.ok) {
+      return baseConfig;
+    }
+
+    const payload = typeof response.json === "function"
+      ? await response.json().catch(() => null)
+      : null;
+
+    if (payload?.ready === true) {
+      return normalizeBootstrapConfig({
+        ...baseConfig,
+        backendStatus: "ready",
+      });
+    }
+  } catch {
+    return baseConfig;
+  }
+
+  return baseConfig;
+}
+
+function subscribeBrowserBootstrapConfig(listener) {
+  const baseConfig = getDefaultDesktopBootstrapConfig();
+  let disposed = false;
+  let timeoutId = null;
+
+  const emit = (payload) => {
+    if (disposed) {
+      return;
+    }
+    listener(normalizeBootstrapConfig(payload));
+  };
+
+  const scheduleNextProbe = () => {
+    if (disposed) {
+      return;
+    }
+    timeoutId = globalThis.setTimeout(() => {
+      timeoutId = null;
+      void probeAndEmit();
+    }, BROWSER_BOOTSTRAP_HEALTH_POLL_MS);
+  };
+
+  const probeAndEmit = async () => {
+    const nextConfig = await probeBrowserEmbeddedBootstrapConfig(baseConfig);
+    emit(nextConfig);
+    if (nextConfig.backendStatus !== "ready") {
+      scheduleNextProbe();
+    }
+  };
+
+  queueTask(() => {
+    emit(baseConfig);
+    void probeAndEmit();
+  });
+
+  return () => {
+    disposed = true;
+    if (timeoutId !== null && typeof globalThis.clearTimeout === "function") {
+      globalThis.clearTimeout(timeoutId);
+    }
+  };
+}
+
 
 export function subscribeDesktopBootstrapConfig(listener) {
   const desktopApp = getDesktopApp();
@@ -51,10 +148,7 @@ export function subscribeDesktopBootstrapConfig(listener) {
   }
 
   if (!desktopApp) {
-    queueTask(() => {
-      listener(getDefaultDesktopBootstrapConfig());
-    });
-    return () => {};
+    return subscribeBrowserBootstrapConfig(listener);
   }
 
   const emit = (payload) => {

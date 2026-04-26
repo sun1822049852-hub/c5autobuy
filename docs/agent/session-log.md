@@ -3267,3 +3267,67 @@
   - `docs/agent/session-log.md` 已更新
   - `docs/agent/memory.md` 本次无需改动
   - `README.md` 已核对，本次无需改动
+
+## 2026-04-26 11:05 (Asia/Shanghai)
+- 背景：魔尊要求修改项目 `AGENTS.md`，把“打开前端/改 UI”任务的默认执行口径改成优先走 Codex 内置浏览器，而不是先拉程序自带前端。
+- 已完成：在项目 `AGENTS.md` 新增“前端预览默认口径”，明确前端/UI任务默认优先使用 Codex app in-app browser；若当前是 CLI 或桌面端没有 Annotating，也先走 `web-only dev server + URL/截图`，仅在桌面壳交互、embedded backend / program access、真实登录态/profile、或问题仅在程序壳复现时才切回 Electron/程序壳；同步把该长期约束提炼到 `docs/agent/memory.md`。
+- 当前进度：项目级协作规则、跨会话记忆与本次会话日志三处已对齐；本轮未改动任何业务代码、启动脚本或验证链路。
+- 下一步：后续凡是 UI/页面类需求，默认先提供可被 Codex 预览的 `localhost` 页面口径，再决定是否需要升级到桌面壳验证；`README.md` 已核对，本次无需改动。
+
+## 2026-04-26 11:10 (Asia/Shanghai)
+- 背景：魔尊在 Codex 内置浏览器打开 `http://127.0.0.1:5173/` 改 UI，但页面一直卡在“本地服务启动中”；现场确认并非 backend 未启动，而是浏览器态没有 Electron `desktopApp` 注入，前端默认 `backendStatus="starting"` 永远不变。
+- 根因：
+  - `app_desktop_web/src/desktop/bridge.js` 在 `window.desktopApp` 缺失时，只返回默认 bootstrap，不会主动探测本地 backend。
+  - `App.jsx` 只有在 `backendStatus === "ready"` 时才会放行 `bootstrapShellOnly()` 与账号中心首页渲染，因此浏览器 preview 会被启动壳锁死。
+- 本轮修改：
+  - `app_desktop_web/tests/renderer/app_remote_bootstrap.test.jsx`
+    - 先补红灯回归：无 Electron 注入时，只要 `http://127.0.0.1:8000/health` 返回 `ready=true`，浏览器态也必须继续拉 `/app/bootstrap` 并解锁账号首页。
+  - `app_desktop_web/src/desktop/bridge.js`
+    - 新增 browser-only fallback：当 `window.desktopApp` 不存在时，前端用默认 `apiBaseUrl` 轮询 `/health`，一旦看到 `ready=true` 就把 bootstrap 回推为 `backendStatus="ready"`。
+    - Electron 分支、remote 模式与 preload 注入契约保持不变。
+- TDD / 验证：
+  - 红灯：
+    - `npm test -- --run tests/renderer/app_remote_bootstrap.test.jsx`
+    - 新增用例先失败，证据是浏览器态从未请求 `/health`，页面一直停在 startup shell。
+  - 绿灯：
+    - 同命令回跑通过，`13 passed`
+  - 真实验尸：
+    - `http://127.0.0.1:8000/health` 返回 `{"status":"ok","ready":true}`
+    - `msedge --headless --dump-dom http://127.0.0.1:5173/`
+    - DOM 中已实际出现 `搜索账号` 与 `代理管理`，说明内置浏览器刷新后可直接进入账号首页，不再卡在加载壳。
+- 文档同步：
+  - `docs/agent/session-log.md` 已更新
+  - `docs/agent/memory.md` 已补充浏览器态 bootstrap fallback 约束
+  - `README.md` 已核对，本次无需改动
+
+## 2026-04-26 11:38 (Asia/Shanghai)
+- 背景：魔尊在内置浏览器直接给了 5 条 UI 批注，要求同步收口账号中心首页与左侧程序账号卡。
+- 本轮修改：
+  - `app_desktop_web/src/program_access/program_access_sidebar_card.jsx`
+    - 左侧收起态眉标改为 `登录状态：`
+    - 删除原 `账号登录` 次标题行
+    - 权限提示改为权限态文案：有远端有效权限时显示 `已授权，可编辑`，否则显示 `无权限，仅只读`
+  - `app_desktop_web/src/features/account-center/account_center_page.jsx`
+    - 首页 hero 文案顺序互换：小字改为 `C5 交易助手`，主标题改为 `账号中心`
+  - `app_desktop_web/src/features/account-center/components/account_table.jsx`
+    - 表头 `浏览器查询` 改为 `浏览器查询（待实现）`
+  - `app_desktop_web/tests/renderer/program_access_sidebar_card.test.jsx`
+    - 补并更新左侧状态卡文案回归
+  - `app_desktop_web/tests/renderer/account_center_page.test.jsx`
+    - 补并更新 hero 文案顺序与新表头回归
+- TDD / 验证：
+  - 红灯：
+    - `npm test -- --run tests/renderer/program_access_sidebar_card.test.jsx tests/renderer/account_center_page.test.jsx`
+    - 初始失败点正好落在旧文案与旧标题顺序
+  - 绿灯：
+    - 同命令回跑通过，`23 passed`
+  - 补充回归：
+    - `npm test -- --run tests/renderer/app_remote_bootstrap.test.jsx`
+      - `13 passed`
+  - 浏览器验尸：
+    - `msedge --headless --dump-dom http://127.0.0.1:5173/`
+    - DOM 已确认出现 `登录状态： / 无权限，仅只读 / 账号中心 / C5 交易助手 / 浏览器查询（待实现）`
+- 文档同步：
+  - `docs/agent/session-log.md` 已更新
+  - `docs/agent/memory.md` 已补充本轮 UI 口径
+  - `README.md` 已核对，本次无需改动
