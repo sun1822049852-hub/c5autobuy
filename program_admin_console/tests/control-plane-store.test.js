@@ -23,6 +23,7 @@ function run() {
   const dockerignorePath = path.join(projectRoot, ".dockerignore");
   const readmePath = path.join(projectRoot, "README.md");
   const adminInitScriptPath = path.join(projectRoot, "tools", "initProgramControlPlaneAdmin.js");
+  const deployScriptPath = path.join(projectRoot, "tools", "deployProgramAdminRemote.ps1");
 
   assert.equal(fs.existsSync(packagePath), true);
   const packageJson = JSON.parse(fs.readFileSync(packagePath, "utf8"));
@@ -32,9 +33,10 @@ function run() {
   assert.equal(packageJson.scripts["test:server"], "node tests/control-plane-server.test.js");
   assert.equal(packageJson.scripts["test:ui"], "node tests/control-plane-ui.test.js");
   assert.equal(packageJson.scripts["test:connect-script"], "node tests/connect-program-admin-console.test.js");
+  assert.equal(packageJson.scripts["test:deploy-script"], "node tests/deploy-program-admin-remote.test.js");
   assert.equal(
     packageJson.scripts.test,
-    "npm run test:mail-config && npm run test:mail-service && npm run test:server-runtime && npm run test:store && npm run test:server && npm run test:ui && npm run test:connect-script"
+    "npm run test:mail-config && npm run test:mail-service && npm run test:server-runtime && npm run test:store && npm run test:server && npm run test:ui && npm run test:connect-script && npm run test:deploy-script"
   );
   assert.equal(packageJson.scripts.start, "node src/server.js");
   assert.equal(packageJson.scripts["admin:init"], "node tools/initProgramControlPlaneAdmin.js");
@@ -70,6 +72,7 @@ function run() {
   assert.doesNotMatch(readme, /\\\s*\r?\n\s*-e\s+PROGRAM_ADMIN_HOST/i);
 
   assert.equal(fs.existsSync(adminInitScriptPath), true);
+  assert.equal(fs.existsSync(deployScriptPath), true);
 
   const missingParentBase = fs.mkdtempSync(path.join(os.tmpdir(), "program-control-plane-missing-parent-"));
   const missingParentDbPath = path.join(missingParentBase, "nested", "db", "control-plane.sqlite");
@@ -230,9 +233,10 @@ function run() {
     const {privateKey} = crypto.generateKeyPairSync("ed25519");
     const signerKeyPath = path.join(dirPath, "entitlement-private.pem");
     fs.writeFileSync(signerKeyPath, privateKey.export({type: "pkcs8", format: "pem"}), "utf8");
+    const signerKeyId = deriveKeyId(privateKey);
     const signer = createEntitlementSigner({
       privateKeyFile: signerKeyPath,
-      keyId: "test-kid",
+      keyId: signerKeyId,
       snapshotTtlMinutes: 10
     });
     const bundle = signer.issueBundle({
@@ -243,7 +247,7 @@ function run() {
         program_access_enabled: true
       }
     });
-    assert.equal(bundle.kid, "test-kid");
+    assert.equal(bundle.kid, signerKeyId);
     assert.equal(typeof bundle.signature, "string");
     assert.equal(bundle.signature.length > 10, true);
     assert.equal(bundle.snapshot.membership_plan, "member");
@@ -259,7 +263,7 @@ function run() {
       action: "runtime.start",
       ttlSeconds: 120
     });
-    assert.equal(runtimePermit.kid, "test-kid");
+    assert.equal(runtimePermit.kid, signerKeyId);
     assert.equal(typeof runtimePermit.signature, "string");
     assert.equal(runtimePermit.signature.length > 10, true);
     assert.equal(runtimePermit.snapshot.action, "runtime.start");
@@ -298,17 +302,35 @@ function run() {
     });
     assert.notEqual(bundleKidA.kid, bundleKidB.kid);
 
-    const explicitKidBundle = signer.issueBundle({
+    const explicitKidSigner = createEntitlementSigner({
+      privateKeyFile: signerKeyPath,
+      keyId: deriveKeyId(privateKey)
+    });
+    const explicitKidBundle = explicitKidSigner.issueBundle({
       user: member,
       deviceId: "device-explicit-kid",
       permissions: memberEntitlements.permissions,
       featureFlags: {}
     });
-    assert.equal(explicitKidBundle.kid, "test-kid");
+    assert.equal(explicitKidBundle.kid, deriveKeyId(privateKey));
+
+    assert.throws(
+      () => createEntitlementSigner({
+        privateKeyFile: signerKeyPath,
+        keyId: `${deriveKeyId(privateKey)}-mismatch`
+      }),
+      /kid/i
+    );
   } finally {
     store.close();
     fs.rmSync(dirPath, {recursive: true, force: true});
   }
+}
+
+function deriveKeyId(privateKey) {
+  const publicDer = crypto.createPublicKey(privateKey).export({type: "spki", format: "der"});
+  const fingerprint = crypto.createHash("sha256").update(publicDer).digest("base64url");
+  return `ed25519:${fingerprint.slice(0, 32)}`;
 }
 
 run();

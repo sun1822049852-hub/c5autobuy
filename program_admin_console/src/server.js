@@ -446,10 +446,6 @@ function createServer({
               verify_code: "/api/auth/register/verify-code",
               complete: "/api/auth/register/complete"
             }
-          },
-          legacy: {
-            send_code: "/api/auth/email/send-code",
-            register: "/api/auth/register"
           }
         });
         return;
@@ -660,25 +656,6 @@ function createServer({
         }
 
         writeError(res, 404, "not_found", "route not found");
-        return;
-      }
-
-      if (req.method === "POST" && pathname === "/api/auth/email/send-code") {
-        const body = await readJsonBody(req);
-        const email = toText(body && body.email).toLowerCase();
-        if (!isValidEmail(email)) {
-          writeError(res, 400, "email_invalid", "email is invalid");
-          return;
-        }
-        const sent = await sendEmailCode({
-          email,
-          scene: "register"
-        });
-        if (!sent.ok) {
-          writeError(res, sent.status, sent.reason, sent.message);
-          return;
-        }
-        writeJson(res, 200, {ok: true, expires_in_seconds: sent.expires_in_seconds});
         return;
       }
 
@@ -1005,52 +982,6 @@ function createServer({
             access_bundle: buildUserBundle(user, deviceId),
             user
           }
-        });
-        return;
-      }
-
-      if (req.method === "POST" && pathname === "/api/auth/register") {
-        const body = await readJsonBody(req);
-        const email = toText(body && body.email).toLowerCase();
-        const code = toText(body && body.code);
-        const username = toText(body && body.username);
-        const password = toText(body && body.password);
-        if (!isValidEmail(email) || !code || !username || !password) {
-          writeError(res, 400, "register_payload_invalid", "register payload invalid");
-          return;
-        }
-        if (!isValidUsernameV(username)) {
-          writeError(res, 400, "username_invalid", "用户名格式无效");
-          return;
-        }
-        if (!isStrongPasswordV(password)) {
-          writeError(res, 400, "password_weak", "密码强度不足，需至少8位且包含字母和数字");
-          return;
-        }
-        const verified = store.verifyEmailCode({
-          email,
-          scene: "register",
-          code,
-          now: now()
-        });
-        if (!verified.ok) {
-          writeError(res, 400, verified.reason, "email code invalid");
-          return;
-        }
-        if (store.getClientUserByEmail(email) || store.getClientUserByUsername(username)) {
-          writeError(res, 409, "user_already_exists", "user already exists");
-          return;
-        }
-        const user = store.createClientUser({
-          email,
-          username,
-          password,
-          membershipPlan: "inactive",
-          now: now()
-        });
-        writeJson(res, 200, {
-          ok: true,
-          user
         });
         return;
       }

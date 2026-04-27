@@ -8,6 +8,7 @@ function run() {
   assert.equal(defaultConfig.smtpHost, "smtp.qq.com");
   assert.equal(defaultConfig.smtpPort, 465);
   assert.equal(defaultConfig.smtpSecure, true);
+  assert.equal(defaultConfig.keyId, "");
   assert.equal(defaultConfig.fromName, "C5 交易助手");
   assert.equal(defaultConfig.fromAddress, "");
 

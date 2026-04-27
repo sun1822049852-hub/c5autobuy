@@ -34,7 +34,7 @@ function getMailConfig(env = process.env) {
     adminSessionHours: toNumber(env.PROGRAM_ADMIN_ADMIN_SESSION_HOURS, 12),
     snapshotTtlMinutes: toNumber(env.PROGRAM_ADMIN_SNAPSHOT_TTL_MINUTES, 30),
     runtimePermitTtlSeconds: toNumber(env.PROGRAM_ADMIN_RUNTIME_PERMIT_TTL_SECONDS, 120),
-    keyId: toText(env.PROGRAM_ADMIN_SIGNING_KID) || "ed25519-2026-04",
+    keyId: toText(env.PROGRAM_ADMIN_SIGNING_KID),
     privateKeyFile: toText(env.PROGRAM_ADMIN_PRIVATE_KEY_FILE),
     provider: "qq",
     fromName: toText(env.MAIL_FROM_NAME) || "C5 交易助手",

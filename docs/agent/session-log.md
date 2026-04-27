@@ -4200,3 +4200,64 @@
   - 远端 control plane 仓库与现网上的 legacy `/api/auth/register` 本轮未删除、也未做远端同步。当前删掉的是“桌面本地注册调用链”，不是“现网 control plane 旧接口已下线”。
 - 下一步：
   - 若魔尊要把“删 v2 register”继续推进到远端 control plane，则下一轮必须单独触达 `program_admin_console/src/server.js`，并按项目纪律完成远端源码同步、容器替换与 smoke；否则当前只可宣称“本地桌面已删旧链，远端旧接口未复验/未下线”。
+
+## 2026-04-27 14:36 (Asia/Shanghai)
+- 背景：魔尊要求继续会员链，但只允许单独推进“远端 `program_admin_console` legacy `/api/auth/register` 下线 + 远端同步与 smoke”，并明确不要卷入 purchase runtime 并行脏改；本轮同时允许多 agent 并行。
+- 已完成：
+  - 先并行盘点本地 control plane 旧路由影响面与远端 deploy/smoke 口径，确认真正未收口的是远端 control plane 仍保留 legacy `/api/auth/register`，而本地桌面 `HTTPS+CA fail-closed` 与本地 `v2 register` 删除都无需重做。
+  - 按 TDD 先把 `program_admin_console/tests/control-plane-server.test.js` 切到“纯 v3 + legacy `/api/auth/register` 必须 404/405 + capability 不再暴露 legacy”的新基线，再最小修改 `program_admin_console/src/server.js`：删除 `GET /api/auth/register/capability` 中的 legacy 摘要，并删除真正的 legacy `POST /api/auth/register` 路由分支。
+  - 为适配远端 control plane 已改成三步注册返回 auth session，重写 server focused test 里的 Alice/Bob/Carol 注册流，改为统一走 `send-code / verify-code / complete`，并修正由此引出的刷新 token、验证码序号、install cooldown 断言。
+  - 远端同步前撞到 `program_admin_console/tools/deployProgramAdminRemote.ps1` 自身 bug：生成的远端 bash 脚本里 `$TMPDIR/$SOURCE_DIR/$TARBALL` 被 PowerShell here-string 提前吃空，导致远端执行成裸 `mkdir -p`。本轮先补 `program_admin_console/tests/deploy-program-admin-remote.test.js` 回归，锁定“生成出的 bash 脚本必须保留这些 bash 变量”，再修复脚本转义并回归。
+  - 使用仓库既定脚本完成远端同步：`deployProgramAdminRemote.ps1 -DryRun` 成功读出现网 image/env/signing kid；正式执行后成功重建并替换远端 `c5-program-admin` 容器，脚本 loopback smoke 与额外 HTTPS/loopback smoke 均通过。
+  - README 已核对，本轮无需改动。
+- 已做验证：
+  - 红灯：
+    - `node program_admin_console/tests/control-plane-server.test.js` -> 先红在 legacy `/api/auth/register` 仍在线。
+    - `node program_admin_console/tests/deploy-program-admin-remote.test.js` -> 先红在生成的远端 bash 脚本缺失 `$TMPDIR` 等 bash 变量。
+  - 绿灯：
+    - `node program_admin_console/tests/control-plane-server.test.js` -> `control-plane-server tests passed`
+    - `node program_admin_console/tests/control-plane-ui.test.js` -> `control-plane-ui tests passed`
+    - `node program_admin_console/tests/deploy-program-admin-remote.test.js` -> 通过
+    - `npm --prefix program_admin_console test` -> 全量通过
+  - 远端 deploy / smoke：
+    - `powershell -ExecutionPolicy Bypass -File program_admin_console/tools/deployProgramAdminRemote.ps1 -DryRun` -> 成功输出 `CURRENT_IMAGE`、`CURRENT_SIGNING_KID`、`DERIVED_SIGNING_KID`
+    - `powershell -ExecutionPolicy Bypass -File program_admin_console/tools/deployProgramAdminRemote.ps1` -> 成功输出 `DEPLOYED_IMAGE=c5-program-admin:deploy-20260427_143501`
+    - 远端 loopback：`GET http://127.0.0.1:18787/api/health` / `/api/admin/session` / `/admin` / `/admin/app.js` / `/admin/styles.css` 全部 `200`
+    - 用户入口 HTTPS：`GET https://8.138.39.139/api/health` -> `200`；`GET /api/auth/public-key` -> `200` 且 `kid=ed25519:M_bnr_KmvBsQLcu9qOojn9NeB1bmCOpe`；`GET /api/auth/register/readiness` -> `200` 且 `registration_flow_version=3`；`GET /admin` -> `404`
+    - 旧接口下线验尸：`POST https://8.138.39.139/api/auth/register` -> `404 {"ok":false,"reason":"not_found","message":"route not found"}`；远端 loopback `POST http://127.0.0.1:18787/api/auth/register` 同样 `404`
+- 当前进度：
+  - 远端 `program_admin_console` 已完成 legacy `/api/auth/register` 下线，现网 control plane 只剩 v3 `send-code / verify-code / complete` 注册链；HTTPS auth gateway 与 loopback 容器口径均已对齐。
+  - 本轮为了完成远端同步，顺手修复了 `deployProgramAdminRemote.ps1` 的 here-string bash 变量转义 bug，并补了对应回归测试。
+  - purchase runtime 那批并行脏改仍未触碰。
+- 下一步：
+  - 若继续会员链，可再决定是否要连带下线旧 `/api/auth/email/send-code` 或继续收窄 control plane 其它 legacy 口径；若不继续，本轮已经满足“远端 legacy `/api/auth/register` 下线 + 同步 + smoke”。
+
+## 2026-04-27 15:00 (Asia/Shanghai)
+- 背景：魔尊继续追问 legacy `/api/auth/email/send-code` 是否已经停止使用，并要求若已脱离真实会员链，就和 control plane 一起下线。
+- 已完成：
+  - 先并行盘点仓内调用面，确认真实桌面会员注册主链已经全量走 v3 `register/send-code -> verify-code -> complete`，找回密码独立走 `password/send-reset-code`；`/api/auth/email/send-code` 只剩 `program_admin_console/src/server.js` 旧路由、`control-plane-server.test.js` 两处 legacy 测试，以及 `program_admin_console/README.md` 的旧说明残留。
+  - 按 TDD 先把 `program_admin_console/tests/control-plane-server.test.js` 改成新基线：legacy `/api/auth/email/send-code` 必须 `404/405`，而“邮件服务未配置/发信失败”的注册链验证改走 v3 `/api/auth/register/send-code`，找回密码继续验证 `/api/auth/password/send-reset-code` 不受影响。
+  - 最小修改 `program_admin_console/src/server.js`，删除 legacy `POST /api/auth/email/send-code` 路由；`sendEmailCode()` helper 保留给找回密码使用，不碰 reset 链。
+  - `program_admin_console/README.md` 已同步更新为“注册发码走 `/api/auth/register/send-code`，找回密码走 `/api/auth/password/send-reset-code`”的新口径。
+  - `program_admin_console/tools/deployProgramAdminRemote.ps1` 的 loopback / HTTPS smoke 也已一起收口：新增 `GET /api/auth/register/capability` 正向验证，以及 legacy `POST /api/auth/email/send-code` 必须 `404/405` 的负向验证，防止旧发码口未来静默复活。
+  - 使用既有 deploy 脚本再次完成远端同步，现网容器已替换为 `c5-program-admin:deploy-20260427_150000`。
+- 已做验证：
+  - 本地：
+    - `node program_admin_console/tests/control-plane-server.test.js` -> `control-plane-server tests passed`
+    - `npm --prefix program_admin_console test` -> 全量通过
+  - 远端 deploy / loopback：
+    - `powershell -ExecutionPolicy Bypass -File program_admin_console/tools/deployProgramAdminRemote.ps1 -DryRun` -> 成功读出现网 image / signing kid
+    - `powershell -ExecutionPolicy Bypass -File program_admin_console/tools/deployProgramAdminRemote.ps1` -> 成功输出 `DEPLOYED_IMAGE=c5-program-admin:deploy-20260427_150000`
+    - 脚本 loopback smoke：`GET http://127.0.0.1:18787/api/health` / `/api/admin/session` / `/admin` / `/admin/app.js` / `/admin/styles.css` / `/api/auth/register/capability` 全部 `200`；`POST http://127.0.0.1:18787/api/auth/email/send-code` -> `404`
+  - 额外 HTTPS / loopback 验尸：
+    - `GET https://8.138.39.139/api/auth/register/readiness` -> `200`，`registration_flow_version=3`
+    - `GET https://8.138.39.139/api/auth/register/capability` -> `200`，只剩 `registration_v3`，不再含 `legacy`
+    - `POST https://8.138.39.139/api/auth/email/send-code` -> `404 {"ok":false,"reason":"not_found","message":"route not found"}`
+    - `GET https://8.138.39.139/admin` -> `404`
+    - 远端 loopback `POST http://127.0.0.1:18787/api/auth/email/send-code` 同样 `404`
+- 当前进度：
+  - 现网 control plane 对外注册入口已进一步收口到纯 v3：旧 `/api/auth/register` 与旧 `/api/auth/email/send-code` 都已下线。
+  - password reset 链仍正常保留在 `/api/auth/password/send-reset-code`，未被误伤。
+  - purchase/runtime 并行脏改继续保持冻结。
+- 下一步：
+  - 若继续会员链，可再决定是否还要收窄其它 legacy 文档或外部兼容口径；若不继续，本轮已完成“legacy register + legacy email/send-code”双下线与远端同步。

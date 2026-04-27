@@ -16,6 +16,52 @@
 - 下文保留的公网 IP / `0.0.0.0` 示例主要用于历史 rollout 或一般性部署说明，不代表当前现网推荐姿势
 - 后续若要让桌面端程序会员链路直连远端 API，必须先单独提供新的公网 API 入口（域名 / 反向代理 / 新配置迁移），不能再靠“临时重新开放 `18787` 公网监听”硬顶
 
+## 给不懂代码的说明
+
+如果你主要让 AI 维护，不自己碰代码或服务器，只需要记住这几件事：
+
+- 这个后台真正跑在远端服务器容器里，本地改完代码不等于远端已经生效。
+- AI 每次改 `program_admin_console`，都应该同时做三件事：同步远端源码、重建远端 `c5-program-admin` 容器、跑 smoke 验证。
+- 如果 AI 只说“本地代码改好了”，但没有给出远端 `health`、`public-key`、`/admin` 或静态资源的验证结果，就不算真正完成。
+- 你不需要自己 SSH 上服务器；默认由 AI 完成。
+- 你真正需要关心的是“远端现在是否健康、程序会员注册/登录是否正常”，不是代码文件名。
+
+## 远端部署脚本
+
+当前仓库已提供一个给 AI 复用的远端部署入口：
+
+- `program_admin_console/tools/deployProgramAdminRemote.ps1`
+
+它的职责是把“同步源码 -> 基于远端源码重建镜像 -> 按现网容器口径替换 -> 跑基础 smoke”这套动作固定下来，减少以后手工敲命令时漏挂密钥、漏配环境变量或忘记验收的风险。
+
+这个脚本有两个关键特点：
+
+- 不在仓库里硬编码 SMTP 密码或其他远端 secret；它会复用当前远端容器已有的环境变量口径。
+- 会先读取远端私钥，再自动派生正确的 `PROGRAM_ADMIN_SIGNING_KID`，避免再次出现“注册完成后 `program_snapshot_invalid`”这种签名漂移问题。
+
+只看计划、不真正修改远端：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File program_admin_console/tools/deployProgramAdminRemote.ps1 -DryRun
+```
+
+真正执行远端更新：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File program_admin_console/tools/deployProgramAdminRemote.ps1
+```
+
+默认成功收口时，脚本至少应输出这些关键信息：
+
+- `REMOTE_CONTAINER=...`
+- `DEPLOYED_IMAGE=...`
+- `DERIVED_SIGNING_KID=...`
+
+如果这轮改动命中注册、签名、公钥链路，AI 还应额外确认：
+
+- `GET /api/auth/public-key` 返回的 `kid` 与脚本输出的 `DERIVED_SIGNING_KID` 一致
+- 必要时再做一次 `register/complete` 深 smoke，而不是只看 `health`
+
 ## 桌面端安全公网接入口径
 
 若目标是“用户端可直连 program access 服务，同时不把后台管理面暴露出去”，推荐口径固定为：
@@ -147,7 +193,7 @@ npm --prefix program_admin_console start
 - `QQ_SMTP_USER`
 - `QQ_SMTP_PASS`
 
-仅当 `MAIL_FROM + QQ_SMTP_USER + QQ_SMTP_PASS` 都已配置时，注册验证码与找回密码验证码才会真正发信；否则 `/api/auth/email/send-code` 与 `/api/auth/password/send-reset-code` 会返回 `mail_service_not_configured`。
+仅当 `MAIL_FROM + QQ_SMTP_USER + QQ_SMTP_PASS` 都已配置时，注册验证码与找回密码验证码才会真正发信；否则 `/api/auth/register/send-code` 与 `/api/auth/password/send-reset-code` 会分别返回注册链/找回密码链对应的“邮件服务不可用”错误。
 
 ## 初始化或重置管理员密码（CLI）
 

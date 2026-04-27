@@ -45,6 +45,15 @@ function deriveKeyId(privateKey) {
   return `ed25519:${fingerprint.slice(0, 32)}`;
 }
 
+function resolveKeyId(privateKey, keyId = "") {
+  const explicitKeyId = toText(keyId);
+  const derivedKeyId = deriveKeyId(privateKey);
+  if (explicitKeyId && explicitKeyId !== derivedKeyId) {
+    throw new Error(`configured signing kid "${explicitKeyId}" does not match derived kid "${derivedKeyId}"`);
+  }
+  return explicitKeyId || derivedKeyId;
+}
+
 function createEntitlementSigner({
   privateKeyFile = "",
   keyId = "",
@@ -56,7 +65,7 @@ function createEntitlementSigner({
 } = {}) {
   const privateKey = resolvePrivateKey(privateKeyFile);
   const publicKey = crypto.createPublicKey(privateKey);
-  const resolvedKid = toText(keyId) || deriveKeyId(privateKey);
+  const resolvedKid = resolveKeyId(privateKey, keyId);
   const publicKeyPem = publicKey.export({type: "spki", format: "pem"}).toString("utf8");
 
   function signSnapshot(snapshot) {

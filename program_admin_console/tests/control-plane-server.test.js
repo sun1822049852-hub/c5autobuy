@@ -50,8 +50,7 @@ async function startServer(options = {}) {
     configured: true,
     authCodeTtlMinutes: 5,
     refreshSessionDays: 30,
-    adminSessionHours: 12,
-    keyId: "ed25519-2026-04"
+    adminSessionHours: 12
   };
   const server = createServer({
     dbPath,
@@ -91,22 +90,70 @@ async function stopServer(ctx) {
   fs.rmSync(ctx.tempDir, {recursive: true, force: true});
 }
 
+async function registerUserViaV3(ctx, {
+  email,
+  installId,
+  username,
+  password,
+  deviceId
+}) {
+  const sendCode = await requestJson(ctx, "POST", "/api/auth/register/send-code", {
+    email,
+    install_id: installId
+  });
+  assert.equal(sendCode.status, 200);
+  assert.equal(sendCode.body.ok, true);
+  assert.equal(typeof sendCode.body.register_session_id, "string");
+
+  const latestCode = ctx.sentMessages[ctx.sentMessages.length - 1].code;
+  const verifyCode = await requestJson(ctx, "POST", "/api/auth/register/verify-code", {
+    email,
+    code: latestCode,
+    register_session_id: sendCode.body.register_session_id,
+    install_id: installId
+  });
+  assert.equal(verifyCode.status, 200);
+  assert.equal(verifyCode.body.ok, true);
+  assert.equal(typeof verifyCode.body.verification_ticket, "string");
+
+  const complete = await requestJson(ctx, "POST", "/api/auth/register/complete", {
+    email,
+    verification_ticket: verifyCode.body.verification_ticket,
+    username,
+    password,
+    install_id: installId,
+    device_id: deviceId
+  });
+  assert.equal(complete.status, 200);
+  assert.equal(complete.body.ok, true);
+  return {
+    sendCode,
+    verifyCode,
+    complete
+  };
+}
+
 async function main() {
   const notConfiguredCtx = await startServer({
     mailConfig: {
       configured: false,
       authCodeTtlMinutes: 5,
       refreshSessionDays: 30,
-      adminSessionHours: 12,
-      keyId: "ed25519-2026-04"
+      adminSessionHours: 12
     }
   });
   try {
-    const sendCodeWithoutMail = await requestJson(notConfiguredCtx, "POST", "/api/auth/email/send-code", {
+    const legacySendCodeWithoutMail = await requestJson(notConfiguredCtx, "POST", "/api/auth/email/send-code", {
       email: "nomail@example.com"
     });
-    assert.equal(sendCodeWithoutMail.status, 503);
-    assert.equal(sendCodeWithoutMail.body.reason, "mail_service_not_configured");
+    assert.ok([404, 405].includes(legacySendCodeWithoutMail.status));
+
+    const registerSendCodeWithoutMail = await requestJson(notConfiguredCtx, "POST", "/api/auth/register/send-code", {
+      email: "nomail@example.com",
+      install_id: "install_nomail"
+    });
+    assert.equal(registerSendCodeWithoutMail.status, 503);
+    assert.equal(registerSendCodeWithoutMail.body.error_code, "REGISTER_SERVICE_UNAVAILABLE");
 
     const sendResetWithoutMail = await requestJson(notConfiguredCtx, "POST", "/api/auth/password/send-reset-code", {
       email: "nomail@example.com"
@@ -127,11 +174,17 @@ async function main() {
     }
   });
   try {
-    const failedSend = await requestJson(failedMailCtx, "POST", "/api/auth/email/send-code", {
+    const failedLegacySend = await requestJson(failedMailCtx, "POST", "/api/auth/email/send-code", {
       email: "failed@example.com"
     });
-    assert.equal(failedSend.status, 502);
-    assert.equal(failedSend.body.reason, "mail_send_failed");
+    assert.ok([404, 405].includes(failedLegacySend.status));
+
+    const failedRegisterSend = await requestJson(failedMailCtx, "POST", "/api/auth/register/send-code", {
+      email: "failed@example.com",
+      install_id: "install_failed"
+    });
+    assert.equal(failedRegisterSend.status, 503);
+    assert.equal(failedRegisterSend.body.error_code, "REGISTER_SERVICE_UNAVAILABLE");
 
     const registerAfterFailedSend = await requestJson(failedMailCtx, "POST", "/api/auth/register", {
       email: "failed@example.com",
@@ -139,8 +192,7 @@ async function main() {
       username: "failed_user",
       password: "Secret123!"
     });
-    assert.equal(registerAfterFailedSend.status, 400);
-    assert.equal(registerAfterFailedSend.body.reason, "email_code_invalid");
+    assert.ok([404, 405].includes(registerAfterFailedSend.status));
   } finally {
     await stopServer(failedMailCtx);
   }
@@ -154,8 +206,20 @@ async function main() {
     const publicKey = await requestJson(ctx, "GET", "/api/auth/public-key");
     assert.equal(publicKey.status, 200);
     assert.equal(publicKey.body.ok, true);
-    assert.equal(publicKey.body.kid, "ed25519-2026-04");
+    assert.match(publicKey.body.kid, /^ed25519:/);
     assert.match(publicKey.body.public_key_pem, /BEGIN PUBLIC KEY/);
+    const issuedKid = publicKey.body.kid;
+
+    const registerCapability = await requestJson(ctx, "GET", "/api/auth/register/capability");
+    assert.equal(registerCapability.status, 200);
+    assert.equal(registerCapability.body.ok, true);
+    assert.equal(registerCapability.body.registration_flow_version, 3);
+    assert.deepEqual(registerCapability.body.registration_v3.endpoints, {
+      send_code: "/api/auth/register/send-code",
+      verify_code: "/api/auth/register/verify-code",
+      complete: "/api/auth/register/complete"
+    });
+    assert.equal(Object.prototype.hasOwnProperty.call(registerCapability.body, "legacy"), false);
 
     assert.equal((await requestJson(ctx, "GET", "/api/admin/session")).body.needs_bootstrap, true);
 
@@ -191,60 +255,29 @@ async function main() {
     assert.equal(adminSession.body.authenticated, true);
     assert.equal(adminSession.body.user.username, "admin");
 
-    const sendCode = await requestJson(ctx, "POST", "/api/auth/email/send-code", {
-      email: "alice@example.com"
-    });
-    assert.equal(sendCode.status, 200);
-    assert.equal(sendCode.body.ok, true);
-    assert.equal(ctx.sentMessages.length, 1);
-    assert.equal(ctx.sentMessages[0].code, "123456");
-
-    const resendCode = await requestJson(ctx, "POST", "/api/auth/email/send-code", {
-      email: "alice@example.com"
-    });
-    assert.equal(resendCode.status, 200);
-    assert.equal(resendCode.body.ok, true);
-    assert.equal(ctx.sentMessages.length, 2);
-    assert.equal(ctx.sentMessages[1].code, "654321");
-
-    const registerWithOldCode = await requestJson(ctx, "POST", "/api/auth/register", {
+    const registerAlice = await registerUserViaV3(ctx, {
       email: "alice@example.com",
-      code: "123456",
-      username: "alice",
-      password: "Secret123!"
-    });
-    assert.equal(registerWithOldCode.status, 400);
-    assert.equal(registerWithOldCode.body.reason, "email_code_invalid");
-
-    const register = await requestJson(ctx, "POST", "/api/auth/register", {
-      email: "alice@example.com",
-      code: "654321",
-      username: "alice",
-      password: "Secret123!"
-    });
-    assert.equal(register.status, 200);
-    assert.equal(register.body.ok, true);
-    assert.equal(register.body.user.membership_plan, "inactive");
-    assert.equal((await requestJson(ctx, "POST", "/api/auth/register", {
-      email: "alice@example.com",
-      code: "654321",
-      username: "alice",
-      password: "Secret123!"
-    })).status, 400);
-
-    const login = await requestJson(ctx, "POST", "/api/auth/login", {
+      installId: "install_alpha",
       username: "alice",
       password: "Secret123!",
-      device_id: "device_alpha"
+      deviceId: "device_alpha"
     });
-    assert.equal(login.status, 200);
-    assert.equal(login.body.ok, true);
-    assert.equal(login.body.access_bundle.snapshot.permissions.includes("program_access_enabled"), false);
-    assert.equal(login.body.access_bundle.snapshot.feature_flags.program_access_enabled, false);
-    assert.equal(login.body.access_bundle.kid, "ed25519-2026-04");
+    assert.equal(ctx.sentMessages.length, 1);
+    assert.equal(ctx.sentMessages[0].code, "123456");
+    assert.equal(registerAlice.complete.body.account_summary.membership_plan, "inactive");
+    assert.equal(registerAlice.complete.body.auth_session.access_bundle.snapshot.permissions.includes("program_access_enabled"), false);
+    assert.equal(registerAlice.complete.body.auth_session.access_bundle.snapshot.feature_flags.program_access_enabled, false);
+    assert.equal(registerAlice.complete.body.auth_session.access_bundle.kid, issuedKid);
+
+    assert.ok([404, 405].includes((await requestJson(ctx, "POST", "/api/auth/register", {
+      email: "alice@example.com",
+      code: "654321",
+      username: "alice",
+      password: "Secret123!"
+    })).status));
 
     const runtimePermitDenied = await requestJson(ctx, "POST", "/api/auth/runtime-permit", {
-      refresh_token: login.body.refresh_token,
+      refresh_token: registerAlice.complete.body.auth_session.refresh_token,
       device_id: "device_alpha",
       action: "runtime.start"
     });
@@ -270,12 +303,12 @@ async function main() {
     assert.equal(upgraded.body.entitlements.permissions.includes("program_access_enabled"), true);
 
     const refreshed = await requestJson(ctx, "POST", "/api/auth/refresh", {
-      refresh_token: login.body.refresh_token,
+      refresh_token: registerAlice.complete.body.auth_session.refresh_token,
       device_id: "device_alpha"
     });
     assert.equal(refreshed.status, 200);
     assert.equal(refreshed.body.ok, true);
-    assert.notEqual(refreshed.body.refresh_token, login.body.refresh_token);
+    assert.notEqual(refreshed.body.refresh_token, registerAlice.complete.body.auth_session.refresh_token);
     assert.equal(refreshed.body.access_bundle.snapshot.permissions.includes("program_access_enabled"), true);
 
     const runtimePermitAllowed = await requestJson(ctx, "POST", "/api/auth/runtime-permit", {
@@ -296,7 +329,7 @@ async function main() {
     assert.equal(runtimePermitInvalidAction.body.reason, "runtime_action_invalid");
 
     const refreshReuse = await requestJson(ctx, "POST", "/api/auth/refresh", {
-      refresh_token: login.body.refresh_token,
+      refresh_token: registerAlice.complete.body.auth_session.refresh_token,
       device_id: "device_alpha"
     });
     assert.equal(refreshReuse.status, 401);
@@ -317,29 +350,14 @@ async function main() {
     // Use the new refreshed token for later tests
     const aliceRefreshToken = reLoginAlice.body.refresh_token;
 
-    const sendBobCode = await requestJson(ctx, "POST", "/api/auth/email/send-code", {
-      email: "bob@example.com"
-    });
-    assert.equal(sendBobCode.status, 200);
-    assert.equal(sendBobCode.body.ok, true);
-    assert.equal(ctx.sentMessages[2].code, "777777");
-
-    const registerBob = await requestJson(ctx, "POST", "/api/auth/register", {
+    const registerBob = await registerUserViaV3(ctx, {
       email: "bob@example.com",
-      code: "777777",
-      username: "bob",
-      password: "Secret123!"
-    });
-    assert.equal(registerBob.status, 200);
-    assert.equal(registerBob.body.ok, true);
-
-    const loginBob = await requestJson(ctx, "POST", "/api/auth/login", {
+      installId: "install_beta",
       username: "bob",
       password: "Secret123!",
-      device_id: "device_beta"
+      deviceId: "device_beta"
     });
-    assert.equal(loginBob.status, 200);
-    assert.equal(loginBob.body.ok, true);
+    assert.equal(ctx.sentMessages[1].code, "654321");
 
     const usersAfterBob = await requestJson(ctx, "GET", "/api/admin/users", null, adminHeaders);
     assert.equal(usersAfterBob.status, 200);
@@ -400,7 +418,7 @@ async function main() {
     assert.equal(revokeBobDevice.body.ok, true);
 
     const bobRefreshAfterRevoke = await requestJson(ctx, "POST", "/api/auth/refresh", {
-      refresh_token: loginBob.body.refresh_token,
+      refresh_token: registerBob.complete.body.auth_session.refresh_token,
       device_id: "device_beta"
     });
     assert.equal(bobRefreshAfterRevoke.status, 401);
@@ -429,47 +447,32 @@ async function main() {
       `expected replayed or not_found, got: ${refreshAfterRevoke.body.reason}`
     );
 
-    const sendCarolCode = await requestJson(ctx, "POST", "/api/auth/email/send-code", {
-      email: "carol@example.com"
-    });
-    assert.equal(sendCarolCode.status, 200);
-    assert.equal(sendCarolCode.body.ok, true);
-    assert.equal(ctx.sentMessages[3].code, "888888");
-
-    const registerCarol = await requestJson(ctx, "POST", "/api/auth/register", {
+    const registerCarol = await registerUserViaV3(ctx, {
       email: "carol@example.com",
-      code: "888888",
-      username: "carol",
-      password: "Secret123!"
-    });
-    assert.equal(registerCarol.status, 200);
-    assert.equal(registerCarol.body.ok, true);
-
-    const loginCarol = await requestJson(ctx, "POST", "/api/auth/login", {
+      installId: "install_gamma",
       username: "carol",
       password: "Secret123!",
-      device_id: "device_gamma"
+      deviceId: "device_gamma"
     });
-    assert.equal(loginCarol.status, 200);
-    assert.equal(loginCarol.body.ok, true);
+    assert.equal(ctx.sentMessages[2].code, "777777");
 
     const resetCarolCode = await requestJson(ctx, "POST", "/api/auth/password/send-reset-code", {
       email: "carol@example.com"
     });
     assert.equal(resetCarolCode.status, 200);
     assert.equal(resetCarolCode.body.ok, true);
-    assert.equal(ctx.sentMessages[4].code, "112233");
+    assert.equal(ctx.sentMessages[3].code, "888888");
 
     const resetCarolPassword = await requestJson(ctx, "POST", "/api/auth/password/reset", {
       email: "carol@example.com",
-      code: "112233",
+      code: "888888",
       new_password: "Secret456!"
     });
     assert.equal(resetCarolPassword.status, 200);
     assert.equal(resetCarolPassword.body.ok, true);
 
     const refreshCarolAfterReset = await requestJson(ctx, "POST", "/api/auth/refresh", {
-      refresh_token: loginCarol.body.refresh_token,
+      refresh_token: registerCarol.complete.body.auth_session.refresh_token,
       device_id: "device_gamma"
     });
     assert.equal(refreshCarolAfterReset.status, 401);
@@ -491,11 +494,11 @@ async function main() {
     });
     assert.equal(resetCode.status, 200);
     assert.equal(resetCode.body.ok, true);
-    assert.equal(ctx.sentMessages[5].code, "445566");
+    assert.equal(ctx.sentMessages[4].code, "112233");
 
     const passwordReset = await requestJson(ctx, "POST", "/api/auth/password/reset", {
       email: "alice@example.com",
-      code: "445566",
+      code: "112233",
       new_password: "Secret456!"
     });
     assert.equal(passwordReset.status, 200);
@@ -535,7 +538,7 @@ async function main() {
 
     const sendRegisterCooldownSeed = await requestJson(ctx, "POST", "/api/auth/register/send-code", {
       email: "cooldown-a@example.com",
-      install_id: "install_alpha"
+      install_id: "install_cooldown"
     });
     assert.equal(sendRegisterCooldownSeed.status, 200);
     assert.equal(sendRegisterCooldownSeed.body.ok, true);
@@ -543,7 +546,7 @@ async function main() {
 
     const sendRegisterCooldownBypass = await requestJson(ctx, "POST", "/api/auth/register/send-code", {
       email: "cooldown-b@example.com",
-      install_id: "install_alpha"
+      install_id: "install_cooldown"
     });
     assert.equal(sendRegisterCooldownBypass.status, 429);
     assert.equal(sendRegisterCooldownBypass.body.error_code, "REGISTER_SEND_RETRY_LATER");

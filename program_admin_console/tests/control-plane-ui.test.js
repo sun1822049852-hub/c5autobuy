@@ -246,8 +246,7 @@ async function startServer() {
         configured: true,
         authCodeTtlMinutes: 5,
         refreshSessionDays: 30,
-        adminSessionHours: 12,
-        keyId: "ed25519-2026-04"
+        adminSessionHours: 12
       };
     },
     mailServiceFactory() {

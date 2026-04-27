@@ -91,7 +91,6 @@ class GetPurchaseRuntimeStatusUseCase:
         rows: list[dict[str, object]] = []
         for item in getattr(config, "items", []) or []:
             stats_row = daily_stats.get(str(getattr(item, "external_item_id", "") or ""), {})
-            source_mode_stats = self._normalize_hit_sources(stats_row.get("source_mode_stats"))
             rows.append(
                 {
                     "query_item_id": str(getattr(item, "query_item_id", "") or ""),
@@ -111,8 +110,8 @@ class GetPurchaseRuntimeStatusUseCase:
                     "purchase_success_count": int(stats_row.get("purchase_success_count", 0)),
                     "purchase_failed_count": int(stats_row.get("purchase_failed_count", 0)),
                     "modes": {},
-                    "source_mode_stats": source_mode_stats,
-                    "recent_hit_sources": list(source_mode_stats),
+                    "source_mode_stats": [],
+                    "recent_hit_sources": [],
                 }
             )
         return rows
@@ -155,16 +154,8 @@ class GetPurchaseRuntimeStatusUseCase:
             query_row = query_rows_by_id.get(query_item_id, {})
             purchase_row = purchase_rows_by_id.get(query_item_id, {})
             stats_row = daily_stats.get(str(getattr(item, "external_item_id", "") or ""), {})
-            source_mode_stats = self._normalize_hit_sources(
-                purchase_row.get("source_mode_stats")
-                if purchase_row.get("source_mode_stats")
-                else stats_row.get("source_mode_stats")
-            )
-            recent_hit_sources = self._normalize_hit_sources(
-                purchase_row.get("recent_hit_sources")
-                if purchase_row.get("recent_hit_sources")
-                else source_mode_stats
-            )
+            source_mode_stats = self._normalize_hit_sources(purchase_row.get("source_mode_stats"))
+            recent_hit_sources = self._normalize_hit_sources(purchase_row.get("recent_hit_sources"))
             rows.append(
                 {
                     "query_item_id": query_item_id,

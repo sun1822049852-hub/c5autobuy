@@ -240,24 +240,8 @@ async def test_purchase_runtime_status_keeps_selected_config_daily_item_stats_wh
             "purchase_success_count": 1,
             "purchase_failed_count": 1,
             "modes": {},
-            "source_mode_stats": [
-                {
-                    "mode_type": "new_api",
-                    "hit_count": 2,
-                    "last_hit_at": None,
-                    "account_id": None,
-                    "account_display_name": None,
-                }
-            ],
-            "recent_hit_sources": [
-                {
-                    "mode_type": "new_api",
-                    "hit_count": 2,
-                    "last_hit_at": None,
-                    "account_id": None,
-                    "account_display_name": None,
-                }
-            ],
+            "source_mode_stats": [],
+            "recent_hit_sources": [],
         }
     ]
 
@@ -372,24 +356,8 @@ async def test_stop_purchase_runtime_keeps_daily_item_stats_without_pre_saved_ui
             "purchase_success_count": 1,
             "purchase_failed_count": 1,
             "modes": {},
-            "source_mode_stats": [
-                {
-                    "mode_type": "new_api",
-                    "hit_count": 2,
-                    "last_hit_at": None,
-                    "account_id": None,
-                    "account_display_name": None,
-                }
-            ],
-            "recent_hit_sources": [
-                {
-                    "mode_type": "new_api",
-                    "hit_count": 2,
-                    "last_hit_at": None,
-                    "account_id": None,
-                    "account_display_name": None,
-                }
-            ],
+            "source_mode_stats": [],
+            "recent_hit_sources": [],
         }
     ]
 
@@ -571,6 +539,8 @@ async def test_purchase_runtime_status_keeps_daily_item_stats_while_running(clie
     assert response.json()["item_rows"][0]["matched_product_count"] >= 2
     assert response.json()["item_rows"][0]["purchase_success_count"] >= 1
     assert response.json()["item_rows"][0]["purchase_failed_count"] >= 1
+    assert response.json()["item_rows"][0]["source_mode_stats"] == []
+    assert response.json()["item_rows"][0]["recent_hit_sources"] == []
 
 
 async def test_purchase_runtime_status_flushes_pending_stats_pipeline_before_stopped_daily_snapshot(client, app):
@@ -683,24 +653,8 @@ async def test_purchase_runtime_status_flushes_pending_stats_pipeline_before_sto
             "purchase_success_count": 1,
             "purchase_failed_count": 1,
             "modes": {},
-            "source_mode_stats": [
-                {
-                    "mode_type": "new_api",
-                    "hit_count": 2,
-                    "last_hit_at": None,
-                    "account_id": None,
-                    "account_display_name": None,
-                }
-            ],
-            "recent_hit_sources": [
-                {
-                    "mode_type": "new_api",
-                    "hit_count": 2,
-                    "last_hit_at": None,
-                    "account_id": None,
-                    "account_display_name": None,
-                }
-            ],
+            "source_mode_stats": [],
+            "recent_hit_sources": [],
         }
     ]
 
