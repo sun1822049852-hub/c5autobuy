@@ -51,6 +51,19 @@ function createDeviceConflictError() {
 }
 
 
+function createRemoteUnavailableError() {
+  const responseText = JSON.stringify({
+    detail: {
+      code: "program_remote_unavailable",
+      message: "program access remote unavailable",
+    },
+  });
+  const error = new Error("program access rejected");
+  error.responseText = responseText;
+  return error;
+}
+
+
 function GuardOutletProbe({ errorFactory }) {
   const {
     lastGuardError,
@@ -84,7 +97,8 @@ function ProgramAuthBridgeProbe() {
   const {
     lastProgramAuthError,
     loginProgramAuth,
-    registerProgramAuth,
+    verifyRegisterCode,
+    completeRegisterProgramAuth,
     refreshProgramAuthStatus,
   } = useProgramAccessGuard();
   const programAccess = useProgramAccess();
@@ -111,17 +125,28 @@ function ProgramAuthBridgeProbe() {
     }
   }
 
-  async function triggerRegister() {
+  async function triggerVerify() {
     try {
-      await registerProgramAuth({
+      await verifyRegisterCode({
         email: "alice@example.com",
         code: "123456",
+      });
+      setStatus("verify-loaded");
+    } catch {
+      setStatus("verify-failed");
+    }
+  }
+
+  async function triggerComplete() {
+    try {
+      await completeRegisterProgramAuth({
+        verificationTicket: "ticket_1",
         username: "alice",
         password: "Secret123!",
       });
-      setStatus("register-loaded");
+      setStatus("complete-loaded");
     } catch {
-      setStatus("register-failed");
+      setStatus("complete-failed");
     }
   }
 
@@ -133,8 +158,11 @@ function ProgramAuthBridgeProbe() {
       <button type="button" onClick={() => void triggerLogin()}>
         trigger program auth login
       </button>
-      <button type="button" onClick={() => void triggerRegister()}>
-        trigger program auth register
+      <button type="button" onClick={() => void triggerVerify()}>
+        trigger program auth verify
+      </button>
+      <button type="button" onClick={() => void triggerComplete()}>
+        trigger program auth complete
       </button>
       <span data-testid="program-auth-status">{status}</span>
       <span data-testid="program-auth-auth-state">{programAccess.authState || "none"}</span>
@@ -148,7 +176,6 @@ function ProgramAuthBridgeProbe() {
 function ProgramAuthRegistrationVersionProbe() {
   const {
     refreshProgramAuthStatus,
-    registerProgramAuth,
     verifyRegisterCode,
     completeRegisterProgramAuth,
   } = useProgramAccessGuard();
@@ -169,7 +196,6 @@ function ProgramAuthRegistrationVersionProbe() {
         load status
       </button>
       <span data-testid="registration-version-status">{status}</span>
-      <span data-testid="has-register-v2">{String(Boolean(registerProgramAuth))}</span>
       <span data-testid="has-register-v3-verify">{String(Boolean(verifyRegisterCode))}</span>
       <span data-testid="has-register-v3-complete">{String(Boolean(completeRegisterProgramAuth))}</span>
     </>
@@ -221,6 +247,20 @@ describe("program access provider", () => {
     expect(screen.queryByText("program_device_conflict")).not.toBeInTheDocument();
   });
 
+  it("surfaces remote control-plane outages through the shared outlet copy", async () => {
+    render(
+      <ProgramAccessProvider>
+        <GuardOutletProbe errorFactory={createRemoteUnavailableError} />
+      </ProgramAccessProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "trigger guard" }));
+
+    expect(await screen.findByText("服务器连接失败请检查网络设置。")).toBeInTheDocument();
+    expect(screen.queryByText("program access remote unavailable")).not.toBeInTheDocument();
+    expect(screen.queryByText("program_remote_unavailable")).not.toBeInTheDocument();
+  });
+
   it("syncs program-auth status into the runtime store through the provider bridge", async () => {
     const store = createAppRuntimeStore();
     const programAuthClient = {
@@ -246,20 +286,6 @@ describe("program access provider", () => {
           runtime_state: "running",
           grace_expires_at: "2026-04-17T08:00:00Z",
           last_error_code: null,
-        },
-      }),
-      registerProgramAuth: async () => ({
-        ok: true,
-        message: "账号已创建，但当前未开通会员",
-        summary: {
-          mode: "remote_entitlement",
-          stage: "packaged_release",
-          guard_enabled: true,
-          message: "请先登录程序会员",
-          auth_state: null,
-          runtime_state: "stopped",
-          grace_expires_at: null,
-          last_error_code: "program_auth_required",
         },
       }),
       logoutProgramAuth: async () => {
@@ -314,9 +340,6 @@ describe("program access provider", () => {
       loginProgramAuth: async () => {
         throw error;
       },
-      registerProgramAuth: async () => {
-        throw new Error("not used");
-      },
       logoutProgramAuth: async () => {
         throw new Error("not used");
       },
@@ -336,7 +359,50 @@ describe("program access provider", () => {
     expect(screen.getByTestId("program-auth-error-code")).toHaveTextContent("program_auth_not_ready");
   });
 
-  it("bridges register actions through the provider and keeps the shared workspace locked", async () => {
+  it("captures non-program login validation errors through the provider bridge", async () => {
+    const store = createAppRuntimeStore();
+    const error = new Error("invalid credentials");
+    error.responseText = JSON.stringify({
+      detail: {
+        code: "invalid_credentials",
+        message: "invalid credentials",
+        action: "program-auth.login",
+      },
+    });
+    const programAuthClient = {
+      getProgramAuthStatus: async () => ({
+        mode: "remote_entitlement",
+        stage: "packaged_release",
+        guard_enabled: true,
+        message: "请先登录程序会员",
+        auth_state: null,
+        runtime_state: "stopped",
+        grace_expires_at: null,
+        last_error_code: "program_auth_required",
+      }),
+      loginProgramAuth: async () => {
+        throw error;
+      },
+      logoutProgramAuth: async () => {
+        throw new Error("not used");
+      },
+    };
+
+    render(
+      <AppRuntimeProvider store={store}>
+        <ProgramAccessProvider programAuthClient={programAuthClient} runtimeStore={store}>
+          <ProgramAuthBridgeProbe />
+        </ProgramAccessProvider>
+      </AppRuntimeProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "trigger program auth login" }));
+
+    expect(await screen.findByTestId("program-auth-status")).toHaveTextContent("login-failed");
+    expect(screen.getByTestId("program-auth-error-code")).toHaveTextContent("invalid_credentials");
+  });
+
+  it("bridges v3 verify/complete actions through the provider and keeps the shared workspace locked", async () => {
     const store = createAppRuntimeStore();
     const programAuthClient = {
       getProgramAuthStatus: async () => ({
@@ -352,7 +418,22 @@ describe("program access provider", () => {
       loginProgramAuth: async () => {
         throw new Error("not used");
       },
-      registerProgramAuth: async () => ({
+      verifyRegisterCode: async () => ({
+        ok: true,
+        message: "验证码已验证",
+        verification_ticket: "ticket_1",
+        summary: {
+          mode: "remote_entitlement",
+          stage: "packaged_release",
+          guard_enabled: true,
+          message: "请先登录程序会员",
+          auth_state: null,
+          runtime_state: "stopped",
+          grace_expires_at: null,
+          last_error_code: "program_auth_required",
+        },
+      }),
+      completeRegisterProgramAuth: async () => ({
         ok: true,
         message: "账号已创建，但当前未开通会员",
         summary: {
@@ -379,14 +460,20 @@ describe("program access provider", () => {
       </AppRuntimeProvider>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "trigger program auth register" }));
+    fireEvent.click(screen.getByRole("button", { name: "trigger program auth verify" }));
 
-    expect(await screen.findByTestId("program-auth-status")).toHaveTextContent("register-loaded");
+    expect(await screen.findByTestId("program-auth-status")).toHaveTextContent("verify-loaded");
+    expect(screen.getByTestId("program-auth-auth-state")).toHaveTextContent("none");
+    expect(screen.getByTestId("program-auth-runtime-state")).toHaveTextContent("stopped");
+
+    fireEvent.click(screen.getByRole("button", { name: "trigger program auth complete" }));
+
+    expect(await screen.findByTestId("program-auth-status")).toHaveTextContent("complete-loaded");
     expect(screen.getByTestId("program-auth-auth-state")).toHaveTextContent("none");
     expect(screen.getByTestId("program-auth-runtime-state")).toHaveTextContent("stopped");
   });
 
-  it("gates the registration flow v3 actions behind registration_flow_version=3", async () => {
+  it("always exposes registration verify/complete actions without registration_flow_version gating", async () => {
     const store = createAppRuntimeStore();
     const programAuthClient = {
       getProgramAuthStatus: async () => ({
@@ -398,12 +485,9 @@ describe("program access provider", () => {
         runtime_state: "stopped",
         grace_expires_at: null,
         last_error_code: "program_auth_required",
-        registration_flow_version: 3,
+        registration_flow_version: 2,
       }),
       loginProgramAuth: async () => {
-        throw new Error("not used");
-      },
-      registerProgramAuth: async () => {
         throw new Error("not used");
       },
       logoutProgramAuth: async () => {
@@ -419,13 +503,12 @@ describe("program access provider", () => {
       </AppRuntimeProvider>,
     );
 
-    expect(screen.getByTestId("has-register-v3-verify")).toHaveTextContent("false");
-    expect(screen.getByTestId("has-register-v3-complete")).toHaveTextContent("false");
+    expect(screen.getByTestId("has-register-v3-verify")).toHaveTextContent("true");
+    expect(screen.getByTestId("has-register-v3-complete")).toHaveTextContent("true");
 
     fireEvent.click(screen.getByRole("button", { name: "load status" }));
 
     expect(await screen.findByTestId("registration-version-status")).toHaveTextContent("status-loaded");
-    expect(screen.getByTestId("has-register-v2")).toHaveTextContent("true");
     expect(screen.getByTestId("has-register-v3-verify")).toHaveTextContent("true");
     expect(screen.getByTestId("has-register-v3-complete")).toHaveTextContent("true");
   });

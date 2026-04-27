@@ -25,13 +25,6 @@ class ProgramAuthRegisterSendCodeRequest(BaseModel):
     email: str
 
 
-class ProgramAuthRegisterRequest(BaseModel):
-    email: str
-    code: str
-    username: str
-    password: str
-
-
 class ProgramAuthRegisterVerifyCodeRequest(BaseModel):
     email: str
     code: str

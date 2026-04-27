@@ -11,7 +11,6 @@ from app_backend.api.schemas.program_auth import (
     ProgramAuthLoginRequest,
     ProgramAuthPasswordResetRequest,
     ProgramAuthPasswordSendResetCodeRequest,
-    ProgramAuthRegisterRequest,
     ProgramAuthRegisterSendCodeRequest,
     ProgramAuthRegisterVerifyCodeRequest,
     ProgramAuthStatusResponse,
@@ -49,6 +48,9 @@ _PROGRAM_AUTH_HTTP_STATUS = {
     "membership_not_enabled": status.HTTP_403_FORBIDDEN,
     "feature_not_enabled": status.HTTP_403_FORBIDDEN,
     "rate_limited": status.HTTP_429_TOO_MANY_REQUESTS,
+    "login_locked": status.HTTP_429_TOO_MANY_REQUESTS,
+    "code_verify_locked": status.HTTP_429_TOO_MANY_REQUESTS,
+    "device_mismatch": status.HTTP_409_CONFLICT,
     "REGISTER_INPUT_INVALID": status.HTTP_400_BAD_REQUEST,
     "REGISTER_SEND_RETRY_LATER": status.HTTP_429_TOO_MANY_REQUESTS,
     "REGISTER_SEND_DENIED": status.HTTP_403_FORBIDDEN,
@@ -204,22 +206,6 @@ def verify_register_code(
             email=payload.email,
             code=payload.code,
             register_session_id=payload.register_session_id,
-        ),
-    )
-
-
-@router.post("/register", response_model=ProgramAuthActionResponse, response_model_exclude_none=True)
-def register_program_auth(
-    payload: ProgramAuthRegisterRequest,
-    request: Request,
-) -> ProgramAuthActionResponse:
-    return _execute_action(
-        action="program-auth.register",
-        invoke=lambda: _gateway(request).register(
-            email=payload.email,
-            code=payload.code,
-            username=payload.username,
-            password=payload.password,
         ),
     )
 

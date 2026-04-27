@@ -104,15 +104,6 @@ class ProgramAccessGateway(Protocol):
         register_session_id: str,
     ) -> ProgramAccessActionResult: ...
 
-    def register(
-        self,
-        *,
-        email: str,
-        code: str,
-        username: str,
-        password: str,
-    ) -> ProgramAccessActionResult: ...
-
     def complete_register(
         self,
         *,

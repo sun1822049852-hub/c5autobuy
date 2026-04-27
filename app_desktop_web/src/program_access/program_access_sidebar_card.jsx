@@ -223,12 +223,17 @@ function hasValidRegisterEmail(email) {
 
 function resolveRegisterErrorMessage(code, fallbackMessage) {
   switch (String(code || "")) {
+    case "program_remote_unavailable":
+    case "program_membership_service_unavailable":
+    case "service_unavailable":
+      return "服务器连接失败请检查网络设置。";
     case "REGISTER_INPUT_INVALID":
       return "请输入有效邮箱地址。";
     case "REGISTER_SEND_RETRY_LATER":
-    case "REGISTER_SEND_DENIED":
     case "REGISTER_SERVICE_UNAVAILABLE":
       return "无法继续注册，请稍后再试。";
+    case "REGISTER_SEND_DENIED":
+      return "当前邮箱无法继续注册，请直接登录或找回密码。";
     case "REGISTER_CODE_INVALID_OR_EXPIRED":
     case "REGISTER_CODE_ATTEMPTS_EXCEEDED":
     case "REGISTER_SESSION_EMAIL_MISMATCH":
@@ -247,6 +252,17 @@ function resolveRegisterErrorMessage(code, fallbackMessage) {
     default:
       return fallbackMessage;
   }
+}
+
+
+function resolveProgramAuthActionFailureMessage(detail, fallbackMessage) {
+  if (detail?.code) {
+    return resolveProgramAccessMessage({
+      code: detail.code,
+      message: detail.message || fallbackMessage,
+    });
+  }
+  return fallbackMessage;
 }
 
 
@@ -281,7 +297,6 @@ export function ProgramAccessSidebarCard({
   loginProgramAuth = noopAsync,
   logoutProgramAuth = noopAsync,
   sendRegisterCode = noopAsync,
-  registerProgramAuth = noopAsync,
   verifyRegisterCode = undefined,
   completeRegisterProgramAuth = undefined,
   sendResetPasswordCode = noopAsync,
@@ -305,8 +320,8 @@ export function ProgramAccessSidebarCard({
   const [formNotice, setFormNotice] = useState("");
   const isLocalPassThrough = access?.mode === "local_pass_through";
   const hasRemoteSession = !isLocalPassThrough && hasRemoteProgramSession(access);
-  const isRegistrationFlowV3 = resolveRegistrationFlowVersion(access) === 3
-    && typeof verifyRegisterCode === "function"
+  const registrationFlowVersion = resolveRegistrationFlowVersion(access);
+  const hasRegisterV3Bridge = typeof verifyRegisterCode === "function"
     && typeof completeRegisterProgramAuth === "function";
   const sidebarAccountLabel = resolveSidebarAccountLabel(access);
   const sidebarHint = resolveSidebarHint(access);
@@ -367,7 +382,7 @@ export function ProgramAccessSidebarCard({
       && authMode !== "register"
       && !isLocalPassThrough
       && !hasRemoteSession
-      && !isRegistrationFlowV3
+      && registrationFlowVersion !== 3
     ) {
       Promise.resolve(refreshProgramAuthStatus()).catch(() => {});
     }
@@ -399,11 +414,11 @@ export function ProgramAccessSidebarCard({
       }
       setFormNotice(String(result?.message || ""));
       return result;
-    } catch {
+    } catch (error) {
       if (!programAuthError) {
         setFormError("程序会员操作失败，请稍后再试。");
       }
-      throw new Error("program access action failed");
+      throw error;
     } finally {
       setBusyAction("");
     }
@@ -442,7 +457,12 @@ export function ProgramAccessSidebarCard({
           });
         },
       });
-    } catch {
+    } catch (error) {
+      const detail = extractProgramAuthActionErrorDetail(error);
+      if (detail) {
+        setFormError(resolveProgramAuthActionFailureMessage(detail, "程序会员登录失败"));
+        return;
+      }
       setFormError("程序会员登录暂不可用，请稍后再试。");
     }
   }
@@ -495,6 +515,11 @@ export function ProgramAccessSidebarCard({
   }
 
   async function handleVerifyRegisterCode() {
+    if (typeof verifyRegisterCode !== "function") {
+      setFormError("注册链路暂未就绪，请稍后再试。");
+      return;
+    }
+
     const email = registerSessionEmail || registerForm.email.trim();
     const code = registerForm.code.trim();
 
@@ -570,87 +595,63 @@ export function ProgramAccessSidebarCard({
   }
 
   async function handleRegisterSubmit() {
-    if (isRegistrationFlowV3) {
-      const email = registerSessionEmail || registerForm.email.trim();
-      const username = registerForm.username.trim();
-      const password = registerForm.password;
-
-      if (!username || !password) {
-        setFormError("请先填写完整的注册信息。");
-        return;
-      }
-
-      clearLocalFeedback();
-      setBusyAction("complete-register");
-      try {
-        const result = await completeRegisterProgramAuth({
-          email,
-          verificationTicket,
-          username,
-          password,
-        });
-        const nextAccess = resolveProgramAccessSummary(result?.summary, access);
-        setVerificationTicket("");
-        setRegisterForm((current) => ({
-          ...current,
-          email,
-          username: "",
-          password: "",
-        }));
-        setFormNotice(String(result?.message || ""));
-        setLoginForm((current) => ({
-          ...current,
-          username,
-        }));
-        if (hasRemoteProgramSession(nextAccess)) {
-          resetRegisterFlow();
-          setAuthMode("login");
-          setIsDialogOpen(false);
-          return;
-        }
-        setRegisterStep(REGISTER_STEP_SUCCESS);
-      } catch (error) {
-        const detail = extractProgramAuthActionErrorDetail(error);
-        if (String(detail?.code || "") === "REGISTER_TICKET_INVALID_OR_EXPIRED") {
-          setVerificationTicket("");
-          setRegisterStep(REGISTER_STEP_CODE);
-          setRegisterForm((current) => ({
-            ...current,
-            username: "",
-            password: "",
-          }));
-        }
-        setFormError(resolveRegisterErrorMessage(detail?.code, "注册失败，请稍后再试。"));
-      } finally {
-        setBusyAction("");
-      }
+    if (!hasRegisterV3Bridge) {
+      setFormError("注册链路暂未就绪，请稍后再试。");
       return;
     }
 
-    const payload = {
-      email: registerForm.email.trim(),
-      code: registerForm.code.trim(),
-      username: registerForm.username.trim(),
-      password: registerForm.password,
-    };
+    const email = registerSessionEmail || registerForm.email.trim();
+    const username = registerForm.username.trim();
+    const password = registerForm.password;
 
-    if (!payload.email || !payload.code || !payload.username || !payload.password) {
+    if (!username || !password) {
       setFormError("请先填写完整的注册信息。");
       return;
     }
 
+    clearLocalFeedback();
+    setBusyAction("complete-register");
     try {
-      await runFormAction("register", () => registerProgramAuth(payload), {
-        onSuccess() {
-          setRegisterForm((current) => ({
-            ...current,
-            code: "",
-            password: "",
-          }));
-        },
+      const result = await completeRegisterProgramAuth({
+        email,
+        verificationTicket,
+        username,
+        password,
       });
-    } catch {
-      setFormError("注册失败，请稍后再试。");
+      const nextAccess = resolveProgramAccessSummary(result?.summary, access);
+      setVerificationTicket("");
+      setRegisterForm((current) => ({
+        ...current,
+        email,
+        username: "",
+        password: "",
+      }));
+      setFormNotice(String(result?.message || ""));
+      setLoginForm((current) => ({
+        ...current,
+        username,
+      }));
+      if (hasRemoteProgramSession(nextAccess)) {
+        resetRegisterFlow();
+        setAuthMode("login");
+        setIsDialogOpen(false);
+        return;
+      }
+      setRegisterStep(REGISTER_STEP_SUCCESS);
+    } catch (error) {
+      const detail = extractProgramAuthActionErrorDetail(error);
+      if (String(detail?.code || "") === "REGISTER_TICKET_INVALID_OR_EXPIRED") {
+        setVerificationTicket("");
+        setRegisterStep(REGISTER_STEP_CODE);
+        setRegisterForm((current) => ({
+          ...current,
+          username: "",
+          password: "",
+        }));
+      }
+      setFormError(resolveRegisterErrorMessage(detail?.code, "注册失败，请稍后再试。"));
+    } finally {
+      setBusyAction("");
     }
   }
 
@@ -663,8 +664,9 @@ export function ProgramAccessSidebarCard({
 
     try {
       await runFormAction("send-reset-password-code", () => sendResetPasswordCode({ email }));
-    } catch {
-      setFormError("找回密码验证码发送失败，请稍后再试。");
+    } catch (error) {
+      const detail = extractProgramAuthActionErrorDetail(error);
+      setFormError(resolveProgramAuthActionFailureMessage(detail, "找回密码验证码发送失败，请稍后再试。"));
     }
   }
 
@@ -697,8 +699,9 @@ export function ProgramAccessSidebarCard({
           setIsResetPasswordVisible(false);
         },
       });
-    } catch {
-      setFormError("密码重置失败，请稍后再试。");
+    } catch (error) {
+      const detail = extractProgramAuthActionErrorDetail(error);
+      setFormError(resolveProgramAuthActionFailureMessage(detail, "密码重置失败，请稍后再试。"));
     }
   }
 

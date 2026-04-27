@@ -4030,3 +4030,173 @@
   - 当前口径仍是“renderer 自动化通过；浏览器预览已到可手测状态；程序壳未额外人工复验”。
 - 下一步：
   - 若魔尊还要把 backend API 返回文本本身也统一改掉，下一刀再沿 `app_backend/application/program_access.py` 和 remote/cached gateway 常量继续收口；本轮先保证用户前端看到的文案已经统一。
+
+## 2026-04-26 22:56 (Asia/Shanghai)
+- 背景：魔尊要求检查“注册页面无法继续注册，请稍后再试”的真实原因。现场反馈是“今天注册链路做过大改，之前能发验证码但不能注册，现在连发验证码也坏了”。
+- 根因复证：
+  - 本地代码与契约层未直接损坏：`C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_program_auth_routes.py tests/backend/test_remote_control_plane_client.py tests/backend/test_remote_entitlement_gateway.py -q` -> `54 passed`；`npm --prefix program_admin_console test` -> 通过；`npm --prefix app_desktop_web test -- tests/renderer/program_access_sidebar_card.test.jsx tests/renderer/program_access_provider.test.jsx tests/renderer/program_auth_client.test.js` -> `34 passed`。
+  - 现网注册入口当前可用：使用 `app_desktop_web/build/control_plane_ca.pem` 直连 `https://8.138.39.139/api/health` -> `200 {"ok":true}`；`/api/auth/register/readiness` -> `200 {"ok":true,"ready":true,"registration_flow_version":3,"mail_service_configured":true}`；`POST /api/auth/register/send-code` 传无效邮箱 -> `400 REGISTER_INPUT_INVALID`，说明远端发码路由和 mail readiness 没挂。
+  - 真正的因果链是“旧失败留下已注册邮箱 + 新版前移拒绝”：
+    - 15:11 那轮注册失败的根因已在同日会话中确认过，是 `register/complete` 返回的 `access_bundle.kid` 与私钥真实派生值不一致，导致本地在完成注册后把结果判成 `program_snapshot_invalid`。
+    - 但远端 `program_admin_console/src/server.js` 的 `POST /api/auth/register/complete` 会先 `createClientUser(...)`，再返回 `auth_session`；因此那轮虽然本地显示失败，远端账号很可能已经创建成功。
+    - 今天的注册 v3 发码链路又在 `program_admin_console/src/server.js` 中前移了邮箱占用检查：`/api/auth/register/send-code` 命中 `store.getClientUserByEmail(email)` 时直接返回 `403 REGISTER_SEND_DENIED`。这就解释了“之前能发码但不能注册，现在连发码都失败”。
+    - 用户之所以只看到“无法继续注册，请稍后再试”，不是服务真挂，而是 `app_desktop_web/src/program_access/program_access_sidebar_card.jsx` 把 `REGISTER_SEND_DENIED` 误翻成了通用服务异常文案，掩盖了“邮箱已占用，应改走登录/找回密码”的真实语义。
+- 已完成：
+  - 先按 TDD 在 `app_desktop_web/tests/renderer/program_access_sidebar_card.test.jsx` 补红灯，锁定 `REGISTER_SEND_DENIED` 必须提示“当前邮箱无法继续注册，请直接登录或找回密码。”；红灯已验证失败。
+  - 最小修复 `app_desktop_web/src/program_access/program_access_sidebar_card.jsx`，把 `REGISTER_SEND_DENIED` 从“无法继续注册，请稍后再试。”单独改成“当前邮箱无法继续注册，请直接登录或找回密码。”，不动其它注册状态机和后端契约。
+  - 将这条提示约束同步沉淀到 `docs/agent/memory.md`。
+  - README 已核对，本轮无需改动。
+- 已做验证：
+  - 红灯：`npm --prefix app_desktop_web test -- --run tests/renderer/program_access_sidebar_card.test.jsx -t "tells the user to log in or reset password when register send is denied for an occupied email"` -> 失败，旧文案仍为“无法继续注册，请稍后再试。”
+  - 绿灯：同命令重跑 -> `1 passed`
+  - 邻近回归：`npm --prefix app_desktop_web test -- tests/renderer/program_access_sidebar_card.test.jsx tests/renderer/program_access_provider.test.jsx tests/renderer/program_auth_client.test.js` -> `34 passed`
+- 当前进度：
+  - 现在“发码失败”这件事的真实语义已经被恢复出来：若是旧失败残留导致邮箱已占用，用户会直接看到应改走登录/找回密码，而不会再被误导成服务暂时挂了。
+  - 这轮没有改远端控制面逻辑；如果魔尊手里的那个邮箱确实是今天先前失败时占掉的，接下来应直接尝试登录/找回密码，或改用新邮箱注册。
+- 下一步：
+  - 若魔尊要彻底验尸某个具体邮箱，可下一轮在远端 control plane DB 或后台里核对该邮箱是否已存在，再决定是走登录/重置密码，还是清理测试账号后重试注册。
+
+## 2026-04-26 23:41 (Asia/Shanghai)
+- 背景：魔尊继续追问“程序会员登录暂时不可用”到底是什么情况，并要求查清。前一轮已确认同一邮箱在远端数据库中确实已注册成功，因此本轮重点切到登录失败链路，而不是继续怀疑远端账号不存在。
+- 根因复证：
+  - 远端控制面当前在线且不是整条登录服务挂掉：直接用 `app_desktop_web/build/control_plane_ca.pem` 请求 `POST https://8.138.39.139/api/auth/login`，对已存在账号 `88888888` 故意传错密码，返回 `401 {"ok":false,"reason":"invalid_credentials","message":"invalid credentials"}`。
+  - 也就是说，现网真实错误是“账号存在，但口令不匹配”，不是“程序会员服务不可用”。
+  - 前端之所以把它显示成“程序会员登录暂不可用，请稍后再试。”，根因在 renderer 两层误吞：
+    - `app_desktop_web/src/program_access/program_access_provider.jsx` 里的 `extractProgramErrorDetail(...)` 旧逻辑只接受 `program_*` 错误码，像 `invalid_credentials` 这种普通业务错误会被丢弃，`lastProgramAuthError` 因此保持空值。
+    - `app_desktop_web/src/program_access/program_access_sidebar_card.jsx` 里的 `runFormAction(...)` 又把原始异常对象替换成了新的泛错，`handleRemoteLogin()` catch 只能看到假异常，最后统一覆写成“程序会员登录暂不可用，请稍后再试。”
+- 已完成：
+  - 先按 TDD 补两盏红灯：
+    - `app_desktop_web/tests/renderer/program_access_provider.test.jsx` 新增“provider 必须捕获 `invalid_credentials`”。
+    - `app_desktop_web/tests/renderer/program_access_sidebar_card.test.jsx` 新增“登录错密码时必须提示 `账号或密码错误。`，不能再提示 generic unavailable”。
+  - 最小实现修复：
+    - `app_desktop_web/src/program_access/program_access_provider.jsx` 放宽 `extractProgramErrorDetail(...)`，不再只识别 `program_*`，让 `invalid_credentials` 等结构化业务错误能进入 auth error 通道。
+    - `app_desktop_web/src/program_access/program_access_messages.js` 新增 `invalid_credentials -> 账号或密码错误。` 的统一用户态映射，并兼容远端当前英文原文 `invalid credentials`。
+    - `app_desktop_web/src/program_access/program_access_sidebar_card.jsx` 保留原始异常对象，不再在 `runFormAction(...)` 里把它抹成假错；同时让 `handleRemoteLogin()` 优先读取结构化 detail，再回退到 generic unavailable。
+  - 将这条登录提示约束同步沉淀到 `docs/agent/memory.md`。
+  - README 已核对，本轮无需改动。
+- 已做验证：
+  - 现网实证：`POST https://8.138.39.139/api/auth/login`（错密码）-> `401 invalid_credentials`
+  - 红灯：`npm --prefix app_desktop_web test -- --run tests/renderer/program_access_provider.test.jsx -t "captures non-program login validation errors through the provider bridge"` -> 失败，旧逻辑显示 `none`
+  - 红灯：`npm --prefix app_desktop_web test -- --run tests/renderer/program_access_sidebar_card.test.jsx -t "shows invalid login credentials as an account-password error instead of generic unavailability"` -> 失败，旧文案仍为“程序会员登录暂不可用，请稍后再试。”
+  - 绿灯：两条 focused test 均转绿
+  - 邻近回归：`npm --prefix app_desktop_web test -- tests/renderer/program_access_sidebar_card.test.jsx tests/renderer/program_access_provider.test.jsx tests/renderer/program_auth_client.test.js` -> `36 passed`
+- 当前进度：
+  - 现在这句“程序会员登录暂不可用”不再会误导用户。若是密码错误，前端会明确提示“账号或密码错误。”；只有真拿不到结构化错误时才保留 generic unavailable。
+  - 远端控制面本身本轮未修改，问题根因已确定在前端错误翻译链路。
+- 下一步：
+  - 若魔尊要继续闭环真实登录，可下一轮直接决定是：
+    - 用这个已存在账号走“找回密码”重置口令；
+    - 或者若你记得自己输入过的密码，吾可帮你做一次真实登录验证，确认到底是记错密码，还是当时落库的并不是你以为那一串。
+
+## 2026-04-27 11:39 (Asia/Shanghai)
+- 背景：魔尊要求对会员链路做一次全面审查，重点核验“注册成功后控制台是否能控制用户权限、会员注册时用户名重复是否会提示，以及其它潜在风险”；本轮只读审查并补 focused 验证，不落业务代码。
+- 已完成：
+  - 代码与测试交叉确认：控制台把用户会员计划从 `inactive` 改为 `member` 后，确实会影响后端 `runtime.start` 放行；但当前控制台 UI 只暴露会员计划与到期时间，未暴露 `status` / `permission_overrides`，细粒度权限控制仍与 UI 脱节。
+  - 确认新版注册链路（v3）对重复用户名会返回 `409 REGISTER_USERNAME_TAKEN`，前端文案为“账号名已被使用”；旧版 fallback 注册分支仍只会报泛化“注册失败，请稍后再试”。
+  - 复证 packaged release 当前默认 control plane base url 仍是 `http://8.138.39.139:18787`，注册/登录/refresh 等敏感凭据默认明文传输，属于本轮最高优先级安全硬伤。
+  - 复证注册双轨风险：`/program-auth/register` 成功后不会持久化本地 auth snapshot；`/program-auth/register/complete` 即使已拿到有效授权，也仍固定回“账号已创建，但当前未开通会员”，存在状态与文案冲突。
+  - 复证权限收敛延迟：`runtime.start` 会立即走远端 permit，再按新权限判定；其它非 `runtime.start` action 先看本地 snapshot，默认可能有约 `300s` 刷新窗口。
+  - 已执行验证：
+    - `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_program_auth_routes.py tests/backend/test_remote_entitlement_gateway.py tests/backend/test_program_access_guard_routes.py -q` -> `41 passed`
+    - `node program_admin_console/tests/control-plane-server.test.js` -> `passed`
+    - `node program_admin_console/tests/control-plane-ui.test.js` -> `passed`
+    - `npm --prefix app_desktop_web test -- tests/renderer/program_auth_client.test.js tests/renderer/program_access_provider.test.jsx tests/renderer/program_access_sidebar_card.test.jsx` -> `36 passed`
+- 当前进度：
+  - 本轮审查已收口到 findings、证据链和验证结果，尚未进入修复实现。
+  - 当前工作树存在大量未提交改动，且多处与本轮会员链路审查无关；本轮没有新改业务代码，后续会话必须先把现有 dirty tree 当现场事实核对，不能误判为本轮审查产物。
+- 下一步：
+  - 第一刀优先决定是否立即处理 packaged release 默认 HTTP 的安全硬伤；若进入实现，默认应先改成 release 强制 HTTPS fail-closed，再补 focused 回归。
+  - 第二刀直接删除旧 `v2 register` 路径，只保留 `v3 send-code / verify-code / complete` 注册链路，避免“重名提示只在 v3 正常、v2 仍泛化失败”的双轨漂移。
+  - 第三刀补最小护栏测试：`REGISTER_USERNAME_TAKEN`、`REGISTER_EMAIL_UNAVAILABLE`、`login_locked`、`code_verify_locked`、`device_mismatch`，并视产品要求决定是否统一收口账号/邮箱枚举文案。
+
+## 2026-04-27 13:12 (Asia/Shanghai)
+- 背景：魔尊确认“没有域名、客户端与服务器连接应无感”，并明确会员远端断链的用户文案固定为 `服务器连接失败请检查网络设置。`；同时要求新版能完整覆盖旧版时，直接删除旧路径，不保留静默 fallback。
+- 已完成：
+  - `app_desktop_web/electron-main.cjs` 已把 packaged release 的 program access 配置收紧为“必须显式 `https://...` + `controlPlaneCaCertPath`”；缺 base url、仍是 `http://...`、或缺 CA 文件时，主进程会在 embedded backend 启动前直接拒绝旧不安全口径。
+  - `app_backend/main.py` 与 `app_backend/startup/build_core_home_services.py` 已删除默认 `http://8.138.39.139:18787` 回退基线；packaged release 若缺显式 `https` base url 或缺 CA 路径，会在 backend program access 服务装配时直接 `ValueError`，不再静默连回旧明文入口。
+  - `app_desktop_web/src/program_access/program_access_messages.js`、`program_access_provider.jsx`、`program_access_sidebar_card.jsx` 已统一把 `program_remote_unavailable / program_membership_service_unavailable / service_unavailable` 收口为 `服务器连接失败请检查网络设置。`；继续复用现有 `FeedbackDialog / ErrorNotice` 提示链，不新增弹窗组件。
+  - 注册、登录、找回密码三类 renderer 护栏已补齐：锁定“远端断链时显示网络检查文案，而不是 generic unavailable / send-code failed”。
+  - 相关 electron / backend focused tests 已同步把 release 配置夹具从旧 `http://8.138.39.139:18787` 收口到 `https://8.138.39.139` + CA 文件口径。
+  - README 已核对，本轮无需改动。
+- 已做验证：
+  - 红灯：
+    - `npm --prefix app_desktop_web test -- --run tests/electron/program_access_packaging.test.js tests/renderer/program_access_provider.test.jsx tests/renderer/program_access_sidebar_card.test.jsx` -> 初次失败，确认 packaged release 仍未拒绝 `http` / 缺 CA，且前端未把远端断链统一翻译成目标文案。
+    - `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_desktop_web_backend_bootstrap.py -q` -> 初次失败，确认 backend 仍保留默认 HTTP 回退且未校验 CA。
+  - 绿灯：
+    - `npm --prefix app_desktop_web test -- --run tests/electron/program_access_packaging.test.js tests/electron/python_backend.test.js tests/renderer/program_access_provider.test.jsx tests/renderer/program_access_sidebar_card.test.jsx` -> `67 passed`
+    - `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_desktop_web_backend_bootstrap.py tests/backend/test_app_bootstrap_route.py tests/backend/test_program_access_guard_routes.py -q` -> `23 passed`
+    - `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_backend_health.py -q` -> `7 passed`
+- 额外验尸：
+  - `npm --prefix app_desktop_web test -- --run tests/electron/electron_remote_mode.test.js` 仍有 `2 failed`，差异仅为远程 bootstrap snapshot 比断言多出既有字段 `pageWarmupEnabled: false`；该文件与本轮安全收口无直接修改关系，当前更像现场遗留断言漂移，不作为本轮修复内容一并扩大。
+- 当前进度：
+  - packaged release 的远端 program access 已完成“删旧 HTTP fallback、显式 HTTPS+CA、远端断链统一文案”的安全收口。
+  - 本轮尚未动第二刀 `v2 register` 删除。
+- 下一步：
+  - 若继续会员链收口，下一刀直接删旧 `v2 register` 路径，并补 `REGISTER_USERNAME_TAKEN / REGISTER_EMAIL_UNAVAILABLE / login_locked / code_verify_locked / device_mismatch` 最小护栏。
+
+## 2026-04-27 13:33 (Asia/Shanghai)
+- 背景：魔尊要求仅改 renderer focused tests，把程序账号注册测试基线切到“纯 v3，无 v2 register fallback”，且先形成合理红灯，不改实现文件。
+- 已完成：
+  - `app_desktop_web/tests/renderer/program_auth_client.test.js` 已删除 `registerProgramAuth` 与 `/program-auth/register` 断言，注册链仅保留 `send-code / verify-code / complete` 三步。
+  - `app_desktop_web/tests/renderer/program_access_provider.test.jsx` 已移除 `registerProgramAuth` 相关期待，注册桥接改为 `verifyRegisterCode + completeRegisterProgramAuth`，并把“`registration_flow_version` 门控 verify/complete”改为“始终暴露 v3 动作”。
+  - `app_desktop_web/tests/renderer/program_access_sidebar_card.test.jsx` 新增 focused 护栏，覆盖 `REGISTER_EMAIL_UNAVAILABLE` 与 `REGISTER_USERNAME_TAKEN` 的用户文案断言。
+  - README 已核对，本轮无需改动。
+- 已做验证：
+  - `npm --prefix app_desktop_web test -- --run tests/renderer/program_auth_client.test.js tests/renderer/program_access_provider.test.jsx tests/renderer/program_access_sidebar_card.test.jsx` -> `2 failed / 39 passed`。
+  - 红灯集中在 `program_access_provider.test.jsx`：
+    - `bridges v3 verify/complete actions through the provider and keeps the shared workspace locked`（实际 `verify-failed`）。
+    - `always exposes registration verify/complete actions without registration_flow_version gating`（实际仍 `false`）。
+- 当前进度：
+  - 三份 focused tests 的“纯 v3 基线”已落地，且已得到预期的实现侧红灯证据。
+  - 本轮未修改任何实现文件。
+- 下一步：
+  - 若魔尊批准，下一轮直接按这两盏 provider 红灯修实现，删除残余 v2 register 依赖与 version 门控逻辑。
+
+## 2026-04-27 13:34 (Asia/Shanghai)
+- 背景：魔尊切换到 backend focused tests，要求只改三份后端测试集，把程序账号注册基线切到“纯 v3，无 `/register` fallback”，并补最小状态码护栏；本轮不得改实现。
+- 已完成：
+  - `tests/backend/test_program_auth_routes.py`：删除 `/program-auth/register` 成功路径期待，改为旧路由不可用断言；新增 focused 状态码护栏，覆盖 `REGISTER_USERNAME_TAKEN`、`REGISTER_EMAIL_UNAVAILABLE`、`login_locked`、`code_verify_locked`、`device_mismatch`。
+  - `tests/backend/test_remote_entitlement_gateway.py`：移除 `gateway.register` 依赖测试与 stub 相关结构，route-only 校验透传改到 v3 `verify_register_code/complete_register` 口径。
+  - `tests/backend/test_remote_control_plane_client.py`：强化 v3 流程断言，显式要求 verify/complete 调用中不出现 legacy `/api/auth/register`。
+  - README 已核对，本轮无需改动。
+- 已做验证：
+  - `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_program_auth_routes.py tests/backend/test_remote_entitlement_gateway.py tests/backend/test_remote_control_plane_client.py`
+  - 结果：`4 failed, 54 passed`；红灯均集中在 `test_program_auth_routes.py`，符合“先改测试、不改实现”的预期。
+- 当前进度：
+  - 三份 backend focused tests 已切到纯 v3 测试基线，`remote_entitlement_gateway` 与 `remote_control_plane_client` 已通过。
+  - 当前待实现侧对齐：旧 `/register` 路由仍可用，且 `login_locked/code_verify_locked/device_mismatch` 状态码映射未补齐。
+- 下一步：
+  - 若魔尊批准进入实现轮，优先删 `/program-auth/register` 路由并补 `program_auth` 错误码映射，再回归三份 focused tests 收口。
+
+## 2026-04-27 13:40 (Asia/Shanghai)
+- 背景：魔尊要求在恢复 handoff 后直接进入“删除 v2 register 路径 + 补 focused tests”，且不要重做已完成的 HTTPS+CA fail-closed 收口；本轮按“只触达桌面本地 program access 注册链、不卷入并行 purchase/program_admin_console 脏改”的边界推进，并显式使用多 agent 分拆前后端测试基线。
+- 已完成：
+  - 先并行完成 renderer/backend focused tests 的纯 v3 红灯基线，再按 TDD 删掉本地桌面旧链：
+    - `app_desktop_web/src/api/program_auth_client.js` 已删除 `registerProgramAuth` 与本地 `/program-auth/register` 调用。
+    - `app_desktop_web/src/program_access/program_access_provider.jsx` 已删除 `registerProgramAuth` 暴露与 `registration_flow_version === 3` 才放行 `verify/complete` 的旧门控，注册桥接固定为 `send-code / verify / complete`。
+    - `app_desktop_web/src/program_access/program_access_sidebar_card.jsx` 已删除 `handleRegisterSubmit()` 的 v2 fallback 提交分支；注册完成只走 `completeRegisterProgramAuth`，若 bridge 缺失只报“注册链路暂未就绪”，不再静默回退旧提交链。
+    - `app_desktop_web/src/App.jsx` 已同步移除 `registerProgramAuth` 透传。
+    - `app_backend/api/routes/program_auth.py`、`app_backend/api/schemas/program_auth.py`、`app_backend/application/program_access.py` 已删除本地 `/program-auth/register` 路由与对应 schema/protocol 入口。
+    - `app_backend/infrastructure/program_access/{remote_control_plane_client,remote_entitlement_gateway,cached_program_access_gateway,local_pass_through_gateway}.py` 已删除 legacy `register()` 调用链；桌面本地注册只保留 v3 `send_register_code / verify_register_code / complete_register`。
+    - `app_backend/api/routes/program_auth.py` 已补齐 `login_locked -> 429`、`code_verify_locked -> 429`、`device_mismatch -> 409` 的 focused 状态码映射。
+  - focused tests 已同步补齐：
+    - renderer：`program_auth_client.test.js`、`program_access_provider.test.jsx`、`program_access_sidebar_card.test.jsx`
+    - backend：`test_program_auth_routes.py`、`test_remote_control_plane_client.py`、`test_remote_entitlement_gateway.py`
+  - `docs/agent/memory.md` 已补一条稳定约束：桌面本地注册桥接不再允许暴露 `registerProgramAuth` / `/program-auth/register` 旧 one-shot fallback。
+  - README 已核对，本轮无需改动。
+- 已做验证：
+  - 红灯：
+    - `npm --prefix app_desktop_web test -- --run tests/renderer/program_auth_client.test.js tests/renderer/program_access_provider.test.jsx tests/renderer/program_access_sidebar_card.test.jsx` -> `2 failed / 39 passed`，先红集中在 provider 仍保留 v2 依赖与 version 门控。
+    - `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_program_auth_routes.py tests/backend/test_remote_control_plane_client.py tests/backend/test_remote_entitlement_gateway.py -q` -> `4 failed, 54 passed`，先红集中在旧 `/program-auth/register` 仍可用、以及 `login_locked / code_verify_locked / device_mismatch` 状态码未映射。
+  - 绿灯：
+    - `npm --prefix app_desktop_web test -- --run tests/renderer/program_auth_client.test.js tests/renderer/program_access_provider.test.jsx tests/renderer/program_access_sidebar_card.test.jsx` -> `41 passed`
+    - `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_program_auth_routes.py tests/backend/test_remote_control_plane_client.py tests/backend/test_remote_entitlement_gateway.py -q` -> `58 passed`
+    - 邻近回归：`npm --prefix app_desktop_web test -- --run tests/renderer/app_remote_bootstrap.test.jsx` -> `13 passed`
+    - 邻近回归：`C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_app_bootstrap_route.py tests/backend/test_program_access_guard_routes.py tests/backend/test_backend_health.py -q` -> `18 passed`
+- 当前进度：
+  - 本地桌面 program access 注册链已收口到纯 v3；用户当前路径不会再命中 `registerProgramAuth` / `/program-auth/register` 旧 one-shot fallback。
+  - HTTPS+CA fail-closed 收口未被回退，相关邻近 tests 仍通过。
+  - 当前工作树里仍存在与本轮无关的并行脏改（purchase runtime / program_admin_console / deploy 脚本等）；本轮没有去碰它们。
+  - 远端 control plane 仓库与现网上的 legacy `/api/auth/register` 本轮未删除、也未做远端同步。当前删掉的是“桌面本地注册调用链”，不是“现网 control plane 旧接口已下线”。
+- 下一步：
+  - 若魔尊要把“删 v2 register”继续推进到远端 control plane，则下一轮必须单独触达 `program_admin_console/src/server.js`，并按项目纪律完成远端源码同步、容器替换与 smoke；否则当前只可宣称“本地桌面已删旧链，远端旧接口未复验/未下线”。

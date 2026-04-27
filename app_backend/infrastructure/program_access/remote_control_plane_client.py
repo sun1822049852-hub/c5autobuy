@@ -50,12 +50,6 @@ class RemotePermitResult:
 
 
 @dataclass(frozen=True, slots=True)
-class RemoteRegisterResult:
-    message: str
-    user: dict[str, object]
-
-
-@dataclass(frozen=True, slots=True)
 class RemoteRegistrationReadinessResult:
     ready: bool
     registration_flow_version: int
@@ -184,31 +178,6 @@ class RemoteControlPlaneClient:
         payload = self._get("/api/auth/public-key")
         try:
             return _require_str(payload.data.get("public_key_pem"), field_name="public_key_pem")
-        except _InvalidResponseShapeError as exc:
-            raise _invalid_response_error(payload.status_code, str(exc), payload.data) from exc
-
-    def register(
-        self,
-        *,
-        email: str,
-        code: str,
-        username: str,
-        password: str,
-    ) -> RemoteRegisterResult:
-        payload = self._post(
-            "/api/auth/register",
-            {
-                "email": email,
-                "code": code,
-                "username": username,
-                "password": password,
-            },
-        )
-        try:
-            return RemoteRegisterResult(
-                message="注册成功",
-                user=_require_dict(payload.data.get("user"), field_name="user"),
-            )
         except _InvalidResponseShapeError as exc:
             raise _invalid_response_error(payload.status_code, str(exc), payload.data) from exc
 

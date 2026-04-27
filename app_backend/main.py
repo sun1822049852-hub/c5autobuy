@@ -20,7 +20,6 @@ import uvicorn
 
 
 PROGRAM_ACCESS_APP_NAME = "C5AutoBug"
-DEFAULT_PROGRAM_CONTROL_PLANE_BASE_URL = "http://8.138.39.139:18787"
 
 _logger = logging.getLogger(__name__)
 
@@ -200,7 +199,7 @@ def _resolve_program_access_control_plane_base_url(explicit_base_url: str | None
     return str(
         explicit_base_url
         or os.getenv("C5_PROGRAM_CONTROL_PLANE_BASE_URL")
-        or DEFAULT_PROGRAM_CONTROL_PLANE_BASE_URL
+        or ""
     ).strip()
 
 
@@ -213,6 +212,19 @@ def _resolve_program_access_control_plane_ca_cert_path(explicit_path: Path | Non
         return Path(env_path)
 
     return None
+
+
+def _validate_packaged_release_program_access_config(
+    *,
+    control_plane_base_url: str,
+    control_plane_ca_cert_path: Path | None,
+) -> None:
+    if not control_plane_base_url:
+        raise ValueError("Packaged release requires a control plane base url.")
+    if not control_plane_base_url.lower().startswith("https://"):
+        raise ValueError("Packaged release requires an https control plane base url.")
+    if control_plane_ca_cert_path is None:
+        raise ValueError("Packaged release requires a control plane CA cert path.")
 
 
 def _resolve_program_access_key_cache_path(
@@ -312,6 +324,10 @@ def _build_program_access_services(
     )
     control_plane_ca_cert_path = _resolve_program_access_control_plane_ca_cert_path(
         explicit_control_plane_ca_cert_path
+    )
+    _validate_packaged_release_program_access_config(
+        control_plane_base_url=control_plane_base_url,
+        control_plane_ca_cert_path=control_plane_ca_cert_path,
     )
     verifier = EntitlementVerifier(key_cache_path=key_cache_path)
     remote_client = RemoteControlPlaneClient(

@@ -143,7 +143,6 @@ function ProgramAccessShellBanner() {
     loginProgramAuth,
     logoutProgramAuth,
     sendRegisterCode,
-    registerProgramAuth,
     verifyRegisterCode,
     completeRegisterProgramAuth,
     sendResetPasswordCode,
@@ -159,7 +158,6 @@ function ProgramAccessShellBanner() {
       loginProgramAuth={loginProgramAuth}
       logoutProgramAuth={logoutProgramAuth}
       sendRegisterCode={sendRegisterCode}
-      registerProgramAuth={registerProgramAuth}
       verifyRegisterCode={verifyRegisterCode}
       completeRegisterProgramAuth={completeRegisterProgramAuth}
       sendResetPasswordCode={sendResetPasswordCode}

@@ -93,12 +93,12 @@ describe("program access packaging config", () => {
 
     const config = readProgramAccessConfig({
       fileConfig: {
-        controlPlaneBaseUrl: "http://8.138.39.139:18787",
+        controlPlaneBaseUrl: "https://8.138.39.139",
         controlPlaneCaCertPath: "C:/certs/control-plane-ca.pem",
       },
     });
 
-    expect(config.controlPlaneBaseUrl).toBe("http://8.138.39.139:18787");
+    expect(config.controlPlaneBaseUrl).toBe("https://8.138.39.139");
     expect(config.controlPlaneCaCertPath).toBe("C:/certs/control-plane-ca.pem");
   });
 
@@ -125,7 +125,7 @@ describe("program access packaging config", () => {
             throw new Error(`unexpected path read: ${targetPath}`);
           }
           return JSON.stringify({
-            controlPlaneBaseUrl: "http://8.138.39.139:18787",
+            controlPlaneBaseUrl: "https://8.138.39.139",
             controlPlaneCaCertPath: "control_plane_ca.pem",
           });
         },
@@ -135,7 +135,7 @@ describe("program access packaging config", () => {
       resourcesPath: "C:\\Users\\tester\\AppData\\Local\\Programs\\electron\\resources",
     });
 
-    expect(config.controlPlaneBaseUrl).toBe("http://8.138.39.139:18787");
+    expect(config.controlPlaneBaseUrl).toBe("https://8.138.39.139");
     expect(config.controlPlaneCaCertPath).toBe("C:\\demo\\project\\app_desktop_web\\build\\control_plane_ca.pem");
   });
 
@@ -167,7 +167,7 @@ describe("program access packaging config", () => {
       ensureManagedPythonRuntimeImpl,
       resolvePythonExecutableImpl,
       readProgramAccessConfigImpl: vi.fn(() => ({
-        controlPlaneBaseUrl: "http://8.138.39.139:18787",
+        controlPlaneBaseUrl: "https://8.138.39.139",
         controlPlaneCaCertPath: "C:/Users/tester/AppData/Roaming/C5AccountCenter/control_plane_ca.pem",
       })),
       startPythonBackendImpl,
@@ -186,7 +186,7 @@ describe("program access packaging config", () => {
       pythonExecutable: "C:/Users/tester/AppData/Roaming/C5AccountCenter/python-runtime/3.11.9/python.exe",
       programAccessConfig: {
         appPrivateDir: "C:\\Users\\tester\\AppData\\Roaming\\C5AccountCenter\\app-private",
-        controlPlaneBaseUrl: "http://8.138.39.139:18787",
+        controlPlaneBaseUrl: "https://8.138.39.139",
         controlPlaneCaCertPath: "C:/Users/tester/AppData/Roaming/C5AccountCenter/control_plane_ca.pem",
         probeRegistrationReadiness: true,
         stage: "packaged_release",
@@ -223,7 +223,8 @@ describe("program access packaging config", () => {
       ensureManagedPythonRuntimeImpl,
       resolvePythonExecutableImpl: vi.fn(() => "C:/demo/project/.venv/Scripts/python.exe"),
       readProgramAccessConfigImpl: vi.fn(() => ({
-        controlPlaneBaseUrl: "http://8.138.39.139:18787",
+        controlPlaneBaseUrl: "https://8.138.39.139",
+        controlPlaneCaCertPath: "C:/demo/project/app_desktop_web/build/control_plane_ca.pem",
       })),
       startPythonBackendImpl,
       publishBootstrapConfigImpl,
@@ -283,7 +284,8 @@ describe("program access packaging config", () => {
       ensureManagedPythonRuntimeImpl,
       resolvePythonExecutableImpl: vi.fn(() => "C:/demo/project/.venv/Scripts/python.exe"),
       readProgramAccessConfigImpl: vi.fn(() => ({
-        controlPlaneBaseUrl: "http://8.138.39.139:18787",
+        controlPlaneBaseUrl: "https://8.138.39.139",
+        controlPlaneCaCertPath: "C:/demo/project/app_desktop_web/build/control_plane_ca.pem",
       })),
       startPythonBackendImpl,
       publishBootstrapConfigImpl,
@@ -336,7 +338,8 @@ describe("program access packaging config", () => {
       }),
       resolvePythonExecutableImpl: vi.fn(() => "C:/demo/project/.venv/Scripts/python.exe"),
       readProgramAccessConfigImpl: vi.fn(() => ({
-        controlPlaneBaseUrl: "http://8.138.39.139:18787",
+        controlPlaneBaseUrl: "https://8.138.39.139",
+        controlPlaneCaCertPath: "C:/demo/project/app_desktop_web/build/control_plane_ca.pem",
       })),
       startPythonBackendImpl,
       createWindowImpl: vi.fn(),
@@ -394,6 +397,81 @@ describe("program access packaging config", () => {
     expect(createFailureWindowImpl).toHaveBeenCalledOnce();
   });
 
+  it("fails closed for packaged embedded startup when the control-plane base url is not https", async () => {
+    const electronHarness = createElectronHarness();
+    const { bootstrapApplication } = loadElectronMainWithMocks({
+      electron: electronHarness.electron,
+    });
+    const startPythonBackendImpl = vi.fn().mockResolvedValue({
+      baseUrl: "http://127.0.0.1:8233",
+      stop: vi.fn(),
+    });
+    const createFailureWindowImpl = vi.fn((error) => {
+      expect(String(error)).toContain("https control plane base url");
+    });
+
+    await bootstrapApplication({
+      runtimeMode: {
+        backendMode: "embedded",
+        apiBaseUrl: "http://127.0.0.1:8000",
+        configurationError: "",
+        runtimeWebSocketUrl: "",
+        shouldStartEmbeddedBackend: true,
+      },
+      ensureWindowStateDependenciesImpl: vi.fn().mockResolvedValue(),
+      ensureBackendDependenciesImpl: vi.fn().mockResolvedValue(),
+      findAvailablePortImpl: vi.fn().mockResolvedValue(8233),
+      resolvePythonExecutableImpl: vi.fn(() => "C:/demo/project/.venv/Scripts/python.exe"),
+      readProgramAccessConfigImpl: vi.fn(() => ({
+        controlPlaneBaseUrl: "http://8.138.39.139:18787",
+        controlPlaneCaCertPath: "C:/demo/project/app_desktop_web/build/control_plane_ca.pem",
+      })),
+      startPythonBackendImpl,
+      createWindowImpl: vi.fn(),
+      createFailureWindowImpl,
+    });
+
+    expect(startPythonBackendImpl).not.toHaveBeenCalled();
+    expect(createFailureWindowImpl).toHaveBeenCalledOnce();
+  });
+
+  it("fails closed for packaged embedded startup when the control-plane CA cert path is missing", async () => {
+    const electronHarness = createElectronHarness();
+    const { bootstrapApplication } = loadElectronMainWithMocks({
+      electron: electronHarness.electron,
+    });
+    const startPythonBackendImpl = vi.fn().mockResolvedValue({
+      baseUrl: "http://127.0.0.1:8233",
+      stop: vi.fn(),
+    });
+    const createFailureWindowImpl = vi.fn((error) => {
+      expect(String(error)).toContain("control plane CA cert path");
+    });
+
+    await bootstrapApplication({
+      runtimeMode: {
+        backendMode: "embedded",
+        apiBaseUrl: "http://127.0.0.1:8000",
+        configurationError: "",
+        runtimeWebSocketUrl: "",
+        shouldStartEmbeddedBackend: true,
+      },
+      ensureWindowStateDependenciesImpl: vi.fn().mockResolvedValue(),
+      ensureBackendDependenciesImpl: vi.fn().mockResolvedValue(),
+      findAvailablePortImpl: vi.fn().mockResolvedValue(8233),
+      resolvePythonExecutableImpl: vi.fn(() => "C:/demo/project/.venv/Scripts/python.exe"),
+      readProgramAccessConfigImpl: vi.fn(() => ({
+        controlPlaneBaseUrl: "https://8.138.39.139",
+      })),
+      startPythonBackendImpl,
+      createWindowImpl: vi.fn(),
+      createFailureWindowImpl,
+    });
+
+    expect(startPythonBackendImpl).not.toHaveBeenCalled();
+    expect(createFailureWindowImpl).toHaveBeenCalledOnce();
+  });
+
   it("fails closed before backend startup when packaged python runtime bootstrap fails", async () => {
     const electronHarness = createElectronHarness();
     const { bootstrapApplication } = loadElectronMainWithMocks({
@@ -421,7 +499,8 @@ describe("program access packaging config", () => {
       ensureManagedPythonRuntimeImpl: vi.fn().mockRejectedValue(new Error("download failed")),
       resolvePythonExecutableImpl: vi.fn(() => "C:/demo/project/.venv/Scripts/python.exe"),
       readProgramAccessConfigImpl: vi.fn(() => ({
-        controlPlaneBaseUrl: "http://8.138.39.139:18787",
+        controlPlaneBaseUrl: "https://8.138.39.139",
+        controlPlaneCaCertPath: "C:/demo/project/app_desktop_web/build/control_plane_ca.pem",
       })),
       startPythonBackendImpl,
       createWindowImpl: vi.fn(),

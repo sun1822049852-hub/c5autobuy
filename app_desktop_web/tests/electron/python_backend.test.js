@@ -215,7 +215,7 @@ describe("python backend manager", () => {
         PATH: "C:/Windows/System32",
       },
       {
-        controlPlaneBaseUrl: "http://8.138.39.139:18787",
+        controlPlaneBaseUrl: "https://8.138.39.139",
         controlPlaneCaCertPath: "C:/demo/project/app_desktop_web/build/control_plane_ca.pem",
         probeRegistrationReadiness: true,
       },
@@ -224,7 +224,7 @@ describe("python backend manager", () => {
     expect(env).toEqual(expect.objectContaining({
       PATH: "C:/Windows/System32",
       C5_APP_PRIVATE_DIR: buildExpectedAppPrivateDir("C:/demo/project"),
-      C5_PROGRAM_CONTROL_PLANE_BASE_URL: "http://8.138.39.139:18787",
+      C5_PROGRAM_CONTROL_PLANE_BASE_URL: "https://8.138.39.139",
       C5_PROGRAM_CONTROL_PLANE_CA_CERT_PATH: "C:/demo/project/app_desktop_web/build/control_plane_ca.pem",
       C5_PROGRAM_ACCESS_STAGE: "packaged_release",
       C5_PROGRAM_ACCESS_PROBE_REGISTRATION_READINESS: "1",
@@ -257,7 +257,7 @@ describe("python backend manager", () => {
         PATH: "C:/Windows/System32",
       },
       {
-        controlPlaneBaseUrl: "http://8.138.39.139:18787",
+        controlPlaneBaseUrl: "https://8.138.39.139",
         stage: "packaged_release",
         appPrivateDir: "C:/Users/tester/AppData/Roaming/C5AccountCenter/app-private",
       },
@@ -266,7 +266,7 @@ describe("python backend manager", () => {
     expect(env).toEqual(expect.objectContaining({
       PATH: "C:/Windows/System32",
       C5_APP_PRIVATE_DIR: "C:/Users/tester/AppData/Roaming/C5AccountCenter/app-private",
-      C5_PROGRAM_CONTROL_PLANE_BASE_URL: "http://8.138.39.139:18787",
+      C5_PROGRAM_CONTROL_PLANE_BASE_URL: "https://8.138.39.139",
       C5_PROGRAM_ACCESS_STAGE: "packaged_release",
       PYTHONNOUSERSITE: "1",
     }));

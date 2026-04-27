@@ -1,4 +1,7 @@
 from pathlib import Path
+import shutil
+
+import certifi
 
 from httpx import ASGITransport, AsyncClient
 
@@ -156,12 +159,15 @@ async def test_app_bootstrap_route_reads_non_zero_runtime_update_hub_version(cli
 async def test_app_bootstrap_route_reports_readonly_locked_program_access_when_packaged_release_has_no_cached_auth(
     tmp_path: Path,
 ):
+    control_plane_ca_cert_path = tmp_path / "control_plane_ca.pem"
+    shutil.copyfile(certifi.where(), control_plane_ca_cert_path)
     app = create_app(
         db_path=tmp_path / "desktop-web.db",
         program_access_stage="packaged_release",
         program_access_app_data_root=tmp_path / "program-access-data",
         program_access_secret_stage="local_dev",
-        program_access_control_plane_base_url="http://8.138.39.139:18787",
+        program_access_control_plane_base_url="https://8.138.39.139",
+        program_access_control_plane_ca_cert_path=control_plane_ca_cert_path,
         program_access_start_refresh_scheduler=False,
     )
     transport = ASGITransport(app=app)

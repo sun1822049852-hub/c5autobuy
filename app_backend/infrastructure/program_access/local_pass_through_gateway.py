@@ -65,24 +65,6 @@ class LocalPassThroughGateway:
             message=LOCAL_PASS_THROUGH_MESSAGE,
         )
 
-    def register(
-        self,
-        *,
-        email: str,
-        code: str,
-        username: str,
-        password: str,
-    ) -> ProgramAccessActionResult:
-        _ = email
-        _ = code
-        _ = username
-        _ = password
-        return ProgramAccessActionResult.reject(
-            summary=self.get_summary(),
-            code=PROGRAM_AUTH_NOT_READY_CODE,
-            message=LOCAL_PASS_THROUGH_MESSAGE,
-        )
-
     def complete_register(
         self,
         *,

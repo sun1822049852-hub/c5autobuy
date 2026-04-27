@@ -61,7 +61,7 @@ describe("program auth client", () => {
     expect(logoutResult.message).toBe("已退出登录");
   });
 
-  it("submits registration flow v3 through the local backend contract while preserving the v2 fallback path", async () => {
+  it("submits registration flow v3 through the local backend contract without a v2 register fallback", async () => {
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce({
         ok: true,
@@ -70,10 +70,6 @@ describe("program auth client", () => {
       .mockResolvedValueOnce({
         ok: true,
         json: async () => ({ ok: true, message: "验证码已验证", verification_ticket: "ticket_1", summary: { auth_state: null } }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ ok: true, message: "账号已创建，但当前未开通会员", summary: { auth_state: null } }),
       })
       .mockResolvedValueOnce({
         ok: true,
@@ -106,13 +102,6 @@ describe("program auth client", () => {
       password: "Secret123!",
     });
 
-    // v2 fallback must remain available until remote rollout completes.
-    const registerResult = await client.registerProgramAuth({
-      email: "alice@example.com",
-      code: "123456",
-      username: "alice",
-      password: "Secret123!",
-    });
     const sendResetCodeResult = await client.sendResetPasswordCode({ email: "alice@example.com" });
     const resetResult = await client.resetProgramAuthPassword({
       email: "alice@example.com",
@@ -153,19 +142,6 @@ describe("program auth client", () => {
     );
     expect(fetchImpl).toHaveBeenNthCalledWith(
       4,
-      "http://127.0.0.1:8123/program-auth/register",
-      expect.objectContaining({
-        method: "POST",
-        body: JSON.stringify({
-          email: "alice@example.com",
-          code: "123456",
-          username: "alice",
-          password: "Secret123!",
-        }),
-      }),
-    );
-    expect(fetchImpl).toHaveBeenNthCalledWith(
-      5,
       "http://127.0.0.1:8123/program-auth/password/send-reset-code",
       expect.objectContaining({
         method: "POST",
@@ -173,7 +149,7 @@ describe("program auth client", () => {
       }),
     );
     expect(fetchImpl).toHaveBeenNthCalledWith(
-      6,
+      5,
       "http://127.0.0.1:8123/program-auth/password/reset",
       expect.objectContaining({
         method: "POST",
@@ -187,7 +163,6 @@ describe("program auth client", () => {
     expect(sendRegisterCodeResult.message).toBe("注册验证码已发送");
     expect(verifyRegisterCodeResult.message).toBe("验证码已验证");
     expect(completeRegisterResult.message).toBe("账号已创建，但当前未开通会员");
-    expect(registerResult.message).toBe("账号已创建，但当前未开通会员");
     expect(sendResetCodeResult.message).toBe("密码重置验证码已发送");
     expect(resetResult.message).toBe("密码已重置");
   });

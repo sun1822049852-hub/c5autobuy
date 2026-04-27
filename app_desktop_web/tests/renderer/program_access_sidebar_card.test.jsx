@@ -269,6 +269,84 @@ describe("program access sidebar card", () => {
     expect(screen.queryByText("program_auth_not_ready")).not.toBeInTheDocument();
   });
 
+  it("shows invalid login credentials as an account-password error instead of generic unavailability", async () => {
+    const user = userEvent.setup();
+    const loginError = Object.assign(
+      new Error(JSON.stringify({
+        detail: {
+          code: "invalid_credentials",
+          message: "invalid credentials",
+          action: "program-auth.login",
+        },
+      })),
+      {
+        responseText: JSON.stringify({
+          detail: {
+            code: "invalid_credentials",
+            message: "invalid credentials",
+            action: "program-auth.login",
+          },
+        }),
+      },
+    );
+    const loginProgramAuth = vi.fn().mockRejectedValue(loginError);
+
+    render(
+      <ProgramAccessSidebarCard
+        access={REMOTE_PROGRAM_ACCESS_LOGGED_OUT_FIXTURE}
+        loginProgramAuth={loginProgramAuth}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "打开程序账号窗口" }));
+    await user.type(screen.getByPlaceholderText("请输入账号"), "88888888");
+    await user.type(screen.getByPlaceholderText("请输入密码"), "wrong-pass");
+    await user.click(getLoginSubmitButton());
+
+    const toast = await screen.findByRole("alert");
+    expect(toast).toHaveTextContent("账号或密码错误。");
+    expect(toast).not.toHaveTextContent("程序会员登录暂不可用，请稍后再试。");
+  });
+
+  it("shows remote control-plane outages as network guidance instead of generic login failure", async () => {
+    const user = userEvent.setup();
+    const loginError = Object.assign(
+      new Error(JSON.stringify({
+        detail: {
+          code: "program_remote_unavailable",
+          message: "program access remote unavailable",
+          action: "program-auth.login",
+        },
+      })),
+      {
+        responseText: JSON.stringify({
+          detail: {
+            code: "program_remote_unavailable",
+            message: "program access remote unavailable",
+            action: "program-auth.login",
+          },
+        }),
+      },
+    );
+    const loginProgramAuth = vi.fn().mockRejectedValue(loginError);
+
+    render(
+      <ProgramAccessSidebarCard
+        access={REMOTE_PROGRAM_ACCESS_LOGGED_OUT_FIXTURE}
+        loginProgramAuth={loginProgramAuth}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "打开程序账号窗口" }));
+    await user.type(screen.getByPlaceholderText("请输入账号"), "88888888");
+    await user.type(screen.getByPlaceholderText("请输入密码"), "wrong-pass");
+    await user.click(getLoginSubmitButton());
+
+    const toast = await screen.findByRole("alert");
+    expect(toast).toHaveTextContent("服务器连接失败请检查网络设置。");
+    expect(toast).not.toHaveTextContent("程序会员登录暂不可用，请稍后再试。");
+  });
+
   it("hides the default program_auth_required prompt while still allowing other flows", async () => {
     const user = userEvent.setup();
 
@@ -606,6 +684,181 @@ describe("program access sidebar card", () => {
     await user.click(screen.getByRole("button", { name: "重新发送验证码" }));
 
     expect(await screen.findByRole("button", { name: "重新发送验证码 (42s)" })).toBeDisabled();
+  });
+
+  it("tells the user to log in or reset password when register send is denied for an occupied email", async () => {
+    const user = userEvent.setup();
+    const deniedPayload = {
+      detail: {
+        code: "REGISTER_SEND_DENIED",
+        message: "register send denied",
+      },
+    };
+    const sendRegisterCode = vi.fn().mockRejectedValue(
+      Object.assign(
+        new Error(JSON.stringify(deniedPayload)),
+        { responseText: JSON.stringify(deniedPayload) },
+      ),
+    );
+
+    render(
+      <ProgramAccessSidebarCard
+        access={{
+          ...REMOTE_PROGRAM_ACCESS_LOGGED_OUT_FIXTURE,
+          registration_flow_version: 3,
+        }}
+        sendRegisterCode={sendRegisterCode}
+        verifyRegisterCode={vi.fn()}
+        completeRegisterProgramAuth={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "打开程序账号窗口" }));
+    await user.click(screen.getByRole("button", { name: "注册" }));
+    await user.type(screen.getByLabelText("注册邮箱"), "alice@example.com");
+    await user.click(screen.getByRole("button", { name: "发送注册验证码" }));
+
+    const toast = await screen.findByRole("alert");
+    expect(toast).toHaveTextContent("当前邮箱无法继续注册，请直接登录或找回密码。");
+    expect(toast).not.toHaveTextContent("无法继续注册，请稍后再试。");
+  });
+
+  it("shows REGISTER_EMAIL_UNAVAILABLE as occupied-email guidance", async () => {
+    const user = userEvent.setup();
+    const deniedPayload = {
+      detail: {
+        code: "REGISTER_EMAIL_UNAVAILABLE",
+        message: "register email unavailable",
+      },
+    };
+    const sendRegisterCode = vi.fn().mockRejectedValue(
+      Object.assign(
+        new Error(JSON.stringify(deniedPayload)),
+        { responseText: JSON.stringify(deniedPayload) },
+      ),
+    );
+
+    render(
+      <ProgramAccessSidebarCard
+        access={{
+          ...REMOTE_PROGRAM_ACCESS_LOGGED_OUT_FIXTURE,
+          registration_flow_version: 3,
+        }}
+        sendRegisterCode={sendRegisterCode}
+        verifyRegisterCode={vi.fn()}
+        completeRegisterProgramAuth={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "打开程序账号窗口" }));
+    await user.click(screen.getByRole("button", { name: "注册" }));
+    await user.type(screen.getByLabelText("注册邮箱"), "alice@example.com");
+    await user.click(screen.getByRole("button", { name: "发送注册验证码" }));
+
+    const toast = await screen.findByRole("alert");
+    expect(toast).toHaveTextContent("当前邮箱无法继续注册，请直接登录或找回密码。");
+    expect(toast).not.toHaveTextContent("注册验证码发送失败，请稍后再试。");
+  });
+
+  it("shows REGISTER_USERNAME_TAKEN as a username conflict copy on complete step", async () => {
+    const user = userEvent.setup();
+    const sendRegisterCode = vi.fn().mockResolvedValue({
+      ok: true,
+      message: "注册验证码已发送",
+      register_session_id: "session_1",
+      masked_email: "a***e@example.com",
+      resend_after_seconds: 60,
+      summary: {
+        ...REMOTE_PROGRAM_ACCESS_LOGGED_OUT_FIXTURE,
+        registration_flow_version: 3,
+      },
+    });
+    const verifyRegisterCode = vi.fn().mockResolvedValue({
+      ok: true,
+      message: "验证码已验证",
+      verification_ticket: "ticket_1",
+      summary: {
+        ...REMOTE_PROGRAM_ACCESS_LOGGED_OUT_FIXTURE,
+        registration_flow_version: 3,
+      },
+    });
+    const usernameTakenPayload = {
+      detail: {
+        code: "REGISTER_USERNAME_TAKEN",
+        message: "register username already exists",
+      },
+    };
+    const completeRegisterProgramAuth = vi.fn().mockRejectedValue(
+      Object.assign(
+        new Error(JSON.stringify(usernameTakenPayload)),
+        { responseText: JSON.stringify(usernameTakenPayload) },
+      ),
+    );
+
+    render(
+      <ProgramAccessSidebarCard
+        access={{
+          ...REMOTE_PROGRAM_ACCESS_LOGGED_OUT_FIXTURE,
+          registration_flow_version: 3,
+        }}
+        sendRegisterCode={sendRegisterCode}
+        verifyRegisterCode={verifyRegisterCode}
+        completeRegisterProgramAuth={completeRegisterProgramAuth}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "打开程序账号窗口" }));
+    await user.click(screen.getByRole("button", { name: "注册" }));
+    await user.type(screen.getByLabelText("注册邮箱"), "alice@example.com");
+    await user.click(screen.getByRole("button", { name: "发送注册验证码" }));
+    await screen.findByLabelText("注册验证码");
+    await user.type(screen.getByLabelText("注册验证码"), "123456");
+    await user.click(screen.getByRole("button", { name: "验证注册验证码" }));
+    await screen.findByLabelText("注册用户名");
+    await user.type(screen.getByLabelText("注册用户名"), "alice");
+    await user.type(screen.getByLabelText("注册密码"), "Secret123!");
+    await user.click(screen.getByRole("button", { name: "完成注册" }));
+
+    const toast = await screen.findByRole("alert");
+    expect(toast).toHaveTextContent("账号名已被使用");
+    expect(toast).not.toHaveTextContent("注册失败，请稍后再试。");
+  });
+
+  it("shows network guidance when the register send-code request cannot reach the remote server", async () => {
+    const user = userEvent.setup();
+    const unavailablePayload = {
+      detail: {
+        code: "program_remote_unavailable",
+        message: "program access remote unavailable",
+      },
+    };
+    const sendRegisterCode = vi.fn().mockRejectedValue(
+      Object.assign(
+        new Error(JSON.stringify(unavailablePayload)),
+        { responseText: JSON.stringify(unavailablePayload) },
+      ),
+    );
+
+    render(
+      <ProgramAccessSidebarCard
+        access={{
+          ...REMOTE_PROGRAM_ACCESS_LOGGED_OUT_FIXTURE,
+          registration_flow_version: 3,
+        }}
+        sendRegisterCode={sendRegisterCode}
+        verifyRegisterCode={vi.fn()}
+        completeRegisterProgramAuth={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "打开程序账号窗口" }));
+    await user.click(screen.getByRole("button", { name: "注册" }));
+    await user.type(screen.getByLabelText("注册邮箱"), "alice@example.com");
+    await user.click(screen.getByRole("button", { name: "发送注册验证码" }));
+
+    const toast = await screen.findByRole("alert");
+    expect(toast).toHaveTextContent("服务器连接失败请检查网络设置。");
+    expect(toast).not.toHaveTextContent("注册验证码发送失败，请稍后再试。");
   });
 
   it("keeps the register email draft when switching between register/login/reset and back", async () => {

@@ -45,9 +45,6 @@ export function createProgramAuthClient({
         }),
       );
     },
-    async registerProgramAuth(payload) {
-      return http.postJson("/program-auth/register", payload);
-    },
     async completeRegisterProgramAuth(payload) {
       return http.postJson(
         "/program-auth/register/complete",

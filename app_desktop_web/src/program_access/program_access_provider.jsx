@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useMemo, useState } from "react";
 
 import { resolveProgramAccessMessage } from "./program_access_messages.js";
 
@@ -10,6 +10,7 @@ const PROGRAM_ACCESS_CODES = new Set([
   "program_feature_not_enabled",
   "program_device_conflict",
   "program_permit_denied",
+  "program_remote_unavailable",
   "program_grace_limited",
   "program_guard_bypassed_dev_only",
 ]);
@@ -32,7 +33,10 @@ const DEFAULT_PROGRAM_ACCESS_GUARD = Object.freeze({
   async sendRegisterCode() {
     return null;
   },
-  async registerProgramAuth() {
+  async verifyRegisterCode() {
+    return null;
+  },
+  async completeRegisterProgramAuth() {
     return null;
   },
   async sendResetPasswordCode() {
@@ -65,7 +69,7 @@ function extractProgramErrorDetail(error) {
     ? payload.detail
     : payload;
 
-  if (!detail || typeof detail.code !== "string" || !detail.code.startsWith("program_")) {
+  if (!detail || typeof detail.code !== "string" || !detail.code.trim()) {
     return null;
   }
 
@@ -139,38 +143,12 @@ function extractProgramAuthSummary(result) {
 }
 
 
-function resolveRegistrationFlowVersion(summary, fallback = 2) {
-  const rawValue = summary?.registrationFlowVersion ?? summary?.registration_flow_version;
-  const numericValue = Number(rawValue);
-  return Number.isFinite(numericValue) ? numericValue : fallback;
-}
-
-
 export function ProgramAccessProvider({ children, programAuthClient = null, runtimeStore = null }) {
   const [lastGuardError, setLastGuardError] = useState(null);
   const [lastProgramAuthError, setLastProgramAuthError] = useState(null);
-  const [registrationFlowVersion, setRegistrationFlowVersion] = useState(() => (
-    resolveRegistrationFlowVersion(runtimeStore?.getSnapshot?.()?.programAccess, 2)
-  ));
-
-  useEffect(() => {
-    if (!runtimeStore?.subscribe || !runtimeStore?.getSnapshot) {
-      return undefined;
-    }
-
-    const syncRegistrationFlowVersion = () => {
-      setRegistrationFlowVersion(
-        resolveRegistrationFlowVersion(runtimeStore.getSnapshot()?.programAccess, 2),
-      );
-    };
-
-    syncRegistrationFlowVersion();
-    return runtimeStore.subscribe(syncRegistrationFlowVersion);
-  }, [runtimeStore]);
 
   const syncSummary = useCallback((summary) => {
     syncProgramAccessSummary(runtimeStore, summary);
-    setRegistrationFlowVersion((current) => resolveRegistrationFlowVersion(summary, current));
   }, [runtimeStore]);
 
   const runProgramAccessAction = useCallback(async (action) => {
@@ -245,26 +223,6 @@ export function ProgramAccessProvider({ children, programAuthClient = null, runt
 
     try {
       const result = await programAuthClient.sendRegisterCode(payload);
-      const summary = extractProgramAuthSummary(result);
-      syncSummary(summary);
-      setLastProgramAuthError(null);
-      return result;
-    } catch (error) {
-      const authError = extractProgramAuthActionError(error);
-      if (authError) {
-        setLastProgramAuthError(authError);
-      }
-      throw error;
-    }
-  }, [programAuthClient, syncSummary]);
-
-  const registerProgramAuth = useCallback(async (payload) => {
-    if (!programAuthClient?.registerProgramAuth) {
-      throw new Error("Program auth client unavailable");
-    }
-
-    try {
-      const result = await programAuthClient.registerProgramAuth(payload);
       const summary = extractProgramAuthSummary(result);
       syncSummary(summary);
       setLastProgramAuthError(null);
@@ -366,9 +324,8 @@ export function ProgramAccessProvider({ children, programAuthClient = null, runt
     loginProgramAuth,
     logoutProgramAuth,
     sendRegisterCode,
-    registerProgramAuth,
-    verifyRegisterCode: registrationFlowVersion === 3 ? verifyRegisterCode : undefined,
-    completeRegisterProgramAuth: registrationFlowVersion === 3 ? completeRegisterProgramAuth : undefined,
+    verifyRegisterCode,
+    completeRegisterProgramAuth,
     sendResetPasswordCode,
     resetProgramAuthPassword,
   }), [
@@ -379,8 +336,6 @@ export function ProgramAccessProvider({ children, programAuthClient = null, runt
     loginProgramAuth,
     logoutProgramAuth,
     sendRegisterCode,
-    registerProgramAuth,
-    registrationFlowVersion,
     verifyRegisterCode,
     completeRegisterProgramAuth,
     sendResetPasswordCode,

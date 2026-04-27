@@ -45,6 +45,7 @@
 - 浏览器代理页与代理池 UI 新增一条稳定交互约束：浏览器代理设置必须明确提示“已打开的浏览器窗口不会立即切到新代理，需要重开窗口或重新登录后才生效”；代理池里前端已拿到的密码默认按用户要求明文可见，不再额外替换成 `***`。
 - 配置管理里的商品级手动暂停展示也已冻结一条 UI 约束：暂停状态必须作为商品行内最后一列 `状态` 展示，不能再挂在行外独立按钮位；界面只显示图形，`manual_paused=true` 用红色三角形，`manual_paused=false` 用绿色双竖线，删除模式则在同一格位原地替换成 `-` 删除按钮。
 - 程序账号注册链路已冻结为“三步前端 + 三接口后端”结构：第一步仅输邮箱并在远端发码阶段做风控，第二步独立验证验证码，第三步仅在验码成功后凭一次性 `verification_ticket` 设置账号名与密码完成注册；前端本地正则只做粗校验，真正的防刷判断必须留在远端统一鉴权。
+- 桌面本地程序账号注册桥接也已进一步冻结：renderer/client/provider/backend local route 只允许保留 `send-code / verify-code / complete` 三段接口，不再暴露 `registerProgramAuth` 或本地 `/program-auth/register` 旧 one-shot fallback；即使 packaged release 因 stale bootstrap 仍短暂显示 `registration_flow_version=2`，注册入口也只能走邮箱首步 + v3 bridge，自愈刷新只允许修正摘要，不得再回退激活旧注册提交链。
 - 程序账号远端注册弹窗的 renderer 口径也已进一步冻结：`remote_entitlement` 下不再渲染旧的一屏式 `email+code+username+password` 注册表单，注册入口统一从“邮箱 -> 验证码 -> 账号密码”的三步流起步；即使首次 bootstrap 还停在 stale `registration_flow_version=2`，UI 也只能走邮箱首步并尝试自愈刷新，不能再回退显示旧表单。
 - 程序账号注册发码链路又新增一条稳定反绕过约束：本地 backend 必须把 program access 稳定 `device_id` 作为远端 `install_id` 透传到注册 `send-code / verify-code / complete` 三接口；60 秒发码冷却不能靠“修改邮箱”绕过，renderer 回到邮箱页时也必须保留冷却并优先采用远端 `retry_after_seconds`；`qq.co` 这类已确认的公共邮箱 typo 域名按 `REGISTER_INPUT_INVALID` 拦截。
 - 程序账号三步注册的发布约束也已冻结：只有当远端 `send-code / verify-code / complete` 三接口全部就绪时，本地后端才可把 `registration_flow_version` 切到 `3` 放行新 UI；否则桌面端必须继续停留在旧的两接口注册链路，不能让本地 UI 先于远端能力切换。
@@ -66,6 +67,8 @@
 - 程序账号弹窗视觉也新增一条稳定 UI 约束：默认 `program_auth_required / 请先登录程序会员` 不再作为顶部异常提示展示；登录/注册/找回密码输入区默认使用输入框内 `placeholder`，右上角关闭控件保持红底正方形 `X`，但访问名仍必须是“关闭”。
 - 程序账号登录/注册/找回密码弹窗又新增一条稳定交互约束：backdrop 点击不得关闭窗口，只允许右上角 `X` 关闭；弹窗眉标固定为 `c5交易助手`；登录主按钮固定为 `登录`，placeholder 固定为 `请输入账号 / 请输入密码`；注册流点“修改邮箱”进入邮箱页后，`发送注册验证码` 右侧必须有 `取消` 可回原验证码页；register/login/reset 之间切换时不得清空已填注册邮箱，且 dialog shell 保持固定尺寸，不因内容切换反复跳动。
 - 程序账号弹窗的表单提示又冻结一条稳定 UI 约束：`formError / formNotice` 统一以弹窗中央 toast 方式提示，不再把“请先填写完整的找回密码信息”这类校验文案贴在底部；注册发码与找回密码发码遇到无效邮箱时必须显式提示 `请输入有效邮箱地址。`，不能通过禁用按钮或静默透传请求把错误吞掉；主要动作按钮统一走紧凑样式，不再默认整行拉满。
+- 程序账号注册发码又新增一条稳定提示约束：当远端在 `send-code` 阶段因邮箱已被占用返回 `REGISTER_SEND_DENIED` 时，前端必须明确提示“当前邮箱无法继续注册，请直接登录或找回密码”，不得再把这类已注册邮箱场景伪装成“无法继续注册，请稍后再试”的服务异常。
+- 程序账号登录提示也新增一条稳定约束：当本地 `/program-auth/login` 或远端控制面返回 `invalid_credentials` 这类账号口令错误时，前端必须明确提示“账号或密码错误。”；provider 侧不得再只识别 `program_*` 错误码，登录弹窗也不得把这类业务错误统一覆写成“程序会员登录暂不可用，请稍后再试。”
 - 程序账号弹窗尺寸口径又新增一条稳定约束：登录/注册/找回密码 dialog root 必须继续带 `program-access-dialog--compact-shell`，桌面端保持更紧凑的固定壳尺寸；用户可见的 `刷新状态` 按钮已从登录页与已登录状态页移除，不得在后续 UI 回退中静默加回。
 - 程序账号弹窗控件密度又新增一条稳定约束：dialog root 继续带 `program-access-dialog--dense-controls`；登录 / 注册 / 找回密码输入框统一带 `program-access-sidebar-card__input--compact`；tabs、输入框、compact 按钮与 close button 都维持当前更紧凑的高度 / padding 口径，后续不得无说明放大回退。
 - 程序账号弹窗的模式切换按钮已纠偏回最初样式来源 `7138d87`：`登录 / 注册 / 找回密码` 三颗 tab 继续沿用三等分 tab 口径，容器保持 `grid-template-columns: repeat(3, minmax(0, 1fr))` + `gap: 8px`；允许在 `program-access-sidebar-card__tab` 之上叠加 `program-access-sidebar-card__tab--dense` 做小一档收口，但不得再无依据改成 compact pill 或其他临时风格。
@@ -107,6 +110,8 @@
 - 程序会员控制台的远端开发机访问口径继续保持 loopback-only：`8.138.39.139` 上的后台 `/admin` 默认只应通过“宿主机 `127.0.0.1:18787` + 本机 SSH 隧道”访问。若桌面端程序会员链路以后要恢复直连远端 API，必须先单独提供新的公网 API 入口（域名 / 反向代理 / 新配置迁移），不能再靠临时重新开放 `18787` 公网监听硬顶。
 - 程序会员链路若要恢复“桌面端直连远端”，稳定安全口径固定为“独立 HTTPS auth gateway + 仅暴露 `/api/health` 与 `/api/auth/*`”；`/admin` 与 `/api/admin/*` 不得挂进同一公网入口。若 control plane 跑在可信反向代理后，运行容器必须显式开启 `PROGRAM_ADMIN_TRUST_PROXY=true`，否则注册风控/登录来源识别拿到的只是代理层 IP。
 - 当前又补齐一条无域名收口能力：桌面端 release 已支持通过 `controlPlaneCaCertPath` / `C5_PROGRAM_CONTROL_PLANE_CA_CERT_PATH` pin 一张自带 CA 证书，因此即使没有域名，也可以走“`https://服务器IP` + 自签/私有 CA + 客户端证书 pinning”这条安全链；此时 `app_desktop_web/build/control_plane_ca.pem` 若存在，会随打包自动进入 resources 根目录。
+- packaged release 的程序会员远端入口又新增一条稳定安全约束：Electron 主进程与 backend program access 装配都不得再回退到默认 `http://8.138.39.139:18787` 或其它明文 HTTP；release 口径必须显式提供 `https://服务器IP`（或等价 HTTPS base url）以及 `controlPlaneCaCertPath`，缺任一项都应 fail-closed，而不是静默降级回旧连接路径。
+- 程序会员远端断链的用户态提示又新增一条稳定口径：当 `program_remote_unavailable`、`program_membership_service_unavailable` 或同类 `service_unavailable` 命中时，前端统一显示 `服务器连接失败请检查网络设置。`，并继续复用现有 `FeedbackDialog / ErrorNotice` 提示链，不得再散落成“程序会员登录暂不可用”“注册验证码发送失败，请稍后再试。”这类 generic 文案。
 - 程序会员控制台的本机连接脚本也新增一条稳定操作约束：`program_admin_console/tools/connectProgramAdminConsole.{ps1,cmd}` 默认不再把 URL 交给已运行的默认浏览器，而是启动一个专用 Chromium 窗口（独立临时 profile）来访问 `/admin`；关闭这个专用窗口后，脚本会自动断开它自己创建的 SSH 隧道。后续若继续调整该脚本，默认不要回退到“复用已有浏览器窗口/标签页”的不可靠模式。
 - 程序会员控制台又新增一条稳定发布约束：`connectProgramAdminConsole` 命中的永远是远端运行中的 `c5-program-admin`，不是本地工作树。因此凡是 `program_admin_console/src/` 或 `program_admin_console/ui/` 的用户可见/接口行为改动，默认都必须在同一轮同步远端源码 `/home/admin/c5-program-admin-src`、重建/替换远端容器，并至少验 `http://127.0.0.1:18787/api/health`、`/api/admin/session`、`/admin`、`/admin/app.js`、`/admin/styles.css`；未完成这组对齐前，不得宣称 connect 入口已生效。同步时还要覆盖新代码依赖到的文件闭包，不能只拷“看起来改过”的单文件，否则会出现 `server.js` 已更新但 `validation.js` 缺失、容器启动失败的漂移事故。
 - 程序会员控制台的标准化远端更新入口现已固定为 `program_admin_console/tools/deployProgramAdminRemote.ps1`：后续 AI 若要同步 `program_admin_console` 到远端，默认先跑该脚本的 `-DryRun` 读取现网 image / env / signing kid，再按同一脚本完成源码同步、镜像重建、容器替换与基础 smoke，而不是重新手拼一套命令。该脚本的稳定语义是“复用远端现有 secret/env/bind/port 口径，但强制用远端私钥真实派生值覆盖 `PROGRAM_ADMIN_SIGNING_KID`”。

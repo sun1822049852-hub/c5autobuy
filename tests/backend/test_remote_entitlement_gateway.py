@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import base64
+import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
 from app_backend.infrastructure.program_access.entitlement_verifier import (
     EntitlementVerifier,
@@ -21,7 +22,6 @@ from app_backend.infrastructure.program_access.remote_control_plane_client impor
     RemoteControlPlaneError,
     RemoteMessageResult,
     RemotePermitResult,
-    RemoteRegisterResult,
     RemoteRuntimePermit,
 )
 from app_backend.infrastructure.program_access.remote_entitlement_gateway import RemoteEntitlementGateway
@@ -195,40 +195,6 @@ def test_remote_gateway_logout_rejects_remote_failure_instead_of_claiming_succes
     assert remote_client.logout_calls == ["refresh-token-1"]
 
 
-def test_remote_gateway_register_does_not_persist_auth_and_returns_local_membership_message(tmp_path: Path) -> None:
-    private_key = Ed25519PrivateKey.generate()
-    verifier = EntitlementVerifier(key_cache_path=_write_public_key(tmp_path, private_key))
-    bundle = ProgramCredentialBundle(device_id="device-alpha")
-    credential_store = _MemoryCredentialStore(bundle)
-    gateway = RemoteEntitlementGateway(
-        remote_client=_RemoteClientStub(
-            register_result=RemoteRegisterResult(
-                message="注册成功",
-                user={"id": "user-1"},
-            )
-        ),
-        verifier=verifier,
-        credential_store=credential_store,
-        secret_store=_MemorySecretStore(),
-        device_id_store=_StaticDeviceIdStore("device-alpha"),
-        stage="packaged_release",
-    )
-
-    summary_before = gateway.get_summary()
-    result = gateway.register(
-        email="alice@example.com",
-        code="123456",
-        username="alice",
-        password="Secret123!",
-    )
-
-    assert result.accepted is True
-    assert result.message == "账号已创建，但当前未开通会员"
-    assert result.summary == summary_before
-    assert gateway.get_summary() == summary_before
-    assert credential_store.load() == bundle
-
-
 def test_remote_gateway_send_register_code_returns_remote_message_and_summary(tmp_path: Path) -> None:
     private_key = Ed25519PrivateKey.generate()
     verifier = EntitlementVerifier(key_cache_path=_write_public_key(tmp_path, private_key))
@@ -342,6 +308,105 @@ def test_remote_gateway_verify_register_code_returns_remote_message_and_summary(
     assert result.summary.registration_flow_version == 3
 
 
+def test_remote_gateway_complete_register_persists_verified_auth_bundle_when_signature_kid_matches(
+    tmp_path: Path,
+) -> None:
+    private_key = Ed25519PrivateKey.generate()
+    verifier = EntitlementVerifier(key_cache_path=_write_public_key(tmp_path, private_key))
+    kid = derive_key_id(private_key.public_key())
+    secret_store = _MemorySecretStore()
+    credential_store = _MemoryCredentialStore(ProgramCredentialBundle(device_id="device-alpha"))
+    remote_client = _RemoteClientStub(
+        complete_register_result=_build_auth_result(
+            private_key=private_key,
+            kid=kid,
+            refresh_token="refresh-token-1",
+            snapshot=_build_snapshot(feature_enabled=True, runtime_state="running"),
+            message="注册成功",
+        ),
+    )
+    gateway = RemoteEntitlementGateway(
+        remote_client=remote_client,
+        verifier=verifier,
+        credential_store=credential_store,
+        secret_store=secret_store,
+        device_id_store=_StaticDeviceIdStore("device-alpha"),
+        stage="packaged_release",
+    )
+
+    result = gateway.complete_register(
+        email="alice@example.com",
+        verification_ticket="ticket_1",
+        username="alice",
+        password="Secret123!",
+    )
+    stored_bundle = credential_store.load()
+
+    assert result.accepted is True
+    # complete_register persists auth but returns a local membership messaging.
+    assert result.message == "账号已创建，但当前未开通会员"
+    assert stored_bundle.refresh_credential_ref is not None
+    assert secret_store.get(stored_bundle.refresh_credential_ref) == "refresh-token-1"
+    assert stored_bundle.entitlement_signature is not None
+    assert stored_bundle.entitlement_kid == kid
+    assert isinstance(stored_bundle.entitlement_snapshot, dict)
+    assert stored_bundle.entitlement_snapshot["runtime_state"] == "running"
+    assert stored_bundle.last_error_code is None
+
+
+def test_remote_gateway_complete_register_rejects_program_snapshot_invalid_when_signature_and_kid_mismatch(
+    tmp_path: Path,
+) -> None:
+    signing_key = Ed25519PrivateKey.generate()
+    decoy_key = Ed25519PrivateKey.generate()
+    jwks_path = _write_jwks(
+        tmp_path,
+        {
+            "signing-key": signing_key.public_key(),
+            "decoy-key": decoy_key.public_key(),
+        },
+    )
+    verifier = EntitlementVerifier(key_cache_path=jwks_path)
+    secret_store = _MemorySecretStore()
+    credential_store = _MemoryCredentialStore(ProgramCredentialBundle(device_id="device-alpha"))
+    remote_client = _RemoteClientStub(
+        # Signature issued by `signing_key` but kid points to `decoy-key`.
+        complete_register_result=_build_auth_result(
+            private_key=signing_key,
+            kid="decoy-key",
+            refresh_token="refresh-token-1",
+            snapshot=_build_snapshot(feature_enabled=True, runtime_state="running"),
+            message="注册成功",
+        ),
+    )
+    gateway = RemoteEntitlementGateway(
+        remote_client=remote_client,
+        verifier=verifier,
+        credential_store=credential_store,
+        secret_store=secret_store,
+        device_id_store=_StaticDeviceIdStore("device-alpha"),
+        stage="packaged_release",
+    )
+
+    result = gateway.complete_register(
+        email="alice@example.com",
+        verification_ticket="ticket_1",
+        username="alice",
+        password="Secret123!",
+    )
+    stored_bundle = credential_store.load()
+    summary = gateway.get_summary()
+
+    assert result.accepted is False
+    assert result.code == "program_snapshot_invalid"
+    assert summary.last_error_code == "program_snapshot_invalid"
+    # clear_auth=True should clear persisted auth material on invalid snapshot.
+    assert stored_bundle.refresh_credential_ref is None
+    assert stored_bundle.entitlement_snapshot is None
+    assert stored_bundle.entitlement_signature is None
+    assert stored_bundle.entitlement_kid is None
+
+
 def test_remote_gateway_send_reset_code_maps_remote_user_not_found_for_route_layer(tmp_path: Path) -> None:
     private_key = Ed25519PrivateKey.generate()
     verifier = EntitlementVerifier(key_cache_path=_write_public_key(tmp_path, private_key))
@@ -400,7 +465,8 @@ def test_remote_gateway_reset_password_maps_invalid_credentials_for_route_layer(
     ("action", "reason", "message"),
     [
         ("send_register_code", "email_invalid", "邮箱格式错误"),
-        ("register", "register_payload_invalid", "注册参数无效"),
+        ("verify_register_code", "email_code_invalid", "验证码错误"),
+        ("complete_register", "register_payload_invalid", "注册参数无效"),
         ("reset_password_code", "email_code_invalid", "验证码错误"),
         ("reset_password_payload", "reset_payload_invalid", "重置参数无效"),
     ],
@@ -421,9 +487,17 @@ def test_remote_gateway_route_only_actions_passthrough_control_plane_validation_
                 message=message,
             )
         )
-    elif action == "register":
+    elif action == "verify_register_code":
         remote_client = _RemoteClientStub(
-            register_error=RemoteControlPlaneError(
+            verify_register_code_error=RemoteControlPlaneError(
+                status_code=400,
+                reason=reason,
+                message=message,
+            )
+        )
+    elif action == "complete_register":
+        remote_client = _RemoteClientStub(
+            complete_register_error=RemoteControlPlaneError(
                 status_code=400,
                 reason=reason,
                 message=message,
@@ -448,10 +522,16 @@ def test_remote_gateway_route_only_actions_passthrough_control_plane_validation_
 
     if action == "send_register_code":
         result = gateway.send_register_code("alice@example.com")
-    elif action == "register":
-        result = gateway.register(
+    elif action == "verify_register_code":
+        result = gateway.verify_register_code(
             email="alice@example.com",
             code="123456",
+            register_session_id="register_session_1",
+        )
+    elif action == "complete_register":
+        result = gateway.complete_register(
+            email="alice@example.com",
+            verification_ticket="ticket_1",
             username="alice",
             password="Secret123!",
         )
@@ -783,7 +863,6 @@ class _RemoteClientStub:
         *,
         login_result: RemoteAuthResult | None = None,
         public_key_pem: str | None = None,
-        register_result: RemoteRegisterResult | None = None,
         send_register_code_result: RemoteMessageResult | None = None,
         verify_register_code_result: object | None = None,
         complete_register_result: RemoteAuthResult | None = None,
@@ -793,7 +872,6 @@ class _RemoteClientStub:
         refresh_result: RemoteAuthResult | None = None,
         permit_result: RemotePermitResult | None = None,
         logout_error: Exception | None = None,
-        register_error: Exception | None = None,
         send_register_code_error: Exception | None = None,
         verify_register_code_error: Exception | None = None,
         complete_register_error: Exception | None = None,
@@ -803,7 +881,6 @@ class _RemoteClientStub:
     ) -> None:
         self._login_result = login_result
         self._public_key_pem = public_key_pem
-        self._register_result = register_result
         self._send_register_code_result = send_register_code_result
         self._verify_register_code_result = verify_register_code_result
         self._complete_register_result = complete_register_result
@@ -813,7 +890,6 @@ class _RemoteClientStub:
         self._refresh_result = refresh_result
         self._permit_result = permit_result
         self._logout_error = logout_error
-        self._register_error = register_error
         self._send_register_code_error = send_register_code_error
         self._verify_register_code_error = verify_register_code_error
         self._complete_register_error = complete_register_error
@@ -822,7 +898,6 @@ class _RemoteClientStub:
         self._refresh_error = refresh_error
         self.logout_calls: list[str] = []
         self.permit_calls: list[dict[str, object]] = []
-        self.register_calls: list[dict[str, object]] = []
         self.send_register_code_calls: list[dict[str, object]] = []
         self.verify_register_code_calls: list[dict[str, object]] = []
         self.complete_register_calls: list[dict[str, object]] = []
@@ -891,28 +966,6 @@ class _RemoteClientStub:
         if self._registration_readiness_result is None:
             raise AssertionError("registration readiness result not configured")
         return self._registration_readiness_result
-
-    def register(
-        self,
-        *,
-        email: str,
-        code: str,
-        username: str,
-        password: str,
-    ) -> RemoteRegisterResult:
-        self.register_calls.append(
-            {
-                "email": email,
-                "code": code,
-                "username": username,
-                "password": password,
-            }
-        )
-        if self._register_error is not None:
-            raise self._register_error
-        if self._register_result is None:
-            raise AssertionError("register result not configured")
-        return self._register_result
 
     def refresh(self, *, refresh_token: str, device_id: str) -> RemoteAuthResult:
         _ = refresh_token
@@ -1109,6 +1162,34 @@ def _write_public_key(tmp_path: Path, private_key: Ed25519PrivateKey) -> Path:
     key_path = tmp_path / "control-plane-public.pem"
     key_path.write_text(_build_public_key_pem(private_key), encoding="utf-8")
     return key_path
+
+
+def _write_jwks(
+    tmp_path: Path,
+    keys: dict[str, Ed25519PublicKey],
+) -> Path:
+    jwks_path = tmp_path / "control-plane-public.jwks.json"
+    jwks_path.write_text(
+        json.dumps(
+            {
+                "keys": [
+                    {
+                        "kty": "OKP",
+                        "crv": "Ed25519",
+                        "kid": kid,
+                        "x": _to_base64url(public_key.public_bytes_raw()),
+                    }
+                    for kid, public_key in keys.items()
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    return jwks_path
+
+
+def _to_base64url(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
 
 
 def _build_public_key_pem(private_key: Ed25519PrivateKey) -> str:

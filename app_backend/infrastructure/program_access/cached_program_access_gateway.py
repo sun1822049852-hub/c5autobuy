@@ -204,24 +204,6 @@ class CachedProgramAccessGateway:
             message=PROGRAM_AUTH_REMOTE_NOT_READY_MESSAGE,
         )
 
-    def register(
-        self,
-        *,
-        email: str,
-        code: str,
-        username: str,
-        password: str,
-    ) -> ProgramAccessActionResult:
-        _ = email
-        _ = code
-        _ = username
-        _ = password
-        return ProgramAccessActionResult.reject(
-            summary=self.get_summary(),
-            code=PROGRAM_AUTH_NOT_READY_CODE,
-            message=PROGRAM_AUTH_REMOTE_NOT_READY_MESSAGE,
-        )
-
     def complete_register(
         self,
         *,

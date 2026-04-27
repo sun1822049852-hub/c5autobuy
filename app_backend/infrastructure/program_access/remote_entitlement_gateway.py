@@ -206,28 +206,6 @@ class RemoteEntitlementGateway:
             }),
         )
 
-    def register(
-        self,
-        *,
-        email: str,
-        code: str,
-        username: str,
-        password: str,
-    ) -> ProgramAccessActionResult:
-        try:
-            self._remote_client.register(
-                email=email,
-                code=code,
-                username=username,
-                password=password,
-            )
-        except Exception as exc:
-            return self._reject_route_action_error(exc)
-        return ProgramAccessActionResult.accept(
-            summary=self.get_summary(),
-            message=PROGRAM_REGISTERED_BUT_NOT_MEMBER_MESSAGE,
-        )
-
     def complete_register(
         self,
         *,

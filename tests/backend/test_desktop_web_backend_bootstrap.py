@@ -3,6 +3,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 import certifi
+import pytest
 
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import inspect
@@ -112,7 +113,7 @@ def test_create_app_packaged_release_wires_remote_program_access_services(tmp_pa
         program_access_stage="packaged_release",
         program_access_app_data_root=tmp_path / "program-access-data",
         program_access_secret_stage="local_dev",
-        program_access_control_plane_base_url="http://8.138.39.139:18787",
+        program_access_control_plane_base_url="https://8.138.39.139",
         program_access_control_plane_ca_cert_path=control_plane_ca_cert_path,
         program_access_start_refresh_scheduler=False,
     )
@@ -131,17 +132,63 @@ def test_create_app_packaged_release_wires_remote_program_access_services(tmp_pa
 
 
 def test_create_app_can_enable_registration_readiness_probe_for_packaged_release(tmp_path: Path):
+    control_plane_ca_cert_path = tmp_path / "control_plane_ca.pem"
+    shutil.copyfile(certifi.where(), control_plane_ca_cert_path)
     app = create_app(
         db_path=tmp_path / "desktop-web.db",
         program_access_stage="packaged_release",
         program_access_app_data_root=tmp_path / "program-access-data",
         program_access_secret_stage="local_dev",
-        program_access_control_plane_base_url="http://8.138.39.139:18787",
+        program_access_control_plane_base_url="https://8.138.39.139",
+        program_access_control_plane_ca_cert_path=control_plane_ca_cert_path,
         program_access_probe_registration_readiness=True,
         program_access_start_refresh_scheduler=False,
     )
 
     assert app.state.program_access_gateway._probe_registration_readiness is True
+
+
+def test_create_app_packaged_release_requires_an_explicit_control_plane_base_url(tmp_path: Path):
+    control_plane_ca_cert_path = tmp_path / "control_plane_ca.pem"
+    shutil.copyfile(certifi.where(), control_plane_ca_cert_path)
+
+    with pytest.raises(ValueError, match="control plane base url"):
+        create_app(
+            db_path=tmp_path / "desktop-web.db",
+            program_access_stage="packaged_release",
+            program_access_app_data_root=tmp_path / "program-access-data",
+            program_access_secret_stage="local_dev",
+            program_access_control_plane_ca_cert_path=control_plane_ca_cert_path,
+            program_access_start_refresh_scheduler=False,
+        )
+
+
+def test_create_app_packaged_release_rejects_insecure_http_control_plane_urls(tmp_path: Path):
+    control_plane_ca_cert_path = tmp_path / "control_plane_ca.pem"
+    shutil.copyfile(certifi.where(), control_plane_ca_cert_path)
+
+    with pytest.raises(ValueError, match="https control plane base url"):
+        create_app(
+            db_path=tmp_path / "desktop-web.db",
+            program_access_stage="packaged_release",
+            program_access_app_data_root=tmp_path / "program-access-data",
+            program_access_secret_stage="local_dev",
+            program_access_control_plane_base_url="http://8.138.39.139:18787",
+            program_access_control_plane_ca_cert_path=control_plane_ca_cert_path,
+            program_access_start_refresh_scheduler=False,
+        )
+
+
+def test_create_app_packaged_release_requires_a_control_plane_ca_cert_path(tmp_path: Path):
+    with pytest.raises(ValueError, match="control plane CA cert path"):
+        create_app(
+            db_path=tmp_path / "desktop-web.db",
+            program_access_stage="packaged_release",
+            program_access_app_data_root=tmp_path / "program-access-data",
+            program_access_secret_stage="local_dev",
+            program_access_control_plane_base_url="https://8.138.39.139",
+            program_access_start_refresh_scheduler=False,
+        )
 
 
 def test_create_app_creates_stats_and_ui_preference_tables(tmp_path: Path):

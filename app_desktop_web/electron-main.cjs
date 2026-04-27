@@ -567,15 +567,22 @@ function ensureEmbeddedBackendStartup({
       const controlPlaneBaseUrl = typeof rawProgramAccessConfig?.controlPlaneBaseUrl === "string"
         ? rawProgramAccessConfig.controlPlaneBaseUrl.trim()
         : "";
+      const controlPlaneCaCertPath = typeof rawProgramAccessConfig?.controlPlaneCaCertPath === "string"
+        ? rawProgramAccessConfig.controlPlaneCaCertPath.trim()
+        : "";
       const probeRegistrationReadiness = Boolean(controlPlaneBaseUrl);
-      if (packagedRelease && !controlPlaneBaseUrl) {
-        throw new Error("Packaged release requires a control plane base url.");
+      if (packagedRelease) {
+        validatePackagedProgramAccessConfig({
+          controlPlaneBaseUrl,
+          controlPlaneCaCertPath,
+        });
       }
       const programAccessConfig = packagedRelease
         ? {
             ...rawProgramAccessConfig,
             appPrivateDir: embeddedBackendPaths.appPrivateDir,
             controlPlaneBaseUrl,
+            controlPlaneCaCertPath,
             probeRegistrationReadiness,
             stage: "packaged_release",
           }
@@ -719,6 +726,24 @@ function buildStartupFailureCopy(runtimeMode, { isPackaged = app?.isPackaged ===
   }
 
   return "Python 后端未能成功拉起，请先确认 .venv 与 data/app.db 是否存在。";
+}
+
+
+function isSecureControlPlaneBaseUrl(value) {
+  return typeof value === "string" && /^https:\/\//i.test(value.trim());
+}
+
+
+function validatePackagedProgramAccessConfig({ controlPlaneBaseUrl, controlPlaneCaCertPath }) {
+  if (!controlPlaneBaseUrl) {
+    throw new Error("Packaged release requires a control plane base url.");
+  }
+  if (!isSecureControlPlaneBaseUrl(controlPlaneBaseUrl)) {
+    throw new Error("Packaged release requires an https control plane base url.");
+  }
+  if (!controlPlaneCaCertPath) {
+    throw new Error("Packaged release requires a control plane CA cert path.");
+  }
 }
 
 

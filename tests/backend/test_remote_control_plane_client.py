@@ -138,6 +138,7 @@ def test_verify_and_complete_register_map_v3_paths() -> None:
             "install_id": "device-alpha",
         },
     }
+    assert all(call["path"] != "/api/auth/register" for call in captured)
     assert verify_result.verification_ticket == "ticket_1"
     assert complete_result.message == "注册成功"
     assert complete_result.user["username"] == "alice"

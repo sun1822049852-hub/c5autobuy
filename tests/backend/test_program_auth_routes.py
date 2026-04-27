@@ -62,15 +62,6 @@ async def test_program_auth_register_and_password_routes_accept_with_stubbed_pac
             "/program-auth/register/send-code",
             json={"email": "alice@example.com"},
         )
-        register_response = await client.post(
-            "/program-auth/register",
-            json={
-                "email": "alice@example.com",
-                "code": "123456",
-                "username": "alice",
-                "password": "Secret123!",
-            },
-        )
         verify_register_code_response = await client.post(
             "/program-auth/register/verify-code",
             json={
@@ -84,6 +75,15 @@ async def test_program_auth_register_and_password_routes_accept_with_stubbed_pac
             json={
                 "email": "alice@example.com",
                 "verification_ticket": "ticket_1",
+                "username": "alice",
+                "password": "Secret123!",
+            },
+        )
+        legacy_register_response = await client.post(
+            "/program-auth/register",
+            json={
+                "email": "alice@example.com",
+                "code": "123456",
                 "username": "alice",
                 "password": "Secret123!",
             },
@@ -108,12 +108,6 @@ async def test_program_auth_register_and_password_routes_accept_with_stubbed_pac
         "message": "注册验证码已发送",
         "summary": expected_summary,
     }
-    assert register_response.status_code == 200
-    assert register_response.json() == {
-        "ok": True,
-        "message": "账号已创建，但当前未开通会员",
-        "summary": expected_summary,
-    }
     assert verify_register_code_response.status_code == 200
     assert verify_register_code_response.json() == {
         "ok": True,
@@ -126,6 +120,7 @@ async def test_program_auth_register_and_password_routes_accept_with_stubbed_pac
         "message": "账号已创建，但当前未开通会员",
         "summary": expected_summary,
     }
+    assert legacy_register_response.status_code in {404, 405}
     assert send_reset_code_response.status_code == 200
     assert send_reset_code_response.json() == {
         "ok": True,
@@ -140,44 +135,106 @@ async def test_program_auth_register_and_password_routes_accept_with_stubbed_pac
     }
 
 
-async def test_program_auth_register_returns_structured_conflict_error(tmp_path: Path) -> None:
-    summary = ProgramAccessSummary(
-        mode="remote_entitlement",
-        stage="packaged_release",
-        guard_enabled=True,
-        message="请先登录程序会员",
-        auth_state=None,
-        runtime_state="stopped",
-        grace_expires_at=None,
-        last_error_code="program_auth_required",
+@pytest.mark.parametrize(
+    ("stub_field", "path", "request_payload", "error_code", "error_message", "status_code", "action"),
+    [
+        (
+            "complete_register_result",
+            "/program-auth/register/complete",
+            {
+                "email": "alice@example.com",
+                "verification_ticket": "ticket_1",
+                "username": "alice",
+                "password": "Secret123!",
+            },
+            "REGISTER_USERNAME_TAKEN",
+            "用户名已被占用",
+            409,
+            "program-auth.register.complete",
+        ),
+        (
+            "complete_register_result",
+            "/program-auth/register/complete",
+            {
+                "email": "alice@example.com",
+                "verification_ticket": "ticket_1",
+                "username": "alice",
+                "password": "Secret123!",
+            },
+            "REGISTER_EMAIL_UNAVAILABLE",
+            "邮箱暂不可用",
+            409,
+            "program-auth.register.complete",
+        ),
+        (
+            "login_result",
+            "/program-auth/login",
+            {
+                "username": "alice",
+                "password": "Secret123!",
+            },
+            "login_locked",
+            "登录尝试过多，请稍后重试",
+            429,
+            "program-auth.login",
+        ),
+        (
+            "reset_password_result",
+            "/program-auth/password/reset",
+            {
+                "email": "alice@example.com",
+                "code": "654321",
+                "new_password": "NewSecret456!",
+            },
+            "code_verify_locked",
+            "验证码校验已锁定",
+            429,
+            "program-auth.password.reset",
+        ),
+        (
+            "complete_register_result",
+            "/program-auth/register/complete",
+            {
+                "email": "alice@example.com",
+                "verification_ticket": "ticket_1",
+                "username": "alice",
+                "password": "Secret123!",
+            },
+            "device_mismatch",
+            "设备不匹配",
+            409,
+            "program-auth.register.complete",
+        ),
+    ],
+)
+async def test_program_auth_routes_map_focused_register_v3_error_statuses(
+    tmp_path: Path,
+    stub_field: str,
+    path: str,
+    request_payload: dict[str, str],
+    error_code: str,
+    error_message: str,
+    status_code: int,
+    action: str,
+) -> None:
+    reject_result = ProgramAccessActionResult.reject(
+        summary=_base_packaged_summary(),
+        code=error_code,
+        message=error_message,
     )
-    gateway = _StubProgramAccessGateway(
-        register_result=ProgramAccessActionResult.reject(
-            summary=summary,
-            code="user_already_exists",
-            message="用户已存在",
-        )
-    )
+    gateway = _StubProgramAccessGateway(**{stub_field: reject_result})
     app = _create_packaged_release_app(tmp_path, gateway)
     transport = ASGITransport(app=app)
 
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        response = await client.post(
-            "/program-auth/register",
-            json={
-                "email": "alice@example.com",
-                "code": "123456",
-                "username": "alice",
-                "password": "Secret123!",
-            },
-        )
+        response = await client.post(path, json=request_payload)
 
-    assert response.status_code == 409
+    assert response.status_code == status_code
     assert response.json() == {
         "detail": {
-            "code": "user_already_exists",
-            "message": "用户已存在",
-            "action": "program-auth.register",
+            "code": error_code,
+            "message": error_message,
+            "action": action,
         }
     }
 
@@ -313,6 +370,9 @@ class _StubProgramAccessGateway:
     logout_result: ProgramAccessActionResult | None = None
     send_register_code_result: ProgramAccessActionResult | None = None
     register_result: ProgramAccessActionResult | None = None
+    verify_register_code_result: ProgramAccessActionResult | None = None
+    complete_register_result: ProgramAccessActionResult | None = None
+    reset_password_result: ProgramAccessActionResult | None = None
 
     def __post_init__(self) -> None:
         self.summary = _base_packaged_summary()
@@ -367,6 +427,8 @@ class _StubProgramAccessGateway:
         _ = email
         _ = code
         _ = register_session_id
+        if self.verify_register_code_result is not None:
+            return self.verify_register_code_result
         return ProgramAccessActionResult(
             accepted=True,
             summary=self.summary,
@@ -405,6 +467,8 @@ class _StubProgramAccessGateway:
         _ = verification_ticket
         _ = username
         _ = password
+        if self.complete_register_result is not None:
+            return self.complete_register_result
         return ProgramAccessActionResult(
             accepted=True,
             summary=self.summary,
@@ -429,6 +493,8 @@ class _StubProgramAccessGateway:
         _ = email
         _ = code
         _ = new_password
+        if self.reset_password_result is not None:
+            return self.reset_password_result
         return ProgramAccessActionResult(
             accepted=True,
             summary=self.summary,

@@ -1,6 +1,7 @@
 const UNLOCKED_AUTH_STATES = new Set(["active", "grace", "refresh_due"]);
 
 const MESSAGE_BY_CODE = Object.freeze({
+  invalid_credentials: "账号或密码错误。",
   program_auth_not_ready: "会员服务暂未就绪",
   program_auth_required: "请先登录",
   program_device_conflict: "当前会员已在另一台设备登录",
@@ -8,8 +9,10 @@ const MESSAGE_BY_CODE = Object.freeze({
   program_grace_limited: "当前处于宽限期，暂不允许新的关键动作",
   program_guard_bypassed_dev_only: "仅开发模式可用",
   program_membership_expired: "会员已过期",
-  program_membership_service_unavailable: "会员服务暂不可用",
+  program_membership_service_unavailable: "服务器连接失败请检查网络设置。",
   program_permit_denied: "当前访问权限不足",
+  program_remote_unavailable: "服务器连接失败请检查网络设置。",
+  service_unavailable: "服务器连接失败请检查网络设置。",
 });
 
 export function resolveProgramAccessMessage({
@@ -30,6 +33,14 @@ export function resolveProgramAccessMessage({
       return "尚无会员";
     }
     return MESSAGE_BY_CODE[normalizedCode];
+  }
+
+  if (
+    normalizedMessage === "invalid credentials"
+    || normalizedMessage === "用户名或者密码错误"
+    || normalizedMessage === "用户名或密码错误"
+  ) {
+    return "账号或密码错误。";
   }
 
   if (
