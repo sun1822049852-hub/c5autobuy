@@ -81,6 +81,20 @@ function mapClientUser(row) {
   };
 }
 
+function mapPermissionOverride(row) {
+  if (!row) {
+    return null;
+  }
+  const featureCode = toText(row.feature_code);
+  if (!featureCode) {
+    return null;
+  }
+  return {
+    feature_code: featureCode,
+    enabled: Number(row.enabled) === 1
+  };
+}
+
 function mapAdminUser(row) {
   if (!row) {
     return null;
@@ -505,6 +519,71 @@ class ControlPlaneStore {
     };
   }
 
+  resolveRuntimeExecutionState({userId = 0, now = new Date()} = {}) {
+    const user = this.getClientUserById(userId);
+    if (!user) {
+      return {
+        allowed: false,
+        reason: "user_not_found",
+        entitlements: null,
+        user: null
+      };
+    }
+    const entitlements = this.resolveUserEntitlements({userId: user.id, now});
+    if (toText(user.status) !== "active") {
+      return {
+        allowed: false,
+        reason: "user_disabled",
+        entitlements,
+        user
+      };
+    }
+    if (!this.isMembershipActive(user, now) || !entitlements || entitlements.membership_plan === "inactive") {
+      return {
+        allowed: false,
+        reason: "membership_inactive",
+        entitlements,
+        user
+      };
+    }
+    const permissions = new Set(Array.isArray(entitlements.permissions) ? entitlements.permissions : []);
+    if (!permissions.has("program_access_enabled")) {
+      return {
+        allowed: false,
+        reason: "program_access_disabled",
+        entitlements,
+        user
+      };
+    }
+    if (!permissions.has("runtime.start")) {
+      return {
+        allowed: false,
+        reason: "runtime_start_disabled",
+        entitlements,
+        user
+      };
+    }
+    return {
+      allowed: true,
+      reason: "allowed",
+      entitlements,
+      user
+    };
+  }
+
+  hasRuntimeExecutionPermission({userId = 0, now = new Date()} = {}) {
+    return this.resolveRuntimeExecutionState({userId, now}).allowed;
+  }
+
+  listUserFeatureOverrides({userId = 0} = {}) {
+    return this.db.prepare(`
+      SELECT feature_code, enabled
+      FROM client_user_feature_override
+      WHERE user_id = ?
+      ORDER BY feature_code ASC
+    `).all(userId).map(mapPermissionOverride).filter(Boolean);
+  }
+
   listUsersWithEntitlements({now = new Date()} = {}) {
     const users = this.listClientUsers();
     if (!users.length) {
@@ -570,6 +649,7 @@ class ControlPlaneStore {
       const resolvedPermissions = [...permissions].sort();
       return {
         ...user,
+        permission_overrides: overrides.map(mapPermissionOverride).filter(Boolean),
         entitlements: {
           membership_plan: effectivePlan ? effectivePlan.code : "inactive",
           assigned_membership_plan: user.membership_plan,
@@ -641,7 +721,10 @@ class ControlPlaneStore {
       const updatedUser = this.getClientUserById(user.id);
       return {
         ok: true,
-        user: updatedUser,
+        user: {
+          ...updatedUser,
+          permission_overrides: this.listUserFeatureOverrides({userId: user.id})
+        },
         entitlements: this.resolveUserEntitlements({userId: user.id, now})
       };
     });

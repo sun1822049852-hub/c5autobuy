@@ -310,6 +310,46 @@ def test_runtime_permit_maps_http_error_reason() -> None:
     assert exc_info.value.message == "runtime permission denied"
 
 
+def test_stream_runtime_control_events_parses_hello_and_keepalive_frames() -> None:
+    class _Stream(httpx.SyncByteStream):
+        def __iter__(self):
+            yield b"event: hello\n"
+            yield b'data: {"stream_version":"runtime-control/v1","server_time":"2026-04-20T08:00:00Z"}\n\n'
+            yield b": keepalive 2026-04-20T08:00:01Z\n\n"
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            stream=_Stream(),
+        )
+
+    with httpx.Client(
+        transport=httpx.MockTransport(handler),
+        base_url="https://control-plane.test",
+    ) as http_client:
+        client = RemoteControlPlaneClient(
+            base_url="https://control-plane.test",
+            client=http_client,
+        )
+
+        events = list(
+            client.stream_runtime_control_events(
+                refresh_token="refresh-token-1",
+                device_id="device-alpha",
+                read_timeout_seconds=2.0,
+            )
+        )
+
+    assert events[0].event == "hello"
+    assert events[0].data == {
+        "stream_version": "runtime-control/v1",
+        "server_time": "2026-04-20T08:00:00Z",
+    }
+    assert events[1].event is None
+    assert events[1].comment == "keepalive 2026-04-20T08:00:01Z"
+
+
 def test_client_raises_domain_error_for_malformed_success_response() -> None:
     def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"ok": True, "expires_in_seconds": "300"})

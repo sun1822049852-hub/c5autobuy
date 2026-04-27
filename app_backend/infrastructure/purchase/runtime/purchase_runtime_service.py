@@ -381,6 +381,7 @@ class PurchaseRuntimeService:
         self._runtime_lifecycle_lock = threading.RLock()
         self._last_stats_snapshot: dict[str, object] | None = None
         self._last_stats_date: str | None = None
+        self._last_runtime_error: str | None = None
 
     def start(self) -> tuple[bool, str]:
         with self._runtime_lifecycle_lock:
@@ -392,18 +393,21 @@ class PurchaseRuntimeService:
             self._bind_runtime_callbacks(runtime)
             runtime.start()
             self._runtime = runtime
+            self._last_runtime_error = None
             self._publish_runtime_update()
         return True, "购买运行时已启动"
 
-    def stop(self) -> tuple[bool, str]:
+    def stop(self, *, forced_stop_reason: str | None = None) -> tuple[bool, str]:
         with self._runtime_lifecycle_lock:
             if not self._has_running_runtime():
                 self._runtime = None
+                self._last_runtime_error = forced_stop_reason
                 return False, "当前没有运行中的购买运行时"
 
             runtime = self._runtime
             if runtime is None:
                 self._runtime = None
+                self._last_runtime_error = forced_stop_reason
                 return False, "当前没有运行中的购买运行时"
             try:
                 snapshot = self._snapshot_runtime_state(runtime, include_recent_events=False)
@@ -426,6 +430,7 @@ class PurchaseRuntimeService:
                 pass
             runtime.stop()
             self._runtime = None
+            self._last_runtime_error = forced_stop_reason
             self._publish_runtime_update()
         return True, "购买运行时已停止"
 
@@ -1003,6 +1008,7 @@ class PurchaseRuntimeService:
 
     def _build_idle_or_retained_snapshot(self) -> dict[str, object]:
         base = self._build_idle_snapshot()
+        base["last_error"] = self._last_runtime_error
         self._apply_retained_stats(base)
         return base
 
@@ -1030,6 +1036,7 @@ class PurchaseRuntimeService:
             "total_account_count": int(snapshot.get("total_account_count", 0)),
             "total_purchased_count": int(snapshot.get("total_purchased_count", 0)),
             "runtime_session_id": snapshot.get("runtime_session_id"),
+            "last_error": snapshot.get("last_error"),
             "matched_product_count": int(snapshot.get("matched_product_count", 0)),
             "purchase_success_count": int(snapshot.get("purchase_success_count", 0)),
             "purchase_failed_count": int(snapshot.get("purchase_failed_count", 0)),
@@ -2156,6 +2163,7 @@ class _DefaultPurchaseRuntime:
             "total_account_count": self._scheduler.total_account_count() if self._running else 0,
             "total_purchased_count": self._total_purchased_count,
             "runtime_session_id": stats_snapshot.get("runtime_session_id"),
+            "last_error": getattr(self, "_last_runtime_error", None),
             "matched_product_count": int(stats_snapshot.get("matched_product_count", 0)),
             "purchase_success_count": int(stats_snapshot.get("purchase_success_count", 0)),
             "purchase_failed_count": int(stats_snapshot.get("purchase_failed_count", 0)),

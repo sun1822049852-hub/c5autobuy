@@ -32,6 +32,7 @@ class QueryRuntimeService:
         open_api_binding_sync_service=None,
         stats_sink=None,
         runtime_update_hub=None,
+        program_runtime_control_service=None,
     ) -> None:
         self._query_config_repository = query_config_repository
         self._query_settings_repository = query_settings_repository
@@ -41,6 +42,7 @@ class QueryRuntimeService:
         self._open_api_binding_sync_service = open_api_binding_sync_service
         self._stats_sink = stats_sink
         self._runtime_update_hub = runtime_update_hub
+        self._program_runtime_control_service = program_runtime_control_service
         self._state_lock = threading.RLock()
         self._runtime = None
         self._retained_runtime = None
@@ -53,7 +55,9 @@ class QueryRuntimeService:
         self._runtime_update_thread_lock = threading.RLock()
         self._runtime_update_pending = False
         self._runtime_update_thread: threading.Thread | None = None
+        self._last_runtime_error: str | None = None
         self._register_purchase_runtime_callbacks()
+        self._register_program_runtime_control_callback()
 
     def start(self, *, config_id: str, resume: bool = False) -> tuple[bool, str]:
         config = None
@@ -141,25 +145,30 @@ class QueryRuntimeService:
                 self._start_runtime(runtime, preserve_allocation_state=preserve_allocation_state)
                 self._clear_pending_resume_state()
                 message = "查询任务已启动"
+            self._last_runtime_error = None
 
+        self._arm_program_runtime_control_service()
         self._publish_runtime_update()
         return True, message
 
-    def stop(self) -> tuple[bool, str]:
+    def stop(self, *, forced_stop_reason: str | None = None) -> tuple[bool, str]:
         with self._state_lock:
             if not self._has_running_runtime_locked() and not self._has_pending_resume_state():
                 self._runtime = None
                 self._auto_stop_requested = False
+                self._last_runtime_error = forced_stop_reason
                 return False, "当前没有运行中的查询任务"
 
             runtime = self._runtime
             self._runtime = None
             self._clear_pending_resume_state()
             self._auto_stop_requested = False
+            self._last_runtime_error = forced_stop_reason
         if runtime is not None:
             runtime.stop()
         self._close_runtime_accounts()
-        self._stop_linked_purchase_runtime()
+        self._disarm_program_runtime_control_service()
+        self._stop_linked_purchase_runtime(forced_stop_reason=forced_stop_reason)
         self._publish_runtime_update()
         return True, "查询任务已停止"
 
@@ -419,6 +428,7 @@ class QueryRuntimeService:
             "config_id": None,
             "config_name": None,
             "message": "未运行",
+            "last_error": self._last_runtime_error,
             "account_count": 0,
             "started_at": None,
             "stopped_at": None,
@@ -440,6 +450,7 @@ class QueryRuntimeService:
             "config_id": config_id,
             "config_name": self._pending_resume_config_name or getattr(config, "name", None),
             "message": "等待购买账号恢复",
+            "last_error": self._last_runtime_error,
             "account_count": 0,
             "started_at": None,
             "stopped_at": self._paused_at,
@@ -463,6 +474,7 @@ class QueryRuntimeService:
             "config_id": snapshot.get("config_id"),
             "config_name": snapshot.get("config_name"),
             "message": str(snapshot.get("message") or ("运行中" if snapshot.get("running") else "未运行")),
+            "last_error": snapshot.get("last_error"),
             "account_count": int(snapshot.get("account_count", 0)),
             "started_at": snapshot.get("started_at"),
             "stopped_at": snapshot.get("stopped_at"),
@@ -917,7 +929,7 @@ class QueryRuntimeService:
             return int(status.get("active_account_count", 0)) > 0
         return True
 
-    def _stop_linked_purchase_runtime(self) -> None:
+    def _stop_linked_purchase_runtime(self, *, forced_stop_reason: str | None = None) -> None:
         if self._purchase_runtime_service is None:
             return
 
@@ -925,12 +937,37 @@ class QueryRuntimeService:
         if not callable(stop_purchase_runtime):
             return
 
-        stopped, message = stop_purchase_runtime()
+        if self._callable_accepts_parameter(stop_purchase_runtime, "forced_stop_reason"):
+            stopped, message = stop_purchase_runtime(forced_stop_reason=forced_stop_reason)
+        else:
+            stopped, message = stop_purchase_runtime()
         normalized_message = str(message or "")
         if stopped:
             return
         if normalized_message == "当前没有运行中的购买运行时":
             return
+
+    def _register_program_runtime_control_callback(self) -> None:
+        if self._program_runtime_control_service is None:
+            return
+        setter = getattr(self._program_runtime_control_service, "set_on_force_stop", None)
+        if callable(setter):
+            setter(self._handle_program_runtime_control_stop)
+
+    def _arm_program_runtime_control_service(self) -> None:
+        service = self._program_runtime_control_service
+        start = getattr(service, "start", None) if service is not None else None
+        if callable(start):
+            start()
+
+    def _disarm_program_runtime_control_service(self) -> None:
+        service = self._program_runtime_control_service
+        stop = getattr(service, "stop", None) if service is not None else None
+        if callable(stop):
+            stop()
+
+    def _handle_program_runtime_control_stop(self, reason: str) -> None:
+        self.stop(forced_stop_reason=str(reason or "program_runtime_revoked"))
 
     def _register_purchase_runtime_callbacks(self) -> None:
         if self._purchase_runtime_service is None:

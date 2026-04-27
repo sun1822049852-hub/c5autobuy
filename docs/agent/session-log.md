@@ -4496,3 +4496,344 @@
   - 本轮只做了 renderer automated tests，尚未在真实桌面壳里手点复验。
 - 下一步：
   - 若魔尊还要继续扫 query-system 读取链，可再单独评估是否要给其它“显式需要最新 detail”的入口也开放 `forceFresh`，但当前没有证据表明应扩大到全局禁用 `GET /query-configs/{id}` dedupe。
+
+## 2026-04-27 21:03 (Asia/Shanghai)
+- 背景：魔尊确认会员链后续目标不是“客户端实时轮询全量权限”，而是“控制台撤权时主动下发停机信息，已在运行中的查询/扫货必须立刻停；会员态摘要仍可继续按 `300s` 慢刷新”。同时明确：若只做 push stop 而不处理控制通道被用户主动截断的场景，仍会留下绕过空间，因此执行控制链还必须包含短 grace 后的 fail-closed 停机。
+- 现场核对：
+  - 当前 `git status --short --branch` 为 `master...origin/master [ahead 60]`。较早日志里的 `ahead 59` 已过期；本轮以当前 `ahead 60` 为准。
+  - 当前工作树仍是脏树，且不只本轮主线：除会员链 backend/control-plane/UI 相关未提交项外，还带着 query/purchase page 的前端未提交改动（`app_desktop_web/src/features/purchase-system/hooks/use_purchase_system_page.js`、`app_desktop_web/tests/renderer/purchase_system_page.test.jsx`）。这些都不是本轮计划要清理或重做的对象。
+- 当前目标：
+  - 为“控制台主动撤权停机 + 会员态摘要继续 `300s` 慢刷新 + 用户截断控制面网络后不能无限继续跑”写一份可直接执行的实现计划，并在本会话结束前留下 handoff。
+  - 当前方案名：`Program Runtime Revoke Push Stop Implementation Plan`
+- 已完成：
+  - 已按 `writing-plans` 落盘实现计划：`docs/superpowers/plans/2026-04-27-program-runtime-revoke-push-stop.md`
+  - 计划已明确把链路拆成两层：
+    - 展示/会员摘要层：继续使用现有 signed snapshot + `300s` refresh scheduler
+    - 执行/停机层：新增 control-plane -> desktop backend 的独立 runtime-control push channel，撤权即停；控制通道长时间失联也要在短 grace 后停机，避免用户靠断网绕过
+  - 已明确第一刀只收 backend/control-plane/runtime lifecycle，不把已完成的 control-plane `status / permission_overrides` 收口、legacy 下线、HTTPS+CA fail-closed、注册链收口重新摊开。
+  - README 已核对，本轮无需改动。
+- 进度断点：
+  - 当前 `chunk`：计划与 handoff
+  - 当前 `task`：`docs/superpowers/plans/2026-04-27-program-runtime-revoke-push-stop.md` 已写完，尚未开始任何红灯测试或生产实现。
+  - 下一会话应直接从计划 `Chunk 1 / Task 1 / Step 1` 开始，而不是重新讨论“要不要实时轮询还是 push stop”。
+- 错误与约束：
+  - 不要把 `program_access.auth_state` / `last_error_code` 继续拿来同时承载“会员摘要状态”和“运行时执行许可状态”；这两个语义层已经被魔尊明确拆开。
+  - 不要把执行态撤权改成“只靠 `300s` refresh”；魔尊已明确要求控制台撤权时主动停机。
+  - 但也不要因为执行态要实时停机，就顺手把会员侧栏/摘要态一起改成实时一致；当前产品口径允许会员态晚一些更新。
+  - 若后续实现只做 push revoke、不做控制通道断开后的短 grace fail-closed，用户仍可通过主动截断程序到控制面的网络绕过停机，这条属于本次计划里的硬约束，不能漏。
+  - 不要清理当前脏工作树，也不要重做已完成的会员链收口。
+- 验证状态：
+  - 本轮只做了阅读、架构收敛与计划落盘，没有运行新的自动化测试。
+  - 验证缺口是计划里刻意保留的：控制面 SSE/push 契约、本地 runtime-control listener、撤权停机、控制通道断开后 grace 停机，这些都还没有红灯与实现。
+- 下一步第一刀：
+  - 先执行计划 `Chunk 1 / Task 1 / Step 1`：在 `program_admin_console/tests/control-plane-server.test.js` 先补 control-plane push channel 红灯，覆盖：
+    - 合法 refresh session + device 能打开 runtime-control stream
+    - `PATCH /api/admin/users/:id` 撤掉有效 `runtime.start` 时会广播 revoke
+    - 只改 `account.browser_query.enable` 这类非运行权限时不会误发 revoke
+  - 红灯写完后立刻跑：
+    - `node program_admin_console/tests/control-plane-server.test.js`
+    - 先确认红，再进 `runtimeControlHub/server.js/controlPlaneStore.js`
+
+## 2026-04-27 21:11 (Asia/Shanghai)
+- 背景：按 handoff 与计划直接从 `Chunk 1 / Task 1 / Step 1` 开刀，先在 control-plane server 测试里把 runtime-control push channel 契约钉成红灯，不提前写生产实现。
+- 现场收敛：
+  - 文档主断点与现场一致：runtime-control 之前确实还没开刀。
+  - 但目标文件并非干净基线：`program_admin_console/tests/control-plane-server.test.js` 与 `program_admin_console/src/controlPlaneStore.js` 当前已挂着上一轮 `permission_overrides` 收口的未提交改动。本轮已确认这些增量不属于 runtime-control 半成品，只能在其之上继续补红灯，不能覆盖或回退。
+- 已完成：
+  - 在 `program_admin_console/tests/control-plane-server.test.js` 增加 runtime-control stream 的测试 helper 与红灯场景，覆盖：
+    - 有效 `refresh_token + device_id` 打开 `GET /api/auth/runtime-control/stream`
+    - 首帧 `hello`
+    - keepalive/comment 健康帧
+    - 仅改 `account.browser_query.enable` 不得误发 `runtime.revoke`
+    - 因 `status=disabled` / `membership_plan=inactive` / `runtime.start=false` / `program_access_enabled=false` 失去运行权限时，必须收到 `runtime.revoke`
+  - 已跑 focused server test：
+    - `node program_admin_console/tests/control-plane-server.test.js`
+  - 红灯结果命中预期缺口：测试在首次打开 runtime-control stream 时失败，报 `404 !== 200`，说明当前缺的是 stream endpoint / push hub 契约本身，而不是测试脚手架或旧收口回归。
+- 验证状态：
+  - 既有测试是否通过：本轮未重跑其它 control-plane / backend 既有测试。
+  - 新增语义护栏测试是否通过：未通过，当前为预期红灯；失败点是 `GET /api/auth/runtime-control/stream` 返回 `404`。
+  - 是否做了真实 payload / 真实接口验证：只做了本地 node server focused 自动化验证，尚未做真实桌面端或真实远端接口验证。
+- 下一步：
+  - 进入 `Chunk 1 / Task 1 / Step 3-6`：新增 `runtimeControlHub`、在 `server.js` 暴露认证过的 SSE stream，并在 admin PATCH 用户更新后对“运行权限 allowed -> denied”的变化广播 `runtime.revoke`。
+  - 实现后先回跑 `node program_admin_console/tests/control-plane-server.test.js`，确认本轮红灯转绿，再决定是否需要把 entitlement truth-source helper 下沉到 `controlPlaneStore.js`。
+
+## 2026-04-27 21:20 (Asia/Shanghai)
+- 背景：继续沿 `Chunk 1 / Task 1` 推进，把刚才的 `404` 红灯直接收口到 control-plane server 侧，不切去 backend listener、桌面停机链或其它已完成会员链收口。
+- 现场核对：
+  - 当前 `git status --short --branch` 仍为 `master...origin/master [ahead 60]`。
+  - 本轮新增了一个 runtime-control 新文件：`program_admin_console/src/runtimeControlHub.js`，当前仍是未跟踪状态；其它脏改动仍保持原样，未清理。
+- 已完成：
+  - 新增 `program_admin_console/src/runtimeControlHub.js`：
+    - 管理按 `user_id` 聚合的 runtime-control SSE 订阅
+    - 首帧发送 `hello`
+    - 周期发送 keepalive comment
+    - 向同一用户的活跃订阅广播 `runtime.revoke`
+  - `program_admin_console/src/server.js` 已接上：
+    - 认证 `GET /api/auth/runtime-control/stream`（`Authorization: Bearer <refresh_token>` + `X-C5-Device-Id`）
+    - 在 `PATCH /api/admin/users/:id` 前后比较运行许可 truth source；仅当 `allowed -> denied` 时广播 revoke
+    - server 关闭时释放 runtime-control hub
+  - `program_admin_console/src/controlPlaneStore.js` 已补运行许可 truth-source helper，明确区分：
+    - `user_disabled`
+    - `membership_inactive`
+    - `runtime_start_disabled`
+    - `program_access_disabled`
+  - `program_admin_console/tests/control-plane-server.test.js` 的 runtime-control 红灯已转绿，且额外 focused 回归已补跑通过。
+- 验证状态：
+  - 既有测试是否通过：
+    - `node program_admin_console/tests/control-plane-server.test.js` -> 通过
+    - `node program_admin_console/tests/control-plane-store.test.js` -> 退出码 `0`
+    - `node program_admin_console/tests/control-plane-server-runtime.test.js` -> 退出码 `0`
+  - 新增语义护栏测试是否通过：
+    - `control-plane-server.test.js` 中新增的 runtime-control stream / keepalive / revoke / non-runtime-no-revoke 断言已通过
+  - 是否做了真实 payload / 真实接口验证：
+    - 还没有；当前只做了本地 node server focused 自动化验证，未做真实桌面 session、真实撤权停机或断网 grace 场景
+- 进度断点：
+  - `Chunk 1 / Task 1` 的 Step 1-7 已基本打通到 server 侧绿灯，但尚未做跨端 manual story，也还没进入 `Chunk 2` 的 desktop backend listener。
+  - reviewer 子 agent 还在只读审查；若后续回报新风险，应先按风险修补，再进入 backend 部分。
+- 下一步：
+  - 若 reviewer 无阻断问题，直接进入 `Chunk 2 / Task 2 / Step 1`：在 backend 侧先补 `runtime_control_service` 红灯，再接本地停机与 grace fail-closed。
+
+## 2026-04-27 21:22 (Asia/Shanghai)
+- 背景：server 侧首轮绿灯后，补做了双 reviewer 只读审查；根据 reviewer 反馈继续收口了本轮代码质量问题，但没有擅自扩到 Python 既有会员摘要链。
+- reviewer 结论与处理：
+  - 已修：
+    - `runtimeControlHub` 在 `hello` 发送失败时可能留下 `setInterval` 句柄的泄漏风险：现已把 `cleanup()` 改成无条件清理 timer，并在 `hello` 写失败时立即收口，不再残留定时器。
+    - `/api/auth/runtime-permit` 与 runtime-control stream 的执行许可判定口径不一致：现已统一收敛到 `resolveRuntimeExecutionState(...)` 这个 truth source，不再只凭 `runtime.start` 单字段判定。
+    - stream 在“连接时其实已失去执行许可”场景的 fail-open：现已补成“连接成功后立即下发 `runtime.revoke`”，并新增测试钉住 `program_access_disabled` 的 connect-time revoke。
+  - 暂记余劫、未在本刀扩改：
+    - reviewer 指出 Python 侧 `app_backend/infrastructure/program_access/remote_entitlement_gateway.py` 仍有把 `feature_flags.program_access_enabled` 当运行态 gate 的既有口径；这条属于 backend 既有链，当前只记录为跨端风险，准备在进入 `Chunk 2` 时一并处理，不在本次 control-plane server 收口里偷偷改旧会员摘要逻辑。
+- 验证状态：
+  - 既有测试是否通过：
+    - `node program_admin_console/tests/control-plane-server.test.js` -> 通过
+    - `node program_admin_console/tests/control-plane-store.test.js` -> 退出码 `0`
+    - `node program_admin_console/tests/control-plane-server-runtime.test.js` -> 退出码 `0`
+  - 新增语义护栏测试是否通过：
+    - 包含 connect-time revoke 的 runtime-control stream 断言已通过
+  - 是否做了真实 payload / 真实接口验证：
+    - 仍未做真实桌面端 / 真实远端撤权验证；当前全部证据仍是本地 node focused 自动化
+- 当前进度：
+  - `Chunk 1 / Task 1` 可以视为 server 侧已完成并经 reviewer 收口。
+  - 下一主线应进入 `Chunk 2 / Task 2`，先在 backend 侧补 runtime-control listener 红灯。
+
+## 2026-04-27 21:33 (Asia/Shanghai)
+- 背景：继续按计划推进 `Chunk 2 / Task 2`，先在 backend 侧把 runtime-control listener service 本体与装配口打通，再考虑 query/purchase 的停机联动；本轮仍不重开已完成的 `remote_entitlement_gateway` 摘要态收口。
+- 已完成：
+  - 新增 `tests/backend/test_program_runtime_control_service.py`，按 TDD 先写出 5 条 focused 契约：
+    - `runtime.revoke` 只触发一次本地 forced-stop
+    - 短暂 jitter 不会立刻停机
+    - keepalive silence 超过 grace 会停机
+    - 传输失败不会把 `program_access` 摘要态伪装改写成“会员被撤”
+    - 本地正常 stop 不会再触发重复 forced-stop
+  - 红灯已命中缺口：初次跑 pytest 时直接报 `ModuleNotFoundError: app_backend.infrastructure.program_access.runtime_control_service`。
+  - 新增 `app_backend/infrastructure/program_access/runtime_control_service.py`，实现了：
+    - 后台线程监听 runtime-control stream
+    - 断链 grace / reconnect
+    - `program_runtime_revoked` 与 `program_runtime_control_unreachable` 两类本地停机原因
+    - 只读使用 credential/secret/device store，不碰摘要态持久化
+  - `app_backend/infrastructure/program_access/remote_control_plane_client.py` 已补 SSE/stream helper，能解析：
+    - `event: hello`
+    - `event: runtime.revoke`
+    - keepalive comment
+    - 非 2xx 错误继续映射成既有 `RemoteControlPlaneError`
+  - `app_backend/startup/build_runtime_full_services.py` 与 `app_backend/main.py` 已接上 runtime-full slice 装配与 shutdown cleanup：
+    - packaged release + remote client 存在时构建 `program_runtime_control_service`
+    - app shutdown 时先 stop runtime-control service，再清理 program_access scheduler / gateway
+  - 配套回归已补到：
+    - `tests/backend/test_backend_health.py`
+    - `tests/backend/test_backend_startup_slices.py`
+    - `tests/backend/test_desktop_web_backend_bootstrap.py`
+- 验证状态：
+  - 既有测试是否通过：
+    - `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_program_runtime_control_service.py tests/backend/test_remote_control_plane_client.py tests/backend/test_backend_health.py tests/backend/test_backend_startup_slices.py tests/backend/test_desktop_web_backend_bootstrap.py -q` -> `46 passed`
+  - 新增语义护栏测试是否通过：
+    - `tests/backend/test_program_runtime_control_service.py` -> `5 passed`
+  - 是否做了真实 payload / 真实接口验证：
+    - 还没有；当前仍只有本地 backend focused 自动化
+- 余劫：
+  - spec reviewer 指出的 Python 既有问题仍在：`remote_entitlement_gateway.py` 里 `program_access_enabled` 的摘要/派生字段仍可能被运行态 gate 读取；这条暂未在本刀处理，准备留给后续 runtime 联动阶段一起收敛，避免把已完成摘要链在本轮偷改散。
+- 当前进度：
+  - `Chunk 2 / Task 2` 已有 focused 自动化与装配口证据，可视为完成。
+  - 下一主线进入 `Chunk 3 / Task 3`：把 `RuntimeControlService` 真正挂到 query runtime 生命周期里，并补“撤权后 query/purchase 都停、状态字段用独立 stop reason”的红灯。
+
+## 2026-04-27 22:10 (Asia/Shanghai)
+- 背景：继续推进 `Chunk 3 / Task 3`，目标是把 backend listener 真正接进 query/purchase 生命周期，并用独立 stop reason 收口到 runtime status / runtime update，不把 `program_access` 摘要字段挪来承载运行态。
+- 已完成：
+  - `app_backend/infrastructure/query/runtime/query_runtime_service.py`
+    - 新增 `program_runtime_control_service` 注入位与 callback 注册
+    - `start()` 成功后 arm runtime-control service，`stop()` 时 disarm
+    - 收到 forced-stop callback 时沿既有 stop 链停 query runtime，并级联停 purchase runtime
+    - query runtime status 新增独立 `last_error`，可承载 `program_runtime_revoked` / `program_runtime_control_unreachable`
+  - `app_backend/infrastructure/purchase/runtime/purchase_runtime_service.py`
+    - `stop()` 现在支持可选 `forced_stop_reason`
+    - purchase runtime status 同样新增独立 top-level `last_error`
+  - `app_backend/api/schemas/query_runtime.py` / `app_backend/api/schemas/purchase_runtime.py`
+    - 对应补齐 top-level `last_error`
+  - 测试补齐：
+    - `tests/backend/test_query_runtime_service.py`
+      - 新增 arm/disarm runtime-control service 的断言
+      - 新增 forced-stop 级联停 query/purchase 且保留独立 `last_error` 的断言
+    - `tests/backend/test_runtime_update_websocket.py`
+      - 新增 runtime update hub 级验证：forced-stop 后会连续发出 `purchase_runtime.updated` 与 `query_runtime.updated`，且二者都带 `program_runtime_revoked`
+  - 本轮补跑 focused sweep，control-plane server 与 backend 主链断言都已通过。
+- 验证状态：
+  - 既有测试是否通过：
+    - `node program_admin_console/tests/control-plane-server.test.js` -> 通过
+    - `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_program_runtime_control_service.py tests/backend/test_query_runtime_service.py tests/backend/test_runtime_update_websocket.py tests/backend/test_program_access_guard_routes.py tests/backend/test_remote_control_plane_client.py tests/backend/test_backend_health.py tests/backend/test_backend_startup_slices.py tests/backend/test_desktop_web_backend_bootstrap.py -q` -> `117 passed`
+  - 新增语义护栏测试是否通过：
+    - server 侧 runtime-control stream 红灯与其后的 connect-time revoke / non-runtime-no-revoke 断言已通过
+    - backend 侧 runtime_control_service 红灯与 query/purchase forced-stop 联动断言已通过
+  - 是否做了真实 payload / 真实接口验证：
+    - 还没有；本轮尚未做真实桌面 session 下的控制台撤权停机，也未做真实断网 grace 手测
+- 余劫：
+  - `app_backend/infrastructure/program_access/remote_entitlement_gateway.py` 里 `feature_flags.program_access_enabled` 参与 gate 的既有口径仍未处理；这条是 reviewer 已标出的跨端旧风险，但本轮按魔尊边界未重开已完成的摘要态收口。
+  - 当前仍缺真实桌面 revoke story / network-cut story 的手工验收。
+- 当前进度：
+  - `Chunk 1 / Task 1`、`Chunk 2 / Task 2`、`Chunk 3 / Task 3` 均已有 focused 自动化证据。
+  - 下一步若继续，应优先做 `Chunk 4` 的真实桌面 revoke / 断网 grace 验收，或单独决定是否现在就处理 `remote_entitlement_gateway` 的既有双口径风险。
+
+## 2026-04-27 22:13 (Asia/Shanghai)
+- 当前目标：
+  - 总目标仍是 `Program Runtime Revoke Push Stop Implementation Plan`：让 control-plane 撤掉运行权限时，正在跑的 query/purchase 立即停机；控制通道断开超过短 grace 也 fail-closed；会员摘要仍保持既有 `300s` 慢刷新。
+  - 当前方案名：`Program Runtime Revoke Push Stop Implementation Plan`
+- 进度断点：
+  - 当前 `chunk`：`Chunk 4 / Verification And Rollout`
+  - 当前 `task`：自动化层面的 `Chunk 1-3` 已完成；真实桌面 revoke / network-cut 手工验收尚未开始。
+  - 已完成：
+    - control-plane server 的 runtime-control stream / keepalive / revoke 广播已落地并通过 focused node 测试
+    - backend runtime_control_service、remote client SSE helper、runtime-full 装配与 shutdown cleanup 已落地并通过 focused pytest
+    - query/purchase 生命周期已接上 forced-stop 级联停机，runtime status 与 runtime update 都改为独立 `last_error` 承载执行态停机原因
+  - 正在进行：
+    - 还没进入真实桌面验收；下一会话应直接做 `Chunk 4`，不要回头重做自动化红绿或已完成的会员链收口
+- 现场状态：
+  - 工作目录：`C:/Users/18220/Desktop/C5autobug更新接口 - 副本 (2)`
+  - 当前分支：`master...origin/master [ahead 60]`
+  - 当前是脏树，且不只本主线：
+    - 本轮主线未提交：`program_admin_console/src/runtimeControlHub.js`、`program_admin_console/src/server.js`、`program_admin_console/src/controlPlaneStore.js`、`program_admin_console/tests/control-plane-server.test.js`、`app_backend/infrastructure/program_access/runtime_control_service.py`、`app_backend/infrastructure/program_access/remote_control_plane_client.py`、`app_backend/startup/build_runtime_full_services.py`、`app_backend/main.py`、`app_backend/infrastructure/query/runtime/query_runtime_service.py`、`app_backend/infrastructure/purchase/runtime/purchase_runtime_service.py`、相关 tests/schema/doc
+    - 另有非本轮旧改动仍在：如 `app_desktop_web/src/features/purchase-system/hooks/use_purchase_system_page.js`、`app_desktop_web/tests/renderer/purchase_system_page.test.jsx`、`program_admin_console/ui/*`、`tests/backend/test_account_routes.py`、`tests/backend/test_remote_entitlement_gateway.py` 等；不要清理或重做
+- 错误与约束：
+  - 已踩坑：
+    - `build_runtime_full_services.py` 一度把 `program_runtime_control_service` 的构造顺序放在 `QueryRuntimeService(...)` 之后，导致 `UnboundLocalError`；后续不要再把 runtime-control 装配点写回这个顺序错误
+    - websocket 级 forced-stop 新测试一度因等待帧不稳而超时，已降到 runtime-update-hub 级断言；后续若做 websocket 手测，不要把“启动广播一定先到”当契约
+  - 后续不要再犯：
+    - 不要把 `program_access.auth_state`、`last_error_code`、摘要态 `feature_flags` 再拿来承载运行中停机原因
+    - 不要重做已完成的 control-plane `status / permission_overrides` 收口、legacy 下线、HTTPS+CA fail-closed、register/complete 文案修复、`account.browser_query.enable` 实时化
+    - 若继续改 Python 侧运行许可 gate，优先收敛 `remote_entitlement_gateway.py` 的双口径风险，但必须明确这是“摘要态既有风险修补”，不是回头改本轮已完成的执行链
+  - 必须保持不变的关键行为：
+    - `查询 -> 命中 -> 购买` 主链热路径不能被额外同步阻塞
+    - 会员摘要仍按现有 signed snapshot + `300s` refresh 慢更新，不要求与执行停机实时一致
+    - forced-stop 原因必须继续留在 query/purchase runtime 的独立 `last_error`
+- 验证状态：
+  - 已执行：
+    - `node program_admin_console/tests/control-plane-server.test.js` -> 通过
+    - `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_program_runtime_control_service.py tests/backend/test_query_runtime_service.py tests/backend/test_runtime_update_websocket.py tests/backend/test_program_access_guard_routes.py tests/backend/test_remote_control_plane_client.py tests/backend/test_backend_health.py tests/backend/test_backend_startup_slices.py tests/backend/test_desktop_web_backend_bootstrap.py -q` -> `117 passed`
+  - 尚未覆盖：
+    - 真实桌面 session 下控制台撤权立即停机
+    - 真实控制通道断网 / 网络切断超过 grace 后停机
+    - 真实桌面 UI 上 query/purchase stopped snapshot 的最终呈现
+- 下一步第一刀：
+  - 下个会话先做 `Chunk 4 / Step 2-3` 的真实故事验收：
+    - 启动一个真实桌面 query/purchase runtime
+    - 从 control-plane 撤掉有效 `runtime.start` 或 `program_access_enabled`
+    - 验证本地无需等 `300s` 就停机
+    - 再模拟 control-plane 网络中断，验证 grace 后停机且 reason 是 control-channel loss，不是假会员撤销
+  - 做完后立刻验证：
+    - 若手测可复现，至少补充一条日志记录，分开写清“真实撤权故事”与“真实断网故事”是否通过
+    - 若手测受限，明确阻塞点，并决定是否转去先收 `remote_entitlement_gateway.py` 的双口径风险
+
+## 2026-04-27 22:32 (Asia/Shanghai)
+- 背景：
+  - 按 handoff 直接进入 `Chunk 4` 的真实桌面 revoke / network-cut 验收，不回头重做已完成的 control-plane 收口、legacy 下线、HTTPS+CA fail-closed、`register/complete` 文案修复、以及 `account.browser_query.enable` 实时化。
+- 现场差异先收敛：
+  - 计划文件 `docs/superpowers/plans/2026-04-27-program-runtime-revoke-push-stop.md` 把验收段写成 `Chunk 3 / Task 4`，但 handoff 与当前会话指令都把它当成 `Chunk 4`；本轮按“真实桌面验收主线”继续，不纠缠编号。
+  - 旧日志把 `app_backend/infrastructure/program_access/remote_entitlement_gateway.py` 写成“既有双口径风险尚未处理”，但当前工作树里该文件已带上前一刀未提交改动：`register/complete` 成功文案修复，以及 `account.browser_query.enable` 的 live refresh 判定；这部分视为既有收口痕迹，不在本轮重做。
+- 已完成的手测准备与查证：
+  - 核对当前活桌面 backend：`http://127.0.0.1:56898/program-auth/status` 返回 `local_pass_through / prepackaging / guard_enabled=false`，说明当前正在跑的源码态桌面不是“真实 program access”口径，不能拿来验 revoke。
+  - 核对最接近真实桌面入口：`app_desktop_web/release/win-unpacked/C5 交易助手.exe` 存在，且 `resources/client_config.release.json` 指向 `https://8.138.39.139` + `control_plane_ca.pem`。
+  - 启动了 `win-unpacked/C5 交易助手.exe`，确认其用户态数据目录落在 `C:/Users/18220/AppData/Roaming/c5-account-center-desktop-web/`，其中已有 `app-private/C5AutoBug/program_access/`、`data/app.db` 与下载到本机的 packaged Python runtime 目录。
+  - 为避免干扰当前本地放行桌面，又额外起了两条隔离的 `packaged_release` backend 手测线：
+    - `http://127.0.0.1:56999`：使用 `AppData/Roaming/c5-account-center-desktop-web/` 的真实 packaged 数据根
+    - `http://127.0.0.1:57001`：使用仓库当前 `data/app.db` + `.runtime/app-private/`，但强制走 `remote_entitlement / packaged_release`
+- 手测阻塞点：
+  - `56999` 与 `57001` 的 `/program-auth/status` 都返回：
+    - `mode=remote_entitlement`
+    - `stage=packaged_release`
+    - `guard_enabled=true`
+    - `username=null`
+    - `auth_state=null`
+    - `last_error_code=program_auth_required`
+  - `56999` 这条真实 packaged 数据根还额外暴露出“无配置”问题：`/query-configs -> []`，因此即使后续补登录，也还要先补运行配置。
+  - `57001` 这条 repo 数据根虽然能读到现有 query configs，但仍然没有可用的程序会员登录态；因此 `runtime.start` 的前置条件都不成立，更谈不上建立 authenticated runtime-control session、再去做 revoke 或 network-cut。
+  - 基于以上前置缺口，本轮无法继续执行：
+    - 真实桌面 revoke story
+    - 真实 control-plane network-cut grace story
+- 验证状态：
+  - 既有测试是否通过：
+    - 本轮未重跑自动化；沿用上一轮已记录的 focused 证据：`node program_admin_console/tests/control-plane-server.test.js` 通过，backend focused sweep `117 passed`。
+  - 新增语义护栏测试是否通过：
+    - 本轮没有新增自动化；手测是在“真实 program access 前置条件是否成立”这一步被阻塞，不是运行态 stop reason 断言失败。
+  - 是否做了真实 payload / 真实接口验证：
+    - 已做一半：`56999` / `57001` 的 `/program-auth/status`、`/app/bootstrap?scope=shell`、`/query-configs` 已在 `remote_entitlement / packaged_release` 口径下直连真实 control-plane base url 验证。
+    - 未做到另一半：由于缺少有效登录态，未能真的启动 member runtime，因此没有拿到真实 `runtime.revoke` / `program_runtime_control_unreachable` 的桌面停机证据。
+- 下一步：
+  - 若继续坚持手测主线，先要补齐一个可用的程序会员登录态（或恢复有效 bundle），再重跑真实 revoke / network-cut story。
+  - 若短期内拿不到这组真实登录前置条件，下一刀可按既定边界单独处理 `remote_entitlement_gateway.py` 的既有双口径风险，但必须明确它属于“摘要态 gate 风险收口”，不是回头重开已完成的 runtime-control 执行链。
+
+## 2026-04-27 23:20 (Asia/Shanghai)
+- 背景：
+  - 继续 `Chunk 4`，先只解“真实 packaged_release 缺登录态”前置阻塞，再重跑真实 revoke / network-cut story；不重做已完成的 control-plane `status / permission_overrides` 收口、legacy 下线、HTTPS+CA fail-closed、`register/complete` 文案修复、以及 `account.browser_query.enable` 实时化。
+- 现场差异先收敛：
+  - handoff 只记了“本地 server 侧自动化已完成”，但吾核对远端现网容器后发现 `c5-program-admin` 还没同步本地主线的 runtime-control 代码：远端 `server.js` 当时没有 `/api/auth/runtime-control/stream`，`controlPlaneStore.js` 也没有 `resolveRuntimeExecutionState()`。这条差异若不先收敛，后续任何“真实 revoke push-stop”都不成立。
+  - 因此本轮先按仓库固定入口 `program_admin_console/tools/deployProgramAdminRemote.ps1` 完成远端源码同步、镜像重建、容器替换和 smoke，再继续手测；这不算重做 control-plane server 逻辑，而是把本地主线实现同步到真实现网口径。
+- 已完成：
+  - 远端现网已重新部署到 `DEPLOYED_IMAGE=c5-program-admin:deploy-20260427_230459`，基础 smoke 通过：
+    - `http://127.0.0.1:18787/api/health`
+    - `http://127.0.0.1:18787/api/admin/session`
+    - `http://127.0.0.1:18787/admin`
+    - `http://127.0.0.1:18787/admin/app.js`
+    - `http://127.0.0.1:18787/admin/styles.css`
+    - legacy `http://127.0.0.1:18787/api/auth/email/send-code` 继续 `404`
+  - 远端控制面真实 DB 中新增了专用调试 member 账号 `debug_runtime_member`（仅作调试捷径，不冒充正式注册链验证），并为其创建了有效的 member 权限；本地 repo packaged_release 手测线随后经 `/program-auth/login` 成功写入了新 bundle。
+  - 真正把 `57001` 阻塞打穿后，又额外拉起一条新的隔离 packaged_release backend 手测线 `http://127.0.0.1:57011`：
+    - 使用仓库 `data/app.db`
+    - 使用仓库 `.runtime/app-private/` 中刚登录得到的有效 bundle
+    - 强制走 `remote_entitlement / packaged_release / HTTPS+CA`
+  - 手测中打出两处真实协议问题，并已最小修复：
+    - `program_admin_console/src/server.js` 默认 `runtimeControlKeepaliveMs=30000`，与 backend `RuntimeControlService(grace=5s)` 完全不对齐；本地 idle 健康流会在 grace 内被误判成断链。
+    - `app_backend/infrastructure/program_access/remote_control_plane_client.py` 的 SSE parser 漏了 `import json`，收到首个 `hello` 帧就会 `NameError`，随后被 `RuntimeControlService` 当成 `program_runtime_control_unreachable`。
+  - 对应最小实现已落地：
+    - `program_admin_console/src/server.js` 默认 runtime-control keepalive 改成 `1000ms`
+    - `app_backend/infrastructure/program_access/runtime_control_service.py` 默认 `read_timeout_seconds` 改成 `2.5s`
+    - `app_backend/infrastructure/program_access/remote_control_plane_client.py` 补回 `import json`
+    - `program_admin_console/tests/control-plane-server.test.js` 新增默认 keepalive 红灯：默认配置下 `2.2s` 内必须收到健康帧
+    - `tests/backend/test_remote_control_plane_client.py` 新增 stream parser 红灯：必须能解析 `hello` + keepalive comment
+  - 真实手测结果（均基于 `57011` 这条 repo 数据根 packaged_release 线，使用空配置 `95ca9c4c-e9d6-4f21-ade9-42df4c2122ef`，避免触发真实扫货/购买）：
+    - 先启动 query runtime 并空跑 `8s`，确认不会再被自己误杀：`running=true`、`last_error=null`
+    - 真实 revoke story：
+      - 通过远端源站 `PATCH /api/admin/users/3 {status: "disabled"}` 撤掉调试账号运行许可
+      - 本地 `57011/query-runtime/status` 先短暂仍是 `running=true`，随后自动切到 `running=false`，`last_error="program_runtime_revoked"`
+      - 随后立即重启 `POST /query-runtime/start` 返回 `401`，`detail.code="program_auth_required"`，证明无需等 `300s` 就已禁止再次启动
+    - 真实 network-cut story：
+      - 短抖动：先让 `c5-program-auth-gateway` 停 `2s` 再起，query runtime 继续 `running=true`，未误判停机
+      - 长断链：直接让远端源站容器 `c5-program-admin` 停 `7s` 再起，query runtime 在 grace 后自动切到 `running=false`，`last_error="program_runtime_control_unreachable"`；未伪装成会员撤销
+- 验证状态：
+  - 既有测试是否通过：
+    - `node program_admin_console/tests/control-plane-server.test.js` -> 通过
+    - `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_program_runtime_control_service.py tests/backend/test_remote_control_plane_client.py -q` -> `22 passed`
+  - 新增语义/协议护栏测试是否通过：
+    - `control-plane-server.test.js` 新增“默认 keepalive 下 2.2s 内收到健康帧”断言已通过
+    - `test_remote_control_plane_client.py` 新增“stream 解析 hello + keepalive comment”断言已通过
+  - 是否做了真实 payload / 真实接口验证：
+    - 已做：远端真实 control-plane 容器已同步并 smoke；`57011` packaged_release 线已用真实远端 `/api/auth/*`、真实 `/api/admin/users/:id` 撤权、真实容器级 network cut 完成手测
+- 余劫：
+  - `56999` 那条真实 `AppData/Roaming/c5-account-center-desktop-web/` packaged 数据根仍然没有 query configs（`/query-configs -> []`），所以本轮真实手测落在 repo 数据根 `57011`，还不是“用户当前 AppData 工作集 + 正式 win-unpacked UI 页面”的完整口径。
+  - 本轮为了避免真实扫货/购买，只在空配置上验证了 runtime-control 的执行停机；purchase runtime “已在活跃命中/下单途中被 stop” 仍只有自动化证据，没有补做真金白银手测。
+  - 调试 member 账号属于手测捷径；若后续要验证正式注册/登录主链，仍应单开用真实邮箱验证码与正式 bundle 链路的验收。
+
+## 2026-04-27 23:27 (Asia/Shanghai)
+- 收口清理：
+  - 按用户选择的方案 1，已清理本轮调试残留：
+    - 远端 control-plane DB 中的调试 member `debug_runtime_member` 已删除
+    - 远端 `user_agent=codex-runtime-debug` 的临时 admin session 已删除
+    - 本地隔离 backend `57011` 已停止
+    - repo `.runtime/app-private/C5AutoBug/program_access/bundle.json` 已清回 `program_auth_required` 空 bundle
+  - 当前远端 `client_user` 已回到只剩原有 `1822049852@qq.com / 88888888` 这一条；本轮手测没有把调试账号长期留在现网。

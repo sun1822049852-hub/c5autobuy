@@ -85,6 +85,7 @@ class QueryRuntimeStatusResponse(BaseModel):
     config_id: str | None
     config_name: str | None
     message: str
+    last_error: str | None = None
     account_count: int
     started_at: str | None
     stopped_at: str | None

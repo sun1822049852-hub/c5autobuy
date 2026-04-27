@@ -70,6 +70,7 @@ async def _app_lifespan(app: FastAPI):
                 await post_ready_task
             except asyncio.CancelledError:
                 pass
+        _shutdown_program_runtime_control_service(app)
         _shutdown_program_access(app)
 
 
@@ -159,6 +160,13 @@ def _shutdown_program_access(app: FastAPI) -> None:
         close = getattr(gateway, "close", None)
         if callable(close):
             close()
+
+
+def _shutdown_program_runtime_control_service(app: FastAPI) -> None:
+    service = getattr(app.state, "program_runtime_control_service", None)
+    stop = getattr(service, "stop", None)
+    if callable(stop):
+        stop()
 
 
 def _supports_program_access_post_ready_warm(gateway: object) -> bool:

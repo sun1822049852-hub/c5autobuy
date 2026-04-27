@@ -12,6 +12,7 @@ _RUNTIME_FULL_STATE_ATTRS = (
     "query_config_repository",
     "query_runtime_service",
     "purchase_runtime_service",
+    "program_runtime_control_service",
     "purchase_ui_preferences_repository",
     "runtime_settings_repository",
     "stats_repository",
@@ -129,6 +130,7 @@ def test_deferred_create_app_builds_core_home_without_runtime_or_browser_actions
     assert getattr(app.state, "account_session_bundle_repository", None) is not None
     assert not hasattr(app.state, "query_runtime_service")
     assert not hasattr(app.state, "purchase_runtime_service")
+    assert not hasattr(app.state, "program_runtime_control_service")
     assert not hasattr(app.state, "login_adapter")
     assert not hasattr(app.state, "open_api_binding_page_launcher")
     assert not hasattr(app.state, "open_api_binding_sync_service")
@@ -176,6 +178,7 @@ def test_deferred_create_app_lifespan_eventually_binds_runtime_full_services(tmp
 
     assert hasattr(app.state, "purchase_runtime_service")
     assert hasattr(app.state, "query_runtime_service")
+    assert hasattr(app.state, "program_runtime_control_service")
 
 
 def test_slice_ensure_only_binds_state_and_does_not_mutate_route_table(tmp_path: Path):

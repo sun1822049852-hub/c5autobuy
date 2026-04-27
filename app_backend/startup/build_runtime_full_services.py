@@ -30,6 +30,7 @@ class RuntimeFullServices:
     purchase_runtime_service: object
     open_api_binding_sync_service: object
     query_runtime_service: object
+    program_runtime_control_service: object | None
     task_manager: object
     product_url_parser: object
     product_detail_collector: object
@@ -54,6 +55,7 @@ def require_runtime_full_services(services: Mapping[str, object]) -> RuntimeFull
         purchase_runtime_service=services["purchase_runtime_service"],
         open_api_binding_sync_service=services["open_api_binding_sync_service"],
         query_runtime_service=services["query_runtime_service"],
+        program_runtime_control_service=services.get("program_runtime_control_service"),
         task_manager=services["task_manager"],
         product_url_parser=services["product_url_parser"],
         product_detail_collector=services["product_detail_collector"],
@@ -83,6 +85,7 @@ def build_runtime_full_services(
     from app_backend.infrastructure.query.collectors.product_url_parser import ProductUrlParser
     from app_backend.infrastructure.query.refresh.query_item_detail_refresh_service import QueryItemDetailRefreshService
     from app_backend.infrastructure.browser_runtime.open_api_binding_sync_service import OpenApiBindingSyncService
+    from app_backend.infrastructure.program_access.runtime_control_service import RuntimeControlService
     from app_backend.infrastructure.repositories.account_inventory_snapshot_repository import (
         SqliteAccountInventorySnapshotRepository,
     )
@@ -145,6 +148,20 @@ def build_runtime_full_services(
         poll_interval_seconds=1.0,
         debug_log_path=database_path.parent / "runtime" / "open_api_binding_debug.runtime.jsonl",
     )
+    remote_client = getattr(shared.program_access_gateway, "_remote_client", None)
+    if (
+        remote_client is not None
+        and shared.program_access_credential_store is not None
+        and shared.program_access_secret_store is not None
+    ):
+        program_runtime_control_service = RuntimeControlService(
+            remote_client=remote_client,
+            credential_store=shared.program_access_credential_store,
+            secret_store=shared.program_access_secret_store,
+            device_id_store=shared.program_access_device_id_store,
+        )
+    else:
+        program_runtime_control_service = None
     query_runtime_service = QueryRuntimeService(
         query_config_repository=query_config_repository,
         query_settings_repository=query_settings_repository,
@@ -153,6 +170,7 @@ def build_runtime_full_services(
         open_api_binding_sync_service=open_api_binding_sync_service,
         stats_sink=stats_pipeline.enqueue,
         runtime_update_hub=shared.runtime_update_hub,
+        program_runtime_control_service=program_runtime_control_service,
     )
     purchase_runtime_service.set_query_runtime_service(query_runtime_service)
     task_manager = TaskManager()
@@ -184,6 +202,7 @@ def build_runtime_full_services(
         "purchase_runtime_service": purchase_runtime_service,
         "open_api_binding_sync_service": open_api_binding_sync_service,
         "query_runtime_service": query_runtime_service,
+        "program_runtime_control_service": program_runtime_control_service,
         "task_manager": task_manager,
         "product_url_parser": product_url_parser,
         "product_detail_collector": product_detail_collector,

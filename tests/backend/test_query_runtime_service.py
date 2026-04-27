@@ -273,23 +273,27 @@ class FakePurchaseRuntimeService:
         self._running = False
         self._on_no_available_accounts = None
         self._on_accounts_available = None
+        self._last_error = None
 
     def start(self) -> tuple[bool, str]:
         self.start_calls += 1
         if self._start_result[0] or self._start_result[1] == "已有购买运行时在运行":
             self._running = True
+            self._last_error = None
         return self._start_result
 
-    def stop(self) -> tuple[bool, str]:
+    def stop(self, *, forced_stop_reason: str | None = None) -> tuple[bool, str]:
         self.stop_calls += 1
         if self._stop_result[0]:
             self._running = False
+            self._last_error = forced_stop_reason
         return self._stop_result
 
     def get_status(self) -> dict[str, object]:
         return {
             "running": self._running,
             "active_account_count": self._active_account_count,
+            "last_error": self._last_error,
         }
 
     def has_available_accounts(self) -> bool:
@@ -316,6 +320,27 @@ class FakePurchaseRuntimeService:
 
     def mark_account_auth_invalid(self, *, account_id: str, error: str | None = None) -> None:
         self.mark_auth_invalid_calls.append({"account_id": account_id, "error": error})
+
+
+class FakeProgramRuntimeControlService:
+    def __init__(self) -> None:
+        self.start_calls = 0
+        self.stop_calls = 0
+        self._on_force_stop = None
+
+    def set_on_force_stop(self, callback) -> None:
+        self._on_force_stop = callback
+
+    def start(self) -> None:
+        self.start_calls += 1
+
+    def stop(self, *, timeout: float = 1.0) -> None:
+        _ = timeout
+        self.stop_calls += 1
+
+    def emit_force_stop(self, reason: str) -> None:
+        if callable(self._on_force_stop):
+            self._on_force_stop(reason)
 
 
 def wait_until(predicate, *, timeout: float = 1.0, interval: float = 0.01) -> bool:
@@ -1207,6 +1232,64 @@ def test_runtime_service_stop_clears_running_state():
     assert message == "查询任务已停止"
     assert service.get_status()["running"] is False
     assert purchase_service.stop_calls == 1
+
+
+def test_runtime_service_arms_program_runtime_control_and_cascades_forced_stop():
+    from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
+
+    repository = FakeQueryConfigRepository(build_config("cfg-1"))
+    purchase_service = FakePurchaseRuntimeService()
+    runtime_control_service = FakeProgramRuntimeControlService()
+    service = QueryRuntimeService(
+        query_config_repository=repository,
+        account_repository=FakeAccountRepository(),
+        runtime_factory=lambda config, accounts: FakeRuntime(config, accounts),
+        purchase_runtime_service=purchase_service,
+        program_runtime_control_service=runtime_control_service,
+    )
+
+    started, message = service.start(config_id="cfg-1")
+
+    assert started is True
+    assert message == "查询任务已启动"
+    assert runtime_control_service.start_calls == 1
+
+    runtime_control_service.emit_force_stop("program_runtime_revoked")
+    snapshot = service.get_status()
+
+    assert snapshot["running"] is False
+    assert snapshot["last_error"] == "program_runtime_revoked"
+    assert purchase_service.stop_calls == 1
+    assert purchase_service.get_status()["last_error"] == "program_runtime_revoked"
+    assert runtime_control_service.stop_calls >= 1
+
+
+def test_runtime_service_manual_stop_disarms_program_runtime_control_without_forced_error():
+    from app_backend.infrastructure.query.runtime.query_runtime_service import QueryRuntimeService
+
+    repository = FakeQueryConfigRepository(build_config("cfg-1"))
+    purchase_service = FakePurchaseRuntimeService()
+    runtime_control_service = FakeProgramRuntimeControlService()
+    service = QueryRuntimeService(
+        query_config_repository=repository,
+        account_repository=FakeAccountRepository(),
+        runtime_factory=lambda config, accounts: FakeRuntime(config, accounts),
+        purchase_runtime_service=purchase_service,
+        program_runtime_control_service=runtime_control_service,
+    )
+
+    started, message = service.start(config_id="cfg-1")
+    stopped, stop_message = service.stop()
+    snapshot = service.get_status()
+
+    assert started is True
+    assert message == "查询任务已启动"
+    assert stopped is True
+    assert stop_message == "查询任务已停止"
+    assert runtime_control_service.start_calls == 1
+    assert runtime_control_service.stop_calls >= 1
+    assert snapshot["running"] is False
+    assert snapshot["last_error"] is None
 
 
 def test_runtime_service_starts_purchase_runtime_before_query_runtime():

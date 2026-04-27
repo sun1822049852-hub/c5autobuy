@@ -228,10 +228,12 @@ class RemoteEntitlementGateway:
         applied = self._apply_remote_auth_result(result)
         if not applied.accepted:
             return applied
-        return ProgramAccessActionResult.accept(
-            summary=applied.summary,
-            message=PROGRAM_REGISTERED_BUT_NOT_MEMBER_MESSAGE,
-        )
+        if applied.summary.last_error_code == PROGRAM_FEATURE_NOT_ENABLED_CODE:
+            return ProgramAccessActionResult.accept(
+                summary=applied.summary,
+                message=PROGRAM_REGISTERED_BUT_NOT_MEMBER_MESSAGE,
+            )
+        return applied
 
     def send_reset_code(self, email: str) -> ProgramAccessActionResult:
         try:
@@ -281,14 +283,35 @@ class RemoteEntitlementGateway:
                 message=action_result.message or PROGRAM_AUTH_REQUIRED_MESSAGE,
             )
 
-        if not _feature_enabled(snapshot):
-            self._set_last_error(PROGRAM_FEATURE_NOT_ENABLED_CODE)
-            return ProgramAccessDecision.deny(
-                code=PROGRAM_FEATURE_NOT_ENABLED_CODE,
-                message=_feature_message_for_action(action),
-            )
-
         if action != "runtime.start":
+            if _action_requires_live_refresh(action):
+                action_result = self.refresh(reason=f"guard:{action}")
+                if not action_result.accepted:
+                    return ProgramAccessDecision.deny(
+                        code=action_result.code or PROGRAM_FEATURE_NOT_ENABLED_CODE,
+                        message=action_result.message or _feature_message_for_action(action),
+                    )
+                bundle = self._credential_store.load()
+                envelope = self._load_verified_envelope(bundle)
+                snapshot = envelope.snapshot
+                if envelope.invalid:
+                    action_result = self._reject_with_code(PROGRAM_SNAPSHOT_INVALID_CODE, clear_auth=True)
+                    return ProgramAccessDecision.deny(
+                        code=action_result.code or PROGRAM_SNAPSHOT_INVALID_CODE,
+                        message=action_result.message or PROGRAM_SNAPSHOT_INVALID_MESSAGE,
+                    )
+                if snapshot is None:
+                    action_result = self._reject_with_code(PROGRAM_AUTH_REQUIRED_CODE, clear_auth=True)
+                    return ProgramAccessDecision.deny(
+                        code=action_result.code or PROGRAM_AUTH_REQUIRED_CODE,
+                        message=action_result.message or PROGRAM_AUTH_REQUIRED_MESSAGE,
+                    )
+            if not _feature_enabled(snapshot):
+                self._set_last_error(PROGRAM_FEATURE_NOT_ENABLED_CODE)
+                return ProgramAccessDecision.deny(
+                    code=PROGRAM_FEATURE_NOT_ENABLED_CODE,
+                    message=_feature_message_for_action(action),
+                )
             if not _action_enabled(snapshot, action):
                 self._set_last_error(PROGRAM_FEATURE_NOT_ENABLED_CODE)
                 return ProgramAccessDecision.deny(
@@ -297,6 +320,13 @@ class RemoteEntitlementGateway:
                 )
             self._clear_last_error()
             return ProgramAccessDecision.allow()
+
+        if not _feature_enabled(snapshot):
+            self._set_last_error(PROGRAM_FEATURE_NOT_ENABLED_CODE)
+            return ProgramAccessDecision.deny(
+                code=PROGRAM_FEATURE_NOT_ENABLED_CODE,
+                message=_feature_message_for_action(action),
+            )
 
         refresh_token = self._read_refresh_token(bundle)
         if not refresh_token:
@@ -656,6 +686,10 @@ def _feature_message_for_action(action: str) -> str:
     if action == ACCOUNT_BROWSER_QUERY_ENABLE_ACTION:
         return PROGRAM_BROWSER_QUERY_ENABLE_NOT_OPEN_MESSAGE
     return PROGRAM_FEATURE_NOT_ENABLED_MESSAGE
+
+
+def _action_requires_live_refresh(action: str) -> bool:
+    return action == ACCOUNT_BROWSER_QUERY_ENABLE_ACTION
 
 
 def _read_optional_string(snapshot: dict[str, object] | None, key: str) -> str | None:

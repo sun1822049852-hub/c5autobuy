@@ -29,16 +29,38 @@ const refs = {
   userForm: document.querySelector("#userForm"),
   detailUsername: document.querySelector("#detailUsername"),
   detailEmail: document.querySelector("#detailEmail"),
+  userStatus: document.querySelector("#userStatus"),
   userPlan: document.querySelector("#userPlan"),
   userExpiryDate: document.querySelector("#userExpiryDate"),
   userExpiryTime: document.querySelector("#userExpiryTime"),
   membershipMeta: document.querySelector("#membershipMeta"),
+  effectivePermissions: document.querySelector("#effectivePermissions"),
+  permissionOverrideProgramAccessEnabled: document.querySelector("#permissionOverrideProgramAccessEnabled"),
+  permissionOverrideRuntimeStart: document.querySelector("#permissionOverrideRuntimeStart"),
+  permissionOverrideAccountBrowserQueryEnable: document.querySelector("#permissionOverrideAccountBrowserQueryEnable"),
   deviceList: document.querySelector("#deviceList"),
   sidebarCopy: document.querySelector("#sidebarCopy"),
   pageHeader: document.querySelector("#pageHeader")
 };
 
 const DEFAULT_EXPIRY_TIME = "23:59";
+const PERMISSION_OVERRIDE_INHERIT = "inherit";
+const PERMISSION_OVERRIDE_FORCE_ON = "force_on";
+const PERMISSION_OVERRIDE_FORCE_OFF = "force_off";
+const PERMISSION_OVERRIDE_OPTIONS = Object.freeze([
+  {
+    code: "program_access_enabled",
+    refKey: "permissionOverrideProgramAccessEnabled"
+  },
+  {
+    code: "runtime.start",
+    refKey: "permissionOverrideRuntimeStart"
+  },
+  {
+    code: "account.browser_query.enable",
+    refKey: "permissionOverrideAccountBrowserQueryEnable"
+  }
+]);
 
 function toText(value = "") {
   return String(value == null ? "" : value).trim();
@@ -187,6 +209,52 @@ function formatDateTime(value = "") {
   ].join("-") + ` ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+function normalizeUserStatus(value = "") {
+  return toText(value) === "disabled" ? "disabled" : "active";
+}
+
+function readOverrideMap(user) {
+  const entries = Array.isArray(user && user.permission_overrides) ? user.permission_overrides : [];
+  return new Map(entries
+    .map((item) => [toText(item && item.feature_code), Boolean(item && item.enabled)])
+    .filter(([code]) => Boolean(code)));
+}
+
+function resolvePermissionOverrideValue(user, code) {
+  const overrideMap = readOverrideMap(user);
+  if (!overrideMap.has(code)) {
+    return PERMISSION_OVERRIDE_INHERIT;
+  }
+  return overrideMap.get(code) ? PERMISSION_OVERRIDE_FORCE_ON : PERMISSION_OVERRIDE_FORCE_OFF;
+}
+
+function renderEffectivePermissions(user) {
+  const permissions = Array.isArray(user && user.entitlements && user.entitlements.permissions)
+    ? user.entitlements.permissions
+    : [];
+  if (!permissions.length) {
+    refs.effectivePermissions.innerHTML = '<span class="token">当前无生效权限</span>';
+    return;
+  }
+  refs.effectivePermissions.innerHTML = permissions
+    .map((permission) => `<span class="token">${escapeHtml(permission)}</span>`)
+    .join("");
+}
+
+function readPermissionOverridesFromForm() {
+  return PERMISSION_OVERRIDE_OPTIONS.flatMap(({code, refKey}) => {
+    const element = refs[refKey];
+    const value = toText(element && element.value);
+    if (value === PERMISSION_OVERRIDE_FORCE_ON) {
+      return [{feature_code: code, enabled: true}];
+    }
+    if (value === PERMISSION_OVERRIDE_FORCE_OFF) {
+      return [{feature_code: code, enabled: false}];
+    }
+    return [];
+  });
+}
+
 function renderAuth() {
   const loggedIn = Boolean(state.session);
   refs.bootstrapForm.hidden = !state.bootstrapNeeded;
@@ -256,6 +324,7 @@ function renderUsers() {
 }
 
 function renderMembershipMeta(user) {
+  const status = normalizeUserStatus(refs.userStatus.value);
   const plan = refs.userPlan.value;
   if (plan === "inactive") {
     refs.userExpiryDate.disabled = true;
@@ -265,6 +334,10 @@ function renderMembershipMeta(user) {
   }
   refs.userExpiryDate.disabled = false;
   refs.userExpiryTime.disabled = false;
+  if (status === "disabled") {
+    refs.membershipMeta.textContent = "当前用户已 disabled；即使计划为 member 或有权限覆盖，实际权限也不会生效，直到改回 active。";
+    return;
+  }
   const preview = expiryToIso(refs.userExpiryDate.value, refs.userExpiryTime.value);
   refs.membershipMeta.textContent = preview
     ? `member 将保留程序访问权限。当前选择的到期时间：${formatDateTime(preview)}。`
@@ -296,6 +369,11 @@ function renderUserDetail() {
   if (!user) {
     refs.userForm.hidden = true;
     refs.detailHint.textContent = "选择左侧用户后即可编辑。";
+    refs.effectivePermissions.innerHTML = '<span class="token">当前无生效权限</span>';
+    refs.userStatus.value = "active";
+    refs.permissionOverrideProgramAccessEnabled.value = PERMISSION_OVERRIDE_INHERIT;
+    refs.permissionOverrideRuntimeStart.value = PERMISSION_OVERRIDE_INHERIT;
+    refs.permissionOverrideAccountBrowserQueryEnable.value = PERMISSION_OVERRIDE_INHERIT;
     renderDevices();
     return;
   }
@@ -303,10 +381,15 @@ function renderUserDetail() {
   refs.detailHint.textContent = `正在编辑 ${user.username}。`;
   refs.detailUsername.textContent = user.username;
   refs.detailEmail.textContent = user.email;
+  refs.userStatus.value = normalizeUserStatus(user.status);
   refs.userPlan.value = toText(user.membership_plan) === "member" ? "member" : "inactive";
   const expiry = splitExpiryParts(user.membership_expires_at);
   refs.userExpiryDate.value = expiry.dateValue;
   refs.userExpiryTime.value = expiry.timeValue;
+  refs.permissionOverrideProgramAccessEnabled.value = resolvePermissionOverrideValue(user, "program_access_enabled");
+  refs.permissionOverrideRuntimeStart.value = resolvePermissionOverrideValue(user, "runtime.start");
+  refs.permissionOverrideAccountBrowserQueryEnable.value = resolvePermissionOverrideValue(user, "account.browser_query.enable");
+  renderEffectivePermissions(user);
   renderMembershipMeta(user);
   renderDevices();
 }
@@ -444,15 +527,18 @@ async function handleUserSubmit(event) {
   if (!user) {
     return;
   }
+  const status = normalizeUserStatus(refs.userStatus.value);
   const membershipPlan = refs.userPlan.value === "member" ? "member" : "inactive";
   try {
     await api(`/api/admin/users/${user.id}`, {
       method: "PATCH",
       body: JSON.stringify({
+        status,
         membership_plan: membershipPlan,
         membership_expires_at: membershipPlan === "inactive"
           ? ""
-          : expiryToIso(refs.userExpiryDate.value, refs.userExpiryTime.value)
+          : expiryToIso(refs.userExpiryDate.value, refs.userExpiryTime.value),
+        permission_overrides: readPermissionOverridesFromForm()
       })
     });
     await loadDashboard();
@@ -492,6 +578,7 @@ function bindEvents() {
   refs.loginForm.addEventListener("submit", handleLogin);
   refs.logoutButton.addEventListener("click", handleLogout);
   refs.userForm.addEventListener("submit", handleUserSubmit);
+  refs.userStatus.addEventListener("change", () => renderMembershipMeta(selectedUser()));
   refs.userPlan.addEventListener("change", () => {
     const user = selectedUser();
     if (refs.userPlan.value === "inactive") {

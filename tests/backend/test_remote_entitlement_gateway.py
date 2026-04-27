@@ -308,7 +308,7 @@ def test_remote_gateway_verify_register_code_returns_remote_message_and_summary(
     assert result.summary.registration_flow_version == 3
 
 
-def test_remote_gateway_complete_register_persists_verified_auth_bundle_when_signature_kid_matches(
+def test_remote_gateway_complete_register_preserves_remote_success_message_when_snapshot_is_authorized(
     tmp_path: Path,
 ) -> None:
     private_key = Ed25519PrivateKey.generate()
@@ -343,8 +343,10 @@ def test_remote_gateway_complete_register_persists_verified_auth_bundle_when_sig
     stored_bundle = credential_store.load()
 
     assert result.accepted is True
-    # complete_register persists auth but returns a local membership messaging.
-    assert result.message == "账号已创建，但当前未开通会员"
+    assert result.message == "注册成功"
+    assert result.summary.auth_state == "active"
+    assert result.summary.last_error_code is None
+    assert result.summary.message == "当前程序会员权限有效"
     assert stored_bundle.refresh_credential_ref is not None
     assert secret_store.get(stored_bundle.refresh_credential_ref) == "refresh-token-1"
     assert stored_bundle.entitlement_signature is not None
@@ -352,6 +354,46 @@ def test_remote_gateway_complete_register_persists_verified_auth_bundle_when_sig
     assert isinstance(stored_bundle.entitlement_snapshot, dict)
     assert stored_bundle.entitlement_snapshot["runtime_state"] == "running"
     assert stored_bundle.last_error_code is None
+
+
+def test_remote_gateway_complete_register_falls_back_to_not_member_message_when_snapshot_has_no_program_access(
+    tmp_path: Path,
+) -> None:
+    private_key = Ed25519PrivateKey.generate()
+    verifier = EntitlementVerifier(key_cache_path=_write_public_key(tmp_path, private_key))
+    kid = derive_key_id(private_key.public_key())
+    secret_store = _MemorySecretStore()
+    credential_store = _MemoryCredentialStore(ProgramCredentialBundle(device_id="device-alpha"))
+    remote_client = _RemoteClientStub(
+        complete_register_result=_build_auth_result(
+            private_key=private_key,
+            kid=kid,
+            refresh_token="refresh-token-1",
+            snapshot=_build_snapshot(feature_enabled=False, runtime_state="stopped"),
+            message="注册成功",
+        ),
+    )
+    gateway = RemoteEntitlementGateway(
+        remote_client=remote_client,
+        verifier=verifier,
+        credential_store=credential_store,
+        secret_store=secret_store,
+        device_id_store=_StaticDeviceIdStore("device-alpha"),
+        stage="packaged_release",
+    )
+
+    result = gateway.complete_register(
+        email="alice@example.com",
+        verification_ticket="ticket_1",
+        username="alice",
+        password="Secret123!",
+    )
+
+    assert result.accepted is True
+    assert result.message == "账号已创建，但当前未开通会员"
+    assert result.summary.auth_state == "revoked"
+    assert result.summary.last_error_code == "program_feature_not_enabled"
+    assert result.summary.message == "当前套餐暂未开放该功能"
 
 
 def test_remote_gateway_complete_register_rejects_program_snapshot_invalid_when_signature_and_kid_mismatch(
@@ -628,39 +670,9 @@ def test_remote_gateway_guard_denies_non_runtime_action_when_program_access_disa
     assert decision.code == "program_feature_not_enabled"
 
 
-def test_remote_gateway_guard_denies_browser_query_enable_without_specific_permission(tmp_path: Path) -> None:
-    private_key = Ed25519PrivateKey.generate()
-    verifier = EntitlementVerifier(key_cache_path=_write_public_key(tmp_path, private_key))
-    kid = derive_key_id(private_key.public_key())
-    secret_store = _MemorySecretStore()
-    cached_snapshot = _build_snapshot(feature_enabled=True)
-    credential_store = _MemoryCredentialStore(
-        ProgramCredentialBundle(
-            device_id="device-alpha",
-            refresh_credential_ref=secret_store.put("refresh-token-1"),
-            entitlement_snapshot=cached_snapshot,
-            entitlement_signature=_sign_snapshot(private_key, cached_snapshot),
-            entitlement_kid=kid,
-            last_error_code=None,
-        )
-    )
-    gateway = RemoteEntitlementGateway(
-        remote_client=_RemoteClientStub(),
-        verifier=verifier,
-        credential_store=credential_store,
-        secret_store=secret_store,
-        device_id_store=_StaticDeviceIdStore("device-alpha"),
-        stage="packaged_release",
-    )
-
-    decision = gateway.guard("account.browser_query.enable")
-
-    assert decision.allowed is False
-    assert decision.code == "program_feature_not_enabled"
-    assert decision.message == "当前此功能未开放"
-
-
-def test_remote_gateway_guard_allows_browser_query_enable_with_specific_permission(tmp_path: Path) -> None:
+def test_remote_gateway_guard_denies_browser_query_enable_when_live_refresh_revokes_specific_permission(
+    tmp_path: Path,
+) -> None:
     private_key = Ed25519PrivateKey.generate()
     verifier = EntitlementVerifier(key_cache_path=_write_public_key(tmp_path, private_key))
     kid = derive_key_id(private_key.public_key())
@@ -679,8 +691,17 @@ def test_remote_gateway_guard_allows_browser_query_enable_with_specific_permissi
             last_error_code=None,
         )
     )
+    remote_client = _RemoteClientStub(
+        refresh_result=_build_auth_result(
+            private_key=private_key,
+            kid=kid,
+            refresh_token="refresh-token-2",
+            snapshot=_build_snapshot(feature_enabled=True),
+            message="刷新成功",
+        )
+    )
     gateway = RemoteEntitlementGateway(
-        remote_client=_RemoteClientStub(),
+        remote_client=remote_client,
         verifier=verifier,
         credential_store=credential_store,
         secret_store=secret_store,
@@ -690,7 +711,68 @@ def test_remote_gateway_guard_allows_browser_query_enable_with_specific_permissi
 
     decision = gateway.guard("account.browser_query.enable")
 
+    assert decision.allowed is False
+    assert decision.code == "program_feature_not_enabled"
+    assert decision.message == "当前此功能未开放"
+    assert remote_client.refresh_calls == [
+        {
+            "refresh_token": "refresh-token-1",
+            "device_id": "device-alpha",
+        }
+    ]
+
+
+def test_remote_gateway_guard_allows_browser_query_enable_after_live_refresh_grants_permission(
+    tmp_path: Path,
+) -> None:
+    private_key = Ed25519PrivateKey.generate()
+    verifier = EntitlementVerifier(key_cache_path=_write_public_key(tmp_path, private_key))
+    kid = derive_key_id(private_key.public_key())
+    secret_store = _MemorySecretStore()
+    cached_snapshot = _build_snapshot(feature_enabled=True)
+    credential_store = _MemoryCredentialStore(
+        ProgramCredentialBundle(
+            device_id="device-alpha",
+            refresh_credential_ref=secret_store.put("refresh-token-1"),
+            entitlement_snapshot=cached_snapshot,
+            entitlement_signature=_sign_snapshot(private_key, cached_snapshot),
+            entitlement_kid=kid,
+            last_error_code=None,
+        )
+    )
+    remote_client = _RemoteClientStub(
+        refresh_result=_build_auth_result(
+            private_key=private_key,
+            kid=kid,
+            refresh_token="refresh-token-2",
+            snapshot=_build_snapshot(
+                feature_enabled=True,
+                extra_permissions=["account.browser_query.enable"],
+            ),
+            message="刷新成功",
+        )
+    )
+    gateway = RemoteEntitlementGateway(
+        remote_client=remote_client,
+        verifier=verifier,
+        credential_store=credential_store,
+        secret_store=secret_store,
+        device_id_store=_StaticDeviceIdStore("device-alpha"),
+        stage="packaged_release",
+    )
+
+    decision = gateway.guard("account.browser_query.enable")
+    stored_bundle = credential_store.load()
+
     assert decision.allowed is True
+    assert remote_client.refresh_calls == [
+        {
+            "refresh_token": "refresh-token-1",
+            "device_id": "device-alpha",
+        }
+    ]
+    assert isinstance(stored_bundle.entitlement_snapshot, dict)
+    assert "account.browser_query.enable" in stored_bundle.entitlement_snapshot["permissions"]
 
 
 def test_remote_gateway_refresh_maps_remote_unauthorized_to_guarded_summary(tmp_path: Path) -> None:
@@ -897,6 +979,7 @@ class _RemoteClientStub:
         self._reset_password_error = reset_password_error
         self._refresh_error = refresh_error
         self.logout_calls: list[str] = []
+        self.refresh_calls: list[dict[str, str]] = []
         self.permit_calls: list[dict[str, object]] = []
         self.send_register_code_calls: list[dict[str, object]] = []
         self.verify_register_code_calls: list[dict[str, object]] = []
@@ -968,8 +1051,12 @@ class _RemoteClientStub:
         return self._registration_readiness_result
 
     def refresh(self, *, refresh_token: str, device_id: str) -> RemoteAuthResult:
-        _ = refresh_token
-        _ = device_id
+        self.refresh_calls.append(
+            {
+                "refresh_token": refresh_token,
+                "device_id": device_id,
+            }
+        )
         if self._refresh_error is not None:
             raise self._refresh_error
         if self._refresh_result is None:

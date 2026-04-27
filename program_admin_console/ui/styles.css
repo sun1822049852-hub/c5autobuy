@@ -194,6 +194,10 @@ label span,
   gap: 1rem;
 }
 
+.stack--dense {
+  gap: 0.7rem;
+}
+
 .notice {
   padding: 0.8rem 0.9rem;
   border-radius: 14px;
@@ -261,6 +265,27 @@ label span,
 .meta-card,
 .empty-state {
   padding: 0.9rem 1rem;
+}
+
+.token-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.45rem;
+}
+
+.permission-card {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: #fffdf9;
+}
+
+.permission-card small {
+  color: var(--muted);
+  line-height: 1.45;
 }
 
 .device-card {

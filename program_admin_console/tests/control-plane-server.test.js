@@ -41,6 +41,196 @@ async function requestJson(ctx, method, route, body = null, headers = null) {
   });
 }
 
+function parseSseFrame(rawFrame = "") {
+  const lines = String(rawFrame || "").split(/\r?\n/);
+  const comments = [];
+  const dataLines = [];
+  let event = "";
+  for (const line of lines) {
+    if (!line) {
+      continue;
+    }
+    if (line.startsWith(":")) {
+      comments.push(line.slice(1).trim());
+      continue;
+    }
+    const separatorIndex = line.indexOf(":");
+    const field = separatorIndex >= 0 ? line.slice(0, separatorIndex).trim() : line.trim();
+    const value = separatorIndex >= 0 ? line.slice(separatorIndex + 1).replace(/^ /, "") : "";
+    if (field === "event") {
+      event = value;
+      continue;
+    }
+    if (field === "data") {
+      dataLines.push(value);
+    }
+  }
+  return {
+    raw: rawFrame,
+    event,
+    comment: comments.join("\n"),
+    dataText: dataLines.join("\n")
+  };
+}
+
+function parseFrameJson(frame) {
+  assert.ok(frame && frame.dataText, `expected json frame data, got: ${frame ? frame.raw : "<empty>"}`);
+  return JSON.parse(frame.dataText);
+}
+
+function pushSseFrame(state, frame) {
+  if (state.waiters.length) {
+    const waiter = state.waiters.shift();
+    clearTimeout(waiter.timer);
+    waiter.resolve(frame);
+    return;
+  }
+  state.frames.push(frame);
+}
+
+function flushSseFrames(state) {
+  while (true) {
+    const match = state.buffer.match(/\r?\n\r?\n/);
+    if (!match) {
+      return;
+    }
+    const separatorIndex = Number(match.index) || 0;
+    const separatorLength = match[0].length;
+    const rawFrame = state.buffer.slice(0, separatorIndex);
+    state.buffer = state.buffer.slice(separatorIndex + separatorLength);
+    if (!rawFrame.trim()) {
+      continue;
+    }
+    pushSseFrame(state, parseSseFrame(rawFrame));
+  }
+}
+
+function failPendingSseWaiters(state, error) {
+  while (state.waiters.length) {
+    const waiter = state.waiters.shift();
+    clearTimeout(waiter.timer);
+    waiter.reject(error);
+  }
+}
+
+async function openRuntimeControlStream(ctx, {
+  refreshToken,
+  deviceId
+}) {
+  const url = new URL("/api/auth/runtime-control/stream", ctx.baseUrl);
+  return new Promise((resolve, reject) => {
+    const state = {
+      buffer: "",
+      frames: [],
+      waiters: [],
+      ended: false,
+      endError: null,
+      res: null,
+      req: null
+    };
+    const req = http.request(url, {
+      method: "GET",
+      headers: {
+        Accept: "text/event-stream",
+        Authorization: `Bearer ${refreshToken}`,
+        "X-C5-Device-Id": deviceId
+      }
+    }, (res) => {
+      state.res = res;
+      res.setEncoding("utf8");
+      res.on("data", (chunk) => {
+        state.buffer += chunk;
+        flushSseFrames(state);
+      });
+      res.on("end", () => {
+        state.ended = true;
+        if (state.buffer.trim()) {
+          pushSseFrame(state, parseSseFrame(state.buffer));
+          state.buffer = "";
+        }
+        failPendingSseWaiters(state, state.endError || new Error("runtime-control stream ended"));
+      });
+      res.on("error", (error) => {
+        state.endError = error;
+        failPendingSseWaiters(state, error);
+      });
+      resolve({
+        status: res.statusCode || 0,
+        headers: res.headers,
+        async readFrame({timeoutMs = 1000} = {}) {
+          if (state.frames.length) {
+            return state.frames.shift();
+          }
+          if (state.ended) {
+            throw state.endError || new Error("runtime-control stream ended");
+          }
+          return new Promise((resolveFrame, rejectFrame) => {
+            const waiter = {
+              resolve: resolveFrame,
+              reject: rejectFrame,
+              timer: setTimeout(() => {
+                const index = state.waiters.indexOf(waiter);
+                if (index >= 0) {
+                  state.waiters.splice(index, 1);
+                }
+                rejectFrame(new Error(`timed out waiting for runtime-control frame after ${timeoutMs}ms`));
+              }, timeoutMs)
+            };
+            state.waiters.push(waiter);
+          });
+        },
+        close() {
+          req.destroy();
+          if (state.res) {
+            state.res.destroy();
+          }
+        }
+      });
+    });
+    state.req = req;
+    req.on("error", reject);
+    req.end();
+  });
+}
+
+async function readHelloFrame(stream) {
+  const frame = await stream.readFrame({timeoutMs: 1000});
+  assert.equal(frame.event, "hello");
+  const payload = parseFrameJson(frame);
+  assert.equal(Number.isNaN(Date.parse(payload.server_time)), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(payload, "stream_version"), true);
+  return payload;
+}
+
+async function readHealthFrameWithoutRevoke(stream, {timeoutMs = 1000} = {}) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const frame = await stream.readFrame({timeoutMs: Math.max(1, deadline - Date.now())});
+    if (frame.event === "runtime.revoke") {
+      const payload = parseFrameJson(frame);
+      assert.fail(`expected keepalive/comment without runtime.revoke, got ${JSON.stringify(payload)}`);
+    }
+    if (frame.comment || frame.event === "keepalive") {
+      return frame;
+    }
+  }
+  assert.fail("expected keepalive/comment frame before timeout");
+}
+
+async function readRuntimeRevoke(stream, {timeoutMs = 1000} = {}) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const frame = await stream.readFrame({timeoutMs: Math.max(1, deadline - Date.now())});
+    if (frame.event !== "runtime.revoke") {
+      continue;
+    }
+    const payload = parseFrameJson(frame);
+    assert.equal(typeof payload.reason, "string");
+    return payload;
+  }
+  assert.fail("expected runtime.revoke event before timeout");
+}
+
 async function startServer(options = {}) {
   const tempDir = makeTempDir();
   const sentMessages = [];
@@ -52,7 +242,7 @@ async function startServer(options = {}) {
     refreshSessionDays: 30,
     adminSessionHours: 12
   };
-  const server = createServer({
+  const serverOptions = {
     dbPath,
     now() {
       return new Date("2026-04-19T08:00:00.000Z");
@@ -74,7 +264,13 @@ async function startServer(options = {}) {
         }
       };
     }
-  });
+  };
+  if (Object.prototype.hasOwnProperty.call(options, "runtimeControlKeepaliveMs")) {
+    serverOptions.runtimeControlKeepaliveMs = Number(options.runtimeControlKeepaliveMs) || 0;
+  } else if (!options.useDefaultRuntimeControlKeepalive) {
+    serverOptions.runtimeControlKeepaliveMs = 50;
+  }
+  const server = createServer(serverOptions);
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   return {
@@ -197,6 +393,67 @@ async function main() {
     await stopServer(failedMailCtx);
   }
 
+  const defaultKeepaliveCtx = await startServer({useDefaultRuntimeControlKeepalive: true});
+  try {
+    const adminBootstrap = await requestJson(defaultKeepaliveCtx, "POST", "/api/admin/bootstrap", {
+      username: "admin",
+      password: "Root123!"
+    });
+    assert.equal(adminBootstrap.status, 200);
+    assert.equal(adminBootstrap.body.ok, true);
+
+    const adminLogin = await requestJson(defaultKeepaliveCtx, "POST", "/api/admin/login", {
+      username: "admin",
+      password: "Root123!"
+    });
+    assert.equal(adminLogin.status, 200);
+    assert.equal(adminLogin.body.ok, true);
+    const adminHeaders = {
+      Authorization: `Bearer ${adminLogin.body.session_token}`
+    };
+
+    const registerKeepaliveUser = await registerUserViaV3(defaultKeepaliveCtx, {
+      email: "keepalive@example.com",
+      installId: "install_keepalive",
+      username: "keepalive_user",
+      password: "Secret123!",
+      deviceId: "device_keepalive"
+    });
+    const keepaliveUserList = await requestJson(defaultKeepaliveCtx, "GET", "/api/admin/users", null, adminHeaders);
+    assert.equal(keepaliveUserList.status, 200);
+    const keepaliveUser = keepaliveUserList.body.items.find((item) => item.email === "keepalive@example.com");
+    assert.ok(keepaliveUser);
+
+    const upgradeKeepaliveUser = await requestJson(defaultKeepaliveCtx, "PATCH", `/api/admin/users/${keepaliveUser.id}`, {
+      membership_plan: "member",
+      permission_overrides: []
+    }, adminHeaders);
+    assert.equal(upgradeKeepaliveUser.status, 200);
+    assert.equal(upgradeKeepaliveUser.body.ok, true);
+
+    const refreshKeepaliveUser = await requestJson(defaultKeepaliveCtx, "POST", "/api/auth/refresh", {
+      refresh_token: registerKeepaliveUser.complete.body.auth_session.refresh_token,
+      device_id: "device_keepalive"
+    });
+    assert.equal(refreshKeepaliveUser.status, 200);
+    assert.equal(refreshKeepaliveUser.body.ok, true);
+
+    const defaultKeepaliveStream = await openRuntimeControlStream(defaultKeepaliveCtx, {
+      refreshToken: refreshKeepaliveUser.body.refresh_token,
+      deviceId: "device_keepalive"
+    });
+    try {
+      assert.equal(defaultKeepaliveStream.status, 200);
+      await readHelloFrame(defaultKeepaliveStream);
+      const healthFrame = await readHealthFrameWithoutRevoke(defaultKeepaliveStream, {timeoutMs: 2200});
+      assert.equal(Boolean(healthFrame.comment || healthFrame.event === "keepalive"), true);
+    } finally {
+      defaultKeepaliveStream.close();
+    }
+  } finally {
+    await stopServer(defaultKeepaliveCtx);
+  }
+
   const ctx = await startServer();
   try {
     const health = await requestJson(ctx, "GET", "/api/health");
@@ -302,6 +559,27 @@ async function main() {
     assert.equal(upgraded.body.user.membership_plan, "member");
     assert.equal(upgraded.body.entitlements.permissions.includes("program_access_enabled"), true);
 
+    const browserQueryOverride = await requestJson(ctx, "PATCH", `/api/admin/users/${aliceId}`, {
+      permission_overrides: [
+        {
+          feature_code: "account.browser_query.enable",
+          enabled: true
+        }
+      ]
+    }, adminHeaders);
+    assert.equal(browserQueryOverride.status, 200);
+    assert.equal(browserQueryOverride.body.ok, true);
+    assert.equal(browserQueryOverride.body.entitlements.permissions.includes("account.browser_query.enable"), true);
+
+    const userListWithOverride = await requestJson(ctx, "GET", "/api/admin/users", null, adminHeaders);
+    assert.equal(userListWithOverride.status, 200);
+    assert.deepEqual(userListWithOverride.body.items[0].permission_overrides, [
+      {
+        feature_code: "account.browser_query.enable",
+        enabled: true
+      }
+    ]);
+
     const refreshed = await requestJson(ctx, "POST", "/api/auth/refresh", {
       refresh_token: registerAlice.complete.body.auth_session.refresh_token,
       device_id: "device_alpha"
@@ -310,6 +588,151 @@ async function main() {
     assert.equal(refreshed.body.ok, true);
     assert.notEqual(refreshed.body.refresh_token, registerAlice.complete.body.auth_session.refresh_token);
     assert.equal(refreshed.body.access_bundle.snapshot.permissions.includes("program_access_enabled"), true);
+
+    const runtimeControlUserDisabledStream = await openRuntimeControlStream(ctx, {
+      refreshToken: refreshed.body.refresh_token,
+      deviceId: "device_alpha"
+    });
+    try {
+      assert.equal(runtimeControlUserDisabledStream.status, 200);
+      assert.match(String(runtimeControlUserDisabledStream.headers["content-type"] || ""), /text\/event-stream/i);
+      await readHelloFrame(runtimeControlUserDisabledStream);
+
+      const browserQueryDisabled = await requestJson(ctx, "PATCH", `/api/admin/users/${aliceId}`, {
+        permission_overrides: [
+          {
+            feature_code: "account.browser_query.enable",
+            enabled: false
+          }
+        ]
+      }, adminHeaders);
+      assert.equal(browserQueryDisabled.status, 200);
+      assert.equal(browserQueryDisabled.body.ok, true);
+      const healthFrame = await readHealthFrameWithoutRevoke(runtimeControlUserDisabledStream, {timeoutMs: 1200});
+      assert.equal(Boolean(healthFrame.comment || healthFrame.event === "keepalive"), true);
+
+      const disabledUser = await requestJson(ctx, "PATCH", `/api/admin/users/${aliceId}`, {
+        status: "disabled"
+      }, adminHeaders);
+      assert.equal(disabledUser.status, 200);
+      assert.equal(disabledUser.body.ok, true);
+      const disabledRevoke = await readRuntimeRevoke(runtimeControlUserDisabledStream, {timeoutMs: 1200});
+      assert.equal(disabledRevoke.reason, "user_disabled");
+    } finally {
+      runtimeControlUserDisabledStream.close();
+    }
+
+    const restoredAfterDisable = await requestJson(ctx, "PATCH", `/api/admin/users/${aliceId}`, {
+      status: "active",
+      membership_plan: "member",
+      permission_overrides: []
+    }, adminHeaders);
+    assert.equal(restoredAfterDisable.status, 200);
+    assert.equal(restoredAfterDisable.body.ok, true);
+
+    const runtimeControlMembershipStream = await openRuntimeControlStream(ctx, {
+      refreshToken: refreshed.body.refresh_token,
+      deviceId: "device_alpha"
+    });
+    try {
+      assert.equal(runtimeControlMembershipStream.status, 200);
+      await readHelloFrame(runtimeControlMembershipStream);
+
+      const downgradedMembership = await requestJson(ctx, "PATCH", `/api/admin/users/${aliceId}`, {
+        membership_plan: "inactive"
+      }, adminHeaders);
+      assert.equal(downgradedMembership.status, 200);
+      assert.equal(downgradedMembership.body.ok, true);
+      const membershipRevoke = await readRuntimeRevoke(runtimeControlMembershipStream, {timeoutMs: 1200});
+      assert.equal(membershipRevoke.reason, "membership_inactive");
+    } finally {
+      runtimeControlMembershipStream.close();
+    }
+
+    const restoredAfterInactive = await requestJson(ctx, "PATCH", `/api/admin/users/${aliceId}`, {
+      status: "active",
+      membership_plan: "member",
+      permission_overrides: []
+    }, adminHeaders);
+    assert.equal(restoredAfterInactive.status, 200);
+    assert.equal(restoredAfterInactive.body.ok, true);
+
+    const runtimeControlRuntimeStartStream = await openRuntimeControlStream(ctx, {
+      refreshToken: refreshed.body.refresh_token,
+      deviceId: "device_alpha"
+    });
+    try {
+      assert.equal(runtimeControlRuntimeStartStream.status, 200);
+      await readHelloFrame(runtimeControlRuntimeStartStream);
+
+      const runtimeStartDisabled = await requestJson(ctx, "PATCH", `/api/admin/users/${aliceId}`, {
+        permission_overrides: [
+          {
+            feature_code: "runtime.start",
+            enabled: false
+          }
+        ]
+      }, adminHeaders);
+      assert.equal(runtimeStartDisabled.status, 200);
+      assert.equal(runtimeStartDisabled.body.ok, true);
+      const runtimeStartRevoke = await readRuntimeRevoke(runtimeControlRuntimeStartStream, {timeoutMs: 1200});
+      assert.equal(runtimeStartRevoke.reason, "runtime_start_disabled");
+    } finally {
+      runtimeControlRuntimeStartStream.close();
+    }
+
+    const restoredAfterRuntimeStartOverride = await requestJson(ctx, "PATCH", `/api/admin/users/${aliceId}`, {
+      status: "active",
+      membership_plan: "member",
+      permission_overrides: []
+    }, adminHeaders);
+    assert.equal(restoredAfterRuntimeStartOverride.status, 200);
+    assert.equal(restoredAfterRuntimeStartOverride.body.ok, true);
+
+    const runtimeControlProgramAccessStream = await openRuntimeControlStream(ctx, {
+      refreshToken: refreshed.body.refresh_token,
+      deviceId: "device_alpha"
+    });
+    try {
+      assert.equal(runtimeControlProgramAccessStream.status, 200);
+      await readHelloFrame(runtimeControlProgramAccessStream);
+
+      const programAccessDisabled = await requestJson(ctx, "PATCH", `/api/admin/users/${aliceId}`, {
+        permission_overrides: [
+          {
+            feature_code: "program_access_enabled",
+            enabled: false
+          }
+        ]
+      }, adminHeaders);
+      assert.equal(programAccessDisabled.status, 200);
+      assert.equal(programAccessDisabled.body.ok, true);
+      const programAccessRevoke = await readRuntimeRevoke(runtimeControlProgramAccessStream, {timeoutMs: 1200});
+      assert.equal(programAccessRevoke.reason, "program_access_disabled");
+    } finally {
+      runtimeControlProgramAccessStream.close();
+    }
+
+    const runtimeControlDeniedOnConnectStream = await openRuntimeControlStream(ctx, {
+      refreshToken: refreshed.body.refresh_token,
+      deviceId: "device_alpha"
+    });
+    try {
+      assert.equal(runtimeControlDeniedOnConnectStream.status, 200);
+      await readHelloFrame(runtimeControlDeniedOnConnectStream);
+      const deniedOnConnectRevoke = await readRuntimeRevoke(runtimeControlDeniedOnConnectStream, {timeoutMs: 1200});
+      assert.equal(deniedOnConnectRevoke.reason, "program_access_disabled");
+    } finally {
+      runtimeControlDeniedOnConnectStream.close();
+    }
+
+    const restoredAfterProgramAccessOverride = await requestJson(ctx, "PATCH", `/api/admin/users/${aliceId}`, {
+      status: "active",
+      membership_plan: "member",
+      permission_overrides: []
+    }, adminHeaders);
+    assert.equal(restoredAfterProgramAccessOverride.status, 200);
+    assert.equal(restoredAfterProgramAccessOverride.body.ok, true);
 
     const runtimePermitAllowed = await requestJson(ctx, "POST", "/api/auth/runtime-permit", {
       refresh_token: refreshed.body.refresh_token,

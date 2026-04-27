@@ -7,6 +7,7 @@ const {ControlPlaneStore} = require("./controlPlaneStore");
 const {createEntitlementSigner} = require("./entitlementSigner");
 const {getMailConfig} = require("./mailConfig");
 const {createMailService} = require("./mailService");
+const {createRuntimeControlHub} = require("./runtimeControlHub");
 const {isStrongPassword: isStrongPasswordV, isValidUsername: isValidUsernameV, generateSecureCode} = require("./validation");
 
 function toText(value = "") {
@@ -229,6 +230,7 @@ function createServer({
   mailServiceFactory = null,
   codeGenerator = null,
   trustProxy = false,
+  runtimeControlKeepaliveMs = 1000,
   now = () => new Date()
 } = {}) {
   const uiDir = path.resolve(__dirname, "../ui");
@@ -247,6 +249,10 @@ function createServer({
     now,
     snapshotTtlMinutes: Number(config.snapshotTtlMinutes) || DEFAULTS.SNAPSHOT_TTL_MINUTES,
     runtimePermitTtlSeconds: Number(config.runtimePermitTtlSeconds) || DEFAULTS.RUNTIME_PERMIT_TTL_SECONDS
+  });
+  const runtimeControlHub = createRuntimeControlHub({
+    now,
+    keepaliveMs: runtimeControlKeepaliveMs
   });
   const nextCode = typeof codeGenerator === "function"
     ? codeGenerator
@@ -598,20 +604,37 @@ function createServer({
 
         const patchUserMatch = pathname.match(/^\/api\/admin\/users\/(\d+)$/);
         if (req.method === "PATCH" && patchUserMatch) {
+          const requestNow = now();
+          const userId = Number(patchUserMatch[1]) || 0;
           const body = await readJsonBody(req);
+          const beforeRuntimeState = store.resolveRuntimeExecutionState({
+            userId,
+            now: requestNow
+          });
           const result = store.updateClientUserControl({
-            userId: Number(patchUserMatch[1]) || 0,
+            userId,
             status: toText(body && body.status),
             membershipPlan: toText(body && body.membership_plan),
             membershipExpiresAt: body && Object.prototype.hasOwnProperty.call(body, "membership_expires_at")
               ? toText(body.membership_expires_at)
               : undefined,
             permissionOverrides: Array.isArray(body && body.permission_overrides) ? body.permission_overrides : null,
-            now: now()
+            now: requestNow
           });
           if (!result.ok) {
             writeError(res, result.reason === "user_not_found" ? 404 : 400, result.reason, "user update failed");
             return;
+          }
+          const afterRuntimeState = store.resolveRuntimeExecutionState({
+            userId,
+            now: requestNow
+          });
+          if (beforeRuntimeState.allowed && !afterRuntimeState.allowed) {
+            runtimeControlHub.broadcastRuntimeRevoke({
+              userId,
+              reason: afterRuntimeState.reason,
+              nowValue: requestNow
+            });
           }
           writeJson(res, 200, result);
           return;
@@ -1054,6 +1077,51 @@ function createServer({
         return;
       }
 
+      if (req.method === "GET" && pathname === "/api/auth/runtime-control/stream") {
+        const refreshToken = readBearerToken(req);
+        const deviceId = toText(req && req.headers && req.headers["x-c5-device-id"]);
+        if (!refreshToken || !deviceId) {
+          writeError(res, 400, "runtime_control_auth_invalid", "refresh token and device id are required");
+          return;
+        }
+        const requestNow = now();
+        const resolved = store.resolveRefreshSession({
+          refreshToken,
+          deviceId,
+          now: requestNow
+        });
+        if (!resolved.ok) {
+          writeError(res, resolved.reason === "device_mismatch" ? 409 : 401, resolved.reason, "runtime control auth denied");
+          return;
+        }
+        res.writeHead(200, {
+          "Content-Type": "text/event-stream; charset=utf-8",
+          "Cache-Control": "no-cache, no-store, must-revalidate",
+          Connection: "keep-alive",
+          "X-Accel-Buffering": "no"
+        });
+        if (typeof res.flushHeaders === "function") {
+          res.flushHeaders();
+        }
+        const subscription = runtimeControlHub.subscribe({
+          userId: resolved.user.id,
+          deviceId,
+          req,
+          res
+        });
+        const runtimeState = store.resolveRuntimeExecutionState({
+          userId: resolved.user.id,
+          now: requestNow
+        });
+        if (!runtimeState.allowed) {
+          subscription.sendRuntimeRevoke({
+            reason: runtimeState.reason,
+            nowValue: requestNow
+          });
+        }
+        return;
+      }
+
       if (req.method === "POST" && pathname === "/api/auth/logout") {
         const body = await readJsonBody(req);
         const refreshToken = toText(body && body.refresh_token);
@@ -1167,7 +1235,11 @@ function createServer({
           userId: resolved.user.id,
           now: now()
         });
-        if (!entitlements || !entitlements.permissions.includes("runtime.start")) {
+        const runtimeState = store.resolveRuntimeExecutionState({
+          userId: resolved.user.id,
+          now: now()
+        });
+        if (!runtimeState.allowed || !entitlements || !entitlements.permissions.includes("runtime.start")) {
           writeError(res, 403, "runtime_permission_denied", "runtime permission denied");
           return;
         }
@@ -1196,6 +1268,7 @@ function createServer({
   });
 
   server.on("close", () => {
+    runtimeControlHub.close();
     store.close();
   });
 

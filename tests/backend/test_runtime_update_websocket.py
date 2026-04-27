@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import threading
 import time
 from queue import Empty
@@ -347,6 +348,75 @@ def test_runtime_update_websocket_streams_real_query_and_purchase_runtime_update
             assert len(set(versions)) == len(versions)
             assert any(event["event"] == "query_runtime.updated" for event in seen_events)
         release_gateway.set()
+
+
+def test_runtime_update_hub_streams_forced_stop_reason_updates(app):
+    class FakeProgramRuntimeControlService:
+        def __init__(self) -> None:
+            self.start_calls = 0
+            self.stop_calls = 0
+            self._on_force_stop = None
+
+        def set_on_force_stop(self, callback) -> None:
+            self._on_force_stop = callback
+
+        def start(self) -> None:
+            self.start_calls += 1
+
+        def stop(self, *, timeout: float = 1.0) -> None:
+            _ = timeout
+            self.stop_calls += 1
+
+        def emit_force_stop(self, reason: str) -> None:
+            if callable(self._on_force_stop):
+                self._on_force_stop(reason)
+
+    with TestClient(app) as client:
+        config_id = _create_query_config(client)
+        app.state.account_repository.create_account(_build_account("a1"))
+        fake_runtime_control_service = FakeProgramRuntimeControlService()
+        app.state.query_runtime_service._program_runtime_control_service = fake_runtime_control_service
+        app.state.query_runtime_service._register_program_runtime_control_callback()
+        queue = app.state.runtime_update_hub.subscribe("*")
+
+        start_response = client.post("/query-runtime/start", json={"config_id": config_id})
+        assert start_response.status_code == 200
+        assert fake_runtime_control_service.start_calls == 1
+        drain_deadline = time.time() + 0.2
+        while time.time() < drain_deadline:
+            try:
+                queue.get_nowait()
+            except (Empty, asyncio.QueueEmpty):
+                time.sleep(0.01)
+                continue
+
+        fake_runtime_control_service.emit_force_stop("program_runtime_revoked")
+
+        forced_events = []
+        deadline = time.time() + 1.0
+        while time.time() < deadline and len(forced_events) < 2:
+            try:
+                candidate = queue.get_nowait()
+            except (Empty, asyncio.QueueEmpty):
+                time.sleep(0.01)
+                continue
+            if candidate.event in {"purchase_runtime.updated", "query_runtime.updated"}:
+                forced_events.append(candidate)
+
+        query_status_response = client.get("/query-runtime/status")
+        purchase_status_response = client.get("/purchase-runtime/status")
+
+    assert query_status_response.status_code == 200
+    assert purchase_status_response.status_code == 200
+    assert len(forced_events) == 2
+    assert [event.event for event in forced_events] == [
+        "purchase_runtime.updated",
+        "query_runtime.updated",
+    ]
+    assert forced_events[0].payload["last_error"] == "program_runtime_revoked"
+    assert forced_events[1].payload["last_error"] == "program_runtime_revoked"
+    assert forced_events[0].payload == purchase_status_response.json()
+    assert forced_events[1].payload == query_status_response.json()
 
 
 def test_runtime_update_websocket_receives_selected_config_clear_on_delete(app):

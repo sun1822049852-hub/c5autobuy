@@ -94,10 +94,15 @@ function createUiHarness(options = {}) {
     "#userForm",
     "#detailUsername",
     "#detailEmail",
+    "#userStatus",
     "#userPlan",
     "#userExpiryDate",
     "#userExpiryTime",
     "#membershipMeta",
+    "#effectivePermissions",
+    "#permissionOverrideProgramAccessEnabled",
+    "#permissionOverrideRuntimeStart",
+    "#permissionOverrideAccountBrowserQueryEnable",
     "#deviceList",
     "#sidebarCopy",
     "#pageHeader"
@@ -118,8 +123,25 @@ function createUiHarness(options = {}) {
           id: 7,
           username: "<img src=x onerror=alert(1)>",
           email: "<svg/onload=alert(2)>@mail.test",
+          status: "disabled",
           membership_plan: "member",
-          membership_expires_at: "2026-05-01T12:30:00.000Z"
+          membership_expires_at: "2026-05-01T12:30:00.000Z",
+          permission_overrides: [
+            {
+              feature_code: "account.browser_query.enable",
+              enabled: true
+            }
+          ],
+          entitlements: {
+            membership_plan: "inactive",
+            assigned_membership_plan: "member",
+            membership_expires_at: "2026-05-01T12:30:00.000Z",
+            membership_active: false,
+            permissions: ["account.browser_query.enable"],
+            feature_flags: {
+              program_access_enabled: false
+            }
+          }
         }
       ]
     },
@@ -279,6 +301,9 @@ async function main() {
   assert.match(html, /管理控制台/);
   assert.match(html, /用户列表/);
   assert.match(html, /inactive/);
+  assert.match(html, /账号状态/);
+  assert.match(html, /权限覆盖/);
+  assert.match(html, /实际权限/);
   assert.match(html, /workspaceMessage/);
   assert.doesNotMatch(html, /trial/);
   assert.doesNotMatch(html, /standard/);
@@ -294,12 +319,112 @@ async function main() {
   assert.doesNotMatch(elements["#usersList"].innerHTML, /<img/i);
   assert.doesNotMatch(elements["#usersList"].innerHTML, /<svg/i);
   assert.doesNotMatch(elements["#deviceList"].innerHTML, /<script/i);
+  assert.equal(elements["#userStatus"].value, "disabled");
+  assert.equal(elements["#permissionOverrideProgramAccessEnabled"].value, "inherit");
+  assert.equal(elements["#permissionOverrideRuntimeStart"].value, "inherit");
+  assert.equal(elements["#permissionOverrideAccountBrowserQueryEnable"].value, "force_on");
+  assert.match(elements["#effectivePermissions"].innerHTML, /account\.browser_query\.enable/);
 
   context.setMessage("保存失败", true);
   assert.equal(elements["#workspace"].hidden, false);
   assert.equal(elements["#workspaceMessage"].hidden, false);
   assert.equal(elements["#workspaceMessage"].textContent, "保存失败");
   assert.equal(elements["#authMessage"].hidden, true);
+
+  const submitHarness = await executeUiApp();
+  const submittedBodies = [];
+  const mutableUser = {
+    id: 7,
+    username: "alice",
+    email: "alice@example.com",
+    status: "active",
+    membership_plan: "member",
+    membership_expires_at: "2026-05-01T12:30:00.000Z",
+    permission_overrides: [],
+    entitlements: {
+      membership_plan: "member",
+      assigned_membership_plan: "member",
+      membership_expires_at: "2026-05-01T12:30:00.000Z",
+      membership_active: true,
+      permissions: ["program_access_enabled", "runtime.start"],
+      feature_flags: {
+        program_access_enabled: true
+      }
+    }
+  };
+  submitHarness.context.fetch = async (route, requestOptions = {}) => {
+    const method = String(requestOptions.method || "GET").toUpperCase();
+    if (route === "/api/admin/session") {
+      return createJsonResponse({
+        ok: true,
+        authenticated: true,
+        user: {username: "root"}
+      });
+    }
+    if (route === "/api/admin/users" && method === "GET") {
+      return createJsonResponse({
+        ok: true,
+        items: [mutableUser]
+      });
+    }
+    if (route === "/api/admin/users/7/devices" && method === "GET") {
+      return createJsonResponse({
+        ok: true,
+        items: []
+      });
+    }
+    if (route === "/api/admin/users/7" && method === "PATCH") {
+      const payload = JSON.parse(String(requestOptions.body || "{}"));
+      submittedBodies.push(payload);
+      mutableUser.status = payload.status;
+      mutableUser.membership_plan = payload.membership_plan;
+      mutableUser.membership_expires_at = payload.membership_expires_at;
+      mutableUser.permission_overrides = payload.permission_overrides;
+      mutableUser.entitlements = {
+        membership_plan: payload.status === "disabled" ? "inactive" : payload.membership_plan,
+        assigned_membership_plan: payload.membership_plan,
+        membership_expires_at: payload.membership_expires_at,
+        membership_active: payload.status === "active",
+        permissions: ["program_access_enabled"],
+        feature_flags: {
+          program_access_enabled: true
+        }
+      };
+      return createJsonResponse({
+        ok: true,
+        user: mutableUser,
+        entitlements: mutableUser.entitlements
+      });
+    }
+    throw new Error(`Unexpected fetch route: ${route}`);
+  };
+  submitHarness.context.saveToken("session-token");
+  await submitHarness.context.loadSession();
+  await submitHarness.context.loadDashboard();
+  submitHarness.elements["#userStatus"].value = "disabled";
+  submitHarness.elements["#permissionOverrideProgramAccessEnabled"].value = "force_on";
+  submitHarness.elements["#permissionOverrideRuntimeStart"].value = "force_off";
+  submitHarness.elements["#permissionOverrideAccountBrowserQueryEnable"].value = "inherit";
+  await submitHarness.context.handleUserSubmit({
+    preventDefault() {}
+  });
+  assert.deepEqual(submittedBodies, [
+    {
+      status: "disabled",
+      membership_plan: "member",
+      membership_expires_at: "2026-05-01T12:30:00.000Z",
+      permission_overrides: [
+        {
+          feature_code: "program_access_enabled",
+          enabled: true
+        },
+        {
+          feature_code: "runtime.start",
+          enabled: false
+        }
+      ]
+    }
+  ]);
 
   const staleSelectionHarness = await executeUiApp();
   const staleRejections = [];

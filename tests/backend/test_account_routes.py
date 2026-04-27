@@ -1,4 +1,25 @@
+from __future__ import annotations
+
+import base64
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
 from app_backend.domain.enums.account_states import PurchaseCapabilityState
+from app_backend.infrastructure.program_access.entitlement_verifier import (
+    EntitlementVerifier,
+    derive_key_id,
+    stable_stringify,
+)
+from app_backend.infrastructure.program_access.program_credential_bundle import ProgramCredentialBundle
+from app_backend.infrastructure.program_access.remote_control_plane_client import (
+    RemoteAuthBundle,
+    RemoteAuthResult,
+)
+from app_backend.infrastructure.program_access.remote_entitlement_gateway import RemoteEntitlementGateway
 
 
 def _account_payload(*, remark_name, browser_proxy_mode="direct", browser_proxy_url=None, api_proxy_mode="direct", api_proxy_url=None, api_key=None):
@@ -28,6 +49,157 @@ class _DenyProgramAccessGateway:
                 "message": self._message,
             },
         )()
+
+
+class _RouteRemoteClientStub:
+    def __init__(self, *, refresh_result: RemoteAuthResult) -> None:
+        self._refresh_result = refresh_result
+        self.refresh_calls: list[dict[str, str]] = []
+
+    def refresh(self, *, refresh_token: str, device_id: str) -> RemoteAuthResult:
+        self.refresh_calls.append(
+            {
+                "refresh_token": refresh_token,
+                "device_id": device_id,
+            }
+        )
+        return self._refresh_result
+
+
+@dataclass
+class _RouteMemoryCredentialStore:
+    bundle: ProgramCredentialBundle
+
+    def load(self) -> ProgramCredentialBundle:
+        return self.bundle
+
+    def save(self, bundle: ProgramCredentialBundle) -> None:
+        self.bundle = bundle
+
+    def clear(self) -> None:
+        self.bundle = ProgramCredentialBundle(device_id=self.bundle.device_id)
+
+
+class _RouteMemorySecretStore:
+    def __init__(self) -> None:
+        self._values: dict[str, str] = {}
+        self._counter = 0
+
+    def put(self, secret: str) -> str:
+        self._counter += 1
+        ref = f"secret:{self._counter}"
+        self._values[ref] = secret
+        return ref
+
+    def get(self, ref: str) -> str:
+        return self._values[ref]
+
+
+@dataclass(frozen=True)
+class _RouteStaticDeviceIdStore:
+    value: str
+
+    def load_or_create(self) -> str:
+        return self.value
+
+
+def _build_program_access_snapshot(
+    *,
+    feature_enabled: bool,
+    extra_permissions: list[str] | None = None,
+) -> dict[str, object]:
+    now = datetime.now(timezone.utc)
+    permissions = ["runtime.start"] if feature_enabled else []
+    if feature_enabled:
+        permissions.append("program_access_enabled")
+    if extra_permissions:
+        permissions.extend(extra_permissions)
+    return {
+        "username": "alice",
+        "sub": "user-1",
+        "membership_plan": "member" if feature_enabled else "inactive",
+        "device_id": "device-alpha",
+        "permissions": sorted(set(permissions)),
+        "feature_flags": {
+            "program_access_enabled": feature_enabled,
+        },
+        "runtime_state": "stopped",
+        "iat": _to_iso_z(now - timedelta(minutes=1)),
+        "exp": _to_iso_z(now + timedelta(minutes=20)),
+    }
+
+
+def _build_remote_auth_result(
+    *,
+    private_key: Ed25519PrivateKey,
+    kid: str,
+    refresh_token: str,
+    snapshot: dict[str, object],
+) -> RemoteAuthResult:
+    return RemoteAuthResult(
+        message="刷新成功",
+        auth_bundle=RemoteAuthBundle(
+            refresh_token=refresh_token,
+            snapshot=snapshot,
+            signature=_sign_snapshot(private_key, snapshot),
+            kid=kid,
+        ),
+        user={"id": "user-1"},
+    )
+
+
+def _build_live_browser_query_gateway(
+    tmp_path: Path,
+    *,
+    cached_snapshot: dict[str, object],
+    refreshed_snapshot: dict[str, object],
+) -> tuple[RemoteEntitlementGateway, _RouteRemoteClientStub]:
+    private_key = Ed25519PrivateKey.generate()
+    key_path = tmp_path / "control-plane-public.pem"
+    key_path.write_bytes(
+        private_key.public_key().public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+    )
+    verifier = EntitlementVerifier(key_cache_path=key_path)
+    kid = derive_key_id(private_key.public_key())
+    secret_store = _RouteMemorySecretStore()
+    credential_store = _RouteMemoryCredentialStore(
+        ProgramCredentialBundle(
+            device_id="device-alpha",
+            refresh_credential_ref=secret_store.put("refresh-token-1"),
+            entitlement_snapshot=cached_snapshot,
+            entitlement_signature=_sign_snapshot(private_key, cached_snapshot),
+            entitlement_kid=kid,
+            last_error_code=None,
+        )
+    )
+    remote_client = _RouteRemoteClientStub(
+        refresh_result=_build_remote_auth_result(
+            private_key=private_key,
+            kid=kid,
+            refresh_token="refresh-token-2",
+            snapshot=refreshed_snapshot,
+        )
+    )
+    gateway = RemoteEntitlementGateway(
+        remote_client=remote_client,
+        verifier=verifier,
+        credential_store=credential_store,
+        secret_store=secret_store,
+        device_id_store=_RouteStaticDeviceIdStore("device-alpha"),
+        stage="packaged_release",
+    )
+    return gateway, remote_client
+
+
+def _sign_snapshot(private_key: Ed25519PrivateKey, snapshot: dict[str, object]) -> str:
+    return base64.b64encode(private_key.sign(stable_stringify(snapshot).encode("utf-8"))).decode("ascii")
+
+
+def _to_iso_z(value: datetime) -> str:
+    return value.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 async def test_post_accounts_creates_account(client):
@@ -254,6 +426,100 @@ async def test_patch_account_query_modes_requires_entitlement_to_enable_browser_
     assert stored is not None
     assert stored.token_enabled is False
     assert stored.browser_query_disabled_reason == "manual_disabled"
+
+
+async def test_patch_account_query_modes_uses_live_remote_refresh_to_allow_browser_query_enable(
+    client,
+    app,
+    tmp_path: Path,
+):
+    created = await client.post(
+        "/accounts",
+        json=_account_payload(remark_name="账号A", api_key="key-123"),
+    )
+    account_id = created.json()["account_id"]
+    app.state.account_repository.update_account(
+        account_id,
+        token_enabled=False,
+        browser_query_disabled_reason="manual_disabled",
+    )
+    gateway, remote_client = _build_live_browser_query_gateway(
+        tmp_path,
+        cached_snapshot=_build_program_access_snapshot(feature_enabled=True),
+        refreshed_snapshot=_build_program_access_snapshot(
+            feature_enabled=True,
+            extra_permissions=["account.browser_query.enable"],
+        ),
+    )
+    app.state.program_access_gateway = gateway
+
+    response = await client.patch(
+        f"/accounts/{account_id}/query-modes",
+        json={
+            "browser_query_enabled": True,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["token_enabled"] is True
+    assert payload["browser_query_disabled_reason"] is None
+    assert remote_client.refresh_calls == [
+        {
+            "refresh_token": "refresh-token-1",
+            "device_id": "device-alpha",
+        }
+    ]
+
+
+async def test_patch_account_query_modes_does_not_trust_stale_browser_query_permission_snapshot(
+    client,
+    app,
+    tmp_path: Path,
+):
+    created = await client.post(
+        "/accounts",
+        json=_account_payload(remark_name="账号A", api_key="key-123"),
+    )
+    account_id = created.json()["account_id"]
+    app.state.account_repository.update_account(
+        account_id,
+        token_enabled=False,
+        browser_query_disabled_reason="manual_disabled",
+    )
+    gateway, remote_client = _build_live_browser_query_gateway(
+        tmp_path,
+        cached_snapshot=_build_program_access_snapshot(
+            feature_enabled=True,
+            extra_permissions=["account.browser_query.enable"],
+        ),
+        refreshed_snapshot=_build_program_access_snapshot(feature_enabled=True),
+    )
+    app.state.program_access_gateway = gateway
+
+    response = await client.patch(
+        f"/accounts/{account_id}/query-modes",
+        json={
+            "browser_query_enabled": True,
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == {
+        "code": "program_feature_not_enabled",
+        "message": "当前此功能未开放",
+        "action": "account.browser_query.enable",
+    }
+    stored = app.state.account_repository.get_account(account_id)
+    assert stored is not None
+    assert stored.token_enabled is False
+    assert stored.browser_query_disabled_reason == "manual_disabled"
+    assert remote_client.refresh_calls == [
+        {
+            "refresh_token": "refresh-token-1",
+            "device_id": "device-alpha",
+        }
+    ]
 
 
 async def test_patch_account_query_modes_still_allows_disabling_browser_query_without_entitlement(client, app):

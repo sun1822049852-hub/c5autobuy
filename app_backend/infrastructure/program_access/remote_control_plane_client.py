@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
 import ssl
 from typing import Mapping
@@ -50,6 +51,13 @@ class RemotePermitResult:
 
 
 @dataclass(frozen=True, slots=True)
+class RemoteRuntimeControlEvent:
+    event: str | None = None
+    data: dict[str, object] | None = None
+    comment: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class RemoteRegistrationReadinessResult:
     ready: bool
     registration_flow_version: int
@@ -95,13 +103,14 @@ class RemoteControlPlaneClient:
         verify: str | bool = True,
     ) -> None:
         self._owns_client = client is None
+        self._timeout = float(timeout)
         self._verify = str(verify) if isinstance(verify, Path) else verify
         httpx_verify = self._verify
         if isinstance(self._verify, str) and self._verify.strip():
             httpx_verify = ssl.create_default_context(cafile=self._verify)
         self._client = client or httpx.Client(
             base_url=base_url.rstrip("/"),
-            timeout=timeout,
+            timeout=self._timeout,
             verify=httpx_verify,
         )
 
@@ -304,6 +313,40 @@ class RemoteControlPlaneClient:
         except _InvalidResponseShapeError as exc:
             raise _invalid_response_error(payload.status_code, str(exc), payload.data) from exc
 
+    def stream_runtime_control_events(
+        self,
+        *,
+        refresh_token: str,
+        device_id: str,
+        read_timeout_seconds: float = 1.0,
+    ):
+        timeout = httpx.Timeout(
+            connect=self._timeout,
+            read=max(float(read_timeout_seconds), 0.01),
+            write=self._timeout,
+            pool=self._timeout,
+        )
+        try:
+            with self._client.stream(
+                "GET",
+                "/api/auth/runtime-control/stream",
+                headers={
+                    "Accept": "text/event-stream",
+                    "Authorization": f"Bearer {refresh_token}",
+                    "X-C5-Device-Id": device_id,
+                },
+                timeout=timeout,
+            ) as response:
+                if response.is_error:
+                    response.read()
+                    _decode_json_response(response)
+                    return
+                yield from _iter_runtime_control_events(response.iter_lines())
+        except RemoteControlPlaneError:
+            raise
+        except httpx.HTTPError as exc:
+            raise RemoteControlPlaneTransportError(str(exc)) from exc
+
     def _build_auth_result(
         self,
         payload: _JsonPayload,
@@ -360,6 +403,68 @@ def _decode_json_response(response: httpx.Response) -> _JsonPayload:
             except _InvalidResponseShapeError as exc:
                 raise _invalid_response_error(response.status_code, str(exc), data) from exc
     return _JsonPayload(status_code=response.status_code, data=data)
+
+
+def _iter_runtime_control_events(lines):
+    event_name = ""
+    data_lines: list[str] = []
+    comment_lines: list[str] = []
+
+    def emit_pending():
+        nonlocal event_name, data_lines, comment_lines
+        if not event_name and not data_lines and not comment_lines:
+            return None
+        payload = None
+        if data_lines:
+            raw_payload = "\n".join(data_lines)
+            try:
+                decoded = json.loads(raw_payload)
+            except ValueError as exc:
+                raise RemoteControlPlaneError(
+                    status_code=200,
+                    reason="invalid_response",
+                    message="runtime control event data is not valid JSON",
+                    payload={"raw": raw_payload},
+                ) from exc
+            if not isinstance(decoded, Mapping):
+                raise RemoteControlPlaneError(
+                    status_code=200,
+                    reason="invalid_response",
+                    message="runtime control event data must be an object",
+                    payload={"raw": raw_payload},
+                )
+            payload = {str(key): decoded[key] for key in decoded}
+        event = RemoteRuntimeControlEvent(
+            event=event_name or None,
+            data=payload,
+            comment="\n".join(comment_lines) or None,
+        )
+        event_name = ""
+        data_lines = []
+        comment_lines = []
+        return event
+
+    for raw_line in lines:
+        line = str(raw_line)
+        if line == "":
+            event = emit_pending()
+            if event is not None:
+                yield event
+            continue
+        if line.startswith(":"):
+            comment_lines.append(line[1:].strip())
+            continue
+        field, _, value = line.partition(":")
+        value = value.lstrip(" ")
+        if field == "event":
+            event_name = value
+            continue
+        if field == "data":
+            data_lines.append(value)
+
+    event = emit_pending()
+    if event is not None:
+        yield event
 
 
 def _decode_json(response: httpx.Response) -> dict[str, object]:

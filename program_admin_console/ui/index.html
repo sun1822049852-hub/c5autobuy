@@ -72,7 +72,7 @@
           <section class="panel">
             <div class="panel-head">
               <h3>用户列表</h3>
-              <p>选择用户后，在右侧调整计划到期时间并吊销设备。</p>
+              <p>选择用户后，在右侧调整状态、计划、权限覆盖并吊销设备。</p>
             </div>
             <div id="usersList" class="user-list"></div>
           </section>
@@ -97,6 +97,14 @@
                 </div>
 
                 <label>
+                  <span>账号状态</span>
+                  <select id="userStatus">
+                    <option value="active">active</option>
+                    <option value="disabled">disabled</option>
+                  </select>
+                </label>
+
+                <label>
                   <span>会员计划</span>
                   <select id="userPlan">
                     <option value="inactive">inactive</option>
@@ -116,6 +124,48 @@
                 </div>
 
                 <div id="membershipMeta" class="meta-card"></div>
+
+                <div class="stack stack--dense">
+                  <div>
+                    <span class="field-label">实际权限</span>
+                    <div id="effectivePermissions" class="token-list"></div>
+                  </div>
+
+                  <div class="stack stack--dense">
+                    <span class="field-label">权限覆盖</span>
+
+                    <label class="permission-card">
+                      <span>program_access_enabled</span>
+                      <small>程序访问总开关。关闭后即使是 member 也不会进入可授权态。</small>
+                      <select id="permissionOverrideProgramAccessEnabled">
+                        <option value="inherit">继承计划</option>
+                        <option value="force_on">强制开启</option>
+                        <option value="force_off">强制关闭</option>
+                      </select>
+                    </label>
+
+                    <label class="permission-card">
+                      <span>runtime.start</span>
+                      <small>控制查询/扫货启动许可；通常与 program_access_enabled 配合使用。</small>
+                      <select id="permissionOverrideRuntimeStart">
+                        <option value="inherit">继承计划</option>
+                        <option value="force_on">强制开启</option>
+                        <option value="force_off">强制关闭</option>
+                      </select>
+                    </label>
+
+                    <label class="permission-card">
+                      <span>account.browser_query.enable</span>
+                      <small>控制“浏览器查询”开关是否允许从关闭切到开启。</small>
+                      <select id="permissionOverrideAccountBrowserQueryEnable">
+                        <option value="inherit">继承计划</option>
+                        <option value="force_on">强制开启</option>
+                        <option value="force_off">强制关闭</option>
+                      </select>
+                    </label>
+                  </div>
+                </div>
+
                 <button type="submit">保存用户配置</button>
               </form>
             </section>

@@ -118,6 +118,7 @@ class PurchaseRuntimeInventoryDetailResponse(BaseModel):
 class PurchaseRuntimeStatusResponse(BaseModel):
     running: bool
     message: str
+    last_error: str | None = None
     started_at: str | None
     stopped_at: str | None
     queue_size: int

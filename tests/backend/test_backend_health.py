@@ -33,6 +33,7 @@ def test_health_endpoint_stays_ready_after_runtime_full_state_is_detached(tmp_pa
         "query_config_repository",
         "query_runtime_service",
         "purchase_runtime_service",
+        "program_runtime_control_service",
         "purchase_ui_preferences_repository",
         "runtime_settings_repository",
         "stats_repository",
@@ -67,6 +68,10 @@ def test_non_deferred_shutdown_still_cleans_program_access_services(tmp_path):
     app = create_app(db_path=tmp_path / "cleanup.db")
     cleanup_calls: list[str] = []
 
+    class _FakeRuntimeControlService:
+        def stop(self) -> None:
+            cleanup_calls.append("runtime-control-stop")
+
     class _FakeScheduler:
         def stop(self) -> None:
             cleanup_calls.append("stop")
@@ -77,12 +82,13 @@ def test_non_deferred_shutdown_still_cleans_program_access_services(tmp_path):
 
     app.state.program_access_refresh_scheduler = _FakeScheduler()
     app.state.program_access_gateway = _FakeGateway()
+    app.state.program_runtime_control_service = _FakeRuntimeControlService()
 
     with TestClient(app) as client:
         response = client.get("/health")
 
     assert response.status_code == 200
-    assert cleanup_calls == ["stop", "close"]
+    assert cleanup_calls == ["runtime-control-stop", "stop", "close"]
 
 
 def test_deferred_health_eventually_becomes_ready_without_init_error(tmp_path):

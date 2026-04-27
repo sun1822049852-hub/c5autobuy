@@ -67,6 +67,7 @@ def test_create_app_keeps_account_center_services_wired(tmp_path: Path):
     assert app.state.program_access_gateway is not None
     assert app.state.purchase_runtime_service is not None
     assert app.state.query_runtime_service is not None
+    assert app.state.program_runtime_control_service is None
     assert app.state.purchase_ui_preferences_repository is not None
     assert app.state.stats_repository is not None
     assert app.state.stats_pipeline is not None
@@ -128,6 +129,7 @@ def test_create_app_packaged_release_wires_remote_program_access_services(tmp_pa
     assert app.state.program_access_secret_store is not None
     assert app.state.program_access_device_id_store is not None
     assert app.state.program_access_refresh_scheduler is not None
+    assert app.state.program_runtime_control_service is not None
     assert app.state.program_access_gateway._remote_client._verify == str(control_plane_ca_cert_path)
 
 
