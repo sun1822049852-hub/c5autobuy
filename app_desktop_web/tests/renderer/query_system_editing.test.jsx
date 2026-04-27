@@ -7,6 +7,11 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import { App } from "../../src/App.jsx";
+import { createAccountCenterClient } from "../../src/api/account_center_client.js";
+import { QuerySystemPage } from "../../src/features/query-system/query_system_page.jsx";
+import { ProgramAccessProvider } from "../../src/program_access/program_access_provider.jsx";
+import { AppRuntimeProvider } from "../../src/runtime/app_runtime_provider.jsx";
+import { createAppRuntimeStore } from "../../src/runtime/app_runtime_store.js";
 
 
 const ALL_MODES = ["new_api", "fast_api", "token"];
@@ -41,6 +46,22 @@ function delayedJsonResponse(payload, status = 200, delayMs = 0) {
       });
     }, delayMs);
   });
+}
+
+
+function buildShellBootstrapPayload() {
+  return {
+    version: 1,
+    generated_at: "2026-04-27T12:00:00.000Z",
+  };
+}
+
+
+function buildFullBootstrapPayload() {
+  return {
+    version: 2,
+    generated_at: "2026-04-27T12:00:01.000Z",
+  };
 }
 
 
@@ -342,6 +363,12 @@ function createFetchHarness({
       pathname: url.pathname,
     });
 
+    if (url.pathname === "/app/bootstrap" && method === "GET" && url.searchParams.get("scope") === "shell") {
+      return jsonResponse(buildShellBootstrapPayload());
+    }
+    if (url.pathname === "/app/bootstrap" && method === "GET") {
+      return jsonResponse(buildFullBootstrapPayload());
+    }
     if (url.pathname === "/account-center/accounts" && method === "GET") {
       return jsonResponse([]);
     }
@@ -487,6 +514,24 @@ async function openQuerySystem(user) {
   render(<App />);
   await user.click(await screen.findByRole("button", { name: "配置管理" }));
   await screen.findByRole("heading", { name: "白天配置" });
+}
+
+
+function renderStandaloneQuerySystem(client, store = createAppRuntimeStore()) {
+  render(
+    <AppRuntimeProvider store={store}>
+      <ProgramAccessProvider runtimeStore={store}>
+        <QuerySystemPage
+          bootstrapConfig={{}}
+          client={client}
+          isActive
+          runtimeBootstrapStatus="ready"
+        />
+      </ProgramAccessProvider>
+    </AppRuntimeProvider>,
+  );
+
+  return { store };
 }
 
 
@@ -898,6 +943,109 @@ describe("query system editing", () => {
     const itemThreeSaved = screen.getByRole("region", { name: "商品 M4A1-S | Blue Phosphor" });
     expect(within(itemThreeSaved).getByRole("button", { name: "修改 new_api M4A1-S | Blue Phosphor" })).toHaveTextContent("专属中 1/1");
     expect(within(itemThreeSaved).getByRole("button", { name: "修改 token M4A1-S | Blue Phosphor" })).toHaveTextContent("无可用账号 0/1");
+  });
+
+  it("keeps the saved detail when save reload overlaps with an older in-flight config GET", async () => {
+    let detail = buildConfigDetail();
+    const calls = [];
+    let cfg1DetailGetCount = 0;
+    const fetchImpl = vi.fn(async (input, options = {}) => {
+      const url = new URL(input);
+      const method = String(options.method ?? "GET").toUpperCase();
+      const body = typeof options.body === "string" ? JSON.parse(options.body) : null;
+      calls.push({
+        body,
+        method,
+        pathname: url.pathname,
+      });
+
+      if (url.pathname === "/query-configs" && method === "GET") {
+        return jsonResponse([
+          {
+            config_id: detail.config_id,
+            name: detail.name,
+            description: detail.description,
+            enabled: detail.enabled,
+            created_at: detail.created_at,
+            updated_at: detail.updated_at,
+            items: [],
+            mode_settings: [],
+          },
+        ]);
+      }
+      if (url.pathname === "/query-configs/capacity-summary" && method === "GET") {
+        return jsonResponse({
+          modes: {
+            new_api: { mode_type: "new_api", available_account_count: 2 },
+            fast_api: { mode_type: "fast_api", available_account_count: 1 },
+            token: { mode_type: "token", available_account_count: 3 },
+          },
+        });
+      }
+      if (url.pathname === "/query-runtime/status" && method === "GET") {
+        return jsonResponse(buildRuntimeStatus());
+      }
+      if (url.pathname === "/query-configs/cfg-1" && method === "GET") {
+        cfg1DetailGetCount += 1;
+        if (cfg1DetailGetCount === 1) {
+          return jsonResponse(detail);
+        }
+
+        const capturedDetail = JSON.parse(JSON.stringify(detail));
+        if (cfg1DetailGetCount === 2) {
+          return delayedJsonResponse(capturedDetail, 200, 250);
+        }
+        return jsonResponse(detail);
+      }
+      if (url.pathname === "/query-configs/cfg-1/items/item-1" && method === "PATCH") {
+        detail = {
+          ...detail,
+          items: detail.items.map((item) => (
+            item.query_item_id !== "item-1"
+              ? item
+              : {
+                ...item,
+                detail_min_wear: body.detail_min_wear,
+                detail_max_wear: body.detail_max_wear,
+                max_price: body.max_price,
+                manual_paused: body.manual_paused,
+                mode_allocations: buildModeAllocations(body.mode_allocations || {}),
+                updated_at: "2026-03-19T12:00:00",
+              }
+          )),
+        };
+        return jsonResponse(detail.items.find((item) => item.query_item_id === "item-1"));
+      }
+      if (url.pathname === "/query-runtime/configs/cfg-1/apply-config" && method === "POST") {
+        return jsonResponse(buildApplyConfigRuntimeStatus(detail));
+      }
+
+      throw new Error(`Unhandled request: ${method} ${url.pathname}`);
+    });
+
+    const client = createAccountCenterClient({
+      apiBaseUrl: "http://127.0.0.1:8123",
+      fetchImpl,
+    });
+    renderStandaloneQuerySystem(client);
+    const user = userEvent.setup();
+
+    await screen.findByRole("heading", { name: "白天配置" });
+    expect(screen.getByRole("button", { name: "修改扫货价 AK-47 | Redline" })).toHaveTextContent("199");
+
+    await setPriceDraft(user, "AK-47 | Redline", "188");
+    const staleDetailPromise = client.getQueryConfig("cfg-1");
+    await waitFor(() => {
+      expect(countCalls(calls, { method: "GET", pathname: "/query-configs/cfg-1" })).toBe(2);
+    });
+    await user.click(screen.getByRole("button", { name: "保存到当前配置" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "已保存" })).toBeInTheDocument();
+    });
+    await staleDetailPromise;
+
+    expect(screen.getByRole("button", { name: "修改扫货价 AK-47 | Redline" })).toHaveTextContent("188");
   });
 
   it("clears the running-save notice once the draft changes again", async () => {

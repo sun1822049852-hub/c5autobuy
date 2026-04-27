@@ -4261,3 +4261,238 @@
   - purchase/runtime 并行脏改继续保持冻结。
 - 下一步：
   - 若继续会员链，可再决定是否还要收窄其它 legacy 文档或外部兼容口径；若不继续，本轮已完成“legacy register + legacy email/send-code”双下线与远端同步。
+
+## 2026-04-27 16:30 (Asia/Shanghai)
+- 背景：魔尊要求把当前所有改动（含 purchase/runtime）一并提交，随后再回看今天最早那次会员链审查，确认还剩哪些问题未改，最后要求生成 handoff。
+- 已完成：
+  - 已创建本地提交 `6b65705 Finalize control plane auth cleanup and runtime updates`，把 `purchase/runtime`、`program_admin_console`、部署脚本与文档改动一并收口；提交时 `tests/backend/test_purchase_runtime_routes.py -q` 的 `20` 条 focused 回归与 `npm --prefix program_admin_console test` 全量验证都已通过。
+  - 已回读 `2026-04-27 11:39` 那次最早审查，并把当时的 findings 与当前代码现场逐条对照。确认已改完的包括：旧注册双轨、release 默认 HTTP 明文口径、重复用户名只在 v3 正常而旧链泛化失败这批问题。
+  - 仍未改完的审查项已收口为 3 条：1) 注册完成后已拿到 `auth_session`，但本地 gateway 仍固定返回“账号已创建，但当前未开通会员”；2) `program_admin_console` UI 仍未暴露 `status / permission_overrides`；3) 非 `runtime.start` 动作仍主要依赖本地 snapshot，刷新窗口默认约 `300s`。
+- 当前进度：
+  - 代码主线当前停在提交 `6b65705`；无新的业务实现正在进行。
+  - 当前分支 `master`，相对 `origin/master` 为 `ahead 59`。
+  - 生成 handoff 前工作树是干净的；本次 handoff 仅追加会话日志这一处记录。
+- 下一步：
+  - 若继续会员链，建议第一刀先处理“注册完成文案与真实授权状态冲突”这一项；它最直接影响用户感知，且改动面最集中。
+
+## 2026-04-27 17:03 (Asia/Shanghai)
+- 背景：魔尊要求恢复 handoff 后只单独处理会员链剩余第一项“注册完成文案与真实授权状态冲突”，并明确不要重做已完成的 control plane legacy `/api/auth/register` 与 `/api/auth/email/send-code` 下线、HTTPS+CA fail-closed，也不要卷入 purchase/runtime 其它话题。
+- 现场核对：
+  - `master` 相对 `origin/master` 仍 `ahead 59`，`HEAD` 仍是提交 `6b65705 Finalize control plane auth cleanup and runtime updates`。
+  - 本轮开始时工作树只有 `docs/agent/session-log.md` 一处未提交修改，与 handoff 中“提交后仅追加日志”一致，无额外冲突。
+- 已完成：
+  - 锁定根因：`app_backend/infrastructure/program_access/remote_entitlement_gateway.py` 的 `complete_register()` 在远端已返回并验签落库 `auth_session` 后，仍无条件把成功 message 覆写成 `账号已创建，但当前未开通会员`，导致“已授权快照”也被降级成 not-member 文案。
+  - 按 TDD 先改 focused tests：
+    - `tests/backend/test_remote_entitlement_gateway.py` 现要求：若 `register/complete` 回来的签名快照已授予 `program_access_enabled`，必须保留远端成功 message，并让 summary 维持 `auth_state=active` / `message=当前程序会员权限有效`。
+    - 同文件新增负向护栏：若签名快照仍未授予 `program_access_enabled`，才允许落回 `账号已创建，但当前未开通会员`，同时 summary 继续保持 `auth_state=revoked` / `last_error_code=program_feature_not_enabled`。
+  - 最小实现收口：
+    - `RemoteEntitlementGateway.complete_register()` 现在只在 summary 明确仍无会员权限时才回本地 not-member fallback；若快照已授权，则直接保留 `_apply_remote_auth_result(...)` 的精确信息，不再伪装成“未开通会员”。
+  - README 已核对，本轮无需改动。
+- 已做验证：
+  - 红灯：
+    - `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_remote_entitlement_gateway.py -k complete_register -q` -> `1 failed, 3 passed`，先红准确命中“已授权快照仍返回 not-member 文案”。
+  - 绿灯：
+    - `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_remote_entitlement_gateway.py tests/backend/test_program_auth_routes.py -q` -> `43 passed`
+- 当前进度：
+  - 会员链剩余第一项已收口：注册完成后的 success message 现在会跟随真实授权状态分流，不再把“已授权”降级成“未开通会员”。
+  - 本轮未触碰 purchase/runtime、program_admin_console 远端同步链，也未回退 `6b65705` 之前已完成的 legacy 下线与 HTTPS+CA fail-closed。
+- 下一步：
+  - 若继续会员链，剩余问题只剩控制台未暴露 `status / permission_overrides`，以及非 `runtime.start` 仍依赖本地 snapshot 的 `~300s` 刷新窗口；应继续单独拆刀，不与购买主链混做。
+
+## 2026-04-27 19:04 (Asia/Shanghai)
+- 背景：魔尊确认继续会员链时先只做第一条“`program_admin_console` UI 暴露 `status / permission_overrides`”，并明确把第二条“非 `runtime.start` 动作仍主要依赖本地 snapshot 的约 `300s` 刷新窗口”冻结到后续其它对话处理，本轮不得触碰。
+- 已完成：
+  - 先按 TDD 补 control plane focused 红灯：
+    - `program_admin_console/tests/control-plane-server.test.js` 现在要求 `GET /api/admin/users` 返回每个用户的显式 `permission_overrides`，不能只给最终 entitlements。
+    - `program_admin_console/tests/control-plane-ui.test.js` 现在要求 `/admin` 页面必须出现 `账号状态 / 权限覆盖 / 实际权限` 三块；用户详情加载后必须正确回填 `status` 与三态 override；保存时必须把 `status + permission_overrides` 一并提交。
+  - 最小后端支持：
+    - `program_admin_console/src/controlPlaneStore.js` 新增显式 override 映射与 `listUserFeatureOverrides(...)`；`listUsersWithEntitlements()` 现在会把 `permission_overrides` 一并回给 UI；`updateClientUserControl()` 返回的 `user` 也同步携带显式 override。
+  - 最小 UI 收口：
+    - `program_admin_console/ui/index.html` 的用户详情区已补 `账号状态`、`实际权限` 与三条固定权限的三态覆盖控件：`program_access_enabled`、`runtime.start`、`account.browser_query.enable`。
+    - `program_admin_console/ui/app.js` 已把用户详情水合、保存提交与说明文案接到这三块新控件上；保存用户配置时，现在会同时提交 `status`、`membership_plan`、`membership_expires_at` 与三态 `permission_overrides`。
+    - `program_admin_console/ui/styles.css` 已补对应布局样式，保持现有控制台视觉语言，不另起新组件体系。
+  - 按控制台现网同步纪律，已用既有脚本把这轮 `program_admin_console` 改动同步到远端：`program_admin_console/tools/deployProgramAdminRemote.ps1 -DryRun` 先读出现网 image/signing kid；正式执行后远端容器已替换为 `c5-program-admin:deploy-20260427_190539`。
+  - 第二条刷新窗口问题未动，继续冻结。
+  - README 已核对，本轮无需改动。
+- 已做验证：
+  - 红灯：
+    - `node program_admin_console/tests/control-plane-server.test.js` -> 先红在 `GET /api/admin/users` 尚未返回 `permission_overrides`
+    - `node program_admin_console/tests/control-plane-ui.test.js` -> 先红在 `/admin` 页面尚无 `账号状态`
+  - 绿灯：
+    - `node program_admin_console/tests/control-plane-server.test.js` -> `control-plane-server tests passed`
+    - `node program_admin_console/tests/control-plane-ui.test.js` -> `control-plane-ui tests passed`
+    - `npm --prefix program_admin_console test` -> 全量通过
+    - `powershell -ExecutionPolicy Bypass -File program_admin_console/tools/deployProgramAdminRemote.ps1 -DryRun` -> 成功输出 `CURRENT_IMAGE=c5-program-admin:deploy-20260427_150000`、`DERIVED_SIGNING_KID=ed25519:M_bnr_KmvBsQLcu9qOojn9NeB1bmCOpe`
+    - `powershell -ExecutionPolicy Bypass -File program_admin_console/tools/deployProgramAdminRemote.ps1` -> 成功输出 `DEPLOYED_IMAGE=c5-program-admin:deploy-20260427_190539`
+    - 远端 loopback script smoke：`GET http://127.0.0.1:18787/api/health` / `/api/admin/session` / `/admin` / `/admin/app.js` / `/admin/styles.css` / `/api/auth/register/capability` 全部 `200`；legacy `POST /api/auth/email/send-code` 继续 `404`
+    - 额外 tunnel 验尸：通过临时本机 SSH tunnel 访问远端 loopback `/admin` 与 `/admin/app.js`，确认 HTML 已含 `账号状态 / 权限覆盖 / 实际权限`，脚本已含 `permission_overrides / userStatus / effectivePermissions`
+- 当前进度：
+  - 会员链剩余项中的第一条已收口：管理员控制台现在不再只能粗看 `member/inactive`，而是可以直接看和改 `status / permission_overrides`，并能看到当前实际权限集合。
+  - 远端 `c5-program-admin` 现网控制台也已同步到这版，不是仅本地工作树生效。
+  - 第二条“`~300s` snapshot 刷新窗口”仍保持冻结，未在本轮实现中引入任何行为变化。
+- 下一步：
+  - 若后续继续会员链，只剩冻结项“非 `runtime.start` 动作的权限实时性窗口”待单独开刀；应在新对话里按架构问题处理，不和本轮 UI 收口混做。
+
+## 2026-04-27 19:31 (Asia/Shanghai)
+- 背景：本会话收口为 handoff。魔尊要求当前对话暂停，需把会员链已完成项、冻结项、未提交现场与下个会话启动指令写清，避免后续重复排查。
+- 当前目标：
+  - 会员链剩余项原本有两条：1) 控制台暴露并可编辑 `status / permission_overrides`；2) 非 `runtime.start` 动作仍主要依赖本地 snapshot 的约 `300s` 权限刷新窗口。
+  - 当前方案已完成第 1 条，并按魔尊要求把第 2 条冻结，留到其它对话单独处理。
+- 进度断点：
+  - 已完成：
+    - `register/complete` 文案已按真实授权状态收口：有授权时保留精确信息，无授权才回“账号已创建，但当前未开通会员”。
+    - `program_admin_console` 本地与远端现网都已收口到“可见/可改 `status / permission_overrides` + 可见当前实际权限”。
+    - 相关 focused tests 与 `program_admin_console` 全量测试均通过；远端容器已部署为 `c5-program-admin:deploy-20260427_190539`。
+  - 冻结未做：
+    - “非 `runtime.start` 动作的权限实时性窗口”完全未动，仍保持当前约 `300s` refresh scheduler 口径。
+  - 当前未提交：
+    - 上一刀会员链 backend 收口：`app_backend/infrastructure/program_access/remote_entitlement_gateway.py`、`tests/backend/test_remote_entitlement_gateway.py`
+    - 本刀 control plane：`program_admin_console/src/controlPlaneStore.js`、`program_admin_console/tests/control-plane-server.test.js`、`program_admin_console/tests/control-plane-ui.test.js`、`program_admin_console/ui/{index.html,app.js,styles.css}`
+    - 文档：`docs/agent/session-log.md`、`docs/agent/memory.md`
+- 现场状态：
+  - 分支：`master`
+  - 相对远端：`origin/master` `ahead 59`
+  - 工作目录：根工作树 `C:/Users/18220/Desktop/C5autobug更新接口 - 副本 (2)`
+  - 当前工作树非干净，且这些未提交改动都是本轮有效成果，不要清理或重做。
+- 错误与约束：
+  - 不要重做已完成的 control plane legacy `/api/auth/register` 与 `/api/auth/email/send-code` 下线，也不要重做 HTTPS+CA fail-closed。
+  - 不要把本轮 control plane UI 收口和冻结项“权限实时性窗口”混做；下一刀若动第二条，必须单独按架构问题处理。
+  - `program_admin_console` 命中现网同步纪律：凡改 UI / server 用户可见行为，都必须继续用 `program_admin_console/tools/deployProgramAdminRemote.ps1` 做远端同步与 smoke，不能只停留在本地工作树。
+- 验证状态：
+  - 已验证：
+    - `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_remote_entitlement_gateway.py tests/backend/test_program_auth_routes.py -q` -> `43 passed`
+    - `node program_admin_console/tests/control-plane-server.test.js` -> `control-plane-server tests passed`
+    - `node program_admin_console/tests/control-plane-ui.test.js` -> `control-plane-ui tests passed`
+    - `npm --prefix program_admin_console test` -> 全量通过
+    - `powershell -ExecutionPolicy Bypass -File program_admin_console/tools/deployProgramAdminRemote.ps1 -DryRun`
+    - `powershell -ExecutionPolicy Bypass -File program_admin_console/tools/deployProgramAdminRemote.ps1` -> `DEPLOYED_IMAGE=c5-program-admin:deploy-20260427_190539`
+    - 额外 tunnel 验尸：远端 `/admin` 与 `/admin/app.js` 已确认包含 `账号状态 / 权限覆盖 / 实际权限` 与对应脚本标识
+  - 验证缺口：
+    - 本轮没有再做新的桌面端人工交互手测。
+    - 冻结项“权限实时性窗口”没有任何新测试，因为未动。
+- 下一步第一刀：
+  - 若下个会话继续会员链，只能先处理冻结项“非 `runtime.start` 动作的权限实时性窗口”，先复述为什么它现在不是实时，再决定是“更多动作实时问远端”还是“缩短/事件触发 refresh”。
+  - 开刀后第一组验证应先补 focused contract tests，证明：1) `runtime.start` 现有实时许可不回退；2) 目标动作的权限变化按新口径生效；3) 不会误伤 purchase/runtime 主链。
+
+## 2026-04-27 19:46 (Asia/Shanghai)
+- 背景：魔尊要求恢复 handoff 后先读最新 `session-log/memory/git status`，若现场无冲突则只单独处理冻结项“非 `runtime.start` 动作的权限实时性窗口”，且不要重做已完成的 control plane `status / permission_overrides` 收口、legacy 下线、HTTPS+CA fail-closed、以及 `register/complete` 文案修复。
+- 现场核对：
+  - 最新 handoff 与当前工作树一致：`master` 相对 `origin/master` 仍 `ahead 59`，未提交项仍主要是上一刀会员链 backend/control plane/UI/documentation 收口，没有发现“已完成项被回退”的冲突。
+  - 当前真正仍未收口的只剩浏览器查询开关这类非 `runtime.start` 动作：本地 guard 以前只看缓存 snapshot，而 refresh scheduler 默认 `300s` 才回远端一次，所以控制台刚改 `permission_overrides` 后会存在实时性窗口。
+- 已完成：
+  - 先冻结语义护栏：权限真值继续以远端 control plane 为准；禁止让本地 stale snapshot 继续冒充 `account.browser_query.enable` 的最新授权结果。
+  - 按 TDD 先补 focused 红灯：
+    - `tests/backend/test_remote_entitlement_gateway.py` 现在要求：`account.browser_query.enable` 即使本地旧快照允许/拒绝，也必须先看远端 refresh 后的最新签名快照再决定；正向覆盖“远端刚授予权限应立即放行”，负向覆盖“远端刚撤销权限不得继续吃旧快照”。
+    - `tests/backend/test_account_routes.py` 新增真实 route contract：`PATCH /accounts/{id}/query-modes` 打开浏览器查询时，远端刚授予权限应立即成功；远端刚撤销权限时必须立即 `403`，不得再被本地旧快照伪装成可用。
+  - 最小实现收口：
+    - `app_backend/infrastructure/program_access/remote_entitlement_gateway.py` 的 `guard()` 现已把 `account.browser_query.enable` 改成“先用现有 refresh token 向远端 refresh 一次最新签名快照，再按 `program_access_enabled + account.browser_query.enable` 判定”。
+    - `runtime.start` 现有实时 permit 链路未改；全局 `300s` refresh scheduler 未缩；purchase/runtime 其它主链未触碰。
+  - README 已核对，本轮无需改动。
+- 已做验证：
+  - 红灯：
+    - `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_remote_entitlement_gateway.py -k browser_query_enable tests/backend/test_account_routes.py -k browser_query -q` -> `4 failed, 2 passed`，先红准确落在“guard 仍信本地旧快照”的预期断点。
+  - 绿灯：
+    - `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_remote_entitlement_gateway.py -k browser_query_enable tests/backend/test_account_routes.py -k browser_query -q` -> `6 passed`
+    - `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_remote_entitlement_gateway.py tests/backend/test_account_routes.py tests/backend/test_program_access_guard_routes.py -q` -> `45 passed`
+- 当前进度：
+  - 冻结项已按当前唯一受影响动作收口：`account.browser_query.enable` 不再主要依赖本地 snapshot，控制台刚改权限后无需再等 `~300s` 才能在账号中心生效。
+  - 本轮没有重做已完成的 control plane `status / permission_overrides` 收口、legacy 下线、HTTPS+CA fail-closed、以及 `register/complete` 文案修复。
+  - 本轮未改远端 `program_admin_console` 代码，因此不需要远端 deploy / smoke；这刀只落在本地桌面 backend guard 与 focused tests。
+- 验证缺口：
+  - 本轮只做了 backend focused automated tests，尚未再做新的桌面端人工手测。
+  - 当前实现只覆盖仓内现有的非 `runtime.start` 受控动作 `account.browser_query.enable`；若后续新增其它细粒度权限动作，仍需沿同一语义护栏补实时校验。
+- 下一步：
+  - 若魔尊后续还要继续收窄权限链，优先把“新增的非 `runtime.start` 受控动作是否也要实时问远端”视为同类问题处理，不要再回到 stale snapshot 兜底。
+
+## 2026-04-27 19:50 (Asia/Shanghai)
+- 背景：魔尊要求修一个 UI 显示 bug：在“配置管理”修改商品信息后，扫货系统实际已热生效，但扫货系统页仍可能继续显示旧配置。
+- 已完成：
+  - 先按 TDD 在 `app_desktop_web/tests/renderer/purchase_system_page.test.jsx` 补 focused 红灯，覆盖“配置管理推来新的 detail，但顶层 `config.updated_at` 未变时，扫货系统页也必须刷新商品列表”。
+  - 最小实现收口到 `app_desktop_web/src/features/purchase-system/hooks/use_purchase_system_page.js`：
+    - 新增 detail 对比 token，比较配置名/描述/启用态以及商品级 `磨损/价格/手动暂停/mode_allocations/sort_order/item.updated_at`。
+    - 扫货系统页在收到 query-system 共享 detail 时，不再只靠顶层 `config.updated_at/name/description` 判断是否陈旧；只要商品级 detail 真变了，就立即把新 detail 同步进 `purchaseSystem.ui.configDetailsById`。
+  - README 已核对，本轮无需改动。
+- 根因：
+  - 扫货系统页此前的 `isConfigDetailStale(...)` 只看配置头字段；如果配置管理改的是商品项，而后端/共享 detail 没同步 bump 顶层 `config.updated_at`，扫货系统页会把新 detail 误判成“没变”，继续显示旧商品配置。
+- 已做验证：
+  - 红灯：`npm --prefix app_desktop_web test -- tests/renderer/purchase_system_page.test.jsx -t "refreshes the purchase item list when config management changes item detail without bumping config updated_at"` -> 先失败，确认旧逻辑不会刷新新商品。
+  - 绿灯：
+    - `npm --prefix app_desktop_web test -- tests/renderer/purchase_system_page.test.jsx -t "refreshes the purchase item list when config management changes item detail without bumping config updated_at"` -> 通过
+    - `npm --prefix app_desktop_web test -- tests/renderer/purchase_system_page.test.jsx` -> `36 passed`
+- 当前进度：
+  - 这刀只修了“配置管理 -> 扫货系统页”跨页 detail 同步判断，没有改扫货热生效链、没有动 query runtime / purchase runtime 接口语义。
+  - 现有工作树仍是脏树，之前会员链/control plane 的未提交改动保持原样，未回退。
+- 验证缺口：
+  - 本轮只做了 renderer focused automated tests，尚未在真实桌面壳里手点复验。
+- 下一步：
+  - 若魔尊要继续扫这条链，建议再补一条 query-page 竞态回归，覆盖“保存后 detail GET 被旧 in-flight 请求复用”这类隐藏竞态，避免同类旧值回填从配置页自身再冒出来。
+
+## 2026-04-27 19:59 (Asia/Shanghai)
+- 背景：魔尊要求在当前会话直接做 handoff，把后续主线明确收口到“旧 GET 回填”处理，不继续扩写实现。
+- 当前目标：
+  - 主目标：处理“配置管理页保存后，旧的 detail GET 晚到或被 in-flight dedupe 复用，导致 UI 又被旧配置盖回去”的潜在竞态。
+  - 当前方案：先补 query-page focused 红灯，实锤复现后，再决定是在 `saveConfig()->loadConfigDetail()` 这条链上禁用旧 GET 复用，还是在 detail 回填层加版本/代次护栏。
+- 进度断点：
+  - 已完成：
+    - 本轮已修掉并验证另一条真实 bug：扫货系统页此前只看配置头字段，没识别商品级 detail 变化；现已按商品级 detail token 同步，`app_desktop_web/tests/renderer/purchase_system_page.test.jsx` 新增 focused 回归并通过。
+    - 通过静态排查已锁定“旧 GET 回填”最可疑链路：`client.getQueryConfig()` 当前带 `dedupeInFlight: true`，而配置管理保存后会走 `saveConfig() -> refreshConfigList() -> loadConfigDetail()`；若保存前已有同路径 GET 未完成，保存后的 detail reload 可能复用旧 Promise。
+  - 未完成：
+    - 还没有补出能稳定红灯复现“配置管理页自己被旧 GET 回填”的自动化测试。
+    - 还没有决定最终修法，不要在未红灯前直接改 `http.js` 或大面积调整 query page hydration 逻辑。
+- 现场状态：
+  - 相关文件：
+    - `app_desktop_web/src/features/query-system/hooks/use_query_system_page.js`
+    - `app_desktop_web/src/api/account_center_client.js`
+    - `app_desktop_web/src/api/http.js`
+    - `app_desktop_web/tests/renderer/query_system_editing.test.jsx`
+    - 已完成的上一刀文件仍保持未提交：`app_desktop_web/src/features/purchase-system/hooks/use_purchase_system_page.js`、`app_desktop_web/tests/renderer/purchase_system_page.test.jsx`
+  - 分支：`master`
+  - 工作目录：`C:/Users/18220/Desktop/C5autobug更新接口 - 副本 (2)`
+  - 未提交改动：存在，且不只这一刀；当前工作树还带着会员链 backend/control-plane/UI 文档改动，以及本轮 purchase page 修复。不要清理、不要重做。
+- 错误与约束：
+  - 不要把“旧 GET 回填”与刚修好的 purchase page detail 比较 bug 混成同一个问题；前者还未被自动化实锤，后者已修完。
+  - 不要回退已完成的 purchase page 修复：`areConfigDetailsEquivalent()` / `buildConfigDetailSyncToken()` 仍是当前有效收口。
+  - 不要先入为主把锅全甩给 websocket/update event；当前优先可疑点仍是 query page 保存后的 detail reload 复用旧 in-flight GET。
+  - 命中关键行为：配置管理保存链、扫货热生效链、共享 query detail 同步。下一刀必须保持“保存后运行时热生效”不回退。
+- 验证状态：
+  - 已验证：
+    - `npm --prefix app_desktop_web test -- tests/renderer/purchase_system_page.test.jsx -t "refreshes the purchase item list when config management changes item detail without bumping config updated_at"` -> 先红后绿
+    - `npm --prefix app_desktop_web test -- tests/renderer/purchase_system_page.test.jsx` -> `36 passed`
+  - 验证缺口：
+    - 尚无针对“配置管理页保存后旧 GET 回填”的 focused 红灯。
+    - 尚未做真实桌面壳手点复验。
+- 下一步第一刀：
+  - 在 `app_desktop_web/tests/renderer/query_system_editing.test.jsx` 先补一条 focused 用例：
+    - 开启 `pageWarmupEnabled=true` 或直接制造保存前已发出的 `GET /query-configs/cfg-1`
+    - 让这条旧 GET 晚于保存返回
+    - 断言 `saveConfig()` 完成后，配置管理页仍显示新值，而不是被旧 detail 覆盖回去
+  - 红灯稳定后立刻验证：
+    - 只跑该 focused 用例，确认先失败
+    - 修复后至少回跑 `tests/renderer/query_system_editing.test.jsx`
+    - 若改到共享读取策略，再补跑 `tests/renderer/purchase_system_page.test.jsx`，确保刚修好的跨页同步不回退
+
+## 2026-04-27 20:39 (Asia/Shanghai)
+- 背景：魔尊确认继续沿当前 handoff 主线处理“配置管理页保存后旧 GET 回填”竞态，明确这刀不是重做已修好的 purchase page detail 比较 bug，也不要清理当前脏工作树。
+- 已完成：
+  - 先按 TDD 在 `app_desktop_web/tests/renderer/query_system_editing.test.jsx` 补 focused 红灯：直接在同一个 `client` 上制造保存前已发出的 `GET /query-configs/cfg-1`，让它晚于保存返回，并断言保存完成后“AK-47 | Redline”扫货价仍保持新值 `188`，不能被旧 detail 覆盖回 `199`。
+  - 红灯已准确命中当前断点：旧 in-flight `GET /query-configs/cfg-1` 仍未结束时，`saveConfig() -> refreshConfigList() -> loadConfigDetail()` 末尾那次 detail reload 会复用旧 Promise，导致配置管理页自己被旧 detail 回填。
+  - 最小实现收口：
+    - `app_desktop_web/src/api/account_center_client.js` 的 `getQueryConfig(configId)` 现在接受可选参数，允许单次调用关闭 `dedupeInFlight`。
+    - `app_desktop_web/src/features/query-system/hooks/use_query_system_page.js` 的 `loadConfigDetail(...)` 新增 `forceFresh` 选项；只有 `saveConfig()` 完成持久化与 runtime apply 后的那次 detail reload 显式 `forceFresh:true`，其余首屏/切页/detail 复用链保持原有 dedupe 行为不变。
+  - 为了让 App 级 query-system 回归文件可运行，顺手给 `app_desktop_web/tests/renderer/query_system_editing.test.jsx` 的通用 fetch harness 补了最小 `/app/bootstrap` shell/full 假响应；这只是测试入口补齐，不改生产逻辑。
+- 已做验证：
+  - 红灯：
+    - `npm --prefix app_desktop_web test -- tests/renderer/query_system_editing.test.jsx -t "keeps the saved detail when save reload overlaps with an older in-flight config GET"` -> 先失败，断言期望 `188`，实际被旧 detail 回填成 `199`
+  - 绿灯：
+    - `npm --prefix app_desktop_web test -- tests/renderer/query_system_editing.test.jsx -t "keeps the saved detail when save reload overlaps with an older in-flight config GET"` -> 通过
+    - `npm --prefix app_desktop_web test -- tests/renderer/query_system_editing.test.jsx` -> `16 passed`
+    - `npm --prefix app_desktop_web test -- tests/renderer/purchase_system_page.test.jsx` -> `36 passed`
+    - `npm --prefix app_desktop_web test -- tests/renderer/query_system_client.test.js` -> `1 passed`
+- 当前进度：
+  - “旧 GET 回填”已被自动化打实并做最小收口：现在只有保存后的那次 detail reload 会强制取新值，不再复用保存前挂着的旧 `GET /query-configs/{id}`。
+  - 已完成的 purchase page 修复未回退；`purchase_system_page.test.jsx` 全量仍通过。
+  - 工作树继续保持脏树，除本轮 query-system 改动外，会员链 backend/control-plane/UI 与 earlier purchase page 改动仍保持原样，未清理。
+- 验证缺口：
+  - 本轮只做了 renderer automated tests，尚未在真实桌面壳里手点复验。
+- 下一步：
+  - 若魔尊还要继续扫 query-system 读取链，可再单独评估是否要给其它“显式需要最新 detail”的入口也开放 `forceFresh`，但当前没有证据表明应扩大到全局禁用 `GET /query-configs/{id}` dedupe。

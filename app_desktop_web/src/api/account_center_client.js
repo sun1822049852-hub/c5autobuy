@@ -240,9 +240,11 @@ export function createAccountCenterClient({
         method: "GET",
       });
     },
-    async getQueryConfig(configId) {
+    async getQueryConfig(configId, options = {}) {
+      const { dedupeInFlight = true, ...requestOptions } = options;
       return http.getJson(`/query-configs/${configId}`, {
-        dedupeInFlight: true,
+        ...requestOptions,
+        dedupeInFlight,
         method: "GET",
       });
     },

@@ -270,9 +270,11 @@ export function useQuerySystemPage({ client, isActive = true, warmupEnabled = fa
     return nextConfigs;
   }
 
-  async function loadConfigDetail(configId, baseConfigs = configs) {
+  async function loadConfigDetail(configId, baseConfigs = configs, { forceFresh = false } = {}) {
     const detail = normalizeConfigWithServerShape(
-      await client.getQueryConfig(configId),
+      await client.getQueryConfig(configId, {
+        dedupeInFlight: !forceFresh,
+      }),
       QUERY_CONFIG_SERVER_SHAPE_DETAIL,
     );
     applyQuerySystemServer({
@@ -932,7 +934,7 @@ export function useQuerySystemPage({ client, isActive = true, warmupEnabled = fa
       }
 
       const nextConfigs = await refreshConfigList();
-      await loadConfigDetail(draftConfig.config_id, nextConfigs);
+      await loadConfigDetail(draftConfig.config_id, nextConfigs, { forceFresh: true });
       if (shouldShowActiveSaveNotice) {
         setSaveNotice(ACTIVE_SAVE_NOTICE);
       }
