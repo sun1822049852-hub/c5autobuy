@@ -306,6 +306,7 @@ $localTarPath = Join-Path $RuntimeDir "program_admin_console_deploy_$timestamp.t
 $remoteTarPath = "$RemoteUploadDir/$(Split-Path $localTarPath -Leaf)"
 $remoteDeployScriptPath = "$RemoteUploadDir/deploy_program_admin_remote_$timestamp.sh"
 $localAdminBaseUrl = "http://127.0.0.1:18787"
+$publicHttpsSmokeEnabled = (-not $SkipHttpsSmoke) -and (Test-Path -LiteralPath $CaCertPath)
 
 if ($DryRun) {
   Write-Output "REMOTE_HOST=$RemoteHost"
@@ -320,6 +321,8 @@ if ($DryRun) {
   Write-Output "LOCAL_TARBALL=$localTarPath"
   Write-Output "REMOTE_TARBALL=$remoteTarPath"
   Write-Output "HTTPS_BASE_URL=$BaseUrl"
+  Write-Output "LOOPBACK_SMOKE=enabled"
+  Write-Output ("PUBLIC_HTTPS_SMOKE=" + $(if ($publicHttpsSmokeEnabled) { "enabled" } else { "disabled" }))
   exit 0
 }
 
@@ -429,13 +432,15 @@ Invoke-ExternalTool -Config $sshLaunch -Arguments @(
   $target,
   "bash -s"
 ) -InputText $loopbackSmokeScript
+Write-Output "LOOPBACK_SMOKE=passed"
 
-if (-not $SkipHttpsSmoke -and (Test-Path -LiteralPath $CaCertPath)) {
+if ($publicHttpsSmokeEnabled) {
   $httpsScript = @'
 import json
 import ssl
 import sys
 import urllib.request
+import urllib.error
 
 base_url = sys.argv[1]
 cafile = sys.argv[2]
@@ -469,6 +474,15 @@ except urllib.error.HTTPError as exc:
     if exc.code != 404:
         raise
 
+try:
+    urllib.request.urlopen(base_url + "/api/admin/session", context=ctx, timeout=15)
+    raise SystemExit("/api/admin/session should not be publicly reachable")
+except urllib.error.HTTPError as exc:
+    print(base_url + "/api/admin/session")
+    print(exc.code)
+    if exc.code != 404:
+        raise
+
 legacy_req = urllib.request.Request(
     base_url + "/api/auth/email/send-code",
     data=json.dumps({"email": "legacy-smoke@example.com"}).encode("utf-8"),
@@ -485,6 +499,9 @@ except urllib.error.HTTPError as exc:
         raise
 '@
   Invoke-Process -FilePath $PythonPath -Arguments @("-c", $httpsScript, $BaseUrl, $CaCertPath, $derivedSigningKid) | Out-Null
+  Write-Output "PUBLIC_HTTPS_SMOKE=passed"
+} else {
+  Write-Output "PUBLIC_HTTPS_SMOKE=disabled"
 }
 
 Write-Output "REMOTE_CONTAINER=$RemoteContainerName"

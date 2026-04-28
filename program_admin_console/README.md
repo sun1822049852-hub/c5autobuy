@@ -60,6 +60,8 @@ powershell -ExecutionPolicy Bypass -File program_admin_console/tools/deployProgr
 如果这轮改动命中注册、签名、公钥链路，AI 还应额外确认：
 
 - `GET /api/auth/public-key` 返回的 `kid` 与脚本输出的 `DERIVED_SIGNING_KID` 一致
+- 额外开放公网 `HTTPS` smoke 时，必须显式验证 `/admin` 与 `/api/admin/*` 仍不可公网访问
+- 脚本输出需要明确区分 `LOOPBACK_SMOKE=passed` 与 `PUBLIC_HTTPS_SMOKE=passed|disabled`
 - 必要时再做一次 `register/complete` 深 smoke，而不是只看 `health`
 
 ## 桌面端安全公网接入口径

@@ -315,7 +315,8 @@ async function main() {
   context.saveToken("session-token");
   await context.loadSession();
   await context.loadDashboard();
-  assert.match(elements["#usersList"].innerHTML, /member/);
+  assert.match(elements["#usersList"].innerHTML, /inactive/);
+  assert.match(elements["#usersList"].innerHTML, /原始 member/);
   assert.doesNotMatch(elements["#usersList"].innerHTML, /<img/i);
   assert.doesNotMatch(elements["#usersList"].innerHTML, /<svg/i);
   assert.doesNotMatch(elements["#deviceList"].innerHTML, /<script/i);

@@ -5,6 +5,7 @@ const os = require("node:os");
 const path = require("node:path");
 
 const {createServer} = require("../src/server");
+const {ControlPlaneStore} = require("../src/controlPlaneStore");
 
 function makeTempDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), "program-control-plane-server-"));
@@ -542,15 +543,42 @@ async function main() {
     assert.equal(runtimePermitDenied.status, 403);
     assert.equal(runtimePermitDenied.body.reason, "runtime_permission_denied");
 
+    {
+      const secondaryStore = new ControlPlaneStore({dbPath: path.join(ctx.tempDir, "control-plane.sqlite")});
+      try {
+        secondaryStore.createClientUser({
+          email: "enum@example.com",
+          username: "enum_user",
+          password: "Secret123!"
+        });
+      } finally {
+        secondaryStore.close();
+      }
+    }
+    const existingRegisterSendMessageCount = ctx.sentMessages.length;
+    const existingRegisterSend = await requestJson(ctx, "POST", "/api/auth/register/send-code", {
+      email: "enum@example.com",
+      install_id: "install_existing_enum"
+    });
+    assert.equal(existingRegisterSend.status, 200);
+    assert.equal(existingRegisterSend.body.ok, true);
+    assert.equal(typeof existingRegisterSend.body.register_session_id, "string");
+    assert.equal(existingRegisterSend.body.masked_email, "e***m@example.com");
+    assert.equal(existingRegisterSend.body.code_length, 6);
+    assert.equal(existingRegisterSend.body.code_expires_in_seconds, 600);
+    assert.equal(ctx.sentMessages.length, existingRegisterSendMessageCount);
+
     const userList = await requestJson(ctx, "GET", "/api/admin/users", null, adminHeaders);
     assert.equal(userList.status, 200);
     assert.equal(userList.body.ok, true);
-    assert.equal(userList.body.items.length, 1);
-    assert.equal(userList.body.items[0].membership_plan, "inactive");
-    assert.equal(userList.body.items[0].active_device_count, 1);
-    assert.equal(userList.body.items[0].entitlements.membership_plan, "inactive");
-    assert.equal(userList.body.items[0].entitlements.feature_flags.program_access_enabled, false);
-    const aliceId = userList.body.items[0].id;
+    assert.equal(userList.body.items.length, 2);
+    const aliceListItem = userList.body.items.find((item) => item.username === "alice");
+    assert.ok(aliceListItem);
+    assert.equal(aliceListItem.membership_plan, "inactive");
+    assert.equal(aliceListItem.active_device_count, 1);
+    assert.equal(aliceListItem.entitlements.membership_plan, "inactive");
+    assert.equal(aliceListItem.entitlements.feature_flags.program_access_enabled, false);
+    const aliceId = aliceListItem.id;
 
     const upgraded = await requestJson(ctx, "PATCH", `/api/admin/users/${aliceId}`, {
       membership_plan: "member",
@@ -799,16 +827,37 @@ async function main() {
     const usersAfterBob = await requestJson(ctx, "GET", "/api/admin/users", null, adminHeaders);
     assert.equal(usersAfterBob.status, 200);
     assert.equal(usersAfterBob.body.ok, true);
-    assert.equal(usersAfterBob.body.items.length, 2);
+    assert.equal(usersAfterBob.body.items.length, 3);
     const aliceAfterBob = usersAfterBob.body.items.find((item) => item.username === "alice");
+    assert.ok(aliceAfterBob);
     assert.equal(aliceAfterBob.active_device_count, 1);
     assert.equal(aliceAfterBob.entitlements.membership_plan, "member");
     assert.equal(aliceAfterBob.entitlements.feature_flags.program_access_enabled, true);
-    const bobId = usersAfterBob.body.items.find((item) => item.username === "bob").id;
     const bobAfterCreate = usersAfterBob.body.items.find((item) => item.username === "bob");
+    assert.ok(bobAfterCreate);
+    const bobId = bobAfterCreate.id;
     assert.equal(bobAfterCreate.active_device_count, 1);
     assert.equal(bobAfterCreate.entitlements.membership_plan, "inactive");
     assert.equal(bobAfterCreate.entitlements.feature_flags.program_access_enabled, false);
+
+    const expiredBobLogin = await requestJson(ctx, "POST", "/api/auth/login", {
+      username: "bob",
+      password: "Secret123!",
+      device_id: "device_beta_expired"
+    });
+    assert.equal(expiredBobLogin.status, 200);
+    {
+      const secondaryStore = new ControlPlaneStore({dbPath: path.join(ctx.tempDir, "control-plane.sqlite")});
+      try {
+        secondaryStore.db.prepare("UPDATE refresh_session SET expires_at = ? WHERE device_id = ?")
+          .run("2026-01-01T00:00:00.000Z", "device_beta_expired");
+      } finally {
+        secondaryStore.close();
+      }
+    }
+    const usersAfterExpiredBobDevice = await requestJson(ctx, "GET", "/api/admin/users", null, adminHeaders);
+    const bobAfterExpiredDevice = usersAfterExpiredBobDevice.body.items.find((item) => item.username === "bob");
+    assert.equal(bobAfterExpiredDevice.active_device_count, 1);
 
     const aliceDevices = await requestJson(ctx, "GET", `/api/admin/users/${aliceId}/devices`, null, adminHeaders);
     assert.equal(aliceDevices.status, 200);
@@ -938,6 +987,15 @@ async function main() {
     });
     assert.equal(loginCarolAfterReset.status, 200);
     assert.equal(loginCarolAfterReset.body.ok, true);
+
+    const resetUnknownMessageCount = ctx.sentMessages.length;
+    const resetUnknown = await requestJson(ctx, "POST", "/api/auth/password/send-reset-code", {
+      email: "unknown@example.com"
+    });
+    assert.equal(resetUnknown.status, 200);
+    assert.equal(resetUnknown.body.ok, true);
+    assert.equal(resetUnknown.body.expires_in_seconds, 300);
+    assert.equal(ctx.sentMessages.length, resetUnknownMessageCount);
 
     const resetCode = await requestJson(ctx, "POST", "/api/auth/password/send-reset-code", {
       email: "alice@example.com"

@@ -112,6 +112,8 @@
 - 程序会员控制台用户详情页又新增一条稳定产品约束：管理员不能再只看 `member/inactive` 粗口径；UI 必须同时暴露 `status`、显式 `permission_overrides` 与“当前实际权限”展示。权限覆盖口径固定为三态：`继承计划 / 强制开启 / 强制关闭`；`GET /api/admin/users` 也必须继续回传每个用户的显式 `permission_overrides`，避免前端只能反推结果态而看不到真实覆盖来源。
 - 程序会员控制台的远端开发机访问口径继续保持 loopback-only：`8.138.39.139` 上的后台 `/admin` 默认只应通过“宿主机 `127.0.0.1:18787` + 本机 SSH 隧道”访问。若桌面端程序会员链路以后要恢复直连远端 API，必须先单独提供新的公网 API 入口（域名 / 反向代理 / 新配置迁移），不能再靠临时重新开放 `18787` 公网监听硬顶。
 - 程序会员链路若要恢复“桌面端直连远端”，稳定安全口径固定为“独立 HTTPS auth gateway + 仅暴露 `/api/health` 与 `/api/auth/*`”；`/admin` 与 `/api/admin/*` 不得挂进同一公网入口。若 control plane 跑在可信反向代理后，运行容器必须显式开启 `PROGRAM_ADMIN_TRUST_PROXY=true`，否则注册风控/登录来源识别拿到的只是代理层 IP。
+- 程序会员控制台的公网 auth surface 又新增一条稳定安全约束：`/api/auth/register/send-code` 与 `/api/auth/password/send-reset-code` 不得再通过状态码或用户可见文案直接泄露“邮箱/账号是否存在”；冷却、限流、审计可以保留，但外部信号必须收敛。
+- 程序会员控制台的 `TRUST_PROXY` 口径又新增一条稳定边界：只有当 Node 进程的直接来路就是 loopback 反向代理时，才允许信任 `X-Forwarded-For`；外部直连请求即使自带 XFF，也必须按真实 socket remoteAddress 处理，不能借头部伪装 localhost 或任意来源 IP。
 - 当前又补齐一条无域名收口能力：桌面端 release 已支持通过 `controlPlaneCaCertPath` / `C5_PROGRAM_CONTROL_PLANE_CA_CERT_PATH` pin 一张自带 CA 证书，因此即使没有域名，也可以走“`https://服务器IP` + 自签/私有 CA + 客户端证书 pinning”这条安全链；此时 `app_desktop_web/build/control_plane_ca.pem` 若存在，会随打包自动进入 resources 根目录。
 - packaged release 的程序会员远端入口又新增一条稳定安全约束：Electron 主进程与 backend program access 装配都不得再回退到默认 `http://8.138.39.139:18787` 或其它明文 HTTP；release 口径必须显式提供 `https://服务器IP`（或等价 HTTPS base url）以及 `controlPlaneCaCertPath`，缺任一项都应 fail-closed，而不是静默降级回旧连接路径。
 - 程序会员远端断链的用户态提示又新增一条稳定口径：当 `program_remote_unavailable`、`program_membership_service_unavailable` 或同类 `service_unavailable` 命中时，前端统一显示 `服务器连接失败请检查网络设置。`，并继续复用现有 `FeedbackDialog / ErrorNotice` 提示链，不得再散落成“程序会员登录暂不可用”“注册验证码发送失败，请稍后再试。”这类 generic 文案。
@@ -123,6 +125,7 @@
 - 程序会员控制台又新增一条稳定发布约束：`connectProgramAdminConsole` 命中的永远是远端运行中的 `c5-program-admin`，不是本地工作树。因此凡是 `program_admin_console/src/` 或 `program_admin_console/ui/` 的用户可见/接口行为改动，默认都必须在同一轮同步远端源码 `/home/admin/c5-program-admin-src`、重建/替换远端容器，并至少验 `http://127.0.0.1:18787/api/health`、`/api/admin/session`、`/admin`、`/admin/app.js`、`/admin/styles.css`；未完成这组对齐前，不得宣称 connect 入口已生效。同步时还要覆盖新代码依赖到的文件闭包，不能只拷“看起来改过”的单文件，否则会出现 `server.js` 已更新但 `validation.js` 缺失、容器启动失败的漂移事故。
 - 程序会员控制台的标准化远端更新入口现已固定为 `program_admin_console/tools/deployProgramAdminRemote.ps1`：后续 AI 若要同步 `program_admin_console` 到远端，默认先跑该脚本的 `-DryRun` 读取现网 image / env / signing kid，再按同一脚本完成源码同步、镜像重建、容器替换与基础 smoke，而不是重新手拼一套命令。该脚本的稳定语义是“复用远端现有 secret/env/bind/port 口径，但强制用远端私钥真实派生值覆盖 `PROGRAM_ADMIN_SIGNING_KID`”；`kid` 派生只能在远端本机完成，不能把私钥正文拉回部署机。
 - 程序会员设备撤销又新增一条稳定控制约束：控制台按设备撤销 refresh session 时，必须只对匹配 `device_id` 的 runtime-control stream 立即下发 `device_session_revoked`，让已在线桌面端 fail-closed 停机；不能只等后续 refresh 失败，也不能把同用户其它设备一并误踢。
+- 程序会员控制台的“活跃设备”语义也已冻结：`active_device_count` 与设备列表必须共用同一套 truth rule，统一排除已 revoke 和自然过期的 refresh session；不能把“数据库里仍是 active，但实际上已过期”的设备继续展示成在线。
 - 程序会员控制台注册链又新增一条稳定收口约束：远端 control plane 的外部注册入口只允许保留 v3 `send-code / verify-code / complete`；`GET /api/auth/register/capability` 不得再暴露任何 legacy 注册摘要，`POST /api/auth/register` 与 `POST /api/auth/email/send-code` 都必须继续保持下线（当前口径为 `404 not_found`），避免远端重新漂回旧 one-shot 注册/发码链。
 - 前端普通用户提示新增一条稳定 UI 口径：除诊断/事件明细这类面向排障的页面外，用户可见的普通错误提示默认统一走中部弹窗，不再以内联顶部红条直接铺开；展示内容只保留用户可理解的人话文案，不得暴露 `program_*` 错误码、HTTP 状态码、原始 JSON 或内部 `action` 字段。若后端返回结构化错误，优先读取 `detail.message` / `message` 作为前端提示文案。
 - 排查桌面端“请求超时，请检查本地后端是否卡死”时，不能先把它等价成“整个 backend 宕死”。先确认 Electron 当前真实 `apiBaseUrl`/监听端口；若 `/health`、`/app/bootstrap`、`/query-runtime/status` 正常而只有 `/purchase-runtime/status` 超时，优先检查 `GetPurchaseRuntimeStatusUseCase` 的同步 stats flush 路径与 stats backlog，而不是先改全局前端 timeout 或误判整后端卡死。
@@ -130,3 +133,5 @@
   - 会员到期后会立即失效，而不是只测错误码映射。
   - 撤销设备后，已在线桌面端会被立即踢下线，而不是只测后续 refresh 失败。
   - control plane 发出的 runtime revoke 信号能被桌面端端到端接收并执行停机，而不是 server/client 各自单测都绿但中间链路未验。
+- 只要当前仓库存在多个 git worktree，且用户问题涉及“你看的到底是哪份代码 / 是否读过 worktree / 是否检查过那条支线”，回答时必须显式区分“当前根工作树”和“独立 worktree 路径”；若只检查了根工作树，必须明确写“未检查独立 worktree”，不得把两者混说成“已看过工作树”。
+- 只要任务是审查、review、上线前复核或最终把关，且仓库里存在多个 git worktree 或上下文已出现“另一条支线 / 另一个 agent / 另一份 worktree 改动”，就不得把根工作树现场当成全量审查结果；必须补查相关 worktree，或明确声明审查范围仅覆盖已检查路径。

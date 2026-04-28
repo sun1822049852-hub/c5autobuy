@@ -241,6 +241,30 @@ function renderEffectivePermissions(user) {
     .join("");
 }
 
+function summarizeUserMembership(user) {
+  const rawPlan = toText(user && user.membership_plan) || "inactive";
+  const effectivePlan = toText(user && user.entitlements && user.entitlements.membership_plan) || rawPlan;
+  const rawExpiry = formatDateTime(user && user.membership_expires_at);
+  const status = normalizeUserStatus(user && user.status);
+  const membershipActive = Boolean(user && user.entitlements && user.entitlements.membership_active);
+
+  if (status === "active" && membershipActive && effectivePlan === rawPlan) {
+    return {
+      token: effectivePlan,
+      meta: rawExpiry
+    };
+  }
+
+  const meta = ["当前未生效", `原始 ${rawPlan}`];
+  if (rawExpiry !== "-") {
+    meta.push(rawExpiry);
+  }
+  return {
+    token: effectivePlan || "inactive",
+    meta: meta.join(" · ")
+  };
+}
+
 function readPermissionOverridesFromForm() {
   return PERMISSION_OVERRIDE_OPTIONS.flatMap(({code, refKey}) => {
     const element = refs[refKey];
@@ -306,7 +330,7 @@ function renderUsers() {
     return;
   }
   refs.usersList.innerHTML = state.users.map((user) => {
-    const membershipPlan = toText(user.membership_plan) || "inactive";
+    const membershipSummary = summarizeUserMembership(user);
     const userId = Number(user.id) || 0;
     return `
       <button class="user-row ${userId === state.selectedUserId ? "is-selected" : ""}" type="button" data-user-id="${userId}">
@@ -315,8 +339,8 @@ function renderUsers() {
           <span>${escapeHtml(user.email)}</span>
         </span>
         <span class="user-row-side">
-          <span class="token">${escapeHtml(membershipPlan)}</span>
-          <span>${escapeHtml(formatDateTime(user.membership_expires_at))}</span>
+          <span class="token">${escapeHtml(membershipSummary.token)}</span>
+          <span>${escapeHtml(membershipSummary.meta)}</span>
         </span>
       </button>
     `;

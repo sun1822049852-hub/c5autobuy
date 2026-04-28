@@ -621,9 +621,9 @@ class ControlPlaneStore {
     const deviceCounts = this.db.prepare(`
       SELECT user_id, COUNT(*) AS cnt
       FROM refresh_session
-      WHERE user_id IN (${placeholders}) AND status = 'active' AND revoked_at = ''
+      WHERE user_id IN (${placeholders}) AND status = 'active' AND revoked_at = '' AND expires_at > ?
       GROUP BY user_id
-    `).all(...userIds);
+    `).all(...userIds, nowIso(now));
     const deviceCountByUser = new Map();
     for (const row of deviceCounts) {
       deviceCountByUser.set(Number(row.user_id) || 0, Number(row.cnt) || 0);
@@ -1042,13 +1042,13 @@ class ControlPlaneStore {
     };
   }
 
-  listUserDeviceSessions({userId = 0} = {}) {
+  listUserDeviceSessions({userId = 0, now = new Date()} = {}) {
     const rows = this.db.prepare(`
       SELECT *
       FROM refresh_session
-      WHERE user_id = ? AND status = 'active' AND revoked_at = ''
+      WHERE user_id = ? AND status = 'active' AND revoked_at = '' AND expires_at > ?
       ORDER BY id ASC
-    `).all(Number(userId) || 0);
+    `).all(Number(userId) || 0, nowIso(now));
     return rows.map((row) => ({
       id: Number(row.id) || 0,
       user_id: Number(row.user_id) || 0,

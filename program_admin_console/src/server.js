@@ -213,14 +213,20 @@ function isValidUsername(value = "") {
   return /^[A-Za-z0-9_]{3,32}$/.test(toText(value));
 }
 
+function isLoopbackAddress(value = "") {
+  const address = toText(value);
+  return address === "127.0.0.1" || address === "::1" || address === "::ffff:127.0.0.1";
+}
+
 function getSourceIp(req, {trustProxy = false} = {}) {
+  const remoteAddress = toText(req && req.socket && req.socket.remoteAddress);
   if (trustProxy) {
     const xff = toText(req && req.headers && req.headers["x-forwarded-for"]);
-    if (xff) {
+    if (xff && isLoopbackAddress(remoteAddress)) {
       return toText(xff.split(",")[0]);
     }
   }
-  return toText(req && req.socket && req.socket.remoteAddress);
+  return remoteAddress;
 }
 
 function createServer({
@@ -705,14 +711,6 @@ function createServer({
           });
           return;
         }
-        if (store.getClientUserByEmail(email)) {
-          writeRegisterV3Error(res, 403, {
-            errorCode: "REGISTER_SEND_DENIED",
-            message: "register send denied",
-            requestId
-          });
-          return;
-        }
         if (!config.configured) {
           writeRegisterV3Error(res, 503, {
             errorCode: "REGISTER_SERVICE_UNAVAILABLE",
@@ -793,21 +791,24 @@ function createServer({
           });
           return;
         }
-        const code = toText(nextCode());
-        try {
-          await mailService.sendVerificationCode({
-            to: email,
-            code,
-            scene: "register_v3",
-            ttlMinutes: Math.ceil(registerConfig.codeExpiresInSeconds / 60)
-          });
-        } catch (error) {
-          writeRegisterV3Error(res, 503, {
-            errorCode: "REGISTER_SERVICE_UNAVAILABLE",
-            message: toText(error && error.message) || "verification email send failed",
-            requestId
-          });
-          return;
+        const existingUser = store.getClientUserByEmail(email);
+        const code = existingUser ? createRequestId() : toText(nextCode());
+        if (!existingUser) {
+          try {
+            await mailService.sendVerificationCode({
+              to: email,
+              code,
+              scene: "register_v3",
+              ttlMinutes: Math.ceil(registerConfig.codeExpiresInSeconds / 60)
+            });
+          } catch (error) {
+            writeRegisterV3Error(res, 503, {
+              errorCode: "REGISTER_SERVICE_UNAVAILABLE",
+              message: toText(error && error.message) || "verification email send failed",
+              requestId
+            });
+            return;
+          }
         }
         const recorded = store.recordRegisterCodeDispatch({
           registerSessionId: session.id,
@@ -1159,7 +1160,10 @@ function createServer({
           return;
         }
         if (!store.getClientUserByEmail(email)) {
-          writeError(res, 404, "user_not_found", "user not found");
+          writeJson(res, 200, {
+            ok: true,
+            expires_in_seconds: (Number(config.authCodeTtlMinutes) || 5) * 60
+          });
           return;
         }
         const sent = await sendEmailCode({
@@ -1311,5 +1315,6 @@ if (require.main === module) {
 
 module.exports = {
   createServer,
-  readServerRuntimeOptions
+  readServerRuntimeOptions,
+  getSourceIp
 };

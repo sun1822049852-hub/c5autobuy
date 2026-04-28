@@ -5349,3 +5349,90 @@
   - 本轮未触碰查询 -> 命中 -> 购买主链、桌面启动链、README 与打包产物。
 - 下一步：
   - 若要把这轮会员控制台改动影响到当前现网 `connectProgramAdminConsole` 入口，还需要按仓库纪律同步远端源码、重建/替换容器并做 loopback smoke；本轮尚未执行远端同步。
+
+## 2026-04-28 22:15 (Asia/Shanghai)
+- 背景：
+  - 用户要求把当前会员审查问题整理成“一份供两个既有修改 Agent 共读的公共文档”，重点是“只把错写出来”，而不是替用户给两个 Agent 分线。
+  - 这轮目标不是继续修代码，而是生成一份公共错点清单，让既有 Agent 自己读完后判断哪些问题和自己刚才改过的内容有关。
+- 已完成：
+  - 新增共享文档：`docs/superpowers/plans/2026-04-28-membership-two-session-remediation.md`
+  - 文档已改成单份公共错点清单，不再写会话 A / 会话 B 分线。
+  - 文档中保留的内容是：
+    - 当前本地现场与已通过的 focused 验证
+    - 已经修好的主 blocker，避免后续 Agent误重开
+    - 还没收干净的 8 个错点：账号枚举、XFF 信任、`/api/admin/*` 公网边界、过期设备统计、控制台误导展示、密钥平滑轮换、本地材料读取失败语义
+    - 一段可直接复制给任意既有 Agent 的通用提示词
+- 当前进度：
+  - 两个后续会话现在可以直接共读同一份文档，再自行判断哪些错点和自己刚才改过的内容有关。
+  - README 本轮未改；仅新增共享文档并追加会话日志。
+- 下一步：
+  - 把 `docs/superpowers/plans/2026-04-28-membership-two-session-remediation.md` 交给两个既有 Agent。
+  - 让每个 Agent 自己根据刚才改过的内容识别相关错点，改完后继续更新 `docs/agent/session-log.md` 并明确远端是否同步。
+
+## 2026-04-28 22:38 (Asia/Shanghai)
+- 背景：
+  - 用户指出我前面把“已检查根工作树”回答成了“已看过工作树”，会让人误以为我连 `.worktrees/*` 的独立工作树也一起检查过。
+  - 当前仓库实际存在多个 git worktree，这类表述歧义需要沉淀成长期规则，避免再次误导。
+- 已完成：
+  - 在仓库 `AGENTS.md` 新增“工作树口径纪律”，明确要求区分根工作树与独立 worktree，且默认在相关问题下先跑 `git worktree list --porcelain`。
+  - 在主 `C:/Users/18220/.codex/AGENTS.md` 新增通用 worktree scope discipline，避免其它仓库复发同类误答。
+  - 在 `docs/agent/memory.md` 提炼稳定约束：只要仓库存在多个 git worktree，回答“你看的到底是哪份代码”时必须显式写出检查路径；若只看了根工作树，必须明确说明“未检查独立 worktree”。
+- 当前进度：
+  - 本轮属于协作规则修正，不涉及业务代码。
+  - 规则已同步到仓库级、主 AGENTS 和会话记忆三处。
+- 下一步：
+  - 后续只要用户问“是否检查过工作树 / 你看的哪份代码”，默认先核对 `git worktree list --porcelain`，再用精确路径回答。
+
+## 2026-04-28 22:44 (Asia/Shanghai)
+- 背景：
+  - 用户进一步指出，错误不只是“表述不严”，还有“审查不全”：在存在独立 worktree 的情况下，我给出了只基于根工作树的审查结论。
+  - 这需要单独沉淀成 review 完整性规则，避免以后再次把“根工作树局部审查”说成“全量审查”。
+- 已完成：
+  - 在仓库 `AGENTS.md` 新增“审查完整性纪律”，明确：
+    - review / 审查 / 最终把关任务不能默认只看根工作树
+    - 若上下文已出现另一条 worktree、另一位 agent 或并行修改线，必须补查相关 worktree，或显式声明审查范围有限
+  - 在主 `C:/Users/18220/.codex/AGENTS.md` 新增通用 review completeness discipline，避免其它仓库复发同类问题。
+  - 在 `docs/agent/memory.md` 补充稳定约束：多 worktree + review 场景下，不能把根工作树现场当成全量审查结果。
+- 当前进度：
+  - 本轮新增的两层规则分别覆盖：
+    - “回答时别把根工作树和独立 worktree 混说”
+    - “审查时别把根工作树局部现场误当成全量审查”
+- 下一步：
+  - 后续凡遇到 review / 审查 / 最终把关任务，若仓库存在多个 worktree 或用户上下文已提到并行支线，默认先核对 worktree 范围，再决定审查结论是否能代表全量。
+
+## 2026-04-28 22:41 (Asia/Shanghai)
+- 背景：
+  - 用户确认继续执行 `docs/superpowers/plans/2026-04-28-membership-two-session-remediation.md`。
+  - 本轮只认领与我刚才 `program_admin_console` 修复链直接相关的 1-6 点；刻意不碰 7（平滑密钥轮换）和 8（本地 refresh 材料读取失败语义）。
+- 已完成：
+  - 修复公网 auth surface 外泄：
+    - `POST /api/auth/register/send-code` 不再用不同外部结果泄露“邮箱是否已注册”；已注册邮箱现在也走通用成功口径，但不会额外发邮件。
+    - `POST /api/auth/password/send-reset-code` 不再对不存在邮箱返回 `404 user_not_found`；不存在邮箱也走通用成功口径，不再暴露存在性。
+  - 修复 `trustProxy` 过宽问题：
+    - 只有当 Node 进程的直接来路是 loopback proxy 时，才信任 `X-Forwarded-For`；外部直连请求即使伪造 `X-Forwarded-For` 也不会被当成真实来源。
+  - 修复活跃设备真值口径：
+    - `active_device_count` 与设备列表现在都排除自然过期的 refresh session，不再把“已过期但未 revoke”的设备算成仍在线。
+  - 修复控制台列表误导：
+    - 用户列表不再直接只展示原始 `membership_plan`；当当前有效态与原始设置不一致时，会显示当前未生效态并同时标明“原始 member”等来源信息。
+  - 修复 deploy/public smoke 边界：
+    - `deployProgramAdminRemote.ps1` 现在会明确输出 `LOOPBACK_SMOKE` 与 `PUBLIC_HTTPS_SMOKE` 状态。
+    - public HTTPS smoke 新增显式检查 `/api/admin/session` 不可公网访问，不再只锁 `/admin`。
+  - 同步更新 `program_admin_console/README.md`，把 deploy/public smoke 的新边界写清。
+- 已做验证：
+  - `npm --prefix program_admin_console run test:server-runtime`
+    - 结果：退出码 `0`
+  - `npm --prefix program_admin_console run test:store`
+    - 结果：退出码 `0`
+  - `npm --prefix program_admin_console run test:server`
+    - 结果：退出码 `0`
+  - `npm --prefix program_admin_console run test:ui`
+    - 结果：退出码 `0`
+  - `npm --prefix program_admin_console run test:deploy-script`
+    - 结果：退出码 `0`
+- 本轮故意没碰：
+  - 错点 7：签名链平滑轮换
+  - 错点 8：本地 refresh/material 读取失败与“未登录”语义拆分
+- 远端同步状态：
+  - 本地已改，远端未同步。
+- 下一步：
+  - 若继续收口会员剩余问题，下一刀应转向 7 / 8 或由另一条 worker 线承接。

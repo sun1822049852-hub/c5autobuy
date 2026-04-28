@@ -63,6 +63,7 @@ function main() {
   const tempDir = makeTempDir();
   try {
     const scriptPath = getScriptPath();
+    const scriptSource = fs.readFileSync(scriptPath, "utf8");
     const fakeSsh = makeFakeSshScript(tempDir);
     const fakeScp = makeFakeScpScript(tempDir);
     const identityFile = path.join(tempDir, "id_ed25519");
@@ -111,6 +112,7 @@ function main() {
     assert.match(result.stdout, new RegExp(`DERIVED_SIGNING_KID=${derivedKid}`));
     assert.match(result.stdout, /CURRENT_SIGNING_KID=ed25519-2026-04/);
     assert.match(result.stdout, /REMOTE_SOURCE_DIR=\/home\/admin\/c5-program-admin-src/);
+    assert.match(result.stdout, /PUBLIC_HTTPS_SMOKE=enabled/);
 
     const runtimeResult = spawnSync("powershell.exe", [
       "-NoProfile",
@@ -136,6 +138,8 @@ function main() {
 
     assert.notEqual(runtimeResult.status, 0, "expected fake remote deploy stop to abort the script");
     assert.match(runtimeResult.stderr || runtimeResult.stdout, /stop after remote deploy script upload/);
+    assert.match(scriptSource, /base_url \+ "\/api\/admin\/session"/);
+    assert.match(scriptSource, /PUBLIC_HTTPS_SMOKE=disabled/);
 
     const generatedScripts = fs.readdirSync(runtimeDir)
       .filter((entry) => /^deploy_program_admin_remote_.*\.sh$/.test(entry))

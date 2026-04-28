@@ -217,6 +217,13 @@ function run() {
       deviceId: "device-a",
       ttlDays: 10
     });
+    const expiredSession = store.createRefreshSession({
+      userId: alice.id,
+      deviceId: "device-expired",
+      ttlDays: 10
+    });
+    store.db.prepare("UPDATE refresh_session SET expires_at = ? WHERE id = ?")
+      .run("2026-01-01T00:00:00.000Z", expiredSession.id);
     const listedUsers = store.listUsersWithEntitlements();
     const listedAlice = listedUsers.find((item) => item.username === "alice");
     const listedMember = listedUsers.find((item) => item.username === "member");
@@ -229,6 +236,10 @@ function run() {
     assert.equal(listedMember.active_device_count, 0);
     assert.equal(listedBlankExpiryMember.entitlements.membership_plan, "inactive");
     assert.deepEqual(listedBlankExpiryMember.entitlements.permissions, []);
+    assert.deepEqual(
+      store.listUserDeviceSessions({userId: alice.id}).map((item) => item.device_id),
+      ["device-a"]
+    );
     const resolved = store.resolveRefreshSession({
       refreshToken: session.refresh_token,
       deviceId: "device-a"
