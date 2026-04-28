@@ -25,6 +25,7 @@ from app_backend.infrastructure.program_access.remote_control_plane_client impor
     RemoteRuntimePermit,
 )
 from app_backend.infrastructure.program_access.remote_entitlement_gateway import RemoteEntitlementGateway
+from app_backend.infrastructure.program_access.secret_store import SecretDecryptError
 
 
 def test_remote_gateway_login_persists_verified_snapshot_and_rotated_refresh_token(tmp_path: Path) -> None:
@@ -811,6 +812,43 @@ def test_remote_gateway_refresh_maps_remote_unauthorized_to_guarded_summary(tmp_
     assert result.summary.runtime_state == "stopped"
 
 
+def test_remote_gateway_refresh_distinguishes_local_refresh_material_read_failure(tmp_path: Path) -> None:
+    private_key = Ed25519PrivateKey.generate()
+    kid = derive_key_id(private_key.public_key())
+    verifier = EntitlementVerifier(key_cache_path=_write_public_key(tmp_path, private_key))
+    cached_snapshot = _build_snapshot(feature_enabled=True, runtime_state="running")
+    secret_store = _ExplodingSecretStore(error=SecretDecryptError("decrypt failed"))
+    credential_store = _MemoryCredentialStore(
+        ProgramCredentialBundle(
+            device_id="device-alpha",
+            refresh_credential_ref="secret:broken",
+            entitlement_snapshot=cached_snapshot,
+            entitlement_signature=_sign_snapshot(private_key, cached_snapshot),
+            entitlement_kid=kid,
+            last_error_code=None,
+        )
+    )
+    gateway = RemoteEntitlementGateway(
+        remote_client=_RemoteClientStub(),
+        verifier=verifier,
+        credential_store=credential_store,
+        secret_store=secret_store,
+        device_id_store=_StaticDeviceIdStore("device-alpha"),
+        stage="packaged_release",
+    )
+
+    result = gateway.refresh(reason="scheduler")
+    stored_bundle = credential_store.load()
+
+    assert result.accepted is False
+    assert result.code == "refresh_credential_invalid"
+    assert result.message == "本地授权材料读取失败，请重新登录程序会员"
+    assert result.summary.last_error_code == "refresh_credential_invalid"
+    assert result.summary.auth_state == "active"
+    assert result.summary.username == "alice"
+    assert stored_bundle.refresh_credential_ref == "secret:broken"
+
+
 def test_remote_gateway_refresh_success_rotates_refresh_token_and_cleans_old_ref(tmp_path: Path) -> None:
     private_key = Ed25519PrivateKey.generate()
     verifier = EntitlementVerifier(key_cache_path=_write_public_key(tmp_path, private_key))
@@ -1166,6 +1204,22 @@ class _MemorySecretStore:
     def delete(self, ref: str) -> None:
         self.deleted_refs.append(ref)
         self._values.pop(ref, None)
+
+
+@dataclass
+class _ExplodingSecretStore:
+    error: Exception
+
+    def put(self, secret: str) -> str:
+        _ = secret
+        return "secret:broken"
+
+    def get(self, ref: str) -> str:
+        _ = ref
+        raise self.error
+
+    def delete(self, ref: str) -> None:
+        _ = ref
 
 
 @dataclass(frozen=True)

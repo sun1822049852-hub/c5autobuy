@@ -36,6 +36,7 @@ function getMailConfig(env = process.env) {
     runtimePermitTtlSeconds: toNumber(env.PROGRAM_ADMIN_RUNTIME_PERMIT_TTL_SECONDS, 120),
     keyId: toText(env.PROGRAM_ADMIN_SIGNING_KID),
     privateKeyFile: toText(env.PROGRAM_ADMIN_PRIVATE_KEY_FILE),
+    publicKeySetFile: toText(env.PROGRAM_ADMIN_PUBLIC_KEY_SET_FILE),
     provider: "qq",
     fromName: toText(env.MAIL_FROM_NAME) || "C5 交易助手",
     fromAddress,

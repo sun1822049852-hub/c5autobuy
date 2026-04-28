@@ -5436,3 +5436,34 @@
   - 本地已改，远端未同步。
 - 下一步：
   - 若继续收口会员剩余问题，下一刀应转向 7 / 8 或由另一条 worker 线承接。
+
+## 2026-04-28 23:05 (Asia/Shanghai)
+- 背景：
+  - 用户进一步指出：根工作树里的 7（签名链平滑轮换闭环）和 8（本地 refresh/material 读取失败语义拆分）其实还没收口。
+  - 已先核对根工作树与 `.worktrees/membership-secondary-hardening` 的差异，确认我之前说“7/8 已改”只对独立 worktree 成立，不对根工作树成立。
+- 已完成：
+  - 将 7 / 8 从独立 worktree 回灌到根工作树：
+    - `7`：
+      - control plane `GET /api/auth/public-key` 不再只发单个 `kid + public_key_pem`，还可发布轮换窗口里的 `keys` 集合。
+      - signer 新增 `PROGRAM_ADMIN_PUBLIC_KEY_SET_FILE`，可继续发布旧公钥集合，形成“新私钥签发 + 新旧公钥都可验”的过渡窗口。
+      - 桌面端 remote client 新增 `fetch_verifier_key_set()`，gateway 刷新本地 verifier cache 时优先拉完整 key set，不再只拉单个 `public_key_pem`。
+    - `8`：
+      - 本地 secret/material 读取失败不再吞成“像是没 token”。
+      - gateway、scheduler、`/program-auth/status` 现在会保留 `refresh_credential_invalid` 语义，不再误报成 `program_auth_required`。
+  - 同步补齐根工作树 focused 测试：
+    - backend：覆盖多 key 发布 / verifier 刷新 / 本地材料读取失败语义
+    - control plane：覆盖 `/api/auth/public-key` 的轮换窗口多 key 契约
+  - 文档同步：
+    - `program_admin_console/README.md` 已补 `PROGRAM_ADMIN_PUBLIC_KEY_SET_FILE` 与平滑轮换口径
+    - `docs/agent/memory.md` 已补 7 / 8 的稳定约束
+- 已做验证：
+  - `C:/Users/18220/Desktop/C5autobug更新接口 - 副本 (2)/.venv/Scripts/python.exe -m pytest -q tests/backend/test_remote_control_plane_client.py tests/backend/test_remote_entitlement_gateway.py tests/backend/test_program_access_refresh_scheduler.py tests/backend/test_program_auth_routes.py`
+    - 结果：`68 passed`
+  - `npm --prefix program_admin_console run test:server`
+    - 结果：退出码 `0`
+- README 核对：
+  - 根 `README.md` 已核对，本次无需改动。
+- 远端同步状态：
+  - 本地已改，远端未同步。
+- 下一步：
+  - 将本次根工作树 7 / 8 回灌结果提交。

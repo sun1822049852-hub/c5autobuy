@@ -31,6 +31,41 @@ async def test_program_auth_status_returns_local_pass_through_summary(client) ->
     }
 
 
+async def test_program_auth_status_preserves_local_material_failure_summary(tmp_path: Path) -> None:
+    gateway = _StubProgramAccessGateway()
+    gateway.summary = ProgramAccessSummary(
+        mode="remote_entitlement",
+        stage="packaged_release",
+        guard_enabled=True,
+        message="本地授权材料读取失败，请重新登录程序会员",
+        registration_flow_version=3,
+        username="alice",
+        auth_state="active",
+        runtime_state="stopped",
+        grace_expires_at=None,
+        last_error_code="refresh_credential_invalid",
+    )
+    app = _create_packaged_release_app(tmp_path, gateway)
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/program-auth/status")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "mode": "remote_entitlement",
+        "stage": "packaged_release",
+        "guard_enabled": True,
+        "message": "本地授权材料读取失败，请重新登录程序会员",
+        "registration_flow_version": 3,
+        "username": "alice",
+        "auth_state": "active",
+        "runtime_state": "stopped",
+        "grace_expires_at": None,
+        "last_error_code": "refresh_credential_invalid",
+    }
+
+
 async def test_program_auth_login_returns_structured_not_ready_error(client) -> None:
     response = await client.post(
         "/program-auth/login",

@@ -10,6 +10,8 @@ from app_backend.application.program_access import (
     PROGRAM_REGISTERED_BUT_NOT_MEMBER_MESSAGE,
     PROGRAM_AUTH_REQUIRED_CODE,
     PROGRAM_AUTH_REQUIRED_MESSAGE,
+    PROGRAM_REFRESH_CREDENTIAL_INVALID_CODE,
+    PROGRAM_REFRESH_CREDENTIAL_INVALID_MESSAGE,
     PROGRAM_FEATURE_NOT_ENABLED_CODE,
     PROGRAM_FEATURE_NOT_ENABLED_MESSAGE,
     PROGRAM_PERMIT_DENIED_CODE,
@@ -120,8 +122,10 @@ class RemoteEntitlementGateway:
         _ = reason
         bundle = self._credential_store.load()
         envelope = self._load_verified_envelope(bundle)
-        refresh_token = self._read_refresh_token(bundle)
+        refresh_token, refresh_token_error = self._read_refresh_token(bundle)
         if not refresh_token:
+            if refresh_token_error:
+                return self._reject_with_code(refresh_token_error, clear_auth=False)
             if envelope.invalid:
                 return self._reject_with_code(PROGRAM_SNAPSHOT_INVALID_CODE, clear_auth=True)
             return self._reject_with_code(PROGRAM_AUTH_REQUIRED_CODE, clear_auth=True)
@@ -136,8 +140,10 @@ class RemoteEntitlementGateway:
 
     def logout(self) -> ProgramAccessActionResult:
         bundle = self._credential_store.load()
-        refresh_token = self._read_refresh_token(bundle)
+        refresh_token, refresh_token_error = self._read_refresh_token(bundle)
         previous_ref = bundle.refresh_credential_ref
+        if refresh_token_error:
+            return self._reject_with_code(refresh_token_error, clear_auth=False)
         if not refresh_token:
             self._credential_store.clear()
             self._cleanup_previous_refresh_ref(previous_ref=previous_ref, next_ref=None)
@@ -328,8 +334,14 @@ class RemoteEntitlementGateway:
                 message=_feature_message_for_action(action),
             )
 
-        refresh_token = self._read_refresh_token(bundle)
+        refresh_token, refresh_token_error = self._read_refresh_token(bundle)
         if not refresh_token:
+            if refresh_token_error:
+                action_result = self._reject_with_code(refresh_token_error, clear_auth=False)
+                return ProgramAccessDecision.deny(
+                    code=action_result.code or PROGRAM_REFRESH_CREDENTIAL_INVALID_CODE,
+                    message=action_result.message or PROGRAM_REFRESH_CREDENTIAL_INVALID_MESSAGE,
+                )
             action_result = self._reject_with_code(PROGRAM_AUTH_REQUIRED_CODE, clear_auth=True)
             return ProgramAccessDecision.deny(
                 code=action_result.code or PROGRAM_AUTH_REQUIRED_CODE,
@@ -428,6 +440,13 @@ class RemoteEntitlementGateway:
         return verification.snapshot
 
     def _refresh_public_key_cache(self) -> bool:
+        fetch_key_cache = getattr(self._remote_client, "fetch_verifier_key_set", None)
+        if callable(fetch_key_cache):
+            try:
+                self._verifier.replace_key_cache(fetch_key_cache())
+            except Exception:
+                return False
+            return True
         fetch_public_key = getattr(self._remote_client, "fetch_public_key_pem", None)
         if not callable(fetch_public_key):
             return False
@@ -560,14 +579,14 @@ class RemoteEntitlementGateway:
         except Exception:
             return
 
-    def _read_refresh_token(self, bundle: ProgramCredentialBundle) -> str | None:
+    def _read_refresh_token(self, bundle: ProgramCredentialBundle) -> tuple[str | None, str | None]:
         ref = bundle.refresh_credential_ref
         if not isinstance(ref, str) or not ref:
-            return None
+            return None, None
         try:
-            return self._secret_store.get(ref)
+            return self._secret_store.get(ref), None
         except (SecretNotFoundError, SecretStoreReadError, SecretDecryptError):
-            return None
+            return None, PROGRAM_REFRESH_CREDENTIAL_INVALID_CODE
 
     def _build_summary(self, bundle: ProgramCredentialBundle) -> ProgramAccessSummary:
         envelope = self._load_verified_envelope(bundle)
@@ -747,6 +766,8 @@ def _should_clear_auth_on_logout_error(error: Exception) -> bool:
 def _code_message(code: str | None) -> str:
     if code == PROGRAM_AUTH_REQUIRED_CODE:
         return PROGRAM_AUTH_REQUIRED_MESSAGE
+    if code == PROGRAM_REFRESH_CREDENTIAL_INVALID_CODE:
+        return PROGRAM_REFRESH_CREDENTIAL_INVALID_MESSAGE
     if code == PROGRAM_FEATURE_NOT_ENABLED_CODE:
         return PROGRAM_FEATURE_NOT_ENABLED_MESSAGE
     if code == PROGRAM_PERMIT_DENIED_CODE:

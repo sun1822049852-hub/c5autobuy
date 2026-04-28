@@ -38,9 +38,37 @@ def test_refresh_scheduler_trigger_now_converts_gateway_exception_to_guarded_res
     assert result.summary.last_error_code == "program_refresh_failed"
 
 
+def test_refresh_scheduler_preserves_local_material_failure_result() -> None:
+    gateway = _RecordingGateway(
+        result=ProgramAccessActionResult.reject(
+            summary=ProgramAccessSummary(
+                mode="remote_entitlement",
+                stage="packaged_release",
+                guard_enabled=True,
+                message="本地授权材料读取失败，请重新登录程序会员",
+                auth_state="active",
+                runtime_state="stopped",
+                grace_expires_at=None,
+                last_error_code="refresh_credential_invalid",
+            ),
+            code="refresh_credential_invalid",
+            message="本地授权材料读取失败，请重新登录程序会员",
+        )
+    )
+    scheduler = RefreshScheduler(gateway=gateway, interval_seconds=60.0)
+
+    result = scheduler.trigger_now("local-secret-read-failed")
+
+    assert gateway.reasons == ["local-secret-read-failed"]
+    assert result.accepted is False
+    assert result.code == "refresh_credential_invalid"
+    assert result.summary.last_error_code == "refresh_credential_invalid"
+
+
 @dataclass
 class _RecordingGateway:
     raise_error: bool = False
+    result: ProgramAccessActionResult | None = None
 
     def __post_init__(self) -> None:
         self.reasons: list[str] = []
@@ -49,6 +77,8 @@ class _RecordingGateway:
         self.reasons.append(reason)
         if self.raise_error:
             raise RuntimeError("refresh exploded")
+        if self.result is not None:
+            return self.result
         return ProgramAccessActionResult.accept(
             summary=ProgramAccessSummary(
                 mode="remote_entitlement",

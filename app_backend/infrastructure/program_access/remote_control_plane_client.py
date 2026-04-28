@@ -190,6 +190,16 @@ class RemoteControlPlaneClient:
         except _InvalidResponseShapeError as exc:
             raise _invalid_response_error(payload.status_code, str(exc), payload.data) from exc
 
+    def fetch_verifier_key_set(self) -> str:
+        payload = self._get("/api/auth/public-key")
+        keys = payload.data.get("keys")
+        if isinstance(keys, list):
+            return json.dumps({"keys": keys}, ensure_ascii=False, separators=(",", ":"))
+        try:
+            return _require_str(payload.data.get("public_key_pem"), field_name="public_key_pem")
+        except _InvalidResponseShapeError as exc:
+            raise _invalid_response_error(payload.status_code, str(exc), payload.data) from exc
+
     def complete_register(
         self,
         *,

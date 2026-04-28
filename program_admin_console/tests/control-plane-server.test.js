@@ -1,4 +1,5 @@
 const assert = require("node:assert/strict");
+const crypto = require("node:crypto");
 const fs = require("node:fs");
 const http = require("node:http");
 const os = require("node:os");
@@ -232,6 +233,12 @@ async function readRuntimeRevoke(stream, {timeoutMs = 1000} = {}) {
   assert.fail("expected runtime.revoke event before timeout");
 }
 
+function deriveKeyId(privateKey) {
+  const publicDer = crypto.createPublicKey(privateKey).export({type: "spki", format: "der"});
+  const fingerprint = crypto.createHash("sha256").update(publicDer).digest("base64url");
+  return `ed25519:${fingerprint.slice(0, 32)}`;
+}
+
 async function startServer(options = {}) {
   const tempDir = makeTempDir();
   const sentMessages = [];
@@ -392,6 +399,56 @@ async function main() {
     assert.ok([404, 405].includes(registerAfterFailedSend.status));
   } finally {
     await stopServer(failedMailCtx);
+  }
+
+  const rotationDir = makeTempDir();
+  const currentSigningKey = crypto.generateKeyPairSync("ed25519").privateKey;
+  const previousSigningKey = crypto.generateKeyPairSync("ed25519").privateKey;
+  const currentPrivateKeyPath = path.join(rotationDir, "entitlement-current.pem");
+  const overlapKeySetPath = path.join(rotationDir, "entitlement-overlap.jwks.json");
+  fs.writeFileSync(
+    currentPrivateKeyPath,
+    currentSigningKey.export({type: "pkcs8", format: "pem"}),
+    "utf8"
+  );
+  fs.writeFileSync(
+    overlapKeySetPath,
+    JSON.stringify({
+      keys: [
+        {
+          kty: "OKP",
+          crv: "Ed25519",
+          kid: deriveKeyId(previousSigningKey),
+          x: crypto.createPublicKey(previousSigningKey).export({format: "jwk"}).x
+        }
+      ]
+    }),
+    "utf8"
+  );
+  const rotationCtx = await startServer({
+    mailConfig: {
+      configured: true,
+      authCodeTtlMinutes: 5,
+      refreshSessionDays: 30,
+      adminSessionHours: 12,
+      privateKeyFile: currentPrivateKeyPath,
+      keyId: deriveKeyId(currentSigningKey),
+      publicKeySetFile: overlapKeySetPath
+    }
+  });
+  try {
+    const rotatedPublicKey = await requestJson(rotationCtx, "GET", "/api/auth/public-key");
+    assert.equal(rotatedPublicKey.status, 200);
+    assert.equal(rotatedPublicKey.body.ok, true);
+    assert.equal(rotatedPublicKey.body.kid, deriveKeyId(currentSigningKey));
+    assert.match(rotatedPublicKey.body.public_key_pem, /BEGIN PUBLIC KEY/);
+    assert.deepEqual(
+      new Set((rotatedPublicKey.body.keys || []).map((item) => item.kid)),
+      new Set([deriveKeyId(currentSigningKey), deriveKeyId(previousSigningKey)])
+    );
+  } finally {
+    await stopServer(rotationCtx);
+    fs.rmSync(rotationDir, {recursive: true, force: true});
   }
 
   const defaultKeepaliveCtx = await startServer({useDefaultRuntimeControlKeepalive: true});

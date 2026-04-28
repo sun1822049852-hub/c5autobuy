@@ -252,6 +252,7 @@ function createServer({
   const signer = createEntitlementSigner({
     privateKeyFile: config.privateKeyFile,
     keyId: config.keyId,
+    publicKeySetFile: config.publicKeySetFile,
     now,
     snapshotTtlMinutes: Number(config.snapshotTtlMinutes) || DEFAULTS.SNAPSHOT_TTL_MINUTES,
     runtimePermitTtlSeconds: Number(config.runtimePermitTtlSeconds) || DEFAULTS.RUNTIME_PERMIT_TTL_SECONDS
@@ -441,7 +442,8 @@ function createServer({
         writeJson(res, 200, {
           ok: true,
           kid: signer.keyId,
-          public_key_pem: signer.publicKeyPem
+          public_key_pem: signer.publicKeyPem,
+          keys: signer.publicJwks.keys
         });
         return;
       }

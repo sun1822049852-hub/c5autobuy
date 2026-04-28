@@ -133,5 +133,7 @@
   - 会员到期后会立即失效，而不是只测错误码映射。
   - 撤销设备后，已在线桌面端会被立即踢下线，而不是只测后续 refresh 失败。
   - control plane 发出的 runtime revoke 信号能被桌面端端到端接收并执行停机，而不是 server/client 各自单测都绿但中间链路未验。
+- 程序会员签名链又新增一条稳定闭环约束：不能只说“底层 verifier/JWKS 已支持多 key”就算平滑轮换完成；只有当 control plane 对外发布契约、桌面端公钥刷新契约、以及旧 key 过渡窗口三件事同时成立时，才能算端到端平滑轮换已收口。当前对外发布口径通过 `/api/auth/public-key` 的 `keys` 集合与 `PROGRAM_ADMIN_PUBLIC_KEY_SET_FILE` 承载。
+- 程序会员本地 refresh credential/material 读取失败又新增一条稳定语义约束：本地 secret store 读取失败、解密失败、材料损坏时，必须返回 `refresh_credential_invalid`，不得再塌成 `program_auth_required`；scheduler、`/program-auth/status`、本地 summary 都要保留“本地材料坏了，但不是没登录”的区分。
 - 只要当前仓库存在多个 git worktree，且用户问题涉及“你看的到底是哪份代码 / 是否读过 worktree / 是否检查过那条支线”，回答时必须显式区分“当前根工作树”和“独立 worktree 路径”；若只检查了根工作树，必须明确写“未检查独立 worktree”，不得把两者混说成“已看过工作树”。
 - 只要任务是审查、review、上线前复核或最终把关，且仓库里存在多个 git worktree 或上下文已出现“另一条支线 / 另一个 agent / 另一份 worktree 改动”，就不得把根工作树现场当成全量审查结果；必须补查相关 worktree，或明确声明审查范围仅覆盖已检查路径。

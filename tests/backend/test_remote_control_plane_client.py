@@ -234,6 +234,46 @@ def test_fetch_public_key_pem_maps_success_response() -> None:
     assert result == public_key_pem
 
 
+def test_fetch_verifier_key_set_prefers_overlapping_keys_array() -> None:
+    signing_key = Ed25519PrivateKey.generate()
+    old_key = Ed25519PrivateKey.generate()
+    payload = {
+        "ok": True,
+        "kid": derive_key_id(signing_key.public_key()),
+        "public_key_pem": _build_public_key_pem(signing_key),
+        "keys": [
+            {
+                "kty": "OKP",
+                "crv": "Ed25519",
+                "kid": derive_key_id(signing_key.public_key()),
+                "x": _to_base64url(signing_key.public_key().public_bytes_raw()),
+            },
+            {
+                "kty": "OKP",
+                "crv": "Ed25519",
+                "kid": derive_key_id(old_key.public_key()),
+                "x": _to_base64url(old_key.public_key().public_bytes_raw()),
+            },
+        ],
+    }
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=payload)
+
+    with httpx.Client(
+        transport=httpx.MockTransport(handler),
+        base_url="https://control-plane.test",
+    ) as http_client:
+        client = RemoteControlPlaneClient(
+            base_url="https://control-plane.test",
+            client=http_client,
+        )
+
+        result = client.fetch_verifier_key_set()
+
+    assert json.loads(result) == {"keys": payload["keys"]}
+
+
 def test_login_returns_typed_auth_bundle() -> None:
     snapshot = _build_snapshot()
 
@@ -539,6 +579,62 @@ def test_entitlement_verifier_accepts_real_node_signer_bundle(tmp_path: Path) ->
     assert result.kid == envelope["kid"]
 
 
+def test_entitlement_verifier_accepts_old_and_new_signatures_after_rotated_key_set_refresh(tmp_path: Path) -> None:
+    old_key = Ed25519PrivateKey.generate()
+    new_key = Ed25519PrivateKey.generate()
+    verifier = EntitlementVerifier(key_cache_path=_write_public_key(tmp_path, old_key))
+    old_envelope = _sign_envelope(
+        old_key,
+        _build_snapshot(),
+        kid=derive_key_id(old_key.public_key()),
+    )
+    new_envelope = _sign_envelope(
+        new_key,
+        _build_snapshot(),
+        kid=derive_key_id(new_key.public_key()),
+    )
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "ok": True,
+                "kid": derive_key_id(new_key.public_key()),
+                "public_key_pem": _build_public_key_pem(new_key),
+                "keys": [
+                    {
+                        "kty": "OKP",
+                        "crv": "Ed25519",
+                        "kid": derive_key_id(new_key.public_key()),
+                        "x": _to_base64url(new_key.public_key().public_bytes_raw()),
+                    },
+                    {
+                        "kty": "OKP",
+                        "crv": "Ed25519",
+                        "kid": derive_key_id(old_key.public_key()),
+                        "x": _to_base64url(old_key.public_key().public_bytes_raw()),
+                    },
+                ],
+            },
+        )
+
+    with httpx.Client(
+        transport=httpx.MockTransport(handler),
+        base_url="https://control-plane.test",
+    ) as http_client:
+        client = RemoteControlPlaneClient(
+            base_url="https://control-plane.test",
+            client=http_client,
+        )
+
+        assert verifier.verify(old_envelope, now=FIXED_NOW).ok is True
+        assert verifier.verify(new_envelope, now=FIXED_NOW).reason == "kid_unknown"
+        verifier.replace_key_cache(client.fetch_verifier_key_set())
+
+    assert verifier.verify(old_envelope, now=FIXED_NOW).ok is True
+    assert verifier.verify(new_envelope, now=FIXED_NOW).ok is True
+
+
 def _write_public_key(tmp_path: Path, private_key: Ed25519PrivateKey) -> Path:
     pem_path = tmp_path / "control-plane-public.pem"
     pem_path.write_bytes(
@@ -672,3 +768,10 @@ def _stable_stringify(value: object) -> str:
 
 def _to_base64url(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
+
+
+def _build_public_key_pem(private_key: Ed25519PrivateKey) -> str:
+    return private_key.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode("utf-8")

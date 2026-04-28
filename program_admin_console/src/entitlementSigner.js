@@ -54,9 +54,86 @@ function resolveKeyId(privateKey, keyId = "") {
   return explicitKeyId || derivedKeyId;
 }
 
+function publicKeyToPem(publicKey) {
+  return publicKey.export({type: "spki", format: "pem"}).toString("utf8");
+}
+
+function publicKeyToJwk(publicKey, keyId = "") {
+  const jwk = publicKey.export({format: "jwk"});
+  return {
+    kty: "OKP",
+    crv: "Ed25519",
+    kid: toText(keyId) || deriveKeyId(publicKey),
+    x: toText(jwk && jwk.x)
+  };
+}
+
+function parsePublishedKeySet(rawText = "") {
+  const normalized = toText(rawText);
+  if (!normalized) {
+    return [];
+  }
+  if (normalized.includes("BEGIN PUBLIC KEY")) {
+    const publicKey = crypto.createPublicKey(normalized);
+    return [{
+      kid: deriveKeyId(publicKey),
+      publicKey
+    }];
+  }
+  const payload = JSON.parse(normalized);
+  const keys = Array.isArray(payload && payload.keys) ? payload.keys : [];
+  return keys.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+    if (toText(entry.kty) !== "OKP" || toText(entry.crv) !== "Ed25519" || !toText(entry.x)) {
+      return [];
+    }
+    const publicKey = crypto.createPublicKey({
+      key: {
+        kty: "OKP",
+        crv: "Ed25519",
+        x: toText(entry.x)
+      },
+      format: "jwk"
+    });
+    const kid = toText(entry.kid) || deriveKeyId(publicKey);
+    return [{kid, publicKey}];
+  });
+}
+
+function resolvePublishedKeys({
+  publicKey,
+  keyId = "",
+  publicKeySetFile = ""
+} = {}) {
+  const keysByKid = new Map();
+  const currentKeyId = toText(keyId) || deriveKeyId(publicKey);
+  keysByKid.set(currentKeyId, publicKey);
+  const explicitPath = toText(publicKeySetFile);
+  if (explicitPath) {
+    if (!fs.existsSync(explicitPath)) {
+      throw new Error(`public key set not found: ${explicitPath}`);
+    }
+    const rawText = fs.readFileSync(explicitPath, "utf8");
+    for (const entry of parsePublishedKeySet(rawText)) {
+      if (!keysByKid.has(entry.kid)) {
+        keysByKid.set(entry.kid, entry.publicKey);
+      }
+    }
+  }
+  return [...keysByKid.entries()].map(([kid, candidatePublicKey]) => ({
+    kid,
+    publicKey: candidatePublicKey,
+    publicKeyPem: publicKeyToPem(candidatePublicKey),
+    jwk: publicKeyToJwk(candidatePublicKey, kid)
+  }));
+}
+
 function createEntitlementSigner({
   privateKeyFile = "",
   keyId = "",
+  publicKeySetFile = "",
   iss = "c5-control-plane",
   aud = "c5-client",
   now = () => new Date(),
@@ -66,7 +143,12 @@ function createEntitlementSigner({
   const privateKey = resolvePrivateKey(privateKeyFile);
   const publicKey = crypto.createPublicKey(privateKey);
   const resolvedKid = resolveKeyId(privateKey, keyId);
-  const publicKeyPem = publicKey.export({type: "spki", format: "pem"}).toString("utf8");
+  const publicKeyPem = publicKeyToPem(publicKey);
+  const publishedKeys = resolvePublishedKeys({
+    publicKey,
+    keyId: resolvedKid,
+    publicKeySetFile
+  });
 
   function signSnapshot(snapshot) {
     return crypto.sign(null, Buffer.from(stableStringify(snapshot)), privateKey).toString("base64");
@@ -75,6 +157,9 @@ function createEntitlementSigner({
   return {
     keyId: resolvedKid,
     publicKeyPem,
+    publicJwks: {
+      keys: publishedKeys.map((entry) => entry.jwk)
+    },
     issueBundle({
       user = null,
       deviceId = "",

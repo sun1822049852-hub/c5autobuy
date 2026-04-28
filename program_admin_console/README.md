@@ -60,6 +60,7 @@ powershell -ExecutionPolicy Bypass -File program_admin_console/tools/deployProgr
 如果这轮改动命中注册、签名、公钥链路，AI 还应额外确认：
 
 - `GET /api/auth/public-key` 返回的 `kid` 与脚本输出的 `DERIVED_SIGNING_KID` 一致
+- 若当前处于密钥轮换窗口，`GET /api/auth/public-key` 返回的 `keys` 集合里还应同时包含旧 `kid`
 - 额外开放公网 `HTTPS` smoke 时，必须显式验证 `/admin` 与 `/api/admin/*` 仍不可公网访问
 - 脚本输出需要明确区分 `LOOPBACK_SMOKE=passed` 与 `PUBLIC_HTTPS_SMOKE=passed|disabled`
 - 必要时再做一次 `register/complete` 深 smoke，而不是只看 `health`
@@ -187,6 +188,7 @@ npm --prefix program_admin_console start
 - `PROGRAM_ADMIN_RUNTIME_PERMIT_TTL_SECONDS`
 - `PROGRAM_ADMIN_SIGNING_KID`
 - `PROGRAM_ADMIN_PRIVATE_KEY_FILE`
+- `PROGRAM_ADMIN_PUBLIC_KEY_SET_FILE`（可选；用于轮换窗口继续发布旧公钥，格式可为单个 PEM 公钥或 JWKS）
 - `MAIL_FROM`
 - `MAIL_FROM_NAME`（默认 `C5 交易助手`）
 - `QQ_SMTP_HOST`（默认 `smtp.qq.com`）
@@ -196,6 +198,18 @@ npm --prefix program_admin_console start
 - `QQ_SMTP_PASS`
 
 仅当 `MAIL_FROM + QQ_SMTP_USER + QQ_SMTP_PASS` 都已配置时，注册验证码与找回密码验证码才会真正发信；否则 `/api/auth/register/send-code` 与 `/api/auth/password/send-reset-code` 会分别返回注册链/找回密码链对应的“邮件服务不可用”错误。
+
+### 签名密钥平滑轮换
+
+如果要从旧签名私钥切到新私钥，推荐最小步骤如下：
+
+1. 把 `PROGRAM_ADMIN_PRIVATE_KEY_FILE` 切到新私钥
+2. 让 `PROGRAM_ADMIN_SIGNING_KID` 与新私钥真实派生值一致
+3. 在 `PROGRAM_ADMIN_PUBLIC_KEY_SET_FILE` 中继续发布旧公钥
+4. 在一个 access bundle TTL 窗口内，同时保持“新私钥签发 + 新旧公钥都可验”
+5. 等旧签名自然老化后，再把旧公钥从 `PROGRAM_ADMIN_PUBLIC_KEY_SET_FILE` 中移除
+
+这样做的目的，是避免客户端刚刷新到新 key set 时，仍在本地缓存里的旧签名 bundle 直接被打成 `kid_unknown`。
 
 ## 初始化或重置管理员密码（CLI）
 
