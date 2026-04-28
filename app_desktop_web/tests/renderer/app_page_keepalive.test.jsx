@@ -271,7 +271,7 @@ describe("app page keepalive", () => {
     expect(countCalls(harness.calls, "/stats/account-capability")).toBe(1);
   });
 
-  it("does not immediately refetch diagnostics when reopening the diagnostics page", async () => {
+  it("resyncs diagnostics once when reopening the diagnostics page", async () => {
     const harness = createFetchHarness();
     const user = userEvent.setup();
     installDesktopApp(harness.fetchImpl);
@@ -289,10 +289,10 @@ describe("app page keepalive", () => {
 
     await user.click(screen.getByRole("button", { name: "通用诊断" }));
     await screen.findByRole("complementary", { name: "通用诊断面板" });
-    expect(countCalls(harness.calls, "/diagnostics/sidebar")).toBe(1);
+    expect(countCalls(harness.calls, "/diagnostics/sidebar")).toBe(2);
   });
 
-  it("warms hidden top-level pages and their first data requests in the background after home becomes interactive", async () => {
+  it("warms hidden top-level pages in the background but leaves diagnostics idle until visible", async () => {
     const harness = createFetchHarness();
     installDesktopApp(harness.fetchImpl, {
       pageWarmupEnabled: true,
@@ -306,7 +306,7 @@ describe("app page keepalive", () => {
       expect(countCallsWithSearch(harness.calls, "/app/bootstrap", "")).toBe(1);
       expect(countCalls(harness.calls, "/stats/query-items")).toBe(1);
       expect(countCalls(harness.calls, "/stats/account-capability")).toBe(1);
-      expect(countCalls(harness.calls, "/diagnostics/sidebar")).toBeGreaterThanOrEqual(1);
+      expect(countCalls(harness.calls, "/diagnostics/sidebar")).toBe(0);
       expect(countCalls(harness.calls, "/query-configs")).toBeGreaterThanOrEqual(1);
       expect(countCalls(harness.calls, "/query-configs/config-1")).toBeGreaterThanOrEqual(1);
     });

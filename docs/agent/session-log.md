@@ -5210,3 +5210,32 @@
 - 下一步：
   - 若继续深挖现场 backlog，可直接读取新的 `purchase_runtime.status` trace，拆账看 `stats_flush` 与 `list_query_item_stats` 各自占比。
   - 若现场真实 backlog 仍大到 250ms 预算内来不及追平，再考虑第二刀：给未 flush 完的 pending stats 做只读 overlay，而不是把预算重新放大。
+
+## 2026-04-28 19:49 (Asia/Shanghai)
+- 背景：
+  - 用户要求把工作区剩余改动一并提交，不再只保留 `/purchase-runtime/status` 这一刀。
+  - 本轮待提交主体是两条已落地但尚未入库的主线：
+    - embedded runtime push
+    - diagnostics 页改为 dedicated websocket push
+- 已完成：
+  - 对剩余改动重新按原主线口径做 fresh focused 验证，没有把已知无关噪音混进来。
+  - 会话日志已补本条收口记录，准备将剩余工作树整体提交。
+- 已做验证：
+  - backend：
+    - `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_task_manager.py tests/backend/test_diagnostics_routes.py tests/backend/test_diagnostics_websocket.py -q`
+    - 结果：`13 passed`
+  - diagnostics renderer：
+    - `npm --prefix app_desktop_web test -- tests/renderer/diagnostics_client.test.js tests/renderer/diagnostics_sidebar.test.jsx --run`
+    - 结果：`12 passed`
+    - `npm --prefix app_desktop_web test -- tests/renderer/app_page_keepalive.test.jsx --run -t "resyncs diagnostics once when reopening the diagnostics page|warms hidden top-level pages in the background but leaves diagnostics idle until visible"`
+    - 结果：`2 passed, 3 skipped`
+  - embedded/runtime push renderer：
+    - `npm --prefix app_desktop_web test -- tests/electron/electron_remote_mode.test.js tests/renderer/app_remote_bootstrap.test.jsx tests/renderer/remote_runtime_shell.test.jsx tests/renderer/purchase_system_page.test.jsx --run`
+    - 结果：`80 passed`
+    - `npm --prefix app_desktop_web test -- tests/renderer/runtime_connection_manager.test.js --run -t "connects runtime websocket updates after bootstrap and applies them into store slices|marks the connection stale and rehydrates from bootstrap when runtime websocket requests resync|keeps existing ui and draft state when bootstrap fails and only marks the connection stale|handles synchronous WebSocket constructor failures without throwing through the renderer"`
+    - 结果：`4 passed, 23 skipped`
+- 当前进度：
+  - 剩余改动已完成 fresh focused 验证，可整体提交。
+  - `remote_runtime_shell.test.jsx` 运行时仍打印 React `act(...)` warning，但命令退出码为 `0`，本轮未把它扩成独立修复任务。
+- 下一步：
+  - 将当前剩余工作区（含 diagnostics websocket、embedded runtime push、相关测试与文档）整体提交。

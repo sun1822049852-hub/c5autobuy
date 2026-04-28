@@ -28,6 +28,31 @@ function createDeferred() {
   return { promise, resolve, reject };
 }
 
+class FakeWebSocket {
+  static instances = [];
+
+  constructor(url) {
+    this.url = url;
+    this.closed = false;
+    FakeWebSocket.instances.push(this);
+  }
+
+  emitOpen() {
+    this.onopen?.();
+  }
+
+  emit(payload) {
+    this.onmessage?.({
+      data: JSON.stringify(payload),
+    });
+  }
+
+  close() {
+    this.closed = true;
+    this.onclose?.();
+  }
+}
+
 function buildShellBootstrapPayload() {
   return {
     version: 1,
@@ -282,8 +307,127 @@ function createFetchHarness({ fullBootstrapPromise = null, snapshots } = {}) {
   });
 }
 
+function countDiagnosticsCalls(fetchImpl) {
+  return fetchImpl.mock.calls.filter(
+    ([input]) => new URL(input).pathname === "/diagnostics/sidebar",
+  ).length;
+}
+
+function findDiagnosticsSocket() {
+  return FakeWebSocket.instances.find((instance) => instance.url.includes("/ws/diagnostics/sidebar")) || null;
+}
+
+function overrideVisibilityState(initialState = "visible") {
+  const originalDescriptor = Object.getOwnPropertyDescriptor(document, "visibilityState");
+  let currentState = initialState;
+  Object.defineProperty(document, "visibilityState", {
+    configurable: true,
+    get() {
+      return currentState;
+    },
+  });
+  return {
+    restore() {
+      if (originalDescriptor) {
+        Object.defineProperty(document, "visibilityState", originalDescriptor);
+        return;
+      }
+      delete document.visibilityState;
+    },
+    set(nextState) {
+      currentState = nextState;
+    },
+  };
+}
+
 
 describe("diagnostics page", () => {
+  it("loads diagnostics once, then switches to websocket push instead of steady-state polling", async () => {
+    const fetchImpl = createFetchHarness();
+    installDesktopApp(fetchImpl);
+    const originalWebSocket = window.WebSocket;
+    window.WebSocket = FakeWebSocket;
+
+    try {
+      render(<App />);
+
+      await screen.findByRole("button", { name: "通用诊断" });
+      fireEvent.click(screen.getByRole("button", { name: "通用诊断" }));
+
+      const panel = await screen.findByRole("complementary", { name: "通用诊断面板" });
+      expect(panel).toBeInTheDocument();
+      expect(countDiagnosticsCalls(fetchImpl)).toBe(1);
+      const diagnosticsSocket = findDiagnosticsSocket();
+      expect(diagnosticsSocket?.url).toBe("ws://127.0.0.1:8123/ws/diagnostics/sidebar");
+
+      diagnosticsSocket?.emitOpen();
+      const pushedSnapshot = buildDiagnosticsSnapshot();
+      pushedSnapshot.query.total_query_count = 99;
+      diagnosticsSocket?.emit(pushedSnapshot);
+
+      await waitFor(() => {
+        expect(within(panel).getByText("99")).toBeInTheDocument();
+      });
+    } finally {
+      window.WebSocket = originalWebSocket;
+      FakeWebSocket.instances = [];
+    }
+  });
+
+  it("disconnects while hidden and resyncs once before reconnecting when visible again", async () => {
+    const fetchImpl = createFetchHarness({
+      snapshots: [buildDiagnosticsSnapshot(), buildDiagnosticsSnapshot()],
+    });
+    installDesktopApp(fetchImpl);
+    const originalWebSocket = window.WebSocket;
+    const visibility = overrideVisibilityState("visible");
+    window.WebSocket = FakeWebSocket;
+
+    try {
+      render(<App />);
+
+      await screen.findByRole("button", { name: "通用诊断" });
+      fireEvent.click(screen.getByRole("button", { name: "通用诊断" }));
+
+      await screen.findByRole("complementary", { name: "通用诊断面板" });
+      expect(countDiagnosticsCalls(fetchImpl)).toBe(1);
+      const diagnosticsSocket = findDiagnosticsSocket();
+      expect(diagnosticsSocket?.url).toBe("ws://127.0.0.1:8123/ws/diagnostics/sidebar");
+
+      visibility.set("hidden");
+      await act(async () => {
+        fireEvent(document, new Event("visibilitychange"));
+      });
+
+      await waitFor(() => {
+        expect(diagnosticsSocket?.closed).toBe(true);
+      });
+
+      await act(async () => {
+        await new Promise((resolve) => {
+          window.setTimeout(resolve, 10);
+        });
+      });
+      expect(countDiagnosticsCalls(fetchImpl)).toBe(1);
+
+      visibility.set("visible");
+      await act(async () => {
+        fireEvent(document, new Event("visibilitychange"));
+      });
+
+      await waitFor(() => {
+        expect(countDiagnosticsCalls(fetchImpl)).toBe(2);
+      });
+      expect(
+        FakeWebSocket.instances.filter((instance) => instance.url.includes("/ws/diagnostics/sidebar")),
+      ).toHaveLength(2);
+    } finally {
+      visibility.restore();
+      window.WebSocket = originalWebSocket;
+      FakeWebSocket.instances = [];
+    }
+  });
+
   it("does not poll diagnostics until the diagnostics page is opened", async () => {
     const fetchImpl = createFetchHarness();
     installDesktopApp(fetchImpl);
@@ -401,30 +545,40 @@ describe("diagnostics page", () => {
     laterSnapshot.query.account_rows = [];
     laterSnapshot.query.recent_events = [];
     installDesktopApp(createFetchHarness({
-      snapshots: [initialSnapshot, laterSnapshot],
+      snapshots: [initialSnapshot],
     }));
+    const originalWebSocket = window.WebSocket;
+    window.WebSocket = FakeWebSocket;
 
-    render(<App />);
+    try {
+      render(<App />);
 
-    expect(screen.getByRole("button", { name: "账号中心" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "账号中心" })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "通用诊断" }));
-    const panel = await screen.findByRole("complementary", { name: "通用诊断面板" });
+      fireEvent.click(screen.getByRole("button", { name: "通用诊断" }));
+      const panel = await screen.findByRole("complementary", { name: "通用诊断面板" });
 
-    await waitFor(() => {
-      expect(within(panel).getByText("异常查询账号-1")).toBeInTheDocument();
-    });
-
-    await act(async () => {
-      await new Promise((resolve) => {
-        window.setTimeout(resolve, 1600);
+      await waitFor(() => {
+        expect(within(panel).getByText("异常查询账号-1")).toBeInTheDocument();
       });
-    });
 
-    expect(within(panel).getByText("异常查询账号-1")).toBeInTheDocument();
-    expect(within(panel).getAllByText("token invalid").length).toBeGreaterThan(0);
-    expect(within(panel).getByRole("button", { name: /查询事件日志/i })).toBeInTheDocument();
-    expect(within(panel).getByText("0")).toBeInTheDocument();
+      const diagnosticsSocket = findDiagnosticsSocket();
+      expect(diagnosticsSocket).toBeTruthy();
+      await act(async () => {
+        diagnosticsSocket?.emitOpen();
+        diagnosticsSocket?.emit(laterSnapshot);
+      });
+
+      expect(within(panel).getByText("异常查询账号-1")).toBeInTheDocument();
+      expect(within(panel).getAllByText("token invalid").length).toBeGreaterThan(0);
+      await fireEvent.click(within(panel).getByRole("button", { name: /查询事件日志/i }));
+      const dialog = await screen.findByRole("dialog", { name: "查询事件日志" });
+      expect(within(dialog).queryByText("查询事件-1")).not.toBeInTheDocument();
+      expect(within(dialog).getByText("暂无事件")).toBeInTheDocument();
+    } finally {
+      window.WebSocket = originalWebSocket;
+      FakeWebSocket.instances = [];
+    }
   });
 
   it("refreshes the query events modal with the latest snapshot instead of retaining stale rows", async () => {
@@ -454,35 +608,43 @@ describe("diagnostics page", () => {
       },
     ];
     installDesktopApp(createFetchHarness({
-      snapshots: [initialSnapshot, laterSnapshot],
+      snapshots: [initialSnapshot],
     }));
     const user = userEvent.setup();
+    const originalWebSocket = window.WebSocket;
+    window.WebSocket = FakeWebSocket;
 
-    render(<App />);
-    await user.click(await screen.findByRole("button", { name: "通用诊断" }));
+    try {
+      render(<App />);
+      await user.click(await screen.findByRole("button", { name: "通用诊断" }));
 
-    const panel = await screen.findByRole("complementary", { name: "通用诊断面板" });
-    await user.click(within(panel).getByRole("button", { name: /查询事件日志/i }));
+      const panel = await screen.findByRole("complementary", { name: "通用诊断面板" });
+      await user.click(within(panel).getByRole("button", { name: /查询事件日志/i }));
 
-    const dialog = await screen.findByRole("dialog", { name: "查询事件日志" });
-    expect(within(dialog).getByText("查询事件-1")).toBeInTheDocument();
-    expect(within(dialog).getByText("2026-03-25T20:00:01")).toBeInTheDocument();
-    expect(within(dialog).getByText(/异常查询账号-1 \/ 浏览器查询器/)).toBeInTheDocument();
+      const dialog = await screen.findByRole("dialog", { name: "查询事件日志" });
+      expect(within(dialog).getByText("查询事件-1")).toBeInTheDocument();
+      expect(within(dialog).getByText("2026-03-25T20:00:01")).toBeInTheDocument();
+      expect(within(dialog).getByText(/异常查询账号-1 \/ 浏览器查询器/)).toBeInTheDocument();
 
-    await act(async () => {
-      await new Promise((resolve) => {
-        window.setTimeout(resolve, 1600);
+      const diagnosticsSocket = findDiagnosticsSocket();
+      expect(diagnosticsSocket).toBeTruthy();
+      await act(async () => {
+        diagnosticsSocket?.emitOpen();
+        diagnosticsSocket?.emit(laterSnapshot);
       });
-    });
 
-    await waitFor(() => {
-      expect(within(dialog).getByText("查询事件-2")).toBeInTheDocument();
-    });
-    expect(within(dialog).getByText("2026-03-25T20:21:00")).toBeInTheDocument();
-    expect(within(dialog).getByText(/查询账号-2 \/ api查询器/)).toBeInTheDocument();
-    expect(within(dialog).queryByText("查询事件-1")).not.toBeInTheDocument();
-    expect(within(dialog).queryByText("2026-03-25T20:00:01")).not.toBeInTheDocument();
-    expect(within(dialog).getByText("查询事件日志")).toBeInTheDocument();
+      await waitFor(() => {
+        expect(within(dialog).getByText("查询事件-2")).toBeInTheDocument();
+      });
+      expect(within(dialog).getByText("2026-03-25T20:21:00")).toBeInTheDocument();
+      expect(within(dialog).getByText(/查询账号-2 \/ api查询器/)).toBeInTheDocument();
+      expect(within(dialog).queryByText("查询事件-1")).not.toBeInTheDocument();
+      expect(within(dialog).queryByText("2026-03-25T20:00:01")).not.toBeInTheDocument();
+      expect(within(dialog).getByText("查询事件日志")).toBeInTheDocument();
+    } finally {
+      window.WebSocket = originalWebSocket;
+      FakeWebSocket.instances = [];
+    }
   });
 
   it("adds an error tab that only shows error events", async () => {

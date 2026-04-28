@@ -512,6 +512,52 @@ function normalizeQueryConfigDetail(config) {
 }
 
 
+function buildComparableModeAllocations(modeAllocations) {
+  if (!Array.isArray(modeAllocations)) {
+    return [];
+  }
+
+  return modeAllocations.map((allocation) => ({
+    mode_type: allocation?.mode_type ? String(allocation.mode_type) : "",
+    target_dedicated_count: parseAllocationValue(allocation?.target_dedicated_count),
+  }));
+}
+
+
+function buildConfigDetailSyncToken(detail) {
+  const normalizedDetail = normalizeQueryConfigDetail(detail);
+  if (!normalizedDetail?.config_id) {
+    return "";
+  }
+
+  return JSON.stringify({
+    config_id: normalizedDetail.config_id,
+    description: normalizedDetail.description,
+    enabled: Boolean(normalizedDetail.enabled),
+    items: normalizedDetail.items.map((item) => ({
+      detail_max_wear: item.detail_max_wear,
+      detail_min_wear: item.detail_min_wear,
+      item_name: item.item_name ? String(item.item_name) : "",
+      manual_paused: Boolean(item.manual_paused),
+      max_price: item.max_price ?? null,
+      max_wear: item.max_wear ?? null,
+      min_wear: item.min_wear ?? null,
+      mode_allocations: buildComparableModeAllocations(item.mode_allocations),
+      query_item_id: item.query_item_id,
+      sort_order: item.sort_order ?? null,
+      updated_at: item.updated_at ? String(item.updated_at) : null,
+    })),
+    name: normalizedDetail.name,
+    updated_at: normalizedDetail.updated_at ? String(normalizedDetail.updated_at) : null,
+  });
+}
+
+
+function areConfigDetailsEquivalent(leftDetail, rightDetail) {
+  return buildConfigDetailSyncToken(leftDetail) === buildConfigDetailSyncToken(rightDetail);
+}
+
+
 function normalizeConfigDetailsById(configDetailsById) {
   if (!configDetailsById || typeof configDetailsById !== "object") {
     return {};
@@ -1134,7 +1180,7 @@ export function usePurchaseSystemPage({ client, isActive = true, warmupEnabled =
       if (isQueryConfigDetail(selectedSharedQueryConfig)) {
         const normalizedSharedDetail = normalizeQueryConfigDetail(selectedSharedQueryConfig);
 
-        if (!selectedConfigDetail || isConfigDetailStale(selectedConfigDetail, normalizedSharedDetail)) {
+        if (!selectedConfigDetail || !areConfigDetailsEquivalent(selectedConfigDetail, normalizedSharedDetail)) {
           applyConfigDetailToStore(normalizedSharedDetail);
           setLoadError("");
           setIsLoading(false);
@@ -1196,29 +1242,17 @@ export function usePurchaseSystemPage({ client, isActive = true, warmupEnabled =
   ]);
 
   useEffect(() => {
-    let active = true;
     const shouldSkipImmediateStatusRefresh = shouldBootstrapPage && shouldFetchBootstrapStatus;
 
     if (!isActive) {
-      return () => {
-        active = false;
-      };
+      return undefined;
     }
 
     if (!shouldSkipImmediateStatusRefresh) {
       refreshStatus({ silent: true });
     }
-    const timerId = window.setInterval(() => {
-      if (!active) {
-        return;
-      }
-      refreshStatus({ silent: true });
-    }, 1500);
 
-    return () => {
-      active = false;
-      window.clearInterval(timerId);
-    };
+    return undefined;
   }, [client, isActive]);
 
   const activeConfig = status.active_query_config;

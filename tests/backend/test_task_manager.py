@@ -92,3 +92,16 @@ def test_task_manager_set_error_keeps_failure_payload():
         "request_path": "/accounts/a-1/login",
         "response_text": "browser crashed",
     }
+
+
+def test_task_manager_wildcard_subscription_receives_task_changes():
+    from app_backend.workers.manager.task_manager import TaskManager
+
+    manager = TaskManager()
+    queue = manager.subscribe("*")
+
+    task = manager.create_task(task_type="login", message="创建任务")
+    payload = queue.get_nowait()
+
+    assert payload.task_id == task.task_id
+    assert payload.state == "pending"

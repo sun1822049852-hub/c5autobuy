@@ -902,6 +902,88 @@ describe("purchase system page", () => {
     });
   });
 
+  it("refreshes the purchase item list when config management changes item detail without bumping config updated_at", async () => {
+    const harness = createFetchHarness({
+      initialStatus: buildPurchaseRuntimeStatus({
+        running: true,
+        message: "运行中",
+        active_query_config: {
+          config_id: "cfg-1",
+          config_name: "白天配置",
+          state: "running",
+          message: "运行中",
+        },
+      }),
+    });
+    const runtimeStore = buildHydratedPurchaseRuntimeStore({
+      runtimeStatus: buildPurchaseRuntimeStatus({
+        running: true,
+        message: "运行中",
+        active_query_config: {
+          config_id: "cfg-1",
+          config_name: "白天配置",
+          state: "running",
+          message: "运行中",
+        },
+      }),
+    });
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+    const baseDetail = buildQueryConfigDetail("cfg-1");
+    const nextConfigDetail = {
+      ...baseDetail,
+      serverShape: "detail",
+      items: [
+        ...baseDetail.items,
+        {
+          query_item_id: "item-9",
+          config_id: "cfg-1",
+          product_url: "https://www.c5game.com/csgo/730/asset/1380979899390267009",
+          external_item_id: "1380979899390267009",
+          item_name: "Desert Eagle | Blaze",
+          market_hash_name: "Desert Eagle | Blaze (Factory New)",
+          min_wear: 0,
+          max_wear: 0.08,
+          detail_min_wear: 0,
+          detail_max_wear: 0.03,
+          max_price: 1999,
+          last_market_price: 1888.88,
+          last_detail_sync_at: "2026-03-22T12:30:00",
+          manual_paused: false,
+          mode_allocations: buildModeAllocations({ fast_api: 1 }),
+          sort_order: 2,
+          created_at: "2026-03-22T12:30:00",
+          updated_at: "2026-03-22T12:30:00",
+        },
+      ],
+    };
+
+    render(<App runtimeStore={runtimeStore} />);
+    await screen.findByText("C5 交易助手");
+
+    await user.click(screen.getByRole("button", { name: "扫货系统" }));
+    expect(await screen.findByRole("button", { name: "AK-47 | Redline" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Desert Eagle | Blaze" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "账号中心" }));
+    await screen.findByText("C5 交易助手");
+
+    act(() => {
+      runtimeStore.applyQuerySystemServer({
+        configs: [
+          nextConfigDetail,
+          { ...QUERY_CONFIGS[1], serverShape: "summary" },
+        ],
+      });
+    });
+
+    await user.click(screen.getByRole("button", { name: "扫货系统" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Desert Eagle | Blaze" })).toBeInTheDocument();
+    });
+  });
+
   it("does not immediately double-fetch purchase runtime status on first active entry", async () => {
     const harness = createFetchHarness();
     installDesktopApp(harness.fetchImpl);
@@ -1756,6 +1838,30 @@ describe("purchase system page", () => {
         call.method === "POST" && call.pathname === "/purchase-runtime/start" && call.body?.config_id === "cfg-2"
       )),
     ).toBe(true);
+  });
+
+  it("does not run 1500ms steady-state polling while purchase page stays active", async () => {
+    const harness = createFetchHarness();
+    installDesktopApp(harness.fetchImpl);
+    const user = userEvent.setup();
+
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "扫货系统" }));
+    await screen.findByRole("region", { name: "扫货运行控制台" });
+
+    const purchaseStatusCallsBeforeIdle = harness.calls.filter((call) => (
+      call.method === "GET" && call.pathname === "/purchase-runtime/status"
+    )).length;
+
+    await new Promise((resolve) => {
+      setTimeout(resolve, 1800);
+    });
+
+    const purchaseStatusCallsAfterIdle = harness.calls.filter((call) => (
+      call.method === "GET" && call.pathname === "/purchase-runtime/status"
+    )).length;
+
+    expect(purchaseStatusCallsAfterIdle).toBe(purchaseStatusCallsBeforeIdle);
   });
 
   it("stops polling purchase runtime status while the page is hidden", async () => {

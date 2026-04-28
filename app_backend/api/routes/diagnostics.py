@@ -32,11 +32,23 @@ def _task_manager(request: Request):
     return _state_attr(request, "task_manager")
 
 
-@router.get("/sidebar", response_model=SidebarDiagnosticsResponse)
-def get_sidebar_diagnostics(request: Request) -> SidebarDiagnosticsResponse:
+def _state_attr_from_app_state(app_state, name: str):
+    if not hasattr(app_state, name):
+        ensure = getattr(app_state, "ensure_runtime_full_ready", None)
+        if callable(ensure):
+            ensure()
+    return getattr(app_state, name)
+
+
+def build_sidebar_diagnostics_response_from_state(app_state) -> SidebarDiagnosticsResponse:
     payload = GetSidebarDiagnosticsUseCase(
-        _query_runtime_service(request),
-        _purchase_runtime_service(request),
-        _task_manager(request),
+        _state_attr_from_app_state(app_state, "query_runtime_service"),
+        _state_attr_from_app_state(app_state, "purchase_runtime_service"),
+        _state_attr_from_app_state(app_state, "task_manager"),
     ).execute()
     return SidebarDiagnosticsResponse.model_validate(payload)
+
+
+@router.get("/sidebar", response_model=SidebarDiagnosticsResponse)
+def get_sidebar_diagnostics(request: Request) -> SidebarDiagnosticsResponse:
+    return build_sidebar_diagnostics_response_from_state(request.app.state)

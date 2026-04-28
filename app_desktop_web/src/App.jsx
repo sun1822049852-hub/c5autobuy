@@ -221,7 +221,6 @@ export function App({ runtimeStore }) {
   const pageWarmupEnabled = Boolean(bootstrapConfig.pageWarmupEnabled);
   const diagnostics = useSidebarDiagnostics(client, {
     enabled: activeItem === "diagnostics" && fullBootstrapState.status === "ready",
-    warmupEnabled: backgroundPageWarmupStarted && fullBootstrapState.status === "ready",
   });
   const isBackendReady = bootstrapConfig.backendStatus === "ready";
 
@@ -380,8 +379,7 @@ export function App({ runtimeStore }) {
 
   useEffect(() => {
     if (
-      bootstrapConfig.backendMode !== "remote"
-      || !isBackendReady
+      !isBackendReady
       || !FULL_BOOTSTRAP_PAGE_IDS.includes(activeItem)
       || !bootstrapConfig.runtimeWebSocketUrl
       || !globalThis.WebSocket
@@ -402,7 +400,6 @@ export function App({ runtimeStore }) {
     };
   }, [
     activeItem,
-    bootstrapConfig.backendMode,
     fullBootstrapState.status,
     isBackendReady,
     bootstrapConfig.runtimeWebSocketUrl,

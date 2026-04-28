@@ -221,7 +221,7 @@ class TaskManager:
             self._subscribers[task_id].append(queue)
             snapshot = self._tasks.get(task_id)
 
-        if snapshot is not None:
+        if task_id != "*" and snapshot is not None:
             queue.put_nowait(deepcopy(snapshot))
         return queue
 
@@ -240,7 +240,7 @@ class TaskManager:
     def _publish(self, task_id: str) -> None:
         with self._lock:
             snapshot = self._tasks.get(task_id)
-            subscribers = list(self._subscribers.get(task_id, []))
+            subscribers = list(self._subscribers.get("*", [])) + list(self._subscribers.get(task_id, []))
 
         if snapshot is None:
             return

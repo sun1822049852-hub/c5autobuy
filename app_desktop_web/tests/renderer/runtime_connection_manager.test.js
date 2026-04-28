@@ -717,6 +717,110 @@ describe("runtime connection manager", () => {
     disconnect();
   });
 
+  it("marks the connection stale and rehydrates from bootstrap when runtime websocket requests resync", async () => {
+    FakeWebSocket.instances = [];
+    const store = createAppRuntimeStore();
+    const scheduledCallbacks = [];
+    const client = {
+      getAppBootstrap: vi.fn()
+        .mockResolvedValueOnce({
+          version: 5,
+          generated_at: "2026-03-31T12:34:56.000Z",
+          query_system: {
+            configs: [{ config_id: "cfg-1", name: "白天配置" }],
+            capacitySummary: { modes: {} },
+            runtimeStatus: { running: false, item_rows: [] },
+          },
+          purchase_system: {
+            runtimeStatus: { running: false, accounts: [], item_rows: [] },
+            uiPreferences: { selected_config_id: "cfg-1", updated_at: "2026-03-31T12:34:56.000Z" },
+            runtimeSettings: { per_batch_ip_fanout_limit: 1, updated_at: null },
+          },
+        })
+        .mockResolvedValueOnce({
+          version: 9,
+          generated_at: "2026-03-31T12:35:10.000Z",
+          query_system: {
+            configs: [{ config_id: "cfg-1", name: "白天配置" }],
+            capacitySummary: { modes: {} },
+            runtimeStatus: {
+              running: true,
+              config_id: "cfg-1",
+              config_name: "白天配置",
+              message: "运行中",
+              item_rows: [{ query_item_id: "item-2" }],
+            },
+          },
+          purchase_system: {
+            runtimeStatus: {
+              running: true,
+              message: "运行中",
+              accounts: [{ account_id: "acc-1" }],
+              item_rows: [],
+            },
+            uiPreferences: { selected_config_id: "cfg-1", updated_at: "2026-03-31T12:35:10.000Z" },
+            runtimeSettings: { per_batch_ip_fanout_limit: 2, updated_at: "2026-03-31T12:35:10.000Z" },
+          },
+        }),
+    };
+    const manager = createRuntimeConnectionManager({
+      client,
+      now: () => "2026-03-31T12:35:11.000Z",
+      schedule: (callback) => {
+        scheduledCallbacks.push(callback);
+        return scheduledCallbacks.length;
+      },
+      store,
+    });
+
+    await manager.bootstrap();
+    const disconnect = manager.connectRuntimeUpdates({
+      websocketUrl: "wss://api.example.com/ws/runtime",
+      WebSocketImpl: FakeWebSocket,
+      reconnectDelayMs: 1000,
+    });
+
+    expect(FakeWebSocket.instances).toHaveLength(1);
+
+    FakeWebSocket.instances[0].emitOpen();
+    FakeWebSocket.instances[0].emitMessage({
+      version: 6,
+      event: "runtime.resync_required",
+      updated_at: "2026-03-31T12:35:05.000Z",
+      payload: {},
+    });
+
+    expect(store.getSnapshot().connection).toMatchObject({
+      state: "stale",
+      stale: true,
+    });
+    expect(client.getAppBootstrap).toHaveBeenCalledTimes(1);
+    expect(scheduledCallbacks).toHaveLength(2);
+
+    await act(async () => {
+      scheduledCallbacks[0]?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(client.getAppBootstrap).toHaveBeenCalledTimes(2);
+    expect(store.getSnapshot().querySystem.server.runtimeStatus).toEqual({
+      running: true,
+      config_id: "cfg-1",
+      config_name: "白天配置",
+      message: "运行中",
+      item_rows: [{ query_item_id: "item-2" }],
+    });
+    expect(store.getSnapshot().connection).toMatchObject({
+      state: "connected",
+      stale: false,
+      lastEventVersion: 9,
+      lastError: "",
+    });
+
+    disconnect();
+  });
+
   it("hydrates bootstrap server state and connection metadata from /app/bootstrap", async () => {
     const store = createAppRuntimeStore();
     const client = {

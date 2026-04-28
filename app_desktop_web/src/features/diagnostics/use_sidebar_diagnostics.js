@@ -1,8 +1,5 @@
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
-
-const FOREGROUND_POLL_MS = 1500;
-const BACKGROUND_POLL_MS = 5000;
 const MAX_RETAINED_EVENT_ROWS = 500;
 const MAX_RETAINED_ACCOUNT_ROWS = 40;
 const MAX_RETAINED_LOGIN_TASKS = 40;
@@ -277,20 +274,32 @@ function mergeDiagnosticsSnapshot(previousSnapshot, nextSnapshot) {
 }
 
 
-export function useSidebarDiagnostics(client, { enabled = true, warmupEnabled = false } = {}) {
+export function useSidebarDiagnostics(client, { enabled = true } = {}) {
   const [state, setState] = useState({
     error: "",
     isLoading: true,
     isRefreshing: false,
     snapshot: null,
   });
+  const [isDocumentVisible, setIsDocumentVisible] = useState(() => document.visibilityState !== "hidden");
   const requestInFlightRef = useRef(false);
   const snapshotRef = useRef(null);
-  const shouldLoadSnapshot = enabled || warmupEnabled;
+  const streamCleanupRef = useRef(() => {});
+  const shouldLoadSnapshot = enabled;
 
   useEffect(() => {
     snapshotRef.current = state.snapshot;
   }, [state.snapshot]);
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      setIsDocumentVisible(document.visibilityState !== "hidden");
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, []);
 
   const loadSnapshot = useEffectEvent(async ({ background = false } = {}) => {
     if (!shouldLoadSnapshot || !client || requestInFlightRef.current) {
@@ -328,73 +337,75 @@ export function useSidebarDiagnostics(client, { enabled = true, warmupEnabled = 
     }
   });
 
+  const stopStream = () => {
+    const cleanup = streamCleanupRef.current;
+    streamCleanupRef.current = () => {};
+    cleanup?.();
+  };
+
   useEffect(() => {
-    if (!shouldLoadSnapshot) {
+    if (!client || !enabled) {
+      stopStream();
       return undefined;
     }
 
-    if (!enabled) {
-      if (!snapshotRef.current) {
-        void loadSnapshot({ background: false });
-      }
+    if (!isDocumentVisible) {
+      stopStream();
       return undefined;
     }
 
     let disposed = false;
-    let timerId = null;
+    const startStream = () => {
+      stopStream();
+      const iterator = client.watchSidebarDiagnosticsUpdates();
+      let streamDisposed = false;
+      streamCleanupRef.current = () => {
+        streamDisposed = true;
+        Promise.resolve(iterator.return?.()).catch(() => {});
+      };
 
-    const scheduleNext = (delayMs) => {
+      void (async () => {
+        try {
+          for await (const nextSnapshot of iterator) {
+            if (disposed || streamDisposed) {
+              return;
+            }
+            if (!isSidebarDiagnosticsSnapshot(nextSnapshot)) {
+              throw new Error("诊断数据格式错误");
+            }
+            setState((current) => ({
+              error: "",
+              isLoading: false,
+              isRefreshing: false,
+              snapshot: mergeDiagnosticsSnapshot(current.snapshot, nextSnapshot),
+            }));
+          }
+        } catch (error) {
+          if (disposed || streamDisposed) {
+            return;
+          }
+          setState((current) => ({
+            ...current,
+            error: toErrorMessage(error),
+            isLoading: false,
+            isRefreshing: false,
+          }));
+        }
+      })();
+    };
+
+    void loadSnapshot({ background: snapshotRef.current !== null }).then(() => {
       if (disposed) {
         return;
       }
-      timerId = window.setTimeout(async () => {
-        await loadSnapshot({ background: true });
-        const nextDelay = document.visibilityState === "hidden"
-          ? BACKGROUND_POLL_MS
-          : FOREGROUND_POLL_MS;
-        scheduleNext(nextDelay);
-      }, delayMs);
-    };
-
-    const nextDelay = document.visibilityState === "hidden"
-      ? BACKGROUND_POLL_MS
-      : FOREGROUND_POLL_MS;
-
-    const handleVisibilityChange = () => {
-      if (timerId !== null) {
-        window.clearTimeout(timerId);
-      }
-      scheduleNext(0);
-    };
-
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-
-    if (snapshotRef.current) {
-      scheduleNext(nextDelay);
-      return () => {
-        disposed = true;
-        if (timerId !== null) {
-          window.clearTimeout(timerId);
-        }
-        document.removeEventListener("visibilitychange", handleVisibilityChange);
-      };
-    }
-
-    void loadSnapshot({ background: false }).then(() => {
-      const nextDelay = document.visibilityState === "hidden"
-        ? BACKGROUND_POLL_MS
-        : FOREGROUND_POLL_MS;
-      scheduleNext(nextDelay);
+      startStream();
     });
 
     return () => {
       disposed = true;
-      if (timerId !== null) {
-        window.clearTimeout(timerId);
-      }
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      stopStream();
     };
-  }, [client, enabled, shouldLoadSnapshot]);
+  }, [client, enabled, isDocumentVisible]);
 
   return {
     ...state,

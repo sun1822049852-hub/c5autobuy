@@ -728,6 +728,31 @@ function buildStartupFailureCopy(runtimeMode, { isPackaged = app?.isPackaged ===
   return "Python 后端未能成功拉起，请先确认 .venv 与 data/app.db 是否存在。";
 }
 
+function buildRuntimeWebSocketUrlFromApiBaseUrl(apiBaseUrl) {
+  const normalizedApiBaseUrl = typeof apiBaseUrl === "string" ? apiBaseUrl.trim() : "";
+  if (!normalizedApiBaseUrl) {
+    return "";
+  }
+
+  try {
+    const endpoint = new URL(normalizedApiBaseUrl);
+    if (endpoint.protocol === "http:") {
+      endpoint.protocol = "ws:";
+    } else if (endpoint.protocol === "https:") {
+      endpoint.protocol = "wss:";
+    } else if (endpoint.protocol !== "ws:" && endpoint.protocol !== "wss:") {
+      return "";
+    }
+
+    endpoint.pathname = "/ws/runtime";
+    endpoint.search = "";
+    endpoint.hash = "";
+    return endpoint.toString();
+  } catch {
+    return "";
+  }
+}
+
 
 function isSecureControlPlaneBaseUrl(value) {
   return typeof value === "string" && /^https:\/\//i.test(value.trim());
@@ -837,9 +862,12 @@ async function bootstrapApplication({
 
     createWindowImpl({ mode: "app" });
     backend = await prewarmedEmbeddedBackendPromise;
+    const resolvedRuntimeWebSocketUrl = bootstrapConfig.runtimeWebSocketUrl
+      || buildRuntimeWebSocketUrlFromApiBaseUrl(backend.baseUrl);
     bootstrapConfig = {
       ...bootstrapConfig,
       apiBaseUrl: backend.baseUrl,
+      runtimeWebSocketUrl: resolvedRuntimeWebSocketUrl,
       backendStatus: "ready",
     };
     startupTraceImpl("desktop.backend.ready", {

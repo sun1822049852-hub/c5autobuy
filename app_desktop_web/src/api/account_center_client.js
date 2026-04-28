@@ -31,6 +31,19 @@ function buildAccountUpdatesWebSocketUrl(apiBaseUrl) {
   }
 }
 
+function buildDiagnosticsSidebarWebSocketUrl(apiBaseUrl) {
+  try {
+    const url = new URL(apiBaseUrl);
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    url.pathname = "/ws/diagnostics/sidebar";
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
 
 function buildStatsQueryString({ rangeMode, date, startDate, endDate } = {}) {
   const params = new URLSearchParams();
@@ -181,6 +194,111 @@ async function* streamAccountUpdatesViaWebSocket(url, WebSocketImpl) {
       });
     yield snapshot;
   }
+}
+
+function createSidebarDiagnosticsWebSocketStream(url, WebSocketImpl) {
+  let closedError = null;
+  let connectionReject = null;
+  let connectionResolve = null;
+  let pendingResolver = null;
+  let closed = false;
+  const queue = [];
+  const readyPromise = new Promise((resolve, reject) => {
+    connectionResolve = resolve;
+    connectionReject = reject;
+  });
+  const websocket = new WebSocketImpl(url);
+
+  websocket.onopen = () => {
+    connectionResolve?.();
+  };
+  websocket.onerror = () => {
+    const error = new Error("WebSocket 诊断流连接失败");
+    if (pendingResolver) {
+      pendingResolver.reject(error);
+      pendingResolver = null;
+    }
+    if (connectionReject) {
+      connectionReject(error);
+      connectionReject = null;
+    } else {
+      closedError = error;
+    }
+  };
+  websocket.onclose = () => {
+    const error = new Error("WebSocket 诊断流已关闭");
+    closedError = error;
+    if (pendingResolver) {
+      pendingResolver.reject(error);
+      pendingResolver = null;
+    }
+  };
+  websocket.onmessage = (event) => {
+    const payload = JSON.parse(typeof event.data === "string" ? event.data : String(event.data ?? ""));
+    if (pendingResolver) {
+      pendingResolver.resolve(payload);
+      pendingResolver = null;
+      return;
+    }
+    queue.push(payload);
+  };
+
+  const closeStream = () => {
+    if (closed) {
+      return;
+    }
+    closed = true;
+    websocket.close?.();
+  };
+
+  return {
+    [Symbol.asyncIterator]() {
+      return this;
+    },
+    async next() {
+      await readyPromise;
+
+      if (closedError) {
+        throw closedError;
+      }
+      const snapshot = queue.length
+        ? queue.shift()
+        : await new Promise((resolve, reject) => {
+          pendingResolver = { resolve, reject };
+        });
+      return {
+        done: false,
+        value: snapshot,
+      };
+    },
+    async return() {
+      closeStream();
+      return {
+        done: true,
+        value: undefined,
+      };
+    },
+  };
+}
+
+function createClosedAsyncIterator() {
+  return {
+    [Symbol.asyncIterator]() {
+      return this;
+    },
+    async next() {
+      return {
+        done: true,
+        value: undefined,
+      };
+    },
+    async return() {
+      return {
+        done: true,
+        value: undefined,
+      };
+    },
+  };
 }
 
 
@@ -461,6 +579,15 @@ export function createAccountCenterClient({
         return;
       }
       yield* streamAccountUpdatesViaWebSocket(websocketUrl, WebSocketImpl);
+    },
+    watchSidebarDiagnosticsUpdates() {
+      const canUseWebSocket = Boolean(WebSocketImpl)
+        && globalThis.window?.location?.protocol !== "about:";
+      const websocketUrl = buildDiagnosticsSidebarWebSocketUrl(resolvedApiBaseUrl);
+      if (!canUseWebSocket || !websocketUrl) {
+        return createClosedAsyncIterator();
+      }
+      return createSidebarDiagnosticsWebSocketStream(websocketUrl, WebSocketImpl);
     },
   };
 }

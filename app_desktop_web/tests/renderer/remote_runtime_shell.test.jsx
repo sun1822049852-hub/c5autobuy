@@ -34,6 +34,20 @@ function installRemoteDesktopApp(fetchImpl) {
   };
 }
 
+function installEmbeddedDesktopApp(fetchImpl) {
+  window.fetch = fetchImpl;
+  window.desktopApp = {
+    getBootstrapConfig() {
+      return {
+        backendMode: "embedded",
+        apiBaseUrl: "http://127.0.0.1:59201",
+        runtimeWebSocketUrl: "ws://127.0.0.1:59201/ws/runtime",
+        backendStatus: "ready",
+      };
+    },
+  };
+}
+
 
 class FakeWebSocket {
   static instances = [];
@@ -317,6 +331,7 @@ describe("remote runtime shell keep alive", () => {
       render(<App />);
 
       await screen.findByText("C5 交易助手");
+      await user.click(screen.getByRole("button", { name: "配置管理" }));
 
       await waitFor(() => {
         expect(
@@ -348,12 +363,35 @@ describe("remote runtime shell keep alive", () => {
         },
       });
 
-      await user.click(screen.getByRole("button", { name: "配置管理" }));
-
       const currentConfigSection = (await screen.findByText("当前配置")).closest("section");
       expect(currentConfigSection).not.toBeNull();
       expect(await screen.findByRole("heading", { name: "白天配置" })).toBeInTheDocument();
       expect(within(currentConfigSection).getAllByText("运行中").length).toBeGreaterThan(0);
+    } finally {
+      window.WebSocket = originalWebSocket;
+    }
+  });
+
+  it("connects runtime websocket updates in embedded mode after full bootstrap page becomes active", async () => {
+    const harness = createFetchHarness();
+    installEmbeddedDesktopApp(harness.fetchImpl);
+    const originalWebSocket = window.WebSocket;
+    window.WebSocket = FakeWebSocket;
+    const user = userEvent.setup();
+
+    try {
+      render(<App />);
+      await screen.findByText("C5 交易助手");
+      await user.click(screen.getByRole("button", { name: "配置管理" }));
+
+      await waitFor(() => {
+        expect(
+          FakeWebSocket.instances.some((instance) => instance.url.includes("/ws/runtime")),
+        ).toBe(true);
+      });
+
+      const runtimeSocket = FakeWebSocket.instances.find((instance) => instance.url.includes("/ws/runtime"));
+      expect(runtimeSocket?.url).toBe("ws://127.0.0.1:59201/ws/runtime?since_version=5");
     } finally {
       window.WebSocket = originalWebSocket;
     }

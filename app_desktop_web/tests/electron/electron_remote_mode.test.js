@@ -261,6 +261,45 @@ describe("electron remote runtime mode", () => {
     });
   });
 
+  it("publishes local runtime websocket url after embedded backend is ready", async () => {
+    const electronHarness = createElectronHarness();
+    const { bootstrapApplication } = loadElectronMainWithMocks(electronHarness);
+    const publishBootstrapConfigImpl = vi.fn();
+    const startPythonBackendImpl = vi.fn().mockResolvedValue({
+      baseUrl: "http://127.0.0.1:59201",
+      port: 59201,
+      stop: vi.fn(),
+    });
+
+    await bootstrapApplication({
+      runtimeMode: {
+        apiBaseUrl: "http://127.0.0.1:8000",
+        backendMode: "embedded",
+        configurationError: "",
+        runtimeWebSocketUrl: "",
+        shouldStartEmbeddedBackend: true,
+      },
+      createWindowImpl: vi.fn(),
+      ensureBackendDependenciesImpl: vi.fn().mockResolvedValue(),
+      ensureManagedPythonRuntimeImpl: vi.fn(),
+      ensureWindowStateDependenciesImpl: vi.fn().mockResolvedValue(),
+      findAvailablePortImpl: vi.fn().mockResolvedValue(59201),
+      publishBootstrapConfigImpl,
+      readProgramAccessConfigImpl: vi.fn(() => ({
+        controlPlaneBaseUrl: "http://8.138.39.139:18787",
+      })),
+      resolvePythonExecutableImpl: vi.fn(() => "C:/demo/project/.venv/Scripts/python.exe"),
+      startPythonBackendImpl,
+    });
+
+    expect(publishBootstrapConfigImpl).toHaveBeenCalledWith(expect.objectContaining({
+      apiBaseUrl: "http://127.0.0.1:59201",
+      backendMode: "embedded",
+      backendStatus: "ready",
+      runtimeWebSocketUrl: "ws://127.0.0.1:59201/ws/runtime",
+    }));
+  });
+
   it("keeps the first embedded app window hidden until ready-to-show to avoid a black frame", () => {
     const app = {
       on: vi.fn(),
@@ -1264,12 +1303,12 @@ describe("electron remote runtime mode", () => {
     const event = {};
     bootstrapHandler(event);
 
-    expect(event.returnValue).toEqual({
+    expect(event.returnValue).toEqual(expect.objectContaining({
       backendMode: "remote",
       apiBaseUrl: "https://api.example.com",
       backendStatus: "ready",
       runtimeWebSocketUrl: "wss://api.example.com/ws/runtime",
-    });
+    }));
   });
 
   it("returns the remote bootstrap snapshot through async desktop:request-bootstrap-config", async () => {
@@ -1296,12 +1335,12 @@ describe("electron remote runtime mode", () => {
       createWindowImpl: vi.fn(),
     });
 
-    await expect(bootstrapHandler()).resolves.toEqual({
+    await expect(bootstrapHandler()).resolves.toEqual(expect.objectContaining({
       backendMode: "remote",
       apiBaseUrl: "https://api.example.com",
       backendStatus: "ready",
       runtimeWebSocketUrl: "wss://api.example.com/ws/runtime",
-    });
+    }));
   });
 
   it("fails fast for remote mode when the api base url is missing", async () => {

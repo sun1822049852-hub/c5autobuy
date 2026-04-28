@@ -412,6 +412,7 @@ def _register_runtime_full_routes(app: FastAPI) -> None:
     from app_backend.api.routes import query_runtime as query_runtime_routes
     from app_backend.api.routes import stats as stats_routes
     from app_backend.api.routes import tasks as task_routes
+    from app_backend.api.websocket import diagnostics as diagnostics_websocket_routes
     from app_backend.api.websocket import tasks as task_websocket_routes
     from app_backend.api.websocket import runtime as runtime_websocket_routes
 
@@ -425,6 +426,7 @@ def _register_runtime_full_routes(app: FastAPI) -> None:
     _include_router_once(app, query_runtime_routes.router)
     _include_router_once(app, stats_routes.router)
     _include_router_once(app, task_routes.router)
+    _include_router_once(app, diagnostics_websocket_routes.router)
     _include_router_once(app, task_websocket_routes.router)
     _include_router_once(app, runtime_websocket_routes.router)
 
