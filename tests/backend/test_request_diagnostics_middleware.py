@@ -3,10 +3,15 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
-
 from httpx import ASGITransport, AsyncClient
 
 from app_backend.domain.models.account import Account
+from app_backend.infrastructure.stats.runtime.stats_pipeline import StatsPipeline
+from app_backend.infrastructure.stats.runtime.stats_events import (
+    PurchaseSubmitOrderStatsEvent,
+    QueryExecutionStatsEvent,
+    QueryHitStatsEvent,
+)
 from app_backend.main import create_app
 
 
@@ -117,6 +122,159 @@ async def test_request_diagnostics_logs_account_center_accounts_trace_breakdown(
         "runtime.account_inventory_detail.total",
         "route.model_validate.row",
         "route.balance_refresh.schedule.row",
+    }.issubset(phase_names)
+
+
+async def test_request_diagnostics_logs_purchase_runtime_status_trace_breakdown(tmp_path: Path):
+    log_path = tmp_path / "runtime" / "request_diagnostics.runtime.jsonl"
+    app = create_app(
+        db_path=tmp_path / "purchase-status.db",
+        request_diagnostics_log_path=log_path,
+        request_diagnostics_slow_ms=60_000,
+    )
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        create_config_response = await client.post(
+            "/query-configs",
+            json={
+                "name": "查询配置A",
+                "description": "用于状态 trace",
+            },
+        )
+        assert create_config_response.status_code == 201
+        config_id = create_config_response.json()["config_id"]
+
+        today = "2026-04-28"
+        query_item = app.state.query_config_repository.add_item(
+            config_id=config_id,
+            product_url="https://www.c5game.com/csgo/730/asset/1380979899390261111",
+            external_item_id="1380979899390261111",
+            item_name="AK-47 | Redline",
+            market_hash_name="AK-47 | Redline (Field-Tested)",
+            min_wear=0.1,
+            max_wear=0.7,
+            detail_min_wear=0.12,
+            detail_max_wear=0.3,
+            max_price=123.45,
+            last_market_price=118.88,
+            last_detail_sync_at=f"{today}T10:00:00",
+        )
+        set_preferences_response = await client.put(
+            "/purchase-runtime/ui-preferences",
+            json={"selected_config_id": config_id},
+        )
+        assert set_preferences_response.status_code == 200
+
+        original_stats_pipeline = app.state.stats_pipeline
+        original_stats_pipeline.stop()
+        app.state.stats_pipeline = StatsPipeline(repository=app.state.stats_repository, flush_batch_size=1)
+        try:
+            assert app.state.stats_pipeline.enqueue(
+                QueryExecutionStatsEvent(
+                    timestamp=f"{today}T10:00:00",
+                    query_config_id=config_id,
+                    query_item_id=query_item.query_item_id,
+                    external_item_id=query_item.external_item_id,
+                    rule_fingerprint="rule-1",
+                    detail_min_wear=query_item.detail_min_wear,
+                    detail_max_wear=query_item.detail_max_wear,
+                    max_price=query_item.max_price,
+                    mode_type="new_api",
+                    account_id="query-a",
+                    account_display_name="查询账号A",
+                    item_name=query_item.item_name,
+                    product_url=query_item.product_url,
+                    latency_ms=120.0,
+                    success=True,
+                    error=None,
+                )
+            )
+            assert app.state.stats_pipeline.enqueue(
+                QueryHitStatsEvent(
+                    timestamp=f"{today}T10:00:01",
+                    runtime_session_id="run-day-1",
+                    query_config_id=config_id,
+                    query_item_id=query_item.query_item_id,
+                    external_item_id=query_item.external_item_id,
+                    rule_fingerprint="rule-1",
+                    detail_min_wear=query_item.detail_min_wear,
+                    detail_max_wear=query_item.detail_max_wear,
+                    max_price=query_item.max_price,
+                    mode_type="new_api",
+                    account_id="query-a",
+                    account_display_name="查询账号A",
+                    item_name=query_item.item_name,
+                    product_url=query_item.product_url,
+                    matched_count=2,
+                    product_ids=["p-1", "p-2"],
+                )
+            )
+            assert app.state.stats_pipeline.enqueue(
+                PurchaseSubmitOrderStatsEvent(
+                    timestamp=f"{today}T10:00:02",
+                    runtime_session_id="run-day-1",
+                    query_config_id=config_id,
+                    query_item_id=query_item.query_item_id,
+                    external_item_id=query_item.external_item_id,
+                    rule_fingerprint="rule-1",
+                    detail_min_wear=query_item.detail_min_wear,
+                    detail_max_wear=query_item.detail_max_wear,
+                    max_price=query_item.max_price,
+                    item_name=query_item.item_name,
+                    product_url=query_item.product_url,
+                    account_id="purchase-a",
+                    account_display_name="购买账号A",
+                    submit_order_latency_ms=450.0,
+                    submitted_count=2,
+                    success_count=1,
+                    failed_count=1,
+                    status="success",
+                    error=None,
+                )
+            )
+
+            response = await client.get("/purchase-runtime/status")
+        finally:
+            app.state.stats_pipeline = original_stats_pipeline
+
+    assert response.status_code == 200
+    assert response.json()["item_rows"] == [
+        {
+            "query_item_id": query_item.query_item_id,
+            "item_name": "AK-47 | Redline",
+            "max_price": 123.45,
+            "min_wear": 0.1,
+            "max_wear": 0.7,
+            "detail_min_wear": 0.12,
+            "detail_max_wear": 0.3,
+            "manual_paused": False,
+            "query_execution_count": 1,
+            "matched_product_count": 2,
+            "purchase_success_count": 1,
+            "purchase_failed_count": 1,
+            "modes": {},
+            "source_mode_stats": [],
+            "recent_hit_sources": [],
+        }
+    ]
+
+    records = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    trace_record = next(record for record in reversed(records) if record["path"] == "/purchase-runtime/status")
+
+    assert trace_record["event"] == "request_trace"
+    assert trace_record["trace"]["name"] == "purchase_runtime.status"
+    assert trace_record["trace"]["details"]["stats_flush_drained_count"] == 3
+    assert trace_record["trace"]["details"]["stats_flush_budget_exhausted"] is False
+
+    phase_names = {phase["name"] for phase in trace_record["trace"]["phases"]}
+    assert {
+        "route.use_case.execute",
+        "runtime_status",
+        "query_status",
+        "stats_flush",
+        "list_query_item_stats",
+        "build_item_rows",
     }.issubset(phase_names)
 
 

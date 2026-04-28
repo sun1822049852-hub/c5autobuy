@@ -58,9 +58,12 @@ class StatsPipeline:
             self._dropped_event_count += 1
             return False
 
-    def flush_pending(self) -> int:
+    def flush_pending(self, *, max_events: int | None = None) -> int:
+        event_limit = self._flush_batch_size
+        if max_events is not None:
+            event_limit = min(event_limit, max(int(max_events), 1))
         drained = 0
-        while drained < self._flush_batch_size:
+        while drained < event_limit:
             try:
                 event = self._queue.get_nowait()
             except Empty:

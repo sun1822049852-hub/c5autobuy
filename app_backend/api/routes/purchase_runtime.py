@@ -25,8 +25,13 @@ from app_backend.application.use_cases.stop_purchase_runtime import StopPurchase
 from app_backend.application.use_cases.update_purchase_ui_preferences import (
     UpdatePurchaseUiPreferencesUseCase,
 )
+from app_backend.infrastructure.request_diagnostics import get_request_trace_recorder
 
 router = APIRouter(prefix="/purchase-runtime", tags=["purchase-runtime"])
+
+_PURCHASE_STATUS_STATS_FLUSH_MAX_BATCHES = 8
+_PURCHASE_STATUS_STATS_FLUSH_MAX_DURATION_MS = 250.0
+_PURCHASE_STATUS_STATS_FLUSH_MAX_EVENTS_PER_BATCH = 8
 
 
 def _ensure_runtime_full_ready(request: Request) -> None:
@@ -72,6 +77,7 @@ def _stats_flush_callback(request: Request):
 
 @router.get("/status", response_model=PurchaseRuntimeStatusResponse)
 def get_purchase_runtime_status(request: Request) -> PurchaseRuntimeStatusResponse:
+    trace = get_request_trace_recorder(request, name="purchase_runtime.status")
     use_case = GetPurchaseRuntimeStatusUseCase(
         _runtime_service(request),
         _query_runtime_service(request),
@@ -80,8 +86,17 @@ def get_purchase_runtime_status(request: Request) -> PurchaseRuntimeStatusRespon
         stats_repository=_stats_repository(request),
         stats_flush_callback=_stats_flush_callback(request),
         include_recent_events=False,
+        trace=trace,
+        stats_flush_max_batches=_PURCHASE_STATUS_STATS_FLUSH_MAX_BATCHES,
+        stats_flush_max_duration_ms=_PURCHASE_STATUS_STATS_FLUSH_MAX_DURATION_MS,
+        stats_flush_max_events_per_batch=_PURCHASE_STATUS_STATS_FLUSH_MAX_EVENTS_PER_BATCH,
     )
-    return PurchaseRuntimeStatusResponse.model_validate(use_case.execute())
+    if trace is not None:
+        with trace.measure("route.use_case.execute"):
+            snapshot = use_case.execute()
+    else:
+        snapshot = use_case.execute()
+    return PurchaseRuntimeStatusResponse.model_validate(snapshot)
 
 
 @router.get("/ui-preferences", response_model=PurchaseRuntimeUiPreferencesResponse)

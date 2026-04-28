@@ -4834,6 +4834,379 @@
   - 按用户选择的方案 1，已清理本轮调试残留：
     - 远端 control-plane DB 中的调试 member `debug_runtime_member` 已删除
     - 远端 `user_agent=codex-runtime-debug` 的临时 admin session 已删除
-    - 本地隔离 backend `57011` 已停止
-    - repo `.runtime/app-private/C5AutoBug/program_access/bundle.json` 已清回 `program_auth_required` 空 bundle
+  - 本地隔离 backend `57011` 已停止
+  - repo `.runtime/app-private/C5AutoBug/program_access/bundle.json` 已清回 `program_auth_required` 空 bundle
   - 当前远端 `client_user` 已回到只剩原有 `1822049852@qq.com / 88888888` 这一条；本轮手测没有把调试账号长期留在现网。
+
+## 2026-04-27 23:40 (Asia/Shanghai)
+- 当前目标：
+  - 不在本会话动代码，只给下个会话准备“本地 embedded 运行态改为 push 主导”的可执行计划与 handoff。
+  - 计划名称：`docs/superpowers/plans/2026-04-27-embedded-runtime-push.md`
+- 当前方案结论：
+  - 用户确认方向选“方案 2”：本地 `embedded` 也消费现有 `/ws/runtime`，purchase steady-state 不再常态轮询。
+  - 结论不是“纯 push 全替换”，而是：保留 `bootstrap snapshot + resync` 兜底，只移除 purchase steady-state `1.5s` 轮询。
+- 已完成：
+  - 静态取证已完成，关键事实如下：
+    - 前端“请求超时，请检查本地后端是否卡死”来自统一 HTTP timeout 文案，不是 backend 自报卡死。
+    - purchase 页当前 steady-state 刷新来自 `use_purchase_system_page.js` 的 `setInterval(..., 1500)`。
+    - backend 侧已经存在 `/ws/runtime` 与 `runtime_update_hub`，不是后端没有推送。
+    - 真正缺口在 renderer：`App.jsx` 只在 `backendMode === "remote"` 时连接 runtime updates，本地 `embedded` 即使有 ws URL 也被硬门禁挡掉。
+  - 已写实现计划：
+    - `docs/superpowers/plans/2026-04-27-embedded-runtime-push.md`
+    - 范围只覆盖：embedded ws 注入、App 顶层接入、purchase steady-state 去轮询、stale/resync 回退
+    - 明确排除 diagnostics polling，避免下会话无意识扩大改动面
+- 进度断点：
+  - `chunk`：计划与 handoff 已完成，尚未进入实现
+  - `task`：等待新会话按计划执行 `Chunk 1`
+  - 下一步第一刀：先让 embedded bootstrap 真正带上本地 `runtimeWebSocketUrl`，再放开 `App.jsx` 的 remote-only gate
+- 现场状态：
+  - 工作目录：`C:/Users/18220/Desktop/C5autobug更新接口 - 副本 (2)`
+  - 分支：`master`
+  - 当前未提交改动：
+    - 预存脏区：`app_desktop_web/src/features/purchase-system/hooks/use_purchase_system_page.js`
+    - 预存脏区：`app_desktop_web/tests/renderer/purchase_system_page.test.jsx`
+    - 本会话新增：`docs/superpowers/plans/2026-04-27-embedded-runtime-push.md`
+  - 关键提醒：
+    - `purchase-system` hook 与对应测试文件在本会话开始前就已脏；新会话实现前必须先读 diff，默认视为现场，不得直接覆盖或回滚。
+- 已尝试但未做的事：
+  - 本会话没有实现代码，也没有跑自动化，只做静态读码、`git blame/show`、设计/计划文档取证。
+  - diagnostics polling 也会产生同类 timeout，但本轮刻意不并入计划，以保持单主线和低风险收口。
+- 验证状态：
+  - 已执行验证：
+    - 静态定位前端 timeout 文案源头
+    - 静态定位 purchase 轮询调用点
+    - 静态定位 `/ws/runtime` 后端能力与 `App.jsx` remote-only gate
+    - `git blame` / `git show` 追到引入历史：
+      - `72f26c28 feat(purchase-system): close purchase runtime loop`
+      - `bc978636 fix: stabilize desktop loading and runtime config sync`
+      - `399da66 feat: finish remote runtime authoritative state sync`
+  - 结果：
+    - 已确认问题是“旧 polling 架构 + 全局 timeout + embedded 未接 ws”的组合，不是单点 backend 宕死。
+  - 验证缺口：
+    - 本会话未跑前端/后端测试
+    - 未做本地 embedded 手工 smoke
+- 必须保持不变的关键行为：
+  - `/health -> ready=true` 的启动 gate 不动
+  - purchase/query 页面 draft state 不能因 push/resync 丢失
+  - hidden page 不得重新引入第二套后台 polling
+  - 不能把 diagnostics polling 悄悄并进本次实现范围
+- 下个会话启动指令：
+  - 先读：
+    - 最新 handoff：`docs/agent/session-log.md` 末尾本条
+    - 实现计划：`docs/superpowers/plans/2026-04-27-embedded-runtime-push.md`
+    - 当前工作区状态：`git status --short`
+    - 稳定约束：`docs/agent/memory.md`
+  - 然后先复述：
+    - 当前目标：embedded runtime push 替掉 purchase steady-state polling
+    - 当前断点：尚未实现，从 `Chunk 1 / Task 1` 开始
+    - 当前风险：`purchase-system` 两个目标文件本来就有未提交改动，不能直接覆盖
+  - 执行顺序：
+    - 先补 embedded `runtimeWebSocketUrl`
+    - 再放开 `App.jsx` remote-only gate
+    - 再删除 purchase steady-state `1.5s` polling
+    - 最后验证 stale/resync，不准为了兜底把 polling 悄悄加回来
+
+## 2026-04-28 00:00 (Asia/Shanghai)
+- 背景：
+  - 按上一条 handoff 直接进入实现，不重做已完成调查；范围继续限定在 embedded runtime push 主线，不把 diagnostics polling 并进来。
+  - 文档与现场基本一致；唯一需要先收敛的是 `purchase-system` hook 与对应测试文件在实现前已是预存脏区，但现有脏改只涉及“配置详情未 bump 时间戳时的同步判定”，与本轮去轮询主线不冲突。
+- 已完成：
+  - Electron embedded ready 链路已补本地 `runtimeWebSocketUrl` 注入：若启动配置未显式提供 ws URL，则按 embedded backend 的 `apiBaseUrl` 派生 `ws(s)://.../ws/runtime` 并写回 desktop bootstrap config。
+  - renderer 顶层已放开 `App.jsx` 的 remote-only gate：当前只要 backend ready、full bootstrap ready、页面属于 full-bootstrap 页且 `runtimeWebSocketUrl` 非空，就会共用现有 `runtimeConnectionManager.connectRuntimeUpdates()` 接入 runtime push。
+  - purchase 页面 steady-state `1.5s` polling 已删除，只保留 active entry 的一次静默状态补拉；没有为了兜底把 polling 悄悄加回来。
+  - 补齐 focused 测试：
+    - embedded backend ready 后发布本地 runtime websocket URL
+    - embedded 模式切到 full-bootstrap 页面后也会接 runtime websocket
+    - purchase 页面 active steady-state 不再跑 `1500ms` 轮询
+    - runtime manager 收到 `runtime.resync_required` 后会先标 stale，再走 force bootstrap 回正
+- 当前进度：
+  - embedded runtime push 主线已到“代码完成 + focused 自动化已验证”状态。
+  - `docs/superpowers/plans/2026-04-27-embedded-runtime-push.md` 仍未勾 checkbox；若后续要求对齐计划文档，可单独补做勾选收口。
+- 下一步：
+  - 若魔尊继续推进，可做本地 embedded 手工 smoke，确认页面在真实桌面链路下不再依赖 purchase steady-state timeout。
+  - 若要扩范围，下一个独立主线才处理 diagnostics polling；本轮不并。
+- 验证状态：
+  - 已执行且通过：
+    - `npm --prefix app_desktop_web test -- tests/electron/electron_remote_mode.test.js tests/renderer/app_remote_bootstrap.test.jsx tests/renderer/remote_runtime_shell.test.jsx tests/renderer/purchase_system_page.test.jsx --run`
+    - `npm --prefix app_desktop_web test -- tests/renderer/runtime_connection_manager.test.js --run -t "connects runtime websocket updates after bootstrap and applies them into store slices|marks the connection stale and rehydrates from bootstrap when runtime websocket requests resync|keeps existing ui and draft state when bootstrap fails and only marks the connection stale|handles synchronous WebSocket constructor failures without throwing through the renderer"`
+  - 额外发现但未纳入本轮结论：
+    - 若直接跑整份 `tests/renderer/runtime_connection_manager.test.js`，当前还会命中一条与本轮改动无关的旧失败：`hydrates shell bootstrap first and backfills full bootstrap asynchronously` 的 program-access message 断言与现场不一致（期望 `程序会员控制面已接入`，实际为 `请先登录`）。本轮未改 `runtime_connection_manager.js`、`app_runtime_store.js` 或 program-access message 映射，因此只记录为现有噪音，不把它混写成本轮回归失败。
+
+## 2026-04-28 00:46 (Asia/Shanghai)
+- 背景：
+  - 继续上一条主线，补真实 embedded 桌面 smoke；不再新增代码修改，只验证真实 `main_ui_node_desktop.js` 链路与用户可见结果。
+- 已完成：
+  - 真实主入口 `main_ui_node_desktop.js` 已在本机成功拉起，startup trace 明确记录：
+    - `desktop.backend.ready`
+    - `desktop.bootstrap.config.updated.published`
+    - `renderer.bootstrap.config.consumed`
+    - `renderer.home.interactive`
+  - 真实 embedded backend 本轮实际监听 `http://127.0.0.1:61309`，并已验证：
+    - `/health -> ready=true`
+    - `/app/bootstrap?scope=full` 正常返回 query/purchase/program_access 数据
+  - 真实窗口截图已确认主入口能渲染到“扫货系统”页面，不再停在黑壳或空白页。
+  - 用户随后按要求完成手工 smoke，并反馈“都正常，均无超时”；据此将本轮真实 embedded smoke 记为通过。
+- 当前进度：
+  - embedded runtime push 主线已同时具备 focused 自动化证据与真实桌面人工 smoke 证据，可按本轮目标收口。
+  - 当前真实主入口窗口实例仍在运行（`electron PID 7492`）；本轮未擅自关闭。
+- 验证状态：
+  - 吾执行的真实链路验证：
+    - 读取真实主入口 stdout startup trace
+    - `Invoke-RestMethod http://127.0.0.1:61309/health`
+    - `Invoke-RestMethod http://127.0.0.1:61309/app/bootstrap?scope=full`
+    - 真实窗口截图确认已进入“扫货系统”页
+  - 用户执行的人工 smoke：
+    - 反馈结果为“都正常，均无超时”
+  - 额外现场现象：
+    - 启动 stderr 只看到 Chromium cache 目录拒绝访问的既有噪音；本轮未见与 purchase steady-state timeout 相关的新报错。
+
+## 2026-04-28 00:58 (Asia/Shanghai)
+- 当前目标：
+  - 结束本轮 embedded runtime push 主线，并为下一主线“diagnostics 页从 polling 改成单开 push 通道”留下 handoff。
+  - 新主线方向已确认：diagnostics 不复用现有 `/ws/runtime`，单开自己的 `WebSocket` 通道。
+- 当前方案结论：
+  - diagnostics 页未来口径已收敛为：
+    - 页面首次可见时拉一次 `/diagnostics/sidebar` 快照
+    - 后续前台只吃 diagnostics 专用 push
+    - 页面隐藏时断开，不再后台 polling
+    - 页面重新可见时先做一次 resync，再重连 push
+  - 吾已明确建议：diagnostics 单开 `WebSocket`，不要复用 runtime 主通道，也不要退回 SSE。
+- 已完成：
+  - embedded runtime push 主线已有 focused 自动化 + 真实桌面人工 smoke 双重证据，可视为本轮已收口。
+  - diagnostics 单开 push 只完成方案收敛，尚未写实现计划，尚未动代码。
+- 当前进度：
+  - `chunk`：embedded runtime push 已完成；diagnostics push 新主线尚未开始。
+  - `task`：等待下会话先写/补实现计划，再进入 TDD 实施。
+- 现场状态：
+  - 工作目录：`C:/Users/18220/Desktop/C5autobug更新接口 - 副本 (2)`
+  - 分支：`master`
+  - 当前未提交改动仍是 embedded runtime push 这批：
+    - `app_desktop_web/electron-main.cjs`
+    - `app_desktop_web/src/App.jsx`
+    - `app_desktop_web/src/features/purchase-system/hooks/use_purchase_system_page.js`
+    - `app_desktop_web/tests/electron/electron_remote_mode.test.js`
+    - `app_desktop_web/tests/renderer/purchase_system_page.test.jsx`
+    - `app_desktop_web/tests/renderer/remote_runtime_shell.test.jsx`
+    - `app_desktop_web/tests/renderer/runtime_connection_manager.test.js`
+    - `docs/agent/session-log.md`
+    - 未跟踪：`docs/superpowers/plans/2026-04-27-embedded-runtime-push.md`
+  - 额外现场：
+    - 真实主入口窗口实例仍在运行：`electron PID 7492`；本轮未擅自关闭。
+- 错误与约束：
+  - 下会话不要把 diagnostics 事件硬塞进现有 `/ws/runtime`；这会把 query/purchase 主链通道越做越重。
+  - diagnostics 数据含历史事件/错误行/登录任务列表，不能只做裸增量 push；必须保留显式 resync 兜底。
+  - 不要悄悄把 diagnostics 改造扩成“全局统一推送重构”；范围先限定在 diagnostics 页自身。
+  - 仍需保持：
+    - `/health -> ready=true` 语义不动
+    - 已收好的 purchase/query runtime push 结构不回退
+    - hidden 页不重新引入 steady-state polling
+- 验证状态：
+  - 已完成验证：
+    - embedded runtime push 的 focused 自动化已通过
+    - 真实 `main_ui_node_desktop.js` 手工 smoke 已通过，用户确认“都正常，均无超时”
+  - 尚未覆盖：
+    - diagnostics 单开 push 的任何自动化或手工验证都还没开始
+    - diagnostics 首次快照 / stale / reconnect / resync 契约尚未落测试
+- 下一步第一刀：
+  - 下会话先写 diagnostics push 实现计划，至少明确：
+    - 后端通道路径
+    - 事件模型是“全量快照推送”还是“增量事件 + resync”
+    - 页面隐藏/显示时的连接与 resync 规则
+    - 如何删除现有 `1500ms/5000ms` polling 而不丢诊断列表语义
+  - 做完计划后立刻补第一批红灯：
+    - 首次可见只拉一次 `/diagnostics/sidebar`
+    - 前台不再 steady-state polling
+    - 隐藏页不拉
+    - 重显触发一次 resync + 重连
+
+## 2026-04-28 01:16 (Asia/Shanghai)
+- 背景：
+  - 按上一条 handoff 进入 diagnostics push 新主线，不重做 embedded runtime push 已完成部分。
+  - 先读最新 handoff、核对 `git status --short`、复述当前目标/断点/约束后再动手；文档与现场一致，当前脏区仍以上一条 embedded runtime push 为主，本轮只新增 diagnostics 计划与红灯测试。
+- 已完成：
+  - 新实现计划已落库：`docs/superpowers/plans/2026-04-28-diagnostics-push.md`
+  - 计划已收口为：
+    - diagnostics 不复用 `/ws/runtime`
+    - 继续保留 `GET /diagnostics/sidebar` 作为 truth source / resync
+    - 新增 diagnostics 专用 websocket
+    - 页面 hidden 时断开，不再 hidden polling / hidden warmup
+    - 页面 visible again 时先 resync，再重连 push
+  - 第一批红灯测试已补：
+    - `app_desktop_web/tests/renderer/diagnostics_client.test.js`
+      - 新增 diagnostics websocket client contract，锁死 `watchSidebarDiagnosticsUpdates()`
+    - `app_desktop_web/tests/renderer/diagnostics_sidebar.test.jsx`
+      - 新增 diagnostics visible-only push / hidden disconnect / visible resync 行为测试
+    - `app_desktop_web/tests/renderer/app_page_keepalive.test.jsx`
+      - 将 diagnostics hidden warmup 口径改为“保持 idle，直到页面可见”
+    - `tests/backend/test_diagnostics_websocket.py`
+      - 新增 diagnostics websocket 对 runtime change / login task change 的推送契约
+- 当前进度：
+  - 仍停在 TDD 的 `RED` 阶段，production 代码尚未开始改。
+  - 红灯失败原因已对齐到目标本身，不是测试误写：
+    - client 侧还没有 diagnostics websocket 入口：`watchSidebarDiagnosticsUpdates is not a function`
+    - renderer 打开 diagnostics 后还没有建立 `/ws/diagnostics/sidebar`
+    - keepalive warmup 仍会在 hidden 态请求 `/diagnostics/sidebar`
+    - backend 还没有可用的 `/ws/diagnostics/sidebar` 路由，`websocket_connect` 直接断开
+  - README 已核对，本次无需改动。
+- 下一步：
+  - 先做 backend 第一刀：
+    - 新增 `/ws/diagnostics/sidebar`
+    - 让它订阅 runtime/account/login-task 变化信号并推送完整 diagnostics snapshot
+  - 再做 frontend：
+    - `account_center_client` 新增 diagnostics websocket client
+    - `use_sidebar_diagnostics` 从 polling 改成“首次快照 + visible-only websocket + visible resync”
+    - 禁掉 diagnostics hidden warmup
+- 验证状态：
+  - 已执行红灯验证：
+    - `npm --prefix app_desktop_web test -- tests/renderer/diagnostics_client.test.js --run -t "streams sidebar diagnostics from the dedicated websocket endpoint"`
+    - `npm --prefix app_desktop_web test -- tests/renderer/diagnostics_sidebar.test.jsx --run -t "loads diagnostics once, then switches to websocket push instead of steady-state polling|disconnects while hidden and resyncs once before reconnecting when visible again"`
+    - `npm --prefix app_desktop_web test -- tests/renderer/app_page_keepalive.test.jsx --run -t "warms hidden top-level pages in the background but leaves diagnostics idle until visible"`
+    - `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_diagnostics_websocket.py -q`
+  - 当前结果：
+    - 全部按预期失败，且失败点已对准“diagnostics push 尚未实现”
+
+## 2026-04-28 02:00 (Asia/Shanghai)
+- 背景：
+  - 继续上一条 diagnostics push 主线，按计划先做 backend，再做 frontend；不回头重做 embedded runtime push。
+  - 过程里遇到两处真实实现级阻塞，均已按系统化调试收口：
+    - backend websocket 先后命中“订阅时序 race / 断开检测缺失 / 无条件 ensure 覆盖 fake service”
+    - frontend diagnostics hook 命中“effect 重复重连 / hidden cleanup 只打到外层 async generator，不会立刻 close 真 socket”
+- 已完成：
+  - backend：
+    - 新增 `app_backend/api/websocket/diagnostics.py`
+    - `diagnostics` websocket 路由固定为 `/ws/diagnostics/sidebar`
+    - transport 只做“监听 runtime/account/task 变化 -> 重算并推送完整 diagnostics snapshot”，不复用 `/ws/runtime`
+    - `app_backend/api/routes/diagnostics.py` 新增共享 snapshot builder，HTTP route 与 websocket 共用同一 truth source
+    - `app_backend/workers/manager/task_manager.py` 支持 `*` 通配订阅，供 diagnostics 监听任意登录任务变化
+    - `app_backend/main.py` 已注册 diagnostics websocket router
+  - frontend：
+    - `app_desktop_web/src/api/account_center_client.js` 新增 diagnostics websocket URL 和 `watchSidebarDiagnosticsUpdates()`
+    - `app_desktop_web/src/features/diagnostics/use_sidebar_diagnostics.js` 已从前后台 polling 改成：
+      - 首次 visible 拉一次 `/diagnostics/sidebar`
+      - steady-state 只吃 diagnostics websocket
+      - hidden 立即断开 websocket
+      - visible again 先 resync，再重连 push
+    - `app_desktop_web/src/App.jsx` 不再把 diagnostics 纳入 hidden warmup
+  - 测试：
+    - diagnostics client / diagnostics page / keepalive 的 websocket 与 resync 断言已对齐到新口径
+- 当前进度：
+  - diagnostics push 主线代码已完成，focused backend + renderer 证据已拿到。
+  - README 已核对，本次无需改动。
+- 验证状态：
+  - 既有/新增 backend focused：
+    - `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_task_manager.py tests/backend/test_diagnostics_routes.py tests/backend/test_diagnostics_websocket.py -q`
+    - 结果：`13 passed`
+  - 既有/新增 renderer focused：
+    - `npm --prefix app_desktop_web test -- tests/renderer/diagnostics_client.test.js tests/renderer/diagnostics_sidebar.test.jsx --run`
+    - 结果：通过
+    - `npm --prefix app_desktop_web test -- tests/renderer/app_page_keepalive.test.jsx --run -t "resyncs diagnostics once when reopening the diagnostics page|warms hidden top-level pages in the background but leaves diagnostics idle until visible"`
+    - 结果：通过
+  - 额外噪音（未并入本轮结论）：
+    - 若直接跑整份 `tests/renderer/app_page_keepalive.test.jsx`，当前仍会命中一条与本轮 diagnostics push 无关的既有失败：
+      - `warms account center in the background even when another page is the startup tab`
+      - 现象是首页仍停在 `账号中心`，未进入测试期望的 `查询统计表`
+    - 这条失败在本轮开工前的红灯阶段就已存在，不属于 diagnostics push 新引入回归；本轮未改该测试所依赖的 startup tab 读取链，因此只记录为现场噪音。
+- 下一步：
+  - 若魔尊继续收口，可单开下一刀处理 `app_page_keepalive` 那条既有 startup tab 噪音。
+  - diagnostics push 本主线若要补人工验收，可按“首次打开一次快照、前台 websocket、hidden 断开、重显 resync”做桌面手测。
+
+## 2026-04-28 17:40 (Asia/Shanghai)
+- 当前目标：
+  - 排查前端报错“请求超时，请检查本地后端是否卡死 (10000ms)”到底是不是本地后端整体卡死，并给出可执行的补救方案。
+  - 当前口径：不改查询/购买主链路，只做活体取证、路由级定位和止血方案收敛。
+- 已完成：
+  - 活体确认当前 embedded backend 实际监听端口是 `127.0.0.1:56313`，不是固定 `127.0.0.1:8000`。
+  - 现场请求取证已完成：
+    - `GET /health` 立即返回 `{"status":"ok","ready":true}`。
+    - `GET /app/bootstrap?scope=shell` 快速返回。
+    - `GET /query-runtime/status` 约 `520ms` 返回。
+    - `GET /account-center/accounts` 约 `1851ms` 返回。
+    - `GET /purchase-runtime/status` 连续在 `6s` 与 `15s` 超时窗口内未返回。
+  - 历史与当前 request diagnostics 已对齐到同一路由：
+    - `data/runtime/request_diagnostics.runtime.jsonl` 多次记录 `/purchase-runtime/status` 的 `request_inflight_timeout` 与 `slow_request`。
+    - 已看到历史极值 `83461.35ms`（`2026-04-28 15:08:38` 开始的同一路由请求）。
+  - 静态读码定位完成：
+    - 前端 timeout 文案来自 `app_desktop_web/src/api/http.js` 的统一 `requestTimeoutMs=10000`，不是 backend 自报“卡死”。
+    - `/purchase-runtime/status` 进入 `GetPurchaseRuntimeStatusUseCase.execute()`。
+    - 该 use case 会在 `_load_daily_stats_by_external_item_id()` 内同步调用 `_flush_pending_stats()`。
+    - `_flush_pending_stats()` 最多循环 `1000` 次；`StatsPipeline.flush_pending()` 每次最多同步 dispatch `100` 个 event；`SqliteStatsRepository.apply_*` 基本按“每个 event 单独 session + commit”落库。
+  - 当前结论已收敛：
+    - 不是“本地后端整体卡死”。
+    - 高概率根因是“`/purchase-runtime/status` 在请求线程里同步 flush stats backlog，导致单路由长时间阻塞”。
+- 当前进度：
+  - 仍停在排查/方案阶段，本轮未改 production 代码。
+  - 已形成可直接执行的方案分层：
+    - `P0`：限制 `/purchase-runtime/status` 内的同步 flush 预算（限批次或限耗时），避免一次请求清空整条 backlog。
+    - `P0`：给前端 `getPurchaseRuntimeStatus()` 增加 in-flight dedupe，避免同一路由并发叠压。
+    - `P1`：给 purchase status route 补独立 request trace，拆出 `runtime_status / query_status / stats_flush / list_query_item_stats`。
+    - `P1`：把 stats pipeline/repository 改成 batch session / batch commit，而不是每个 event 一次 commit。
+- 现场状态：
+  - 工作目录：`C:/Users/18220/Desktop/C5autobug更新接口 - 副本 (2)`
+  - 分支：`master`
+  - 当前工作区本来就有大量未提交改动，主要集中在 diagnostics push 和 embedded runtime/purchase 相关文件；本轮未改这些业务文件。
+  - 本轮实际落盘文件只有：
+    - `docs/agent/session-log.md`
+    - `docs/agent/memory.md`
+- 已尝试但未做的事：
+  - 本轮没有直接修改 `/purchase-runtime/status`、stats pipeline 或前端 client，避免在未补 trace/test 的情况下直接动关键状态链路。
+  - 没有把 `requestTimeoutMs=10000` 直接调大；当前证据表明那只是症状放大器，不是根因。
+- 验证状态：
+  - 已执行验证：
+    - 读取 `.runtime/backend-dev.out.log`、`.runtime/backend-dev.err.log`
+    - 读取 `data/runtime/request_diagnostics.runtime.jsonl`
+    - 通过 PowerShell `Invoke-RestMethod` 对真实端口 `56313` 逐条活体请求 `/health`、`/app/bootstrap?scope=shell`、`/query-runtime/status`、`/account-center/accounts`、`/purchase-runtime/status`
+    - 静态核对 `app_desktop_web/src/api/http.js`、`app_backend/application/use_cases/get_purchase_runtime_status.py`、`app_backend/infrastructure/stats/runtime/stats_pipeline.py`、`app_backend/infrastructure/repositories/stats_repository.py`
+  - 结果：
+    - 已确认超时是 purchase status 单路由问题，不是整 backend 宕死。
+    - 已确认现版 purchase page 不是旧的 steady-state `setInterval` 轮询口径；当前更像后端单路由同步阻塞。
+  - 验证缺口：
+    - 还没有给 `/purchase-runtime/status` 加 route-level trace，暂时无法把“同步 flush”和“runtime 内锁等待”做最终比例拆账。
+    - 还没有补 focused regression test 去锁死“status route 不得为 flush backlog 长时间阻塞”。
+- 必须保持不变的关键行为：
+  - 不改 `/health -> ready=true` 的启动 gate。
+  - 不静默改写查询运行态、购买执行链、命中后购买链。
+  - 不为了止血把 runtime/purchase 统计口径直接清空或降级成错误数据。
+- 下一步第一刀：
+  - 先在 `/purchase-runtime/status` 对应 use case 增加“限预算 flush + 分段 trace”，把同步补账耗时显式打出来。
+  - 做完后立刻验证：
+    - `/purchase-runtime/status` 在运行中是否稳定回到秒级内。
+    - `item_rows / matched_product_count / purchase_success_count / purchase_failed_count` 是否仍保持当天累计语义，不出现明显回退为 0 或跳变。
+
+## 2026-04-28 18:32 (Asia/Shanghai)
+- 背景：
+  - 按上一条断点直接处理 `/purchase-runtime/status` 单路由卡慢；不重做“整后端是否活着”的基础取证，也不先放大全局前端 `10000ms`。
+  - 文档与现场已再次核对：17:40 的 handoff 结论与当前代码现场一致，没有出现“文档说已改、现场其实没落”的冲突。
+- 已完成：
+  - `GetPurchaseRuntimeStatusUseCase` 已接入分段 trace，当前至少拆出：
+    - `runtime_status`
+    - `query_status`
+    - `stats_flush`
+    - `list_query_item_stats`
+    - `build_item_rows`
+  - `/purchase-runtime/status` 路由已单独接入命名 trace：`purchase_runtime.status`，并把 use case 执行包进 `route.use_case.execute`。
+  - `StatsPipeline.flush_pending()` 已支持单次 `max_events` 上限；状态路由当前口径固定为：
+    - 单请求最多 `8` 次同步 flush
+    - 单次 flush 最多 `8` 个 event
+    - 总同步预算 `250ms`
+  - 补齐并跑通 focused 回归：
+    - 新增“单请求 flush 预算受限”测试，锁死不会再出现 `1000` 次无上限同步 flush。
+    - 新增“purchase runtime status trace breakdown”测试，锁死 request diagnostics 会落 `purchase_runtime.status` 分段 trace。
+    - 同步补齐 `last_error=None` 的既有空闲态断言，清掉当前整文件回归里的旧噪音。
+- 当前进度：
+  - 这条状态路由的第一刀已完成，且 focused + 同链路整文件回归都已通过。
+  - README 未改；本轮未触碰查询主链、购买执行主链、`/health -> ready=true` 语义与全局前端 timeout。
+- 已做验证：
+  - 自动化：
+    - `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_purchase_runtime_routes.py -q`
+      - 结果：`21 passed`
+    - `C:/Users/18220/AppData/Local/Programs/Python/Python311/python.exe -m pytest tests/backend/test_request_diagnostics_middleware.py -q`
+      - 结果：`5 passed`
+  - 针对“秒级返回”的真路由测时：
+    - 用慢 `flush_pending` 假回调（每次 `20ms`、持续返回 backlog）直打 `/purchase-runtime/status`
+    - 结果：HTTP `200`，总耗时约 `171.59ms`，同步 flush 实际只执行 `8` 次后收手
+  - 针对“当天累计语义”的 focused 证据：
+    - 停止态 pending stats flush 回归仍通过，`item_rows` 保持 `query_execution_count=1 / matched_product_count=2 / purchase_success_count=1 / purchase_failed_count=1`
+    - 运行态“历史累计 + 当前运行”回归仍通过，没有退回 0 或改成只看当前 session
+- 下一步：
+  - 若继续深挖现场 backlog，可直接读取新的 `purchase_runtime.status` trace，拆账看 `stats_flush` 与 `list_query_item_stats` 各自占比。
+  - 若现场真实 backlog 仍大到 250ms 预算内来不及追平，再考虑第二刀：给未 flush 完的 pending stats 做只读 overlay，而不是把预算重新放大。

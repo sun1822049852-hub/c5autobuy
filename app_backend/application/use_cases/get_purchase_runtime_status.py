@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 from datetime import datetime
+import time
 
 
 class GetPurchaseRuntimeStatusUseCase:
@@ -15,6 +17,10 @@ class GetPurchaseRuntimeStatusUseCase:
         stats_flush_callback=None,
         now_provider=None,
         include_recent_events: bool = True,
+        trace=None,
+        stats_flush_max_batches: int | None = None,
+        stats_flush_max_duration_ms: float | None = None,
+        stats_flush_max_events_per_batch: int | None = None,
     ) -> None:
         self._runtime_service = runtime_service
         self._query_runtime_service = query_runtime_service
@@ -24,34 +30,44 @@ class GetPurchaseRuntimeStatusUseCase:
         self._stats_flush_callback = stats_flush_callback if callable(stats_flush_callback) else None
         self._now_provider = now_provider or datetime.now
         self._include_recent_events = bool(include_recent_events)
+        self._trace = trace
+        self._stats_flush_max_batches = self._normalize_positive_int(stats_flush_max_batches)
+        self._stats_flush_max_duration_ms = self._normalize_non_negative_float(stats_flush_max_duration_ms)
+        self._stats_flush_max_events_per_batch = self._normalize_positive_int(stats_flush_max_events_per_batch)
 
     def execute(self) -> dict[str, object]:
-        purchase_snapshot = dict(self._read_runtime_status())
+        with self._measure("runtime_status"):
+            purchase_snapshot = dict(self._read_runtime_status())
         if self._query_runtime_service is None:
             purchase_snapshot.setdefault("active_query_config", None)
-            purchase_snapshot["item_rows"] = self._build_inactive_item_rows() or []
+            with self._measure("build_item_rows"):
+                purchase_snapshot["item_rows"] = self._build_inactive_item_rows() or []
             return purchase_snapshot
 
-        query_snapshot = self._query_runtime_service.get_status()
+        with self._measure("query_status"):
+            query_snapshot = self._query_runtime_service.get_status()
         if not isinstance(query_snapshot, dict):
             purchase_snapshot.setdefault("active_query_config", None)
-            purchase_snapshot["item_rows"] = self._build_inactive_item_rows() or []
+            with self._measure("build_item_rows"):
+                purchase_snapshot["item_rows"] = self._build_inactive_item_rows() or []
             return purchase_snapshot
 
         active_query_config = self._build_active_query_config(query_snapshot)
         purchase_snapshot["active_query_config"] = active_query_config
         if active_query_config is None:
-            purchase_snapshot["item_rows"] = self._build_inactive_item_rows() or []
+            with self._measure("build_item_rows"):
+                purchase_snapshot["item_rows"] = self._build_inactive_item_rows() or []
             return purchase_snapshot
 
-        purchase_snapshot["item_rows"] = self._build_active_item_rows(
-            active_query_config=active_query_config,
-            raw_purchase_item_rows=purchase_snapshot.get("item_rows"),
-            raw_query_item_rows=query_snapshot.get("item_rows"),
-        ) or self._build_item_rows(
-            purchase_snapshot.get("item_rows"),
-            query_snapshot.get("item_rows"),
-        )
+        with self._measure("build_item_rows"):
+            purchase_snapshot["item_rows"] = self._build_active_item_rows(
+                active_query_config=active_query_config,
+                raw_purchase_item_rows=purchase_snapshot.get("item_rows"),
+                raw_query_item_rows=query_snapshot.get("item_rows"),
+            ) or self._build_item_rows(
+                purchase_snapshot.get("item_rows"),
+                query_snapshot.get("item_rows"),
+            )
         return purchase_snapshot
 
     def _read_runtime_status(self) -> dict[str, object]:
@@ -235,7 +251,8 @@ class GetPurchaseRuntimeStatusUseCase:
             return {}
         self._flush_pending_stats()
         stat_date = self._current_stat_date()
-        rows = list_query_item_stats(range_mode="day", date=stat_date)
+        with self._measure("list_query_item_stats"):
+            rows = list_query_item_stats(range_mode="day", date=stat_date)
         if not isinstance(rows, list):
             return {}
         stats_by_external_item_id: dict[str, dict[str, object]] = {}
@@ -253,13 +270,49 @@ class GetPurchaseRuntimeStatusUseCase:
         if not callable(flush_pending):
             return
 
-        for _ in range(1000):
-            try:
-                drained = int(flush_pending() or 0)
-            except Exception:
-                return
-            if drained <= 0:
-                return
+        max_batches = self._stats_flush_max_batches or 1000
+        max_duration_ms = self._stats_flush_max_duration_ms
+        max_events_per_batch = self._stats_flush_max_events_per_batch
+        started_at = time.perf_counter()
+        drained_total = 0
+        flush_call_count = 0
+        budget_exhausted = False
+        flush_failed = False
+
+        with self._measure("stats_flush"):
+            for _ in range(max_batches):
+                if max_duration_ms is not None and flush_call_count > 0:
+                    elapsed_ms = (time.perf_counter() - started_at) * 1000
+                    if elapsed_ms >= max_duration_ms:
+                        budget_exhausted = True
+                        break
+                flush_call_count += 1
+                drained = self._flush_pending_once(flush_pending, max_events=max_events_per_batch)
+                if drained is None:
+                    flush_failed = True
+                    break
+                if drained <= 0:
+                    break
+                drained_total += drained
+                if max_duration_ms is not None:
+                    elapsed_ms = (time.perf_counter() - started_at) * 1000
+                    if elapsed_ms >= max_duration_ms:
+                        budget_exhausted = True
+                        break
+            else:
+                budget_exhausted = True
+
+        self._set_trace_detail("stats_flush_drained_count", drained_total)
+        self._set_trace_detail("stats_flush_call_count", flush_call_count)
+        self._set_trace_detail("stats_flush_budget_exhausted", budget_exhausted)
+        if max_batches is not None:
+            self._set_trace_detail("stats_flush_max_batches", max_batches)
+        if max_duration_ms is not None:
+            self._set_trace_detail("stats_flush_max_duration_ms", round(max_duration_ms, 3))
+        if max_events_per_batch is not None:
+            self._set_trace_detail("stats_flush_max_events_per_batch", max_events_per_batch)
+        if flush_failed:
+            self._set_trace_detail("stats_flush_failed", True)
 
     def _current_stat_date(self) -> str:
         now_value = self._now_provider()
@@ -269,6 +322,53 @@ class GetPurchaseRuntimeStatusUseCase:
         if len(now_text) >= 10:
             return now_text[:10]
         return datetime.now().date().isoformat()
+
+    def _measure(self, name: str):
+        trace = self._trace
+        measure = getattr(trace, "measure", None)
+        if callable(measure):
+            return measure(name)
+        return nullcontext()
+
+    def _set_trace_detail(self, key: str, value: object) -> None:
+        trace = self._trace
+        set_detail = getattr(trace, "set_detail", None)
+        if callable(set_detail):
+            set_detail(key, value)
+
+    @staticmethod
+    def _normalize_positive_int(value: object) -> int | None:
+        if value is None:
+            return None
+        try:
+            normalized = int(value)
+        except (TypeError, ValueError):
+            return None
+        return max(normalized, 1)
+
+    @staticmethod
+    def _normalize_non_negative_float(value: object) -> float | None:
+        if value is None:
+            return None
+        try:
+            normalized = float(value)
+        except (TypeError, ValueError):
+            return None
+        return max(normalized, 0.0)
+
+    @staticmethod
+    def _flush_pending_once(flush_pending, *, max_events: int | None) -> int | None:
+        try:
+            if max_events is None:
+                return int(flush_pending() or 0)
+            try:
+                return int(flush_pending(max_events=max_events) or 0)
+            except TypeError as exc:
+                if "max_events" not in str(exc):
+                    raise
+                return int(flush_pending() or 0)
+        except Exception:
+            return None
 
     @staticmethod
     def _build_item_rows(
