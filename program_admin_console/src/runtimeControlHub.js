@@ -138,6 +138,7 @@ function createRuntimeControlHub({
 
   function broadcastRuntimeRevoke({
     userId = 0,
+    deviceId = "",
     reason = "",
     nowValue = now()
   } = {}) {
@@ -145,8 +146,12 @@ function createRuntimeControlHub({
     if (!userSubscribers || !userSubscribers.size) {
       return {deliveredCount: 0};
     }
+    const normalizedDeviceId = toText(deviceId);
     let deliveredCount = 0;
     for (const subscriber of userSubscribers.values()) {
+      if (normalizedDeviceId && subscriber.deviceId !== normalizedDeviceId) {
+        continue;
+      }
       const delivered = sendEvent(subscriber, "runtime.revoke", {
         reason: toText(reason) || "runtime_permission_revoked",
         server_time: nowIso(nowValue)

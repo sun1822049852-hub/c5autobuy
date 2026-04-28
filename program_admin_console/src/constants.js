@@ -15,6 +15,12 @@ const MEMBERSHIP_PLANS = Object.freeze([
   {code: "member", permissions: ["program_access_enabled", "runtime.start"]}
 ]);
 
+const PERMISSION_CODES = Object.freeze([
+  "program_access_enabled",
+  "runtime.start",
+  "account.browser_query.enable"
+]);
+
 const RUNTIME_PERMIT_ACTIONS = Object.freeze([
   "runtime.start"
 ]);
@@ -23,5 +29,6 @@ module.exports = {
   PATHS,
   DEFAULTS,
   MEMBERSHIP_PLANS,
+  PERMISSION_CODES,
   RUNTIME_PERMIT_ACTIONS
 };

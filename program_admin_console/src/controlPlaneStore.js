@@ -2,7 +2,9 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const {DatabaseSync} = require("node:sqlite");
-const {MEMBERSHIP_PLANS, PATHS} = require("./constants");
+const {MEMBERSHIP_PLANS, PATHS, PERMISSION_CODES} = require("./constants");
+
+const ALLOWED_PERMISSION_CODES = new Set(PERMISSION_CODES);
 
 function toText(value = "") {
   return String(value == null ? "" : value).trim();
@@ -81,11 +83,16 @@ function mapClientUser(row) {
   };
 }
 
+function normalizePermissionCode(value = "") {
+  const code = toText(value);
+  return ALLOWED_PERMISSION_CODES.has(code) ? code : "";
+}
+
 function mapPermissionOverride(row) {
   if (!row) {
     return null;
   }
-  const featureCode = toText(row.feature_code);
+  const featureCode = normalizePermissionCode(row.feature_code);
   if (!featureCode) {
     return null;
   }
@@ -495,15 +502,17 @@ class ControlPlaneStore {
       WHERE user_id = ?
       ORDER BY feature_code ASC
     `).all(user.id);
-    for (const item of overrides) {
-      const code = toText(item.feature_code);
-      if (!code) {
-        continue;
-      }
-      if (Number(item.enabled) === 1) {
-        permissions.add(code);
-      } else {
-        permissions.delete(code);
+    if (active) {
+      for (const item of overrides) {
+        const code = normalizePermissionCode(item.feature_code);
+        if (!code) {
+          continue;
+        }
+        if (Number(item.enabled) === 1) {
+          permissions.add(code);
+        } else {
+          permissions.delete(code);
+        }
       }
     }
     const resolvedPermissions = [...permissions].sort();
@@ -635,21 +644,20 @@ class ControlPlaneStore {
       const effectivePlan = active ? plan : getPlan("inactive");
       const permissions = new Set(effectivePlan ? effectivePlan.permissions : []);
       const overrides = overridesByUser.get(user.id) || [];
-      for (const item of overrides) {
-        const code = toText(item.feature_code);
-        if (!code) {
-          continue;
-        }
-        if (Number(item.enabled) === 1) {
-          permissions.add(code);
-        } else {
-          permissions.delete(code);
+      const normalizedOverrides = overrides.map(mapPermissionOverride).filter(Boolean);
+      if (active) {
+        for (const item of normalizedOverrides) {
+          if (item.enabled) {
+            permissions.add(item.feature_code);
+          } else {
+            permissions.delete(item.feature_code);
+          }
         }
       }
       const resolvedPermissions = [...permissions].sort();
       return {
         ...user,
-        permission_overrides: overrides.map(mapPermissionOverride).filter(Boolean),
+        permission_overrides: normalizedOverrides,
         entitlements: {
           membership_plan: effectivePlan ? effectivePlan.code : "inactive",
           assigned_membership_plan: user.membership_plan,
@@ -674,7 +682,7 @@ class ControlPlaneStore {
     }
     const expiresAt = toText(user.membership_expires_at);
     if (!expiresAt) {
-      return true;
+      return false;
     }
     return parseMs(expiresAt) > parseMs(nowIso(now));
   }
@@ -696,7 +704,33 @@ class ControlPlaneStore {
       return {ok: false, reason: "status_invalid"};
     }
     const nextPlan = toText(membershipPlan) ? normalizePlan(membershipPlan) : user.membership_plan;
-    const nextExpiresAt = membershipExpiresAt === undefined ? user.membership_expires_at : toText(membershipExpiresAt);
+    const requestedExpiresAt = membershipExpiresAt === undefined ? undefined : toText(membershipExpiresAt);
+    const nextExpiresAt = nextPlan === "inactive"
+      ? ""
+      : requestedExpiresAt
+        ? requestedExpiresAt
+        : toText(user.membership_expires_at);
+    if (nextPlan === "member" && !nextExpiresAt) {
+      return {ok: false, reason: "membership_expiry_required"};
+    }
+    const normalizedPermissionOverrides = Array.isArray(permissionOverrides)
+      ? permissionOverrides.map((item) => {
+          const featureCode = normalizePermissionCode(item && item.feature_code);
+          if (!featureCode) {
+            return null;
+          }
+          return {
+            feature_code: featureCode,
+            enabled: Number(item && item.enabled ? 1 : 0)
+          };
+        })
+      : null;
+    if (Array.isArray(permissionOverrides) && normalizedPermissionOverrides.some((item) => !item)) {
+      return {ok: false, reason: "permission_override_invalid"};
+    }
+    const dedupedPermissionOverrides = Array.isArray(normalizedPermissionOverrides)
+      ? [...new Map(normalizedPermissionOverrides.map((item) => [item.feature_code, item])).values()]
+      : null;
     const stamp = nowIso(now);
     return this.runInTransaction(() => {
       this.db.prepare(`
@@ -704,18 +738,14 @@ class ControlPlaneStore {
         SET status = ?, membership_plan = ?, membership_expires_at = ?, updated_at = ?
         WHERE id = ?
       `).run(nextStatus, nextPlan, nextExpiresAt, stamp, user.id);
-      if (Array.isArray(permissionOverrides)) {
+      if (Array.isArray(dedupedPermissionOverrides)) {
         this.db.prepare("DELETE FROM client_user_feature_override WHERE user_id = ?").run(user.id);
         const insert = this.db.prepare(`
           INSERT INTO client_user_feature_override(user_id, feature_code, enabled, created_at, updated_at)
           VALUES(?, ?, ?, ?, ?)
         `);
-        for (const item of permissionOverrides) {
-          const featureCode = toText(item && item.feature_code);
-          if (!featureCode) {
-            continue;
-          }
-          insert.run(user.id, featureCode, Number(item && item.enabled ? 1 : 0), stamp, stamp);
+        for (const item of dedupedPermissionOverrides) {
+          insert.run(user.id, item.feature_code, item.enabled, stamp, stamp);
         }
       }
       const updatedUser = this.getClientUserById(user.id);
@@ -1046,7 +1076,7 @@ class ControlPlaneStore {
 
   revokeRefreshSessionById({sessionId = 0, now = new Date()} = {}) {
     const row = this.db.prepare(`
-      SELECT id
+      SELECT id, user_id, device_id
       FROM refresh_session
       WHERE id = ? AND status = 'active' AND revoked_at = ''
       LIMIT 1
@@ -1060,7 +1090,14 @@ class ControlPlaneStore {
       SET status = 'revoked', revoked_at = ?, updated_at = ?
       WHERE id = ?
     `).run(stamp, stamp, Number(row.id) || 0);
-    return {ok: true};
+    return {
+      ok: true,
+      session: {
+        id: Number(row.id) || 0,
+        user_id: Number(row.user_id) || 0,
+        device_id: toText(row.device_id)
+      }
+    };
   }
 
   revokeRefreshSessionForUserById({userId = 0, sessionId = 0, now = new Date()} = {}) {

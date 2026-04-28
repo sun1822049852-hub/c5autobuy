@@ -402,6 +402,7 @@ async function main() {
   await submitHarness.context.loadSession();
   await submitHarness.context.loadDashboard();
   submitHarness.elements["#userStatus"].value = "disabled";
+  submitHarness.elements["#userExpiryDate"].value = "";
   submitHarness.elements["#permissionOverrideProgramAccessEnabled"].value = "force_on";
   submitHarness.elements["#permissionOverrideRuntimeStart"].value = "force_off";
   submitHarness.elements["#permissionOverrideAccountBrowserQueryEnable"].value = "inherit";

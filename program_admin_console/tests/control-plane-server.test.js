@@ -426,6 +426,7 @@ async function main() {
 
     const upgradeKeepaliveUser = await requestJson(defaultKeepaliveCtx, "PATCH", `/api/admin/users/${keepaliveUser.id}`, {
       membership_plan: "member",
+      membership_expires_at: "2026-06-01T00:00:00.000Z",
       permission_overrides: []
     }, adminHeaders);
     assert.equal(upgradeKeepaliveUser.status, 200);
@@ -552,7 +553,8 @@ async function main() {
     const aliceId = userList.body.items[0].id;
 
     const upgraded = await requestJson(ctx, "PATCH", `/api/admin/users/${aliceId}`, {
-      membership_plan: "member"
+      membership_plan: "member",
+      membership_expires_at: "2026-06-01T00:00:00.000Z"
     }, adminHeaders);
     assert.equal(upgraded.status, 200);
     assert.equal(upgraded.body.ok, true);
@@ -579,6 +581,17 @@ async function main() {
         enabled: true
       }
     ]);
+
+    const invalidPermissionOverride = await requestJson(ctx, "PATCH", `/api/admin/users/${aliceId}`, {
+      permission_overrides: [
+        {
+          feature_code: "unsafe.debug.root",
+          enabled: true
+        }
+      ]
+    }, adminHeaders);
+    assert.equal(invalidPermissionOverride.status, 400);
+    assert.equal(invalidPermissionOverride.body.reason, "permission_override_invalid");
 
     const refreshed = await requestJson(ctx, "POST", "/api/auth/refresh", {
       refresh_token: registerAlice.complete.body.auth_session.refresh_token,
@@ -652,6 +665,7 @@ async function main() {
     const restoredAfterInactive = await requestJson(ctx, "PATCH", `/api/admin/users/${aliceId}`, {
       status: "active",
       membership_plan: "member",
+      membership_expires_at: "2026-06-01T00:00:00.000Z",
       permission_overrides: []
     }, adminHeaders);
     assert.equal(restoredAfterInactive.status, 200);
@@ -850,15 +864,28 @@ async function main() {
       `expected replayed or not_found, got: ${bobRefreshAfterRevoke.body.reason}`
     );
 
-    const revokeDevice = await requestJson(
-      ctx,
-      "POST",
-      `/api/admin/users/${aliceId}/devices/${aliceDevices.body.items[0].id}/revoke`,
-      {},
-      adminHeaders
-    );
-    assert.equal(revokeDevice.status, 200);
-    assert.equal(revokeDevice.body.ok, true);
+    const runtimeControlDeviceRevokeStream = await openRuntimeControlStream(ctx, {
+      refreshToken: aliceRefreshToken,
+      deviceId: "device_alpha"
+    });
+    try {
+      assert.equal(runtimeControlDeviceRevokeStream.status, 200);
+      await readHelloFrame(runtimeControlDeviceRevokeStream);
+
+      const revokeDevice = await requestJson(
+        ctx,
+        "POST",
+        `/api/admin/users/${aliceId}/devices/${aliceDevices.body.items[0].id}/revoke`,
+        {},
+        adminHeaders
+      );
+      assert.equal(revokeDevice.status, 200);
+      assert.equal(revokeDevice.body.ok, true);
+      const deviceRevoke = await readRuntimeRevoke(runtimeControlDeviceRevokeStream, {timeoutMs: 1200});
+      assert.equal(deviceRevoke.reason, "device_session_revoked");
+    } finally {
+      runtimeControlDeviceRevokeStream.close();
+    }
 
     const refreshAfterRevoke = await requestJson(ctx, "POST", "/api/auth/refresh", {
       refresh_token: aliceRefreshToken,

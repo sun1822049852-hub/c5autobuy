@@ -34,7 +34,11 @@ if (joined.includes("docker inspect")) {
   process.exit(0);
 }
 if (joined.includes("cat /remote/entitlement-private.pem")) {
-  process.stdout.write(process.env.FAKE_REMOTE_PRIVATE_KEY || "");
+  process.stderr.write("remote private key must not be copied to deploy machine");
+  process.exit(31);
+}
+if (joined.includes("python3") && joined.includes("/remote/entitlement-private.pem")) {
+  process.stdout.write(process.env.FAKE_REMOTE_DERIVED_KID || "");
   process.exit(0);
 }
 if (joined.includes("bash /home/admin/deploy_program_admin_remote_")) {
@@ -68,7 +72,6 @@ function main() {
     const runtimeDir = path.join(tempDir, "runtime");
 
     const {privateKey} = crypto.generateKeyPairSync("ed25519");
-    const privateKeyPem = privateKey.export({type: "pkcs8", format: "pem"}).toString("utf8");
     const derivedKid = deriveKeyId(privateKey);
     const fakeInspect = JSON.stringify({
       binds: ["/keys:/app/keys:ro", "c5_program_admin_data:/app/data"],
@@ -99,7 +102,7 @@ function main() {
       env: {
         ...process.env,
         FAKE_REMOTE_INSPECT: fakeInspect,
-        FAKE_REMOTE_PRIVATE_KEY: privateKeyPem,
+        FAKE_REMOTE_DERIVED_KID: derivedKid,
       }
     });
 
@@ -127,7 +130,7 @@ function main() {
       env: {
         ...process.env,
         FAKE_REMOTE_INSPECT: fakeInspect,
-        FAKE_REMOTE_PRIVATE_KEY: privateKeyPem,
+        FAKE_REMOTE_DERIVED_KID: derivedKid,
       }
     });
 

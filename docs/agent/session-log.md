@@ -5239,3 +5239,113 @@
   - `remote_runtime_shell.test.jsx` 运行时仍打印 React `act(...)` warning，但命令退出码为 `0`，本轮未把它扩成独立修复任务。
 - 下一步：
   - 将当前剩余工作区（含 diagnostics websocket、embedded runtime push、相关测试与文档）整体提交。
+
+## 2026-04-28 20:27 (Asia/Shanghai)
+- 背景：
+  - 用户要求对项目做一次“上线前最终审查”，明确要求多 agent 并行，重点只看会员管理机制。
+  - 本轮目标不是改代码，而是产出可执行的上线风险结论和下一会话 handoff。
+- 已完成：
+  - 并行拉起 4 个 `gpt-5.4` 审查 agent，分别覆盖：
+    - 会员后端授权/鉴权链路
+    - 控制台会员编辑/设备会话/签发链路
+    - 外网暴露与签名信任链安全边界
+    - 测试覆盖与上线验收缺口
+  - 主线程完成会员相关源码抽样、控制台本地最小复现、以及 focused 自动化验证。
+  - 已向用户输出“说人话”的问题总表，供新会话直接承接。
+- 核心结论：
+  - 当前状态不建议上线；会员管理存在明确阻断项，不属于“测试都绿即可放行”的收口状态。
+  - 最关键的阻断项包括：
+    - 部署链会把会员签名私钥带到部署机，本质上扩大了整条会员信任链的泄露面。
+    - 控制台把会员到期日清空，会把限时会员放大成长期/永久会员。
+    - 撤销设备后，已在线程序不会立刻被踢下线。
+    - 控制台可把任意权限名签发给客户端，权限边界不是封闭 allowlist。
+    - 非有效会员场景下，某些 override/feature 仍可能继续进入授权结果，会员边界存在穿透风险。
+    - 桌面端对“正常/宽限期/过期/撤销”的会员态映射不可靠，且真实会员错误会被误判成服务故障。
+- 本地已确认的抽样事实：
+  - `inactive` 用户在当前控制台实现下，仍可得到 `program_access_enabled` / `account.browser_query.enable` 这类 entitlements；说明“非有效会员也能带权限”的担忧不是静态误判。
+  - 设备 session 被后台 revoke 后，已建立的 runtime-control 长连接不会立即收到踢下线信号，会继续存活到后续 refresh / reconnect / 再申请 permit。
+- 已做验证：
+  - backend：
+    - `C:/Users/18220/Desktop/C5autobug更新接口 - 副本 (2)/.venv/Scripts/python.exe -m pytest -q tests/backend/test_program_auth_routes.py tests/backend/test_remote_entitlement_gateway.py tests/backend/test_program_access_guard_routes.py tests/backend/test_app_bootstrap_route.py tests/backend/test_backend_health.py tests/backend/test_remote_control_plane_client.py`
+    - 结果：`78 passed`
+    - `C:/Users/18220/Desktop/C5autobug更新接口 - 副本 (2)/.venv/Scripts/python.exe -m pytest -q tests/backend/test_account_routes.py tests/backend/test_program_runtime_control_service.py tests/backend/test_desktop_web_backend_bootstrap.py`
+    - 结果：`33 passed`
+  - control plane：
+    - `npm run test:store`
+    - 结果：退出码 `0`
+    - `npm run test:server`
+    - 结果：退出码 `0`
+    - `npm run test:ui`
+    - 结果：退出码 `0`
+    - `npm run test:server-runtime`
+    - 结果：退出码 `0`
+  - 结论：自动化大面是绿的，但未覆盖“会员到期立即失效 / 撤销设备立即停机 / revoke 推送端到端落地”这三类上线关键行为，存在明显假绿风险。
+- 现场状态：
+  - 工作目录：`C:/Users/18220/Desktop/C5autobug更新接口 - 副本 (2)`
+  - 分支：`master`
+  - 本轮在落盘 handoff 前工作树无业务改动；当前仅新增/修改会话记录文件。
+- 下一步第一刀：
+  - 新会话先不要重做全仓探索，也不要先讲实现细节。
+  - 先复述本条 handoff 和 `docs/agent/memory.md` 新增约束，再按下面顺序推进：
+    - 先修会员上线阻断项：签名私钥部署链、清空到期日变永久会员、设备 revoke 不即时踢下线、权限 allowlist/非会员带权限。
+    - 再补三条强制回归：会员到期即时失效、设备撤销即时停机、runtime-control revoke 端到端验证。
+  - 做完每一批后立刻复跑对应 focused 测试，不要只看现有整包绿灯。
+
+## 2026-04-28 20:44 (Asia/Shanghai)
+- 背景：
+  - 用户要求把“刚才 handoff 主线之外的其他问题”单独写成一份计划。
+  - 约束是：不覆盖已在运行的主 handoff 修复链，不把两条线混在一起。
+- 已完成：
+  - 新增独立计划：`docs/superpowers/plans/2026-04-28-membership-secondary-hardening.md`
+  - 该计划只覆盖第二圈问题，不重复主 handoff 已经接住的阻断项。
+- 本计划刻意不碰的内容：
+  - 不重开主 blocker：签名私钥部署链、清空到期日变永久会员、设备 revoke 不即时停机、权限 allowlist/非会员带权限、主 runtime revoke 链。
+  - 不改 `查询 -> 命中 -> 购买` 主链、不改桌面启动 gate、不做 installer 验证。
+- 计划覆盖的剩余问题：
+  - 公网注册/找回密码的账号枚举信号
+  - 可信代理下来源 IP/XFF 伪造风险
+  - 过期设备仍算活跃设备
+  - disabled 用户详情页语义误导
+  - 单钥匙切换缺少平滑轮换路径
+  - 本地授权材料读取失败被误当成未登录
+  - 发布脚本对公网 `/api/admin/*` 暴露与 HTTPS smoke 验证不完整
+- 下一步：
+  - 这份 secondary plan 等主 handoff 修复链稳定后再执行，或单独分给另一条 worker 线处理。
+  - 执行前先重新核对主 handoff 已落地到哪一步，避免重复改同一片文件。
+
+## 2026-04-28 20:55 (Asia/Shanghai)
+- 背景：
+  - 按 20:27 handoff 直接承接会员上线阻断项，只修会员管理相关链路，不重做全仓探索。
+  - 文档与现场已先核对一致：本轮开始时工作树只有 `docs/agent/session-log.md` 与 `docs/agent/memory.md` 文档改动，README 本轮未改。
+- 已完成：
+  - 修复控制台会员编辑与授权汇总口径：
+    - `member` 不再允许通过清空到期时间放大成长期/永久会员；已有到期时间的用户若清空输入，控制台会沿用原到期时间；无到期时间时后端直接拒绝升级为 `member`。
+    - 非有效会员 / disabled 用户不再把 `permission_overrides` 重新叠回实际 entitlements。
+    - `permission_overrides` 改为封闭 allowlist，未知权限名会被后端拒绝，不能再被任意签发给客户端。
+  - 修复设备撤销与部署链阻断项：
+    - 控制台撤销设备 session 时，会按 `device_id` 对匹配的 runtime-control 长连接立即下发 `device_session_revoked`，不再只等后续 refresh/reconnect。
+    - `deployProgramAdminRemote.ps1` 改为在远端本机派生 `PROGRAM_ADMIN_SIGNING_KID`，不再把会员签名私钥正文拉回部署机。
+  - 补齐并跑通三条上线前强制回归：
+    - 会员到期后 `runtime-permit` 会立即失效。
+    - 设备撤销后，真实 runtime-control 客户端会收到 revoke 并触发本地停机回调。
+    - admin 侧 runtime revoke 能通过真实 control-plane server -> backend runtime-control service 端到端落到 `program_runtime_revoked`。
+- 已做验证：
+  - control plane focused：
+    - `npm --prefix program_admin_console run test:store`
+      - 结果：退出码 `0`
+    - `npm --prefix program_admin_console run test:server`
+      - 结果：退出码 `0`
+    - `npm --prefix program_admin_console run test:ui`
+      - 结果：退出码 `0`
+    - `npm --prefix program_admin_console run test:deploy-script`
+      - 结果：退出码 `0`
+  - backend focused：
+    - `C:/Users/18220/Desktop/C5autobug更新接口 - 副本 (2)/.venv/Scripts/python.exe -m pytest -q tests/backend/test_program_runtime_control_service.py tests/backend/test_program_runtime_control_end_to_end.py`
+      - 结果：`8 passed`
+    - `C:/Users/18220/Desktop/C5autobug更新接口 - 副本 (2)/.venv/Scripts/python.exe -m pytest -q tests/backend/test_query_runtime_service.py -k program_runtime_control`
+      - 结果：`2 passed, 51 deselected`
+- 当前进度：
+  - 20:27 handoff 列出的四个会员上线阻断项已在仓内收口，并且三条强制回归已有 focused 自动化证据。
+  - 本轮未触碰查询 -> 命中 -> 购买主链、桌面启动链、README 与打包产物。
+- 下一步：
+  - 若要把这轮会员控制台改动影响到当前现网 `connectProgramAdminConsole` 入口，还需要按仓库纪律同步远端源码、重建/替换容器并做 loopback smoke；本轮尚未执行远端同步。

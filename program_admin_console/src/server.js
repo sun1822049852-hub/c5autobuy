@@ -674,6 +674,12 @@ function createServer({
             writeError(res, 404, revoked.reason, "device session not found");
             return;
           }
+          runtimeControlHub.broadcastRuntimeRevoke({
+            userId,
+            deviceId: revoked.session && revoked.session.device_id,
+            reason: "device_session_revoked",
+            nowValue: now()
+          });
           writeJson(res, 200, {ok: true});
           return;
         }

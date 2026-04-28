@@ -529,15 +529,16 @@ async function handleUserSubmit(event) {
   }
   const status = normalizeUserStatus(refs.userStatus.value);
   const membershipPlan = refs.userPlan.value === "member" ? "member" : "inactive";
+  const nextMembershipExpiry = membershipPlan === "inactive"
+    ? ""
+    : expiryToIso(refs.userExpiryDate.value, refs.userExpiryTime.value) || toText(user.membership_expires_at);
   try {
     await api(`/api/admin/users/${user.id}`, {
       method: "PATCH",
       body: JSON.stringify({
         status,
         membership_plan: membershipPlan,
-        membership_expires_at: membershipPlan === "inactive"
-          ? ""
-          : expiryToIso(refs.userExpiryDate.value, refs.userExpiryTime.value),
+        membership_expires_at: nextMembershipExpiry,
         permission_overrides: readPermissionOverridesFromForm()
       })
     });

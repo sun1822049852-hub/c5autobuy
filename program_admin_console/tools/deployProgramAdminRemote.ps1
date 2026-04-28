@@ -190,17 +190,15 @@ function Get-EnvMap {
   return $map
 }
 
-function Get-DerivedSigningKid {
+function Get-RemoteDerivedSigningKid {
   param(
-    [string]$PemText,
-    [string]$ResolvedPythonPath
+    [hashtable]$SshConfig,
+    [string]$IdentityFilePath,
+    [string]$Target,
+    [string]$RemoteKeyPath
   )
 
-  Assert-PathExists -PathValue $ResolvedPythonPath -Label "Python interpreter"
-  $tempPath = [System.IO.Path]::GetTempFileName()
-  try {
-    [System.IO.File]::WriteAllText($tempPath, $PemText, (New-Object System.Text.UTF8Encoding($false)))
-    $script = @'
+  $script = @'
 import base64
 import hashlib
 import sys
@@ -217,10 +215,14 @@ public_der = private_key.public_key().public_bytes(
 fingerprint = base64.urlsafe_b64encode(hashlib.sha256(public_der).digest()).decode("ascii").rstrip("=")
 print("ed25519:" + fingerprint[:32], end="")
 '@
-    return (Invoke-Process -FilePath $ResolvedPythonPath -Arguments @("-c", $script, $tempPath)).Trim()
-  } finally {
-    Remove-Item -LiteralPath $tempPath -Force -ErrorAction SilentlyContinue
-  }
+  $remoteCommand = "python3 -c {0} {1}" -f (Quote-Bash $script), (Quote-Bash $RemoteKeyPath)
+  return (Invoke-ExternalTool -Config $SshConfig -Arguments @(
+    "-i", $IdentityFilePath,
+    "-o", "BatchMode=yes",
+    "-o", "StrictHostKeyChecking=accept-new",
+    $Target,
+    "bash -lc $(Quote-Bash $remoteCommand)"
+  )).Trim()
 }
 
 function Get-LoopbackSmokeScript {
@@ -293,17 +295,9 @@ $inspectRaw = Invoke-ExternalTool -Config $sshLaunch -Arguments @(
 )
 $remoteState = Normalize-RemoteInspectPayload -Payload $inspectRaw
 
-$pemText = Invoke-ExternalTool -Config $sshLaunch -Arguments @(
-  "-i", $IdentityFile,
-  "-o", "BatchMode=yes",
-  "-o", "StrictHostKeyChecking=accept-new",
-  $target,
-  "cat $RemotePrivateKeyPath"
-)
-
 $envMap = Get-EnvMap -EnvList $remoteState.Env
 $currentSigningKid = [string]$envMap["PROGRAM_ADMIN_SIGNING_KID"]
-$derivedSigningKid = Get-DerivedSigningKid -PemText $pemText -ResolvedPythonPath $PythonPath
+$derivedSigningKid = Get-RemoteDerivedSigningKid -SshConfig $sshLaunch -IdentityFilePath $IdentityFile -Target $target -RemoteKeyPath $RemotePrivateKeyPath
 $envMap["PROGRAM_ADMIN_SIGNING_KID"] = $derivedSigningKid
 
 $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"

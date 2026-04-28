@@ -156,12 +156,60 @@ function run() {
       email: "member@example.com",
       username: "member",
       password: "Secret123!",
-      membershipPlan: "member"
+      membershipPlan: "member",
+      membershipExpiresAt: "2026-06-01T00:00:00.000Z"
     });
     const memberEntitlements = store.resolveUserEntitlements({userId: member.id});
     assert.equal(
       memberEntitlements.permissions.includes("program_access_enabled"),
       true
+    );
+
+    const blankExpiryMember = store.createClientUser({
+      email: "blank-expiry@example.com",
+      username: "blank_expiry",
+      password: "Secret123!",
+      membershipPlan: "member"
+    });
+    const blankExpiryEntitlements = store.resolveUserEntitlements({
+      userId: blankExpiryMember.id,
+      now: new Date("2026-05-01T00:00:00.000Z")
+    });
+    assert.equal(blankExpiryEntitlements.membership_active, false);
+    assert.equal(blankExpiryEntitlements.membership_plan, "inactive");
+    assert.deepEqual(blankExpiryEntitlements.permissions, []);
+
+    const inactiveOverrideResult = store.updateClientUserControl({
+      userId: alice.id,
+      permissionOverrides: [
+        {
+          feature_code: "account.browser_query.enable",
+          enabled: true
+        }
+      ]
+    });
+    assert.equal(inactiveOverrideResult.ok, true);
+    const inactiveOverrideEntitlements = store.resolveUserEntitlements({userId: alice.id});
+    assert.equal(inactiveOverrideEntitlements.membership_plan, "inactive");
+    assert.deepEqual(inactiveOverrideEntitlements.permissions, []);
+
+    const memberWithoutExpiryUpgrade = store.updateClientUserControl({
+      userId: alice.id,
+      membershipPlan: "member",
+      membershipExpiresAt: ""
+    });
+    assert.equal(memberWithoutExpiryUpgrade.ok, false);
+    assert.equal(memberWithoutExpiryUpgrade.reason, "membership_expiry_required");
+
+    const preservedExpiryMember = store.updateClientUserControl({
+      userId: member.id,
+      membershipPlan: "member",
+      membershipExpiresAt: ""
+    });
+    assert.equal(preservedExpiryMember.ok, true);
+    assert.equal(
+      preservedExpiryMember.user.membership_expires_at,
+      "2026-06-01T00:00:00.000Z"
     );
 
     const session = store.createRefreshSession({
@@ -172,12 +220,15 @@ function run() {
     const listedUsers = store.listUsersWithEntitlements();
     const listedAlice = listedUsers.find((item) => item.username === "alice");
     const listedMember = listedUsers.find((item) => item.username === "member");
+    const listedBlankExpiryMember = listedUsers.find((item) => item.username === "blank_expiry");
     assert.equal(listedAlice.entitlements.membership_plan, "inactive");
     assert.equal(listedAlice.entitlements.feature_flags.program_access_enabled, false);
     assert.equal(listedAlice.active_device_count, 1);
     assert.equal(listedMember.entitlements.membership_plan, "member");
     assert.equal(listedMember.entitlements.feature_flags.program_access_enabled, true);
     assert.equal(listedMember.active_device_count, 0);
+    assert.equal(listedBlankExpiryMember.entitlements.membership_plan, "inactive");
+    assert.deepEqual(listedBlankExpiryMember.entitlements.permissions, []);
     const resolved = store.resolveRefreshSession({
       refreshToken: session.refresh_token,
       deviceId: "device-a"
